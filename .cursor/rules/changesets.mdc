@@ -88,6 +88,21 @@ This publishes every bumped package to npm **and** creates git tags (e.g. `creat
 git push --follow-tags
 ```
 
+### Step 7: Create GitHub Releases
+
+`changeset publish` creates git tags but **not** GitHub Releases. Run the release script:
+
+```bash
+./scripts/create-github-releases.sh
+```
+
+This automatically:
+
+- Finds all tags that `changeset publish` just created on HEAD
+- Maps each tag (e.g. `@geajs/core@2.0.0`) back to its package directory by matching the `name` field in `package.json`
+- Extracts the latest version's notes from that package's CHANGELOG
+- Creates a GitHub Release for each
+
 ### Quick copy-paste version
 
 ```bash
@@ -97,6 +112,8 @@ git push                                             # push so GitHub API works
 GITHUB_TOKEN=$(gh auth token) npx changeset version  # bump versions + changelogs
 npx changeset publish                                # publish to npm + create tags
 git push --follow-tags                               # push release commit + tags
+
+./scripts/create-github-releases.sh                  # create GitHub Releases
 ```
 
 ## Dry run
