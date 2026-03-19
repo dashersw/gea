@@ -23,7 +23,6 @@ describe('Store – construction', () => {
     const store = new Store({ nested: { x: 1 } })
     assert.equal((store.nested as any).__isProxy, true)
   })
-
 })
 
 describe('Store – basic reactivity', () => {
@@ -263,12 +262,18 @@ describe('Store – array iterator proxies', () => {
 
   it('some returns true when predicate matches', () => {
     const store = new Store({ items: [1, 2, 3] })
-    assert.equal(store.items.some((n) => n > 2), true)
+    assert.equal(
+      store.items.some((n) => n > 2),
+      true,
+    )
   })
 
   it('every returns false when predicate fails', () => {
     const store = new Store({ items: [1, 2, 3] })
-    assert.equal(store.items.every((n) => n > 2), false)
+    assert.equal(
+      store.items.every((n) => n > 2),
+      false,
+    )
   })
 
   it('reduce accumulates correctly', () => {
@@ -437,5 +442,48 @@ describe('Store – observerRoot cleanup on unsubscribe', () => {
     unsub()
     const unsub2 = store.observe('a.b.c', () => {})
     unsub2()
+  })
+})
+
+describe('Store – derived arrays passed as values', () => {
+  it('filtered store array is a real array that supports .map()', () => {
+    const store = new Store({
+      items: [
+        { id: 1, active: true },
+        { id: 2, active: false },
+        { id: 3, active: true },
+      ],
+    })
+    const filtered = store.items.filter((x: any) => x.active)
+    assert.ok(Array.isArray(filtered), 'filter result should be a real Array')
+    const ids = filtered.map((x: any) => x.id)
+    assert.deepEqual(ids, [1, 3])
+  })
+
+  it('mapped store array is a real array that supports .filter()', () => {
+    const store = new Store({
+      items: [
+        { id: 1, name: 'a' },
+        { id: 2, name: 'b' },
+      ],
+    })
+    const names = store.items.map((x: any) => x.name)
+    assert.ok(Array.isArray(names), 'map result should be a real Array')
+    assert.deepEqual(names, ['a', 'b'])
+    const filtered = names.filter((n: string) => n === 'a')
+    assert.deepEqual(filtered, ['a'])
+  })
+
+  it('store array proxy itself supports .map() and .filter()', () => {
+    const store = new Store({
+      items: [
+        { id: 1, v: 10 },
+        { id: 2, v: 20 },
+      ],
+    })
+    const doubled = store.items.map((x: any) => x.v * 2)
+    assert.deepEqual(doubled, [20, 40])
+    const big = store.items.filter((x: any) => x.v > 15)
+    assert.equal(big.length, 1)
   })
 })
