@@ -10,10 +10,22 @@ export default class Link extends Component {
   private _clickHandler: ((e: MouseEvent) => void) | null = null
   private _observerRemover: (() => void) | null = null
 
-  template(props: { to: string; replace?: boolean; class?: string; label?: string }) {
+  template(props: {
+    to: string
+    replace?: boolean
+    exact?: boolean
+    class?: string
+    label?: string
+    children?: string
+    target?: string
+    rel?: string
+    onNavigate?: (e: MouseEvent) => void
+  }) {
     const cls = props.class ? ` class="${escapeAttr(props.class)}"` : ''
-    const label = props.label || ''
-    return `<a id="${this.id}" href="${escapeAttr(props.to)}"${cls}>${label}</a>` as any
+    const target = props.target ? ` target="${escapeAttr(props.target)}"` : ''
+    const rel = props.rel ? ` rel="${escapeAttr(props.rel)}"` : ''
+    const content = props.children ?? props.label ?? ''
+    return `<a id="${this.id}" href="${escapeAttr(props.to)}"${cls}${target}${rel}>${content}</a>` as any
   }
 
   onAfterRender() {
@@ -24,8 +36,9 @@ export default class Link extends Component {
       const to = this.props.to
       if (!to) return
       if (to.startsWith('http://') || to.startsWith('https://')) return
-      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
       e.preventDefault()
+      this.props.onNavigate?.(e)
       const router = Link._router
       if (router) {
         this.props.replace ? router.replace(to) : router.push(to)

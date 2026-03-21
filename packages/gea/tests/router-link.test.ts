@@ -48,8 +48,8 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-class Home {}
-class About {}
+import Home from '../../../examples/router-simple/src/views/Home'
+import About from '../../../examples/router-simple/src/views/About'
 
 describe('Link', () => {
   let restoreDom: () => void
@@ -93,6 +93,17 @@ describe('Link', () => {
     router.dispose()
   })
 
+  it('renders children html when provided', async () => {
+    const { GeaRouter, Link } = await loadModules()
+    const router = new GeaRouter({ '/': Home as any })
+    Link._router = router
+
+    const html = String(new Link({ to: '/', children: '<span class="inner">Click Me</span>' }))
+    assert.ok(html.includes('<span class="inner">Click Me</span>'))
+
+    router.dispose()
+  })
+
   it('renders class attribute', async () => {
     const { GeaRouter, Link } = await loadModules()
     const router = new GeaRouter({ '/': Home as any })
@@ -121,6 +132,37 @@ describe('Link', () => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
 
+    assert.equal(router.path, '/target')
+
+    router.dispose()
+    container.remove()
+  })
+
+  it('click calls onNavigate before router.push(to)', async () => {
+    const { GeaRouter, Link } = await loadModules()
+    const router = new GeaRouter({ '/': Home as any, '/target': About as any })
+    Link._router = router
+
+    let navigated = false
+    const link = new Link({
+      to: '/target',
+      label: 'Go',
+      onNavigate: () => {
+        navigated = true
+      },
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    container.insertAdjacentHTML('beforeend', String(link))
+    const el = document.getElementById(link.id) as HTMLAnchorElement
+    link.element_ = el
+    link.rendered_ = true
+    link.onAfterRender()
+
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flush()
+
+    assert.equal(navigated, true)
     assert.equal(router.path, '/target')
 
     router.dispose()

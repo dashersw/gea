@@ -178,6 +178,20 @@ export function resolvePath(
       if (ref.kind === 'local-destructured' && ref.propName) {
         return { parts: [ref.propName] }
       }
+      if (ref.kind === 'store-alias' && ref.storeVar && ref.propName) {
+        return {
+          parts: [ref.propName],
+          isImportedState: true,
+          storeVar: ref.storeVar,
+        }
+      }
+      if (ref.kind === 'imported-destructured' && ref.storeVar && ref.propName) {
+        return {
+          parts: [ref.propName],
+          isImportedState: true,
+          storeVar: ref.storeVar,
+        }
+      }
       return {
         parts: [],
         isImportedState: ref.kind === 'imported',
@@ -267,8 +281,9 @@ export function replacePropRefsInStatements(
   statements: t.Statement[],
   propNames: Set<string>,
   wholeParamName?: string,
+  propDefaults?: Map<string, t.Expression>,
 ): t.Statement[] {
-  return statements.map((stmt) => replacePropRefsInNode(stmt, propNames, wholeParamName) as t.Statement)
+  return statements.map((stmt) => replacePropRefsInNode(stmt, propNames, wholeParamName, propDefaults) as t.Statement)
 }
 
 /**
@@ -377,18 +392,32 @@ export function replacePropRefsInExpression(
   expr: t.Expression,
   propNames: Set<string>,
   wholeParamName?: string,
+  propDefaults?: Map<string, t.Expression>,
 ): t.Expression {
-  return replacePropRefsInNode(expr, propNames, wholeParamName) as t.Expression
+  return replacePropRefsInNode(expr, propNames, wholeParamName, propDefaults) as t.Expression
 }
 
-function replacePropRefsInNode(node: t.Node, propNames: Set<string>, wholeParamName?: string): t.Node {
+function replacePropRefsInNode(
+  node: t.Node,
+  propNames: Set<string>,
+  wholeParamName?: string,
+  propDefaults?: Map<string, t.Expression>,
+): t.Node {
   if (t.isIdentifier(node) && wholeParamName && node.name === wholeParamName) {
     return t.memberExpression(t.thisExpression(), t.identifier('props'))
   }
   if (t.isIdentifier(node) && propNames.has(node.name)) {
-    return t.memberExpression(t.memberExpression(t.thisExpression(), t.identifier('props')), t.identifier(node.name))
+    const member = t.memberExpression(
+      t.memberExpression(t.thisExpression(), t.identifier('props')),
+      t.identifier(node.name),
+    )
+    const def = propDefaults?.get(node.name)
+    if (def) {
+      return t.logicalExpression('??', member, t.cloneNode(def, true) as t.Expression)
+    }
+    return member
   }
-  const r = (n: t.Node) => replacePropRefsInNode(n, propNames, wholeParamName)
+  const r = (n: t.Node) => replacePropRefsInNode(n, propNames, wholeParamName, propDefaults)
   if (t.isExpressionStatement(node)) {
     return t.expressionStatement(r(node.expression) as t.Expression)
   }

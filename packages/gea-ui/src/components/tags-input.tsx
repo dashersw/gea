@@ -1,7 +1,6 @@
 import * as tagsInput from '@zag-js/tags-input'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class TagsInput extends ZagComponent {
   declare value: string[]
@@ -39,7 +38,7 @@ export default class TagsInput extends ZagComponent {
     return tagsInput.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',
@@ -84,6 +83,7 @@ export default class TagsInput extends ZagComponent {
         >
           {(this.value || []).map((tag: string, i: number) => (
             <span
+              key={`${tag}-${i}`}
               data-part="item"
               data-index={String(i)}
               data-value={tag}

@@ -12,6 +12,7 @@
   ],
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     }
@@ -37,8 +38,8 @@
     "size": "node -e \"process.stdout.write('gzip size: ')\" && gzip-size dist/gea.js",
     "ts-type-check": "tsc --noEmit --project tsconfig.build.json",
     "lint": "eslint src",
-    "test": "tsx --test tests/**/*.test.ts",
-    "test:coverage": "c8 --reporter=text --reporter=lcov tsx --test tests/**/*.test.ts"
+    "test": "tsx --conditions source --import ./tests/preload.mjs --test tests/**/*.test.ts",
+    "test:coverage": "c8 --reporter=text --reporter=lcov tsx --conditions source --import ./tests/preload.mjs --test tests/**/*.test.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -54,6 +55,7 @@
     "@types/node": "^25.5.0",
     "c8": "^11.0.0",
     "jsdom": "^29.0.0",
+    "quill": "^2.0.3",
     "tsdown": "^0.21.2",
     "tsx": "^4.21.0",
     "typescript": "~5.8.0"

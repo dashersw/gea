@@ -16,12 +16,128 @@ import {
   toGeaEventType,
 } from './component-event-helpers.ts'
 
-/** Convert PascalCase component name to kebab-case custom element tag (matches Gea's generateTagName_). */
+const RESERVED_HTML_TAG_NAMES = new Set([
+  'a',
+  'abbr',
+  'address',
+  'area',
+  'article',
+  'aside',
+  'audio',
+  'b',
+  'base',
+  'bdi',
+  'bdo',
+  'blockquote',
+  'body',
+  'br',
+  'button',
+  'canvas',
+  'caption',
+  'cite',
+  'code',
+  'col',
+  'colgroup',
+  'data',
+  'datalist',
+  'dd',
+  'del',
+  'details',
+  'dfn',
+  'dialog',
+  'div',
+  'dl',
+  'dt',
+  'em',
+  'embed',
+  'fieldset',
+  'figcaption',
+  'figure',
+  'footer',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'head',
+  'header',
+  'hgroup',
+  'hr',
+  'html',
+  'i',
+  'iframe',
+  'img',
+  'input',
+  'ins',
+  'kbd',
+  'label',
+  'legend',
+  'li',
+  'link',
+  'main',
+  'map',
+  'mark',
+  'menu',
+  'meta',
+  'meter',
+  'nav',
+  'noscript',
+  'object',
+  'ol',
+  'optgroup',
+  'option',
+  'output',
+  'p',
+  'picture',
+  'pre',
+  'progress',
+  'q',
+  'rp',
+  'rt',
+  'ruby',
+  's',
+  'samp',
+  'script',
+  'search',
+  'section',
+  'select',
+  'slot',
+  'small',
+  'source',
+  'span',
+  'strong',
+  'style',
+  'sub',
+  'summary',
+  'sup',
+  'table',
+  'tbody',
+  'td',
+  'template',
+  'textarea',
+  'tfoot',
+  'th',
+  'thead',
+  'time',
+  'title',
+  'tr',
+  'track',
+  'u',
+  'ul',
+  'var',
+  'video',
+  'wbr',
+])
+
+/** Convert PascalCase component name to a safe custom element tag (matches Gea's generateTagName_). */
 function pascalToKebabCase(tagName: string): string {
-  return tagName
+  const normalized = tagName
     .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
     .replace(/[\s_]+/g, '-')
     .toLowerCase()
+  return RESERVED_HTML_TAG_NAMES.has(normalized) ? `gea-${normalized}` : normalized
 }
 
 /** Convert camelCase to kebab-case for data-prop-* attribute names. */
@@ -129,13 +245,8 @@ function expressionMayBeFalsy(expr: t.Expression): boolean {
 
 /** True if expression can evaluate to boolean at runtime (so we need === false check). */
 function canBeBoolean(expr: t.Expression): boolean {
-  if (t.isBooleanLiteral(expr)) return true
-  if (t.isBinaryExpression(expr) && ['===', '!==', '==', '!=', '<', '>', '<=', '>='].includes(expr.operator))
-    return true
-  if (t.isLogicalExpression(expr)) return true
-  if (t.isUnaryExpression(expr) && expr.operator === '!') return true
-  if (t.isConditionalExpression(expr)) return true
-  return false
+  if (t.isNumericLiteral(expr) || t.isStringLiteral(expr) || t.isTemplateLiteral(expr)) return false
+  return true
 }
 
 /** Build condition to skip attribute when value is null, undefined, or false. */
@@ -281,6 +392,7 @@ interface Ctx {
   lazyChildComponents?: boolean
   conditionalSlots?: ConditionalSlotInfo[]
   conditionalSlotCursor?: { value: number }
+  conditionalSlotNodeMap?: Map<t.Node, ConditionalSlotInfo>
   stateChildSlots?: StateChildSlot[]
   stateChildSlotCounter?: { value: number }
   /** Populated by processElement: the event token generated for the root element of a map item */
@@ -428,13 +540,33 @@ function replaceJSXInExpression(
       mapItemVariable,
       conditionalSlots: undefined,
       conditionalSlotCursor: undefined,
+      conditionalSlotNodeMap: undefined,
     }
-    const body = t.isBlockStatement(fn.body)
-      ? fn.body.body[0] && t.isReturnStatement(fn.body.body[0]) && fn.body.body[0].argument
-        ? replaceJSXInExpression(fn.body.body[0].argument as t.Expression, mapJSXNodes, mapCtx)
-        : ((fn.body.body[0] as t.ReturnStatement)?.argument as t.Expression)
-      : replaceJSXInExpression(fn.body as t.Expression, mapJSXNodes, mapCtx)
-    const newBody = t.isBlockStatement(fn.body) ? t.blockStatement([t.returnStatement(body)]) : body
+    let body: t.Expression | undefined
+    let newBody: t.BlockStatement | t.Expression
+    if (t.isBlockStatement(fn.body)) {
+      const jsxReturnIdx = fn.body.body.findIndex(
+        (s) =>
+          t.isReturnStatement(s) &&
+          s.argument &&
+          (t.isJSXElement(s.argument) || t.isJSXFragment(s.argument) || t.isParenthesizedExpression(s.argument)),
+      )
+      if (jsxReturnIdx >= 0) {
+        const retStmt = fn.body.body[jsxReturnIdx] as t.ReturnStatement
+        body = replaceJSXInExpression(retStmt.argument as t.Expression, mapJSXNodes, mapCtx)
+        const preceding = fn.body.body.slice(0, jsxReturnIdx).map((s) => t.cloneNode(s, true) as t.Statement)
+        newBody = t.blockStatement([...preceding, t.returnStatement(body)])
+      } else if (fn.body.body[0] && t.isReturnStatement(fn.body.body[0]) && fn.body.body[0].argument) {
+        body = replaceJSXInExpression(fn.body.body[0].argument as t.Expression, mapJSXNodes, mapCtx)
+        newBody = t.blockStatement([t.returnStatement(body)])
+      } else {
+        body = (fn.body.body[0] as t.ReturnStatement)?.argument as t.Expression
+        newBody = t.blockStatement([t.returnStatement(body)])
+      }
+    } else {
+      body = replaceJSXInExpression(fn.body as t.Expression, mapJSXNodes, mapCtx)
+      newBody = body
+    }
     return t.callExpression(t.cloneNode(node.callee), [
       t.arrowFunctionExpression(fn.params, newBody, fn.async),
       ...node.arguments.slice(1).map((a) => t.cloneNode(a)),
@@ -565,15 +697,13 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
       pushString(parts, '')
       parts.push({
         type: 'expression',
-        value: instance.lazy
-          ? t.callExpression(
-              t.memberExpression(
-                t.thisExpression(),
-                t.identifier(`__ensureChild_${instance.instanceVar.replace(/^_/, '')}`),
-              ),
-              [],
-            )
-          : t.memberExpression(t.thisExpression(), t.identifier(instance.instanceVar)),
+        value: t.callExpression(
+          t.memberExpression(
+            t.thisExpression(),
+            t.identifier(`__ensureChild_${instance.instanceVar.replace(/^_/, '')}`),
+          ),
+          [],
+        ),
       })
       return
     }
@@ -581,23 +711,21 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
 
   // In .map(), root item is a custom element placeholder (<issue-card>) for list sync; nested components need `new X()`.
   if (isComp && (!ctx.inMapCallback || elementPath.length > 0)) {
-    const propsEntries: t.ObjectProperty[] = []
-    for (const attr of node.openingElement.attributes) {
-      if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
-      const name = attr.name.name
-      if (name === 'key') continue
-      let value: t.Expression
-      if (attr.value === null) value = t.booleanLiteral(true)
-      else if (t.isStringLiteral(attr.value)) value = attr.value
-      else if (t.isJSXExpressionContainer(attr.value) && !t.isJSXEmptyExpression(attr.value.expression))
-        value = attr.value.expression as t.Expression
-      else continue
-      propsEntries.push(t.objectProperty(t.identifier(name), value))
-    }
+    const childPropCtx = { ...ctx, inChildrenProp: true }
+    const props = buildComponentPropsExpression(
+      node,
+      ctx.imports,
+      ctx.componentInstances,
+      ctx.eventHandlers,
+      ctx.stateRefs,
+      ctx.templateSetupContext,
+      (e: t.Expression) => transformJSXExpression(e, childPropCtx),
+      (f: t.JSXFragment) => transformJSXFragmentToTemplate(f, childPropCtx),
+    )
     pushString(parts, '')
     parts.push({
       type: 'expression',
-      value: t.newExpression(t.identifier(tagName!), [t.objectExpression(propsEntries)]),
+      value: t.newExpression(t.identifier(tagName!), [props.expression]),
     })
     return
   }
@@ -834,17 +962,8 @@ function processChildren(
         appendString(parts, escapeHtml(staticStr))
         return
       }
-      const slotCursor = ctx.conditionalSlotCursor
-      const slots = ctx.conditionalSlots
-      if (
-        slots &&
-        slotCursor &&
-        slotCursor.value < slots.length &&
-        expressionMayBeFalsy(rawExpr) &&
-        expressionMayProduceJSXForCtx(rawExpr)
-      ) {
-        const slot = slots[slotCursor.value]
-        slotCursor.value++
+      const slot = ctx.conditionalSlotNodeMap?.get(rawExpr)
+      if (slot) {
         appendString(parts, `<!--`)
         parts.push({
           type: 'expression',

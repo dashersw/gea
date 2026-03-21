@@ -1,7 +1,6 @@
 import * as clipboard from '@zag-js/clipboard'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Clipboard extends ZagComponent {
   copied = false
@@ -27,7 +26,7 @@ export default class Clipboard extends ZagComponent {
     return clipboard.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',

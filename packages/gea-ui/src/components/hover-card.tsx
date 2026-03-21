@@ -1,7 +1,6 @@
 import * as hoverCard from '@zag-js/hover-card'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class HoverCard extends ZagComponent {
   declare open: boolean
@@ -29,7 +28,7 @@ export default class HoverCard extends ZagComponent {
     return hoverCard.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="trigger"]': 'getTriggerProps',
       '[data-part="positioner"]': 'getPositionerProps',

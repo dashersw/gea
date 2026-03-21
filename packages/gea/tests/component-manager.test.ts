@@ -117,6 +117,12 @@ describe('ComponentManager', () => {
       assert.equal(mgr.generateTagName_({ name: 'MyComponent' }), 'my-component')
     })
 
+    it('prefixes names that collide with native html tags', () => {
+      const mgr = ComponentManager.getInstance()
+      assert.equal(mgr.generateTagName_({ name: 'Link' }), 'gea-link')
+      assert.equal(mgr.generateTagName_({ name: 'Label' }), 'gea-label')
+    })
+
     it('uses displayName when available', () => {
       const mgr = ComponentManager.getInstance()
       assert.equal(mgr.generateTagName_({ displayName: 'CustomName', name: 'Other' }), 'custom-name')

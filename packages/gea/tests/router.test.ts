@@ -56,31 +56,16 @@ async function loadModules() {
   return { GeaRouter: GeaRouter as typeof import('../src/lib/router/router').GeaRouter }
 }
 
-// Fake component classes for testing
-class Home {
-  static _name = 'Home'
-}
-class About {
-  static _name = 'About'
-}
-class UserProfile {
-  static _name = 'UserProfile'
-}
-class NotFound {
-  static _name = 'NotFound'
-}
-class Dashboard {
-  static _name = 'Dashboard'
-}
-class LoginPage {
-  static _name = 'LoginPage'
-}
-class AdminPanel {
-  static _name = 'AdminPanel'
-}
-class ProjectDetail {
-  static _name = 'ProjectDetail'
-}
+import Home from '../../../examples/router-simple/src/views/Home'
+import About from '../../../examples/router-simple/src/views/About'
+import UserProfile from '../../../examples/router-simple/src/views/UserProfile'
+import NotFound from '../../../examples/router-simple/src/views/NotFound'
+import Dashboard from '../../../examples/router-v2/src/views/Overview'
+import LoginPage from '../../../examples/router-v2/src/views/Login'
+import AdminPanel from '../../../examples/router-v2/src/views/Projects'
+import ProjectDetail from '../../../examples/router-v2/src/views/Project'
+import AppShell from '../../../examples/router-v2/src/layouts/AppShell'
+import DashboardLayout from '../../../examples/router-v2/src/layouts/DashboardLayout'
 
 // ── Tests ──────────────────────────────────────────────────────────
 
@@ -478,6 +463,64 @@ describe('GeaRouter', () => {
 
     assert.equal(router.path, '/about')
     assert.equal(router.page, About)
+    router.dispose()
+  })
+
+  it('getComponentAtDepth passes page prop to layouts', async () => {
+    const { GeaRouter } = await loadModules()
+
+    const routes = {
+      '/': {
+        layout: AppShell,
+        children: {
+          '/dashboard': {
+            layout: DashboardLayout,
+            children: {
+              '/': Dashboard,
+              '/projects': AdminPanel,
+            },
+          },
+        },
+      } as any,
+    }
+    const router = new GeaRouter(routes)
+    router.push('/dashboard')
+
+    const depth0 = router.getComponentAtDepth(0)
+    assert.equal(depth0?.component, AppShell, 'depth 0 should be AppShell')
+    assert.equal(depth0?.props.page, DashboardLayout, 'AppShell page prop should be DashboardLayout')
+
+    const depth1 = router.getComponentAtDepth(1)
+    assert.equal(depth1?.component, DashboardLayout, 'depth 1 should be DashboardLayout')
+    assert.equal(depth1?.props.page, Dashboard, 'DashboardLayout page prop should be Dashboard')
+
+    router.push('/dashboard/projects')
+    const depth1b = router.getComponentAtDepth(1)
+    assert.equal(depth1b?.props.page, AdminPanel, 'after nav, DashboardLayout page prop should be AdminPanel')
+
+    router.dispose()
+  })
+
+  it('guard component replaces entire layout chain when guard blocks', async () => {
+    const { GeaRouter } = await loadModules()
+
+    const routes = {
+      '/': {
+        layout: AppShell,
+        guard: () => LoginPage,
+        children: {
+          '/dashboard': Dashboard,
+        },
+      } as any,
+    }
+    const router = new GeaRouter(routes)
+    router.push('/dashboard')
+
+    // Guard blocks before _applyResolved — layouts are not applied, guard component shows directly
+    assert.equal(router.page, LoginPage, 'router.page should be the guard component')
+    const depth0 = router.getComponentAtDepth(0)
+    assert.equal(depth0?.component, LoginPage, 'depth 0 should be the guard component (no layout)')
+
     router.dispose()
   })
 })

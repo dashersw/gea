@@ -21,6 +21,7 @@ import {
   isComputedArrayProp,
   addArrayTextBindings,
   extractItemTemplate,
+  extractCallbackBodyStatements,
   detectItemIdProperty,
   detectContainerSelector,
   hasExplicitItemKey,
@@ -47,6 +48,8 @@ export interface AnalysisResult {
   elementPathToBindingId: Map<string, string>
   /** Store observe keys that appear exclusively inside conditional slot branch content */
   conditionalSlotScopedStoreKeys: Set<string>
+  /** Original AST expression node → slotId, used by transform-jsx for direct lookup instead of cursor */
+  conditionalSlotNodeMap: Map<t.Node, string>
 }
 
 function buildTextTemplateExpressionFromParts(
@@ -158,6 +161,7 @@ export function analyzeTemplate(
       stateChildSlots: [],
       elementPathToBindingId: new Map(),
       conditionalSlotScopedStoreKeys: new Set(),
+      conditionalSlotNodeMap: new Map(),
     }
 
   const returnStmt = templateMethod.body.body.find((s) => t.isReturnStatement(s) && s.argument !== null) as
@@ -176,6 +180,7 @@ export function analyzeTemplate(
       stateChildSlots: [],
       elementPathToBindingId: new Map(),
       conditionalSlotScopedStoreKeys: new Set(),
+      conditionalSlotNodeMap: new Map(),
     }
   const returnIndex = templateMethod.body.body.indexOf(returnStmt)
   const templateSetupContext = {
@@ -184,6 +189,9 @@ export function analyzeTemplate(
     ),
     statements: returnIndex >= 0 ? templateMethod.body.body.slice(0, returnIndex) : [],
   }
+
+  const templateRoot = t.isJSXElement(returnStmt.argument) ? returnStmt.argument : null
+  const conditionalSlotNodeMap = new Map<t.Node, string>()
 
   const walk = (node: t.JSXElement | t.JSXFragment, elementPath: string[] = []): void => {
     if (t.isJSXFragment(node)) {
@@ -207,6 +215,7 @@ export function analyzeTemplate(
         propsParamName,
         destructuredPropNames,
         templateSetupContext,
+        classBody,
       )
     }
     const { textTemplate, textExpressions, shouldBuildTextTemplate } = collectTextChildren(node, stateRefs, stateProps)
@@ -231,6 +240,8 @@ export function analyzeTemplate(
       rerenderPropNames,
       rerenderConditions,
       conditionalSlots,
+      templateRoot,
+      conditionalSlotNodeMap,
     )
   }
 
@@ -305,6 +316,7 @@ export function analyzeTemplate(
     stateChildSlots: [],
     elementPathToBindingId,
     conditionalSlotScopedStoreKeys,
+    conditionalSlotNodeMap,
   }
 }
 
@@ -385,6 +397,7 @@ function analyzeAttributes(
   propsParamName?: string,
   destructuredPropNames?: Set<string>,
   templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
+  classBody?: t.ClassBody,
 ) {
   node.openingElement.attributes.forEach((attr) => {
     if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) return
@@ -452,6 +465,7 @@ function analyzeAttributes(
       propsParamName,
       destructuredPropNames,
       templateSetupContext,
+      classBody,
     )
     if (derived.length > 0) {
       propBindings.push(...derived)
@@ -560,6 +574,38 @@ function collectTextChildren(
   return { textTemplate, textExpressions, shouldBuildTextTemplate }
 }
 
+function parentHasElementChildren(node: t.JSXElement): boolean {
+  return node.children.some((c) => t.isJSXElement(c))
+}
+
+function getDOMTextNodeIndex(children: t.JSXElement['children'], childIndex: number): number {
+  let domIndex = 0
+  let inTextRun = false
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+
+    if (t.isJSXText(child)) {
+      if (child.value.trim() === '') continue
+      if (!inTextRun) {
+        inTextRun = true
+        domIndex++
+      }
+    } else if (t.isJSXExpressionContainer(child)) {
+      if (!inTextRun) {
+        inTextRun = true
+        domIndex++
+      }
+      if (i === childIndex) return domIndex - 1
+    } else if (t.isJSXElement(child) || t.isJSXFragment(child)) {
+      inTextRun = false
+      domIndex++
+    }
+  }
+
+  return 0
+}
+
 function analyzeChildren(
   node: t.JSXElement,
   tagName: string,
@@ -581,7 +627,13 @@ function analyzeChildren(
   rerenderPropNames?: Set<string>,
   rerenderConditions?: Array<{ expression: t.Expression; setupStatements: t.Statement[] }>,
   conditionalSlots?: import('./ir').ConditionalSlot[],
+  templateRoot?: t.JSXElement | null,
+  conditionalSlotNodeMap?: Map<t.Node, string>,
 ) {
+  getDirectChildElements(node.children).forEach((child) => {
+    walk(child.node, [...elementPath, child.selectorSegment])
+  })
+
   node.children.forEach((child, index) => {
     if (t.isJSXExpressionContainer(child) && !t.isJSXEmptyExpression(child.expression)) {
       const expr = child.expression
@@ -617,6 +669,9 @@ function analyzeChildren(
           )
         })
         const hasNestedMapCall = nestedMapCalls.length > 0
+        const mixedTextNodeIndex = parentHasElementChildren(node)
+          ? getDOMTextNodeIndex(node.children, index)
+          : undefined
         handleTextBinding(
           expr,
           node,
@@ -636,13 +691,12 @@ function analyzeChildren(
           rerenderConditions,
           conditionalSlots,
           hasNestedMapCall,
+          classBody,
+          conditionalSlotNodeMap,
+          mixedTextNodeIndex,
         )
       }
     }
-  })
-
-  getDirectChildElements(node.children).forEach((child) => {
-    walk(child.node, [...elementPath, child.selectorSegment])
   })
 }
 
@@ -717,8 +771,33 @@ function handleArrayMap(
 ) {
   const arrayExpr = (expr.callee as t.MemberExpression).object
   const normalizedArrayExpr = resolveHelperCallExpression(arrayExpr as t.Expression, classBody) || arrayExpr
+
+  if (t.isArrowFunctionExpression(expr.arguments?.[0])) {
+    const tpl = extractItemTemplate(expr.arguments[0] as t.ArrowFunctionExpression)
+    if (tpl && !hasExplicitItemKey(tpl)) {
+      const loc = tpl.loc?.start
+      const locStr = loc ? ` (line ${loc.line}, col ${loc.column})` : ''
+      const err = new Error(
+        `[gea] Array .map() items must have a \`key\` prop on the root element${locStr}. ` +
+          `Add key={item.id} (or another unique identifier) to the outermost JSX element returned by the .map() callback.`,
+      )
+      ;(err as any).__geaCompileError = true
+      throw err
+    }
+  }
+
   const result = resolvePath(normalizedArrayExpr as t.MemberExpression | t.Identifier, stateRefs)
-  if (!result?.parts?.length || !t.isArrowFunctionExpression(expr.arguments[0])) {
+  const isDestructuredNonReactive =
+    result?.parts?.length === 1 &&
+    result.isImportedState &&
+    t.isIdentifier(normalizedArrayExpr) &&
+    (() => {
+      const ref = stateRefs.get(normalizedArrayExpr.name)
+      if (!ref || ref.kind !== 'imported-destructured' || !ref.storeVar || !ref.propName) return false
+      const storeRef = stateRefs.get(ref.storeVar)
+      return !storeRef?.reactiveFields?.has(ref.propName)
+    })()
+  if (!result?.parts?.length || isDestructuredNonReactive || !t.isArrowFunctionExpression(expr.arguments[0])) {
     if (t.isArrowFunctionExpression(expr.arguments?.[0])) {
       const arrowFn = expr.arguments[0] as t.ArrowFunctionExpression
       const itemVar = t.isIdentifier(arrowFn.params[0]) ? arrowFn.params[0].name : 'item'
@@ -747,6 +826,7 @@ function handleArrayMap(
         stateRefs,
         dependencies,
       )
+      const cbBodyStmts = extractCallbackBodyStatements(arrowFn)
       onUnresolvedMap({
         containerSelector: detectContainerSelector(node, tagName),
         itemTemplate,
@@ -757,6 +837,7 @@ function handleArrayMap(
         computationSetupStatements: computationSetupStatements.map((stmt) => t.cloneNode(stmt, true) as t.Statement),
         dependencies,
         containerElementPath: [...elementPath],
+        ...(cbBodyStmts.length > 0 ? { callbackBodyStatements: cbBodyStmts } : {}),
         ...(relationalClassBindings.length > 0 ? { relationalClassBindings } : {}),
       })
     }
@@ -891,6 +972,9 @@ function handleTextBinding(
   rerenderConditions?: Array<{ expression: t.Expression; setupStatements: t.Statement[] }>,
   conditionalSlots?: import('./ir').ConditionalSlot[],
   hasNestedMapCall: boolean = false,
+  classBody?: t.ClassBody,
+  conditionalSlotNodeMap?: Map<t.Node, string>,
+  textNodeIndex?: number,
 ) {
   const propName = resolvePropRef(expr, propsParamName, destructuredPropNames)
   if (propName) {
@@ -902,6 +986,7 @@ function handleTextBinding(
         setupStatements,
         propsParamName,
         destructuredPropNames,
+        classBody,
       )
       const selector = generateSelector(elementPath)
 
@@ -914,6 +999,7 @@ function handleTextBinding(
             elementPath: [...elementPath],
             expression: t.cloneNode(derivedTemplateExpr, true) as t.Expression,
             setupStatements: setupStatements.map((statement) => t.cloneNode(statement, true) as t.Statement),
+            ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
           })),
         )
         return
@@ -921,7 +1007,13 @@ function handleTextBinding(
     }
 
     const selector = generateSelector(elementPath)
-    propBindings.push({ propName, selector, type: 'text', elementPath: [...elementPath] })
+    propBindings.push({
+      propName,
+      selector,
+      type: 'text',
+      elementPath: [...elementPath],
+      ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
+    })
     return
   }
   if (!expressionMayProduceJSX(expr)) {
@@ -933,6 +1025,7 @@ function handleTextBinding(
         setupStatements,
         propsParamName,
         destructuredPropNames,
+        classBody,
       )
       if (dependentProps.length > 0) {
         const selector = generateSelector(elementPath)
@@ -944,6 +1037,7 @@ function handleTextBinding(
             elementPath: [...elementPath],
             expression: t.cloneNode(derivedTemplateExpr, true) as t.Expression,
             setupStatements: setupStatements.map((statement) => t.cloneNode(statement, true) as t.Statement),
+            ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
           })),
         )
         return
@@ -957,6 +1051,7 @@ function handleTextBinding(
       propsParamName,
       destructuredPropNames,
       templateSetupContext,
+      classBody,
     )
     if (derived.length > 0) {
       propBindings.push(...derived)
@@ -967,29 +1062,32 @@ function handleTextBinding(
     if (t.isJSXEmptyExpression(expr)) return
     const conditionExpr = extractConditionalControlExpression(expr)
     if (conditionExpr) {
-      const setupStatements = collectTemplateSetupStatements(conditionExpr, templateSetupContext)
-      const allDeps = collectExpressionDependencies(conditionExpr, stateRefs, setupStatements)
+      const condSetupStatements = collectTemplateSetupStatements(conditionExpr, templateSetupContext)
+      const fullSetupStatements = collectTemplateSetupStatements(expr, templateSetupContext)
+      const allDeps = collectExpressionDependencies(conditionExpr, stateRefs, condSetupStatements)
       const dependencies = hasNestedMapCall
         ? allDeps
         : allDeps.filter((d) => !d.storeVar && d.pathParts.length > 0 && d.pathParts[0] !== 'props')
       const dependentProps = collectDependentPropNames(
         conditionExpr,
-        setupStatements,
+        condSetupStatements,
         propsParamName,
         destructuredPropNames,
+        classBody,
       )
       dependentProps.forEach((propName) => rerenderPropNames.add(propName))
       if (dependentProps.length > 0 || dependencies.length > 0) {
         rerenderConditions?.push({
           expression: t.cloneNode(conditionExpr, true),
-          setupStatements: setupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
+          setupStatements: condSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
         })
         if (conditionalSlots) {
           const slotId = `c${conditionalSlots.length}`
           conditionalSlots.push({
             slotId,
             conditionExpr: t.cloneNode(conditionExpr, true),
-            setupStatements: setupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
+            setupStatements: condSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
+            htmlSetupStatements: fullSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
             dependentPropNames: [...dependentProps],
             dependencies: dependencies.map((dep) => ({
               observeKey: dep.observeKey,
@@ -998,6 +1096,7 @@ function handleTextBinding(
             })),
             originalExpr: t.cloneNode(expr, true) as t.Expression,
           })
+          conditionalSlotNodeMap?.set(expr, slotId)
         }
       }
     }
@@ -1022,6 +1121,7 @@ function handleTextBinding(
           expression: t.cloneNode(exprToUse, true) as t.Expression,
           setupStatements: setupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
           stateOnly: true,
+          ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
         })
       }
     }
@@ -1051,6 +1151,7 @@ function handleTextBinding(
     type: 'text',
     selector: generateSelector(elementPath),
     elementPath: [...elementPath],
+    ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
   }
   applyImportedState(binding, result, stateProps)
   if (shouldBuildTextTemplate && textTemplate) {
@@ -1110,10 +1211,17 @@ function buildDerivedPropBindings(
   propsParamName?: string,
   destructuredPropNames?: Set<string>,
   templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
+  classBody?: t.ClassBody,
 ): PropBinding[] {
   if (t.isJSXEmptyExpression(expr) || !templateSetupContext) return []
   const setupStatements = collectTemplateSetupStatements(expr, templateSetupContext)
-  const dependentProps = collectDependentPropNames(expr, setupStatements, propsParamName, destructuredPropNames)
+  const dependentProps = collectDependentPropNames(
+    expr,
+    setupStatements,
+    propsParamName,
+    destructuredPropNames,
+    classBody,
+  )
   if (dependentProps.length === 0) return []
   const selector = generateSelector(elementPath)
   return dependentProps.map((propName) => ({
@@ -1132,12 +1240,14 @@ function collectDependentPropNames(
   setupStatements: t.Statement[],
   propsParamName?: string,
   destructuredPropNames?: Set<string>,
+  classBody?: t.ClassBody,
 ): string[] {
   const names = new Set<string>()
   const program = t.program([
     ...setupStatements.map((statement) => t.cloneNode(statement, true) as t.Statement),
     t.expressionStatement(t.cloneNode(expr, true) as t.Expression),
   ])
+  const getterNamesToExpand = new Set<string>()
   traverse(program, {
     noScope: true,
     Identifier(path: NodePath<t.Identifier>) {
@@ -1147,8 +1257,40 @@ function collectDependentPropNames(
     MemberExpression(path: NodePath<t.MemberExpression>) {
       const propName = resolvePropRef(path.node, propsParamName, destructuredPropNames)
       if (propName) names.add(propName)
+      if (classBody && t.isThisExpression(path.node.object) && t.isIdentifier(path.node.property)) {
+        getterNamesToExpand.add(path.node.property.name)
+      }
     },
   })
+  if (classBody && getterNamesToExpand.size > 0) {
+    for (const member of classBody.body) {
+      if (
+        !t.isClassMethod(member) ||
+        member.kind !== 'get' ||
+        !t.isIdentifier(member.key) ||
+        !getterNamesToExpand.has(member.key.name)
+      )
+        continue
+      const getterProgram = t.program(member.body.body.map((s) => t.cloneNode(s, true) as t.Statement))
+      traverse(getterProgram, {
+        noScope: true,
+        Identifier(path: NodePath<t.Identifier>) {
+          if (!path.isReferencedIdentifier()) return
+          if (destructuredPropNames?.has(path.node.name)) names.add(path.node.name)
+        },
+        MemberExpression(path: NodePath<t.MemberExpression>) {
+          if (t.isThisExpression(path.node.object) && t.isIdentifier(path.node.property)) {
+            if (path.node.property.name === 'props' && t.isMemberExpression(path.parentPath?.node)) {
+              const parent = path.parentPath.node as t.MemberExpression
+              if (t.isIdentifier(parent.property)) names.add(parent.property.name)
+            }
+          }
+          const propName = resolvePropRef(path.node, propsParamName, destructuredPropNames)
+          if (propName) names.add(propName)
+        },
+      })
+    }
+  }
   return Array.from(names)
 }
 

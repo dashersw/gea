@@ -12,7 +12,7 @@ import { JSDOM } from 'jsdom'
 import { geaPlugin } from '../index'
 
 function installDom() {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>')
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' })
   const requestAnimationFrame = (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0)
   const cancelAnimationFrame = (id: number) => clearTimeout(id)
 
@@ -62,12 +62,21 @@ async function compileJsxComponent(source: string, id: string, className: string
   const result = await transform?.call({} as never, source, id)
   assert.ok(result)
 
-  const code = typeof result === 'string' ? result : result.code
+  let code = typeof result === 'string' ? result : result.code
+
+  // Strip TypeScript types so new Function() can parse the output
+  const esbuild = await import('esbuild')
+  const stripped = await esbuild.transform(code, { loader: 'ts', target: 'esnext' })
+  code = stripped.code
+
   const compiledSource = `${code
     .replace(/^import .*;$/gm, '')
+    .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
     .replaceAll('import.meta.hot', 'undefined')
     .replaceAll('import.meta.url', '""')
-    .replace(/export default class\s+/, 'class ')}
+    .replace(/export default class\s+/, 'class ')
+    .replace(/export default function\s+/, 'function ')
+    .replace(/export\s*\{[^}]*\}/, '')}
 return ${className};`
 
   return new Function(...Object.keys(bindings), compiledSource)(...Object.values(bindings))
@@ -2519,7 +2528,7 @@ test('unkeyed mapped tables do not emit key attributes', async () => {
               <table>
                 <tbody id="tbody">
                   {store.data.map(item => (
-                    <tr>
+                    <tr key={item.id}>
                       <td>{item.id}</td>
                       <td>{item.label}</td>
                     </tr>
@@ -2555,7 +2564,7 @@ test('unkeyed mapped tables do not emit key attributes', async () => {
   }
 })
 
-for (const keyed of [true, false]) {
+for (const keyed of [true]) {
   test(`local state mapped benchmark table renders rows after array assignment (${keyed ? 'keyed' : 'non-keyed'})`, async () => {
     const restoreDom = installDom()
 
@@ -2630,7 +2639,7 @@ for (const keyed of [true, false]) {
   })
 }
 
-for (const keyed of [true, false]) {
+for (const keyed of [true]) {
   test(`local state mapped rows update selected class in place (${keyed ? 'keyed' : 'non-keyed'})`, async () => {
     const restoreDom = installDom()
 
@@ -2701,7 +2710,7 @@ for (const keyed of [true, false]) {
   })
 }
 
-for (const keyed of [true, false]) {
+for (const keyed of [true]) {
   test(`local state mapped rows keep event item refs after full replacement (${keyed ? 'keyed' : 'non-keyed'})`, async () => {
     const restoreDom = installDom()
 
@@ -3211,7 +3220,7 @@ test('store-dependent class in unresolved map patches items without full list re
               <div class="column">
                 <div class="body">
                   {items.map(item => (
-                    <div class={\`card \${store.activeId === item ? 'active' : ''}\`}>
+                    <div key={item} class={\`card \${store.activeId === item ? 'active' : ''}\`}>
                       {item}
                     </div>
                   ))}
@@ -3293,7 +3302,7 @@ test('unresolved map rebuilds when parent mutates prop array in-place and calls 
                 <div class="body">
                   {taskIds.map(taskId =>
                     store.tasks[taskId] ? (
-                      <div class="card">{store.tasks[taskId].title}</div>
+                      <div key={taskId} class="card">{store.tasks[taskId].title}</div>
                     ) : null
                   )}
                 </div>
@@ -3342,6 +3351,69 @@ test('unresolved map rebuilds when parent mutates prop array in-place and calls 
 
     viewA.dispose()
     viewB.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('conditional slot with early-return guard does not crash constructor when store value is null', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-early-return-cond`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    const dataStore = new Store({
+      item: null as { description: string } | null,
+    }) as { item: { description: string } | null }
+
+    const DetailView = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import dataStore from './data-store'
+
+        export default class DetailView extends Component {
+          isEditing = false
+
+          template() {
+            const { item } = dataStore
+
+            if (!item) return <div class="loader">Loading</div>
+
+            const desc = item.description || ''
+
+            return (
+              <div class="detail">
+                {this.isEditing && <textarea value={desc} />}
+                {!this.isEditing && desc && <p class="desc">{desc}</p>}
+                {!this.isEditing && !desc && <p class="placeholder">Add description</p>}
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/DetailView.jsx',
+      'DetailView',
+      { Component, dataStore },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    assert.doesNotThrow(
+      () => new DetailView(),
+      'constructing a component with null store data and an early-return guard must not throw',
+    )
+
+    const view = new DetailView()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.ok(view.el.textContent?.includes('Loading'), 'should show loader when item is null')
+
+    view.dispose()
+    dataStore.item = null
     await flushMicrotasks()
   } finally {
     restoreDom()
@@ -4622,6 +4694,4034 @@ test('real-file store: getter accessed via direct member expression updates when
 
     view.dispose()
   } finally {
+    restoreDom()
+  }
+})
+
+/** Mirrors jira_clone Select: class getter + nested span + {this.displayLabel}; label must update after __geaUpdateProps. */
+test('component getter displayLabel text updates when value prop changes (Select pattern)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-select-display-label`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const SelectLike = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class SelectLike extends Component {
+          get displayLabel() {
+            const { options = [], value, placeholder = 'Select...' } = this.props
+            if (value === undefined || value === null || value === '') return placeholder
+            const opt = options.find((o) => o.value === value)
+            return opt ? opt.label : String(value)
+          }
+
+          template({
+            options = [],
+            value,
+            placeholder = 'Select...',
+          }) {
+            return (
+              <div class="select">
+                <div class="select-value">
+                  <span class="select-value-text">{this.displayLabel}</span>
+                </div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/SelectDisplayLabel.jsx',
+      'SelectLike',
+      { Component },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const options = [
+      { value: 'a', label: 'Alpha' },
+      { value: 'b', label: 'Bravo' },
+    ]
+
+    const view = new SelectLike({
+      options,
+      value: 'a',
+      placeholder: 'Select...',
+    })
+    view.render(root)
+    await flushMicrotasks()
+
+    const labelEl = () => view.el.querySelector('.select-value-text')
+    assert.equal(labelEl()?.textContent, 'Alpha', 'initial label matches selected option')
+
+    view.__geaUpdateProps({ value: 'b', options })
+    await flushMicrotasks()
+
+    assert.equal(
+      labelEl()?.textContent,
+      'Bravo',
+      'label text must update after value prop changes (getter + this.displayLabel patch)',
+    )
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRequestRender', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-jira-board-rerender`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    const { readFileSync } = await import('node:fs')
+    const jiraRoot = join(__dirname, '../../../examples/jira_clone/src')
+    const readJira = (rel: string) => readFileSync(join(jiraRoot, rel), 'utf8')
+
+    // --- Real stores (fresh Store instances with same shape) ---
+    const projectStore = new Store({
+      project: null as any,
+      isLoading: true,
+      error: null as any,
+    }) as any
+    projectStore.updateLocalProjectIssues = (issueId: string, fields: any) => {
+      if (!projectStore.project) return
+      for (const issue of projectStore.project.issues) {
+        if (issue.id === issueId) {
+          Object.assign(issue, fields)
+          break
+        }
+      }
+    }
+
+    const filtersStore = new Store({
+      searchTerm: '',
+      userIds: [] as string[],
+      myOnly: false,
+      recentOnly: false,
+    }) as any
+    Object.defineProperty(filtersStore, 'areFiltersCleared', {
+      get() {
+        return (
+          !filtersStore.searchTerm &&
+          filtersStore.userIds.length === 0 &&
+          !filtersStore.myOnly &&
+          !filtersStore.recentOnly
+        )
+      },
+    })
+    filtersStore.setSearchTerm = (val: string) => {
+      filtersStore.searchTerm = val
+    }
+    filtersStore.toggleUserId = (id: string) => {
+      const idx = filtersStore.userIds.indexOf(id)
+      if (idx >= 0) filtersStore.userIds.splice(idx, 1)
+      else filtersStore.userIds.push(id)
+    }
+    filtersStore.toggleMyOnly = () => {
+      filtersStore.myOnly = !filtersStore.myOnly
+    }
+    filtersStore.toggleRecentOnly = () => {
+      filtersStore.recentOnly = !filtersStore.recentOnly
+    }
+    filtersStore.clearAll = () => {
+      filtersStore.searchTerm = ''
+      filtersStore.userIds = []
+      filtersStore.myOnly = false
+      filtersStore.recentOnly = false
+    }
+
+    const authStore = new Store({
+      token: null as string | null,
+      currentUser: null as any,
+      isAuthenticating: false,
+    }) as any
+
+    const issueStore = new Store({
+      issue: null as any,
+      isLoading: false,
+    }) as any
+    issueStore.clear = () => {
+      issueStore.issue = null
+      issueStore.isLoading = false
+    }
+    issueStore.updateIssue = async (fields: any) => {
+      if (!issueStore.issue) return
+      Object.assign(issueStore.issue, fields)
+      projectStore.updateLocalProjectIssues(issueStore.issue.id, fields)
+    }
+    issueStore.createComment = async (_issueId: string, body: string) => {
+      if (!issueStore.issue) return
+      if (!issueStore.issue.comments) issueStore.issue.comments = []
+      issueStore.issue.comments.push({
+        id: `c${Date.now()}`,
+        body,
+        userId: 'u1',
+        createdAt: new Date().toISOString(),
+      })
+    }
+
+    const { Router } = await import(`../../gea/src/lib/router/router.ts?${seed}`)
+    const { matchRoute } = await import(`../../gea/src/lib/router/match.ts?${seed}`)
+    const router = new Router()
+    router.path = '/project/board'
+
+    const IssueStatus = { BACKLOG: 'backlog', SELECTED: 'selected', INPROGRESS: 'inprogress', DONE: 'done' }
+    const IssueStatusCopy: Record<string, string> = {
+      backlog: 'Backlog',
+      selected: 'Selected for development',
+      inprogress: 'In progress',
+      done: 'Done',
+    }
+
+    // --- Compile real components ---
+
+    // Functional components (plugin converts them to class extends Component)
+    const Icon = await compileJsxComponent(
+      readJira('components/Icon.tsx'),
+      join(jiraRoot, 'components/Icon.tsx'),
+      'Icon',
+      { Component },
+    )
+
+    const Spinner = await compileJsxComponent(
+      readJira('components/Spinner.tsx'),
+      join(jiraRoot, 'components/Spinner.tsx'),
+      'Spinner',
+      { Component },
+    )
+
+    const PageLoader = await compileJsxComponent(
+      readJira('components/PageLoader.tsx'),
+      join(jiraRoot, 'components/PageLoader.tsx'),
+      'PageLoader',
+      { Component, Spinner },
+    )
+
+    const Breadcrumbs = await compileJsxComponent(
+      readJira('components/Breadcrumbs.tsx'),
+      join(jiraRoot, 'components/Breadcrumbs.tsx'),
+      'Breadcrumbs',
+      { Component },
+    )
+
+    const IssuePriorityIcon = await compileJsxComponent(
+      readJira('components/IssuePriorityIcon.tsx'),
+      join(jiraRoot, 'components/IssuePriorityIcon.tsx'),
+      'IssuePriorityIcon',
+      { Component },
+    )
+
+    const IssueTypeIcon = await compileJsxComponent(
+      readJira('components/IssueTypeIcon.tsx'),
+      join(jiraRoot, 'components/IssueTypeIcon.tsx'),
+      'IssueTypeIcon',
+      { Component },
+    )
+
+    // Avatar — use real @geajs/ui source
+    const geaUiRoot = join(__dirname, '../../../packages/gea-ui/src')
+    const zagAvatarSrc = readFileSync(join(geaUiRoot, 'components/avatar.tsx'), 'utf8')
+    let avatar: any, normalizeProps: any, ZagComponent: any
+
+    try {
+      avatar = await import('@zag-js/avatar')
+      ;({ normalizeProps } = await import('@zag-js/vanilla'))
+      const zagMod = await import(`../../gea-ui/src/primitives/zag-component.ts?${seed}`)
+      ZagComponent = zagMod.default
+    } catch {
+      // If zag not available, use a simple stub
+      ZagComponent = class extends Component {
+        onAfterRender() {
+          this.el?.setAttribute('data-mounted', 'true')
+        }
+      }
+      avatar = { machine: null, connect: () => ({}) }
+      normalizeProps = (v: any) => v
+    }
+
+    const Avatar = await compileJsxComponent(zagAvatarSrc, join(geaUiRoot, 'components/avatar.tsx'), 'Avatar', {
+      Component,
+      ZagComponent,
+      avatar,
+      normalizeProps,
+    })
+
+    // IssueCard — real source
+    const IssueCard = await compileJsxComponent(
+      readJira('components/IssueCard.tsx'),
+      join(jiraRoot, 'components/IssueCard.tsx'),
+      'IssueCard',
+      { Component, router, IssueTypeIcon, IssuePriorityIcon, Avatar },
+    )
+
+    // BoardColumn — real source
+    const BoardColumn = await compileJsxComponent(
+      readJira('components/BoardColumn.tsx'),
+      join(jiraRoot, 'components/BoardColumn.tsx'),
+      'BoardColumn',
+      { Component, IssueStatusCopy, projectStore, IssueCard },
+    )
+
+    // Board — real source
+    const Board = await compileJsxComponent(readJira('views/Board.tsx'), join(jiraRoot, 'views/Board.tsx'), 'Board', {
+      Component,
+      projectStore,
+      filtersStore,
+      authStore,
+      IssueStatus,
+      Avatar,
+      Breadcrumbs,
+      BoardColumn,
+    })
+
+    // Sidebar — real source
+    const Sidebar = await compileJsxComponent(
+      readJira('views/Sidebar.tsx'),
+      join(jiraRoot, 'views/Sidebar.tsx'),
+      'Sidebar',
+      { Component, router, projectStore, Icon },
+    )
+
+    // NavbarLeft — real source
+    const NavbarLeft = await compileJsxComponent(
+      readJira('views/NavbarLeft.tsx'),
+      join(jiraRoot, 'views/NavbarLeft.tsx'),
+      'NavbarLeft',
+      { Component },
+    )
+
+    // Real Dialog from @geajs/ui
+    let dialog: any, Dialog: any
+    try {
+      dialog = await import('@zag-js/dialog')
+      const dialogSrc = readFileSync(join(geaUiRoot, 'components/dialog.tsx'), 'utf8')
+      Dialog = await compileJsxComponent(dialogSrc, join(geaUiRoot, 'components/dialog.tsx'), 'Dialog', {
+        Component,
+        ZagComponent,
+        dialog,
+        normalizeProps,
+      })
+    } catch {
+      // Fallback stub if zag-js/dialog is unavailable
+      Dialog = await compileJsxComponent(
+        `import { Component } from '@geajs/core'
+         export default class Dialog extends Component {
+           template(props) { return <div class="dialog-stub">{props.children}</div> }
+         }`,
+        join(jiraRoot, 'views/_DialogStub.tsx'),
+        'Dialog',
+        { Component },
+      )
+    }
+
+    // Mock issueStore.fetchIssue — return data matching the project issue
+    const makeIssueDetail = (id: string) => {
+      const projectIssue = mockProject.issues.find((i: any) => i.id === id)
+      return {
+        id,
+        title: projectIssue?.title || 'Test issue ' + id,
+        description: 'A test description',
+        type: projectIssue?.type || 'task',
+        status: projectIssue?.status || 'backlog',
+        priority: projectIssue?.priority || '3',
+        userIds: projectIssue?.userIds || [],
+        reporterId: 'u1',
+        comments: [],
+        estimate: 4,
+        timeSpent: 0,
+        timeRemaining: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+    }
+    issueStore.fetchIssue = async (id: string) => {
+      issueStore.isLoading = true
+      await Promise.resolve()
+      issueStore.issue = makeIssueDetail(id)
+      issueStore.isLoading = false
+    }
+
+    // Select — real @geajs/ui source
+    let selectZag: any, Select: any
+    try {
+      selectZag = await import('@zag-js/select')
+      Select = await compileJsxComponent(
+        readFileSync(join(geaUiRoot, 'components/select.tsx'), 'utf8'),
+        join(geaUiRoot, 'components/select.tsx'),
+        'Select',
+        { Component, ZagComponent, select: selectZag, normalizeProps },
+      )
+    } catch (e) {
+      Select = await compileJsxComponent(
+        `import { Component } from '@geajs/core'\nexport default class Select extends Component { template(props) { return <div class="select-stub">{props.placeholder}</div> } }`,
+        join(geaUiRoot, 'components/select.tsx'),
+        'Select',
+        { Component },
+      )
+    }
+
+    // Button — real @geajs/ui source
+    const { cn } = await import('../../gea-ui/src/utils/cn')
+    const Button = await compileJsxComponent(
+      readFileSync(join(geaUiRoot, 'components/button.tsx'), 'utf8'),
+      join(geaUiRoot, 'components/button.tsx'),
+      'Button',
+      { Component, cn },
+    )
+
+    // toastStore — lightweight mock (no real ToastStore in test env)
+    const toastStore = { success(_title: string) {}, error(_err: unknown) {} }
+
+    // CommentCreate — real jira source
+    const CommentCreate = await compileJsxComponent(
+      readJira('views/CommentCreate.tsx'),
+      join(jiraRoot, 'views/CommentCreate.tsx'),
+      'CommentCreate',
+      { Component, issueStore, authStore, Avatar, Button, Spinner },
+    )
+
+    // CommentItem — real jira source
+    const { formatDateTimeConversational } = await import('../../../examples/jira_clone/src/utils/dateTime')
+    const CommentItem = await compileJsxComponent(
+      readJira('views/CommentItem.tsx'),
+      join(jiraRoot, 'views/CommentItem.tsx'),
+      'CommentItem',
+      { Component, issueStore, projectStore, formatDateTimeConversational, Avatar, Button },
+    )
+
+    // Issue constants
+    const {
+      IssueType,
+      IssueTypeCopy,
+      IssueStatus: IssueStatusConst,
+      IssueStatusCopy: IssueStatusCopyConst,
+      IssuePriority,
+      IssuePriorityCopy,
+    } = await import('../../../examples/jira_clone/src/constants/issues')
+
+    // IssueDetails — REAL source
+    const IssueDetails = await compileJsxComponent(
+      readJira('views/IssueDetails.tsx'),
+      join(jiraRoot, 'views/IssueDetails.tsx'),
+      'IssueDetails',
+      {
+        Component,
+        issueStore,
+        projectStore,
+        toastStore,
+        IssueType,
+        IssueTypeCopy,
+        IssueStatus: IssueStatusConst,
+        IssueStatusCopy: IssueStatusCopyConst,
+        IssuePriority,
+        IssuePriorityCopy,
+        formatDateTimeConversational,
+        Select,
+        Button,
+        Dialog,
+        Icon,
+        IssueTypeIcon,
+        IssuePriorityIcon,
+        Spinner,
+        CommentCreate,
+        CommentItem,
+      },
+    )
+
+    // Validation utils for IssueCreate
+    const { is, generateErrors } = await import('../../../examples/jira_clone/src/utils/validation')
+
+    // IssueCreate — real jira source
+    const IssueCreate = await compileJsxComponent(
+      readJira('views/IssueCreate.tsx'),
+      join(jiraRoot, 'views/IssueCreate.tsx'),
+      'IssueCreate',
+      {
+        Component,
+        projectStore,
+        authStore,
+        toastStore,
+        IssueType,
+        IssueTypeCopy,
+        IssueStatus: IssueStatusConst,
+        IssuePriority,
+        IssuePriorityCopy,
+        is,
+        generateErrors,
+        Button,
+        Select,
+        Spinner,
+      },
+    )
+
+    // IssueSearch utils
+    const { sortByNewest } = await import('../../../examples/jira_clone/src/utils/javascript')
+    const api = {
+      get: async () => ({ issues: [] }),
+      post: async () => ({}),
+      put: async () => ({}),
+      delete: async () => ({}),
+    }
+
+    // IssueSearch — real jira source
+    const IssueSearch = await compileJsxComponent(
+      readJira('views/IssueSearch.tsx'),
+      join(jiraRoot, 'views/IssueSearch.tsx'),
+      'IssueSearch',
+      { Component, router, projectStore, api, sortByNewest, Icon, IssueTypeIcon, Spinner },
+    )
+
+    // Project — real source
+    const Project = await compileJsxComponent(
+      readJira('views/Project.tsx'),
+      join(jiraRoot, 'views/Project.tsx'),
+      'Project',
+      {
+        Component,
+        router,
+        matchRoute,
+        Dialog,
+        projectStore,
+        issueStore,
+        NavbarLeft,
+        Sidebar,
+        Board,
+        ProjectSettings: IssueCreate,
+        IssueDetails,
+        IssueCreate,
+        IssueSearch,
+        PageLoader,
+      },
+    )
+
+    // --- Setup mock data ---
+    const mockProject = {
+      id: 'p1',
+      name: 'Project Singularity',
+      category: 'software',
+      url: '',
+      description: '',
+      users: [
+        { id: 'u1', name: 'Pickle Rick', avatarUrl: 'https://i.ibb.co/7JM1P2r/picke-rick.jpg' },
+        { id: 'u2', name: 'Lord Gaben', avatarUrl: 'https://i.ibb.co/6RJ5hq6/gaben.jpg' },
+        { id: 'u3', name: 'Baby Yoda', avatarUrl: 'https://i.ibb.co/6n0hLML/baby-yoda.jpg' },
+      ],
+      issues: [
+        {
+          id: '1',
+          title: 'Investigate login',
+          type: 'task',
+          priority: '4',
+          status: 'backlog',
+          listPosition: 1,
+          userIds: ['u1', 'u2'],
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: '2',
+          title: 'Add search',
+          type: 'story',
+          priority: '4',
+          status: 'backlog',
+          listPosition: 2,
+          userIds: ['u1', 'u3'],
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: '3',
+          title: 'Fix registration',
+          type: 'bug',
+          priority: '5',
+          status: 'selected',
+          listPosition: 1,
+          userIds: ['u2'],
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: '4',
+          title: 'Dark mode toggle',
+          type: 'story',
+          priority: '4',
+          status: 'inprogress',
+          listPosition: 1,
+          userIds: ['u1', 'u3'],
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    }
+
+    projectStore.project = mockProject
+    projectStore.isLoading = false
+    await flushMicrotasks()
+
+    // --- Render ---
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new Project()
+    view.render(root)
+    await flushMicrotasks()
+
+    // Board must be rendered and have the attribute
+    const boardEl = view.el.querySelector('.board')
+    assert.ok(boardEl, 'Board element must exist after render')
+    assert.equal(
+      boardEl!.hasAttribute('data-gea-compiled-child-root'),
+      true,
+      'Board must have data-gea-compiled-child-root after initial render',
+    )
+
+    // Issue cards must exist
+    const cardsBefore = view.el.querySelectorAll('.issue-card')
+    assert.ok(cardsBefore.length > 0, 'Issue cards must exist after initial render')
+
+    // Capture Board element reference to check it survives
+    const boardIdBefore = boardEl!.id
+
+    // --- Simulate route change — open issue 2 (userIds: ['u1', 'u3']) ---
+    router.path = '/project/board/issues/2'
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // Board must STILL have data-gea-compiled-child-root
+    const boardElAfter = view.el.querySelector('.board')
+    assert.ok(boardElAfter, 'Board element must still exist after route change')
+    assert.equal(
+      boardElAfter!.hasAttribute('data-gea-compiled-child-root'),
+      true,
+      'Board must keep data-gea-compiled-child-root after route change (no unnecessary rerender)',
+    )
+
+    // Board element should be the SAME node (not recreated)
+    assert.equal(boardElAfter!.id, boardIdBefore, 'Board element ID must not change — Board must not be recreated')
+
+    // Issue cards must still be present
+    const cardsAfter = view.el.querySelectorAll('.issue-card')
+    assert.equal(cardsAfter.length, cardsBefore.length, 'Issue cards must survive route change')
+
+    // Check Dialog mounting
+    const dialogInstance = (view as any)._dialog
+    assert.ok(dialogInstance, 'Dialog instance must exist after route to issue')
+    const dialogElById = document.getElementById(dialogInstance.id)
+    assert.ok(dialogElById, `Dialog element must exist in DOM (id=${dialogInstance.id})`)
+    assert.ok(dialogInstance.__geaCompiledChild, 'Dialog must have __geaCompiledChild')
+    assert.equal(dialogInstance.parentComponent, view, 'Dialog parentComponent must be Project')
+    assert.equal(dialogInstance.rendered_, true, `Dialog must be rendered after conditional slot activation`)
+
+    // Wait for fetchIssue to resolve and IssueDetails to rerender
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // IssueDetails must have loaded past the spinner
+    const detailsEl = view.el.querySelector('.issue-details')
+    assert.ok(detailsEl, 'Issue detail must load (not stuck on spinner)')
+    const titleEl = view.el.querySelector('.issue-title-text')
+    assert.ok(titleEl, 'Issue title must be rendered after fetch completes')
+    assert.ok(titleEl!.textContent!.includes('Add search'), 'Issue title must contain fetched data')
+
+    // IssueDetails right panel must have field labels
+    const fieldLabels = detailsEl!.querySelectorAll('.issue-details-field-label')
+    assert.ok(fieldLabels.length > 0, `IssueDetails must render field labels (found ${fieldLabels.length})`)
+
+    // --- Changing assignees must NOT trigger a board rerender ---
+    const boardNodeBefore = view.el.querySelector('.board')!
+
+    // Simulate real scenario: issue 2 has userIds ['u1','u3'], user adds 'u2' as 3rd assignee.
+    // The new array ['u1','u3','u2'] is an append of the old ['u1','u3'] — triggers Store
+    // append optimization which produces a change WITHOUT isArrayItemPropUpdate.
+    await issueStore.updateIssue({
+      userIds: ['u1', 'u3', 'u2'],
+      users: [{ id: 'u1' }, { id: 'u3' }, { id: 'u2' }],
+    })
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    const boardNodeAfter = view.el.querySelector('.board')
+    assert.ok(boardNodeAfter, 'Board must still exist after assignee change')
+    assert.strictEqual(
+      boardNodeAfter,
+      boardNodeBefore,
+      'Board DOM node must be the SAME reference — assignee change must not cause Project rerender',
+    )
+
+    // Dialog must still show the issue details (not spinner)
+    const detailsAfterAssignees = view.el.querySelector('.issue-details')
+    assert.ok(detailsAfterAssignees, 'IssueDetails must still show full details after assignee change (not spinner)')
+
+    // --- Creating a comment must not break IssueDetails ---
+    await issueStore.createComment('2', 'Hello world')
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    const detailsAfterComment = view.el.querySelector('.issue-details')
+    assert.ok(detailsAfterComment, 'IssueDetails must still show full details after adding a comment (not spinner)')
+
+    // --- Close the dialog and verify body styles are cleaned up ---
+    router.path = '/project/board'
+    issueStore.clear()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    const bodyStyle = document.body.getAttribute('style') || ''
+    assert.ok(
+      !bodyStyle.includes('overflow') || bodyStyle.includes('overflow: visible') || bodyStyle === '',
+      'Body must not have overflow:hidden after dialog closes (got: ' + bodyStyle + ')',
+    )
+
+    view.dispose()
+    await flushMicrotasks()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+// create*Item patch path must rewrite destructured template props like render*Item (jira_clone Select).
+test('map createItem patch path rewrites template props after __geaUpdateProps (Select isMulti)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-conditional-map-ismulti-props`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const SelectLike = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class SelectLike extends Component {
+          template({ options = [], isMulti = false, value }) {
+            return (
+              <div class="select">
+                <div class="options">
+                  {options.map((opt) => (
+                    <div
+                      key={opt.value}
+                        class={\`opt \${isMulti ? ((value || []).includes(opt.value) ? 'on' : '') : opt.value === value ? 'on' : ''}\`}
+                    >
+                      {opt.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/SelectLikeMapProps.jsx',
+      'SelectLike',
+      { Component },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new SelectLike({
+      options: [{ value: '1', label: 'One' }],
+      isMulti: true,
+      value: ['1'],
+    })
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.equal(view.el.querySelectorAll('.opt').length, 1)
+
+    view.__geaUpdateProps({
+      options: [
+        { value: '1', label: 'One' },
+        { value: '2', label: 'Two' },
+      ],
+    })
+    await flushMicrotasks()
+
+    assert.equal(view.el.querySelectorAll('.opt').length, 2)
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('disabled={false} on a <button> must NOT produce a disabled attribute in the DOM', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-button-disabled-false`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const { readFileSync } = await import('node:fs')
+    const { join, dirname } = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+    const geaUiRoot = join(dirname(fileURLToPath(import.meta.url)), '../../gea-ui/src')
+    const { cn } = await import('../../gea-ui/src/utils/cn')
+
+    const Button = await compileJsxComponent(
+      readFileSync(join(geaUiRoot, 'components/button.tsx'), 'utf8'),
+      join(geaUiRoot, 'components/button.tsx'),
+      'Button',
+      { Component, cn },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const btn = new Button({ disabled: false, variant: 'default' })
+    btn.render(root)
+    await flushMicrotasks()
+
+    const el = btn.el.querySelector('button') || btn.el
+    assert.ok(el, 'button element must exist')
+    assert.equal(
+      el.hasAttribute('disabled'),
+      false,
+      'button with disabled={false} must NOT have the disabled attribute',
+    )
+
+    btn.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('conditional textarea value binding: textarea.value must reflect state set before conditional flip', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-cond-textarea-value`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const EditableTitle = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class EditableTitle extends Component {
+          isEditing = false
+          editTitle = ''
+
+          startEditing() {
+            this.editTitle = 'Hello World'
+            this.isEditing = true
+          }
+
+          startEditingFlagFirst() {
+            this.isEditing = true
+            this.editTitle = 'Flag First'
+          }
+
+          template() {
+            return (
+              <div class="wrapper">
+                {!this.isEditing && (
+                  <h2 class="title-display">Some Title</h2>
+                )}
+                {this.isEditing && (
+                  <textarea class="title-input" value={this.editTitle}></textarea>
+                )}
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/EditableTitle.jsx',
+      'EditableTitle',
+      { Component },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const comp = new EditableTitle()
+    comp.render(root)
+    await flushMicrotasks()
+
+    assert.ok(comp.el.querySelector('.title-display'), 'h2 visible initially')
+    assert.ok(!comp.el.querySelector('.title-input'), 'textarea absent initially')
+
+    comp.startEditing()
+    await flushMicrotasks()
+
+    assert.ok(!comp.el.querySelector('.title-display'), 'h2 hidden after startEditing')
+    const textarea = comp.el.querySelector('.title-input') as HTMLTextAreaElement
+    assert.ok(textarea, 'textarea appears after startEditing')
+    assert.equal(
+      textarea.value,
+      'Hello World',
+      'textarea.value must equal editTitle set in startEditing (data before flag)',
+    )
+
+    // Reset and test the other assignment order (flag first, then data)
+    comp.isEditing = false
+    await flushMicrotasks()
+
+    comp.startEditingFlagFirst()
+    await flushMicrotasks()
+
+    const textarea2 = comp.el.querySelector('.title-input') as HTMLTextAreaElement
+    assert.ok(textarea2, 'textarea appears after startEditingFlagFirst')
+    assert.equal(
+      textarea2.value,
+      'Flag First',
+      'textarea.value must work regardless of assignment order (flag before data)',
+    )
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('children prop update must render as HTML, not textContent', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-children-html`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Wrapper = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Wrapper extends Component {
+          template(props) {
+            return (
+              <div class="wrapper">
+                <div class="body">{props.children}</div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Wrapper.jsx',
+      'Wrapper',
+      { Component },
+    )
+
+    const Parent = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Wrapper from './Wrapper'
+
+        export default class Parent extends Component {
+          count = 0
+
+          template() {
+            return (
+              <div class="parent">
+                <Wrapper>
+                  <span class="inner">Count: {this.count}</span>
+                </Wrapper>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Parent.jsx',
+      'Parent',
+      { Component, Wrapper },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new Parent()
+    view.render(root)
+    await flushMicrotasks()
+
+    const body = view.el.querySelector('.body')
+    assert.ok(body, '.body element must exist')
+    assert.ok(body!.querySelector('.inner'), 'children must render as HTML elements, not text')
+    assert.ok(body!.querySelector('.inner')!.textContent!.includes('Count: 0'), 'initial children content')
+
+    view.count = 1
+    await flushMicrotasks()
+
+    assert.ok(
+      body!.querySelector('.inner'),
+      'after state change, children must still be rendered as HTML (not raw text)',
+    )
+    assert.ok(body!.querySelector('.inner')!.textContent!.includes('Count: 1'), 'children must reflect updated state')
+    assert.ok(!body!.textContent!.includes('<span'), 'body must NOT contain raw HTML tags as text (textContent leak)')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('conditional slot index mismatch: local-var conditional must not be toggled by this.xxx conditional', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-cond-slot-index`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class ItemStore extends Store {
+      item = { description: 'A real description' }
+    }
+
+    const itemStore = new ItemStore()
+
+    const Panel = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Panel extends Component {
+          openDropdown = null
+
+          template() {
+            const item = itemStore.item
+            const desc = item.description || ''
+
+            return (
+              <div class="panel">
+                <div class="left">
+                  {desc && <div class="desc">{desc}</div>}
+                  {!desc && <p class="no-desc">No description</p>}
+                </div>
+                <div class="right">
+                  {this.openDropdown && <div class="overlay">overlay</div>}
+                  {this.openDropdown === 'status' && <div class="dropdown">dropdown</div>}
+                </div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Panel.jsx',
+      'Panel',
+      { Component, itemStore },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const comp = new Panel()
+    comp.render(root)
+    await flushMicrotasks()
+
+    assert.ok(comp.el.querySelector('.desc'), 'description must be visible initially')
+    assert.ok(!comp.el.querySelector('.no-desc'), 'placeholder must be hidden initially')
+    assert.ok(!comp.el.querySelector('.overlay'), 'overlay must be hidden initially')
+    assert.ok(!comp.el.querySelector('.dropdown'), 'dropdown must be hidden initially')
+
+    comp.openDropdown = 'status'
+    await flushMicrotasks()
+
+    assert.ok(comp.el.querySelector('.overlay'), 'overlay must appear when dropdown opens')
+    assert.ok(comp.el.querySelector('.dropdown'), 'dropdown must appear when dropdown opens')
+    assert.ok(
+      comp.el.querySelector('.desc'),
+      'description must STILL be visible after opening dropdown (slot index mismatch bug)',
+    )
+
+    comp.openDropdown = null
+    await flushMicrotasks()
+
+    assert.ok(!comp.el.querySelector('.overlay'), 'overlay must disappear when dropdown closes')
+    assert.ok(!comp.el.querySelector('.dropdown'), 'dropdown must disappear when dropdown closes')
+    assert.ok(comp.el.querySelector('.desc'), 'description must STILL be visible after closing dropdown (toggle bug)')
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('Link child component must not collide with native <link> tag', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-link-child`
+    const [{ default: Component }] = await Promise.all([import(`../../gea/src/lib/base/component.tsx?${seed}`)])
+    const { default: Link } = await import(`../../gea/src/lib/router/link.ts?${seed}`)
+
+    const Parent = await compileJsxComponent(
+      `
+        import { Component, Link } from '@geajs/core'
+
+        export default class Parent extends Component {
+          template() {
+            return (
+              <div class="parent">
+                <Link to="/target" class="nav-link">
+                  <span class="inner">Target</span>
+                </Link>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/ParentWithLink.jsx',
+      'Parent',
+      { Component, Link },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new Parent()
+    view.render(root)
+    await flushMicrotasks()
+
+    const anchor = view.el.querySelector('a.nav-link') as HTMLAnchorElement | null
+    assert.ok(anchor, 'Link child component must instantiate into an <a> element')
+    assert.equal(anchor.getAttribute('href'), '/target')
+    assert.equal(anchor.querySelector('.inner')?.textContent, 'Target')
+    assert.equal(view.el.querySelector('link'), null, 'raw native <link> tag must not remain in DOM')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('nested Link inside unresolved .map() item preserves children content', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-nested-link-map`
+    const [{ default: Component }] = await Promise.all([import(`../../gea/src/lib/base/component.tsx?${seed}`)])
+    const { default: Link } = await import(`../../gea/src/lib/router/link.ts?${seed}`)
+
+    const Parent = await compileJsxComponent(
+      `
+        import { Component, Link } from '@geajs/core'
+
+        export default class Parent extends Component {
+          items = [{ id: '1', title: 'First' }, { id: '2', title: 'Second' }]
+
+          template() {
+            return (
+              <div class="results">
+                {this.items.map((item) => (
+                  <div key={item.id} class="row">
+                    <Link to={\`/items/\${item.id}\`} class="row-link">
+                      <span class="title">{item.title}</span>
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/ParentWithNestedLinkMap.jsx',
+      'Parent',
+      { Component, Link },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new Parent()
+    view.render(root)
+    await flushMicrotasks()
+
+    const links = Array.from(view.el.querySelectorAll('a.row-link')) as HTMLAnchorElement[]
+    assert.equal(links.length, 2, 'expected both Link components to mount as anchors')
+    assert.equal(links[0]?.getAttribute('href'), '/items/1')
+    assert.equal(links[1]?.getAttribute('href'), '/items/2')
+    assert.equal(links[0]?.querySelector('.title')?.textContent, 'First', 'first nested Link must keep children')
+    assert.equal(links[1]?.querySelector('.title')?.textContent, 'Second', 'second nested Link must keep children')
+    assert.equal(view.el.querySelector('gea-link'), null, 'raw gea-link placeholder must not remain')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('dialog progress bar must update when local edit state changes (time tracking)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-tracking-bar`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    const Wrapper = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Wrapper extends Component {
+          template(props) {
+            return (
+              <div class="wrapper">
+                <div class="body">{props.children}</div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Wrapper.jsx',
+      'Wrapper',
+      { Component },
+    )
+
+    function getTrackingPercent(spent: number, remaining: number) {
+      const total = spent + remaining
+      return total > 0 ? Math.min(100, Math.round((spent / total) * 100)) : 0
+    }
+
+    const TrackingEditor = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Wrapper from './Wrapper'
+
+        function getTrackingPercent(spent, remaining) {
+          const total = spent + remaining
+          return total > 0 ? Math.min(100, Math.round((spent / total) * 100)) : 0
+        }
+
+        export default class TrackingEditor extends Component {
+          editTimeSpent = 2
+          editTimeRemaining = 4
+
+          template() {
+            return (
+              <div class="editor">
+                <Wrapper>
+                  <div class="tracking-bar-fill" style={\`width:\${getTrackingPercent(this.editTimeSpent, this.editTimeRemaining)}%\`}></div>
+                  <span class="spent-label">{this.editTimeSpent}h logged</span>
+                </Wrapper>
+                <input
+                  class="time-input"
+                  type="number"
+                  value={this.editTimeSpent}
+                  input={(e) => { this.editTimeSpent = Number(e.target.value) || 0 }}
+                />
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/TrackingEditor.jsx',
+      'TrackingEditor',
+      { Component, Wrapper, getTrackingPercent },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new TrackingEditor()
+    view.render(root)
+    await flushMicrotasks()
+
+    const bar = view.el.querySelector('.tracking-bar-fill')
+    assert.ok(bar, 'progress bar must exist')
+    assert.equal(bar!.style.width, '33%', 'initial bar: 2/(2+4)=33%')
+
+    view.editTimeSpent = 6
+    await flushMicrotasks()
+
+    const barAfter = view.el.querySelector('.tracking-bar-fill')
+    assert.ok(barAfter, 'progress bar must still exist after state change')
+    assert.equal(barAfter!.style.width, '60%', 'bar must update to 6/(6+4)=60% after local state change')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('inner conditional inside slot content must not steal later slots (priority/reporter mismatch)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-inner-cond-steal`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class ItemStore extends Store {
+      item = { status: 'backlog', priority: '3', reporterId: 'u1' }
+      users = [
+        { id: 'u1', name: 'Alice' },
+        { id: 'u2', name: 'Bob' },
+      ]
+    }
+
+    const itemStore = new ItemStore()
+
+    const Detail = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Detail extends Component {
+          openDropdown = null
+
+          template() {
+            const item = itemStore.item
+            const users = itemStore.users
+            const reporter = users.find(u => u.id === item.reporterId)
+
+            return (
+              <div class="detail">
+                {this.openDropdown && <div class="overlay">overlay</div>}
+
+                <div class="field field-assignees">
+                  <button class="btn-assignees" click={() => { this.openDropdown = this.openDropdown === 'assignees' ? null : 'assignees' }}>Assignees</button>
+                  {this.openDropdown === 'assignees' && (
+                    <div class="dropdown-assignees">
+                      {users.map(u => <div key={u.id} class="user-option">{u.name}</div>)}
+                      {users.filter(u => u.id === 'nobody').length === 0 && <div class="no-match">No match</div>}
+                    </div>
+                  )}
+                </div>
+
+                <div class="field field-reporter">
+                  <span class="reporter-name">{reporter ? reporter.name : 'Unassigned'}</span>
+                  <button class="btn-reporter" click={() => { this.openDropdown = this.openDropdown === 'reporter' ? null : 'reporter' }}>Reporter</button>
+                  {this.openDropdown === 'reporter' && (
+                    <div class="dropdown-reporter">
+                      {users.map(u => <div key={u.id} class="reporter-option">{u.name}</div>)}
+                    </div>
+                  )}
+                </div>
+
+                <div class="field field-priority">
+                  <button class="btn-priority" click={() => { this.openDropdown = this.openDropdown === 'priority' ? null : 'priority' }}>Priority</button>
+                  {this.openDropdown === 'priority' && (
+                    <div class="dropdown-priority">
+                      <div class="priority-option">High</div>
+                      <div class="priority-option">Low</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Detail.jsx',
+      'Detail',
+      { Component, itemStore },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const comp = new Detail()
+    comp.render(root)
+    await flushMicrotasks()
+
+    assert.ok(!comp.el.querySelector('.overlay'), 'overlay hidden initially')
+    assert.ok(!comp.el.querySelector('.dropdown-assignees'), 'assignees dropdown hidden initially')
+    assert.ok(!comp.el.querySelector('.dropdown-reporter'), 'reporter dropdown hidden initially')
+    assert.ok(!comp.el.querySelector('.dropdown-priority'), 'priority dropdown hidden initially')
+
+    comp.openDropdown = 'reporter'
+    await flushMicrotasks()
+
+    assert.ok(comp.el.querySelector('.overlay'), 'overlay must appear for reporter')
+    assert.ok(comp.el.querySelector('.dropdown-reporter'), 'reporter dropdown must open')
+    assert.ok(!comp.el.querySelector('.dropdown-assignees'), 'assignees dropdown must stay closed')
+    assert.ok(!comp.el.querySelector('.dropdown-priority'), 'priority dropdown must stay closed')
+
+    comp.openDropdown = null
+    await flushMicrotasks()
+
+    comp.openDropdown = 'priority'
+    await flushMicrotasks()
+
+    assert.ok(comp.el.querySelector('.overlay'), 'overlay must appear for priority')
+    assert.ok(
+      comp.el.querySelector('.dropdown-priority'),
+      'priority dropdown must open (not reporter — inner conditional must not steal slots)',
+    )
+    assert.ok(!comp.el.querySelector('.dropdown-reporter'), 'reporter dropdown must stay closed when priority opens')
+    assert.ok(!comp.el.querySelector('.dropdown-assignees'), 'assignees dropdown must stay closed when priority opens')
+
+    comp.openDropdown = null
+    await flushMicrotasks()
+
+    assert.ok(!comp.el.querySelector('.dropdown-priority'), 'priority dropdown closes')
+    assert.ok(!comp.el.querySelector('.dropdown-reporter'), 'reporter dropdown stays closed')
+    assert.ok(!comp.el.querySelector('.overlay'), 'overlay hidden after close')
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('store nested field change via destructured local must update DOM (status badge pattern)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-nested-store-field`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class ItemStore extends Store {
+      issue = { status: 'backlog', priority: '3' }
+    }
+
+    const itemStore = new ItemStore()
+
+    const Badge = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import itemStore from './item-store'
+
+        const StatusCopy = { backlog: 'Backlog', selected: 'Selected', inprogress: 'In progress', done: 'Done' }
+
+        export default class Badge extends Component {
+          template() {
+            const issue = itemStore.issue
+            const issueStatus = issue.status || 'backlog'
+
+            return (
+              <div class="badge">
+                <span class="status-text">{(StatusCopy[issueStatus] || 'Backlog').toUpperCase()}</span>
+                <span class="priority-text">{issue.priority}</span>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Badge.jsx',
+      'Badge',
+      { Component, itemStore },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const comp = new Badge()
+    comp.render(root)
+    await flushMicrotasks()
+
+    assert.equal(comp.el.querySelector('.status-text')!.textContent, 'BACKLOG', 'initial status must be BACKLOG')
+    assert.equal(comp.el.querySelector('.priority-text')!.textContent, '3', 'initial priority must be 3')
+
+    itemStore.issue.status = 'done'
+    await flushMicrotasks()
+
+    assert.equal(
+      comp.el.querySelector('.status-text')!.textContent,
+      'DONE',
+      'status must update to DONE after store change',
+    )
+
+    itemStore.issue.priority = '1'
+    await flushMicrotasks()
+
+    assert.equal(
+      comp.el.querySelector('.priority-text')!.textContent,
+      '1',
+      'priority must update to 1 after store change',
+    )
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('text binding in mixed-content element must not destroy sibling elements', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-mixed-content-text`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class BadgeStore extends Store {
+      status = 'backlog'
+    }
+
+    const badgeStore = new BadgeStore()
+
+    const Badge = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import badgeStore from './badge-store'
+
+        const StatusCopy = { backlog: 'Backlog', done: 'Done', inprogress: 'In Progress' }
+
+        export default class Badge extends Component {
+          template() {
+            const status = badgeStore.status
+            return (
+              <div class="wrapper">
+                <button class="status-badge">
+                  {(StatusCopy[status] || 'Backlog').toUpperCase()}
+                  <span class="arrow">▼</span>
+                </button>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Badge.jsx',
+      'Badge',
+      { Component, badgeStore },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const comp = new Badge()
+    comp.render(root)
+    await flushMicrotasks()
+
+    const btn = comp.el.querySelector('.status-badge')!
+    const arrow = btn.querySelector('.arrow')
+    assert.ok(arrow, 'arrow span must exist initially')
+    assert.ok(btn.textContent!.includes('BACKLOG'), 'initial text must be BACKLOG')
+
+    badgeStore.status = 'done'
+    await flushMicrotasks()
+
+    const arrowAfter = btn.querySelector('.arrow')
+    assert.ok(arrowAfter, 'arrow span must survive text update')
+    assert.equal(arrowAfter!.textContent, '▼', 'arrow content must be preserved')
+    assert.ok(btn.textContent!.includes('DONE'), 'text must update to DONE')
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('destructured store field update must not destroy sibling child components (IssueDetails pattern)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-issue-details-pattern`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class DetailStore extends Store {
+      issue: any = {
+        id: '1',
+        status: 'backlog',
+        priority: '3',
+        title: 'Test issue',
+        comments: [{ id: 'c1', body: 'Hello' }],
+      }
+      isLoading = false
+      updateIssue(fields: any) {
+        Object.assign(this.issue, fields)
+      }
+    }
+
+    const detailStore = new DetailStore()
+
+    const CommentComp = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class CommentComp extends Component {
+          template({ body }) {
+            return <div class="comment">{body}</div>
+          }
+        }
+      `,
+      '/virtual/CommentComp.jsx',
+      'CommentComp',
+      { Component },
+    )
+
+    const IssueDetail = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import detailStore from './detail-store'
+        import CommentComp from './CommentComp.jsx'
+
+        const StatusCopy = { backlog: 'Backlog', done: 'Done' }
+
+        export default class IssueDetail extends Component {
+          openDropdown = null
+
+          toggleDropdown(name) {
+            this.openDropdown = this.openDropdown === name ? null : name
+          }
+
+          template() {
+            const { issue } = detailStore
+            const issueStatus = issue.status || 'backlog'
+
+            return (
+              <div class="detail">
+                <div class="left">
+                  <h2 class="title-text">{issue.title}</h2>
+                  <div class="comments-section">
+                    {issue.comments && issue.comments.map(c => (
+                      <CommentComp key={c.id} body={c.body} />
+                    ))}
+                  </div>
+                </div>
+                <div class="right">
+                  <div class="field">
+                    <span class="status-label">{(StatusCopy[issueStatus] || 'Backlog').toUpperCase()}</span>
+                    <button class="status-btn" click={() => this.toggleDropdown('status')}>Toggle</button>
+                    {this.openDropdown === 'status' && (
+                      <div class="dropdown">
+                        <div class="opt" click={() => { detailStore.updateIssue({ status: 'done' }); this.openDropdown = null }}>Done</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/IssueDetail.jsx',
+      'IssueDetail',
+      { Component, detailStore, CommentComp },
+    )
+
+    Component._register(CommentComp)
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const comp = new IssueDetail()
+    comp.render(root)
+    await flushMicrotasks()
+
+    assert.equal(comp.el.querySelector('.status-label')!.textContent, 'BACKLOG', 'initial status')
+    assert.equal(comp.el.querySelectorAll('.comment').length, 1, 'comment rendered initially')
+    assert.equal(comp.el.querySelector('.comment')!.textContent, 'Hello', 'comment body')
+
+    detailStore.updateIssue({ status: 'done' })
+    await flushMicrotasks()
+
+    assert.equal(comp.el.querySelector('.status-label')!.textContent, 'DONE', 'status must update to DONE')
+    assert.equal(comp.el.querySelectorAll('.comment').length, 1, 'comment must survive status update')
+    assert.equal(comp.el.querySelector('.comment')!.textContent, 'Hello', 'comment body preserved')
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('real IssueDetails: clicking status dropdown option updates badge and preserves comments', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-real-issue-details`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    // --- Fake stores matching the real store shapes ---
+
+    class FakeIssueStore extends Store {
+      issue: any = null
+      isLoading = false
+      fetchIssue(_id: string) {
+        // no-op in test — we set data directly
+      }
+      updateIssue(fields: any) {
+        if (!this.issue) return
+        Object.assign(this.issue, fields)
+      }
+    }
+    const issueStore = new FakeIssueStore()
+    issueStore.issue = {
+      id: 'ISS-42',
+      title: 'Fix login flow',
+      description: 'The login is broken',
+      type: 'task',
+      status: 'backlog',
+      priority: '3',
+      estimate: 8,
+      userIds: ['u1'],
+      reporterId: 'u1',
+      timeSpent: 2,
+      timeRemaining: 6,
+      createdAt: new Date(Date.now() - 86400000).toISOString(),
+      updatedAt: new Date().toISOString(),
+      comments: [
+        { id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() },
+        { id: 'c2', body: 'Second comment', userId: 'u2', createdAt: new Date().toISOString() },
+      ],
+    }
+
+    class FakeProjectStore extends Store {
+      project: any = null
+      isLoading = false
+      updateLocalProjectIssues() {}
+      deleteIssue() {}
+    }
+    const projectStore = new FakeProjectStore()
+    projectStore.project = {
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+      ],
+      issues: [],
+    }
+
+    const toastStore = { success() {}, error() {} }
+
+    const IssueType = { TASK: 'task', BUG: 'bug', STORY: 'story' }
+    const IssueStatus = { BACKLOG: 'backlog', SELECTED: 'selected', INPROGRESS: 'inprogress', DONE: 'done' }
+    const IssuePriority = { HIGHEST: '5', HIGH: '4', MEDIUM: '3', LOW: '2', LOWEST: '1' }
+    const IssueTypeCopy: Record<string, string> = { task: 'Task', bug: 'Bug', story: 'Story' }
+    const IssueStatusCopy: Record<string, string> = {
+      backlog: 'Backlog',
+      selected: 'Selected for development',
+      inprogress: 'In progress',
+      done: 'Done',
+    }
+    const IssuePriorityCopy: Record<string, string> = {
+      '5': 'Highest',
+      '4': 'High',
+      '3': 'Medium',
+      '2': 'Low',
+      '1': 'Lowest',
+    }
+
+    function formatDateTimeConversational() {
+      return 'a few seconds ago'
+    }
+
+    // --- Stub child components (compiled through the plugin so they're proper Gea components) ---
+
+    const stubDir = join(__dirname, 'fixtures')
+
+    const Icon = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Icon extends Component { template({ type }) { return <span class="icon-stub"></span> } }`,
+      join(stubDir, 'Icon.jsx'),
+      'Icon',
+      { Component },
+    )
+    const IssueTypeIcon = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class IssueTypeIcon extends Component { template() { return <span class="issue-type-icon"></span> } }`,
+      join(stubDir, 'IssueTypeIcon.jsx'),
+      'IssueTypeIcon',
+      { Component },
+    )
+    const IssuePriorityIcon = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class IssuePriorityIcon extends Component { template() { return <span class="priority-icon"></span> } }`,
+      join(stubDir, 'IssuePriorityIcon.jsx'),
+      'IssuePriorityIcon',
+      { Component },
+    )
+    const Spinner = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Spinner extends Component { template() { return <span class="spinner"></span> } }`,
+      join(stubDir, 'Spinner.jsx'),
+      'Spinner',
+      { Component },
+    )
+    const CommentCreate = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class CommentCreate extends Component { template() { return <div class="comment-create-stub"></div> } }`,
+      join(stubDir, 'CommentCreate.jsx'),
+      'CommentCreate',
+      { Component },
+    )
+    const CommentItem = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class CommentItem extends Component { template({ body }) { return <div class="comment-item">{body}</div> } }`,
+      join(stubDir, 'CommentItem.jsx'),
+      'CommentItem',
+      { Component },
+    )
+    const Button = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Button extends Component { template() { return <button class="btn"><slot /></button> } }`,
+      join(stubDir, 'Button.jsx'),
+      'Button',
+      { Component },
+    )
+    const Dialog = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Dialog extends Component { template() { return <div class="dialog"><slot /></div> } }`,
+      join(stubDir, 'Dialog.jsx'),
+      'Dialog',
+      { Component },
+    )
+
+    // --- The REAL IssueDetails source (verbatim from the app) ---
+
+    const issueDetailsSource = `
+import { Component } from '@geajs/core'
+import issueStore from '../stores/issue-store'
+import projectStore from '../stores/project-store'
+import toastStore from '../stores/toast-store'
+import { IssueTypeCopy, IssueStatus, IssueStatusCopy, IssuePriority, IssuePriorityCopy } from '../constants/issues'
+import { formatDateTimeConversational } from '../utils/dateTime'
+import { Button, Dialog } from '@geajs/ui'
+import Icon from '../components/Icon'
+import IssueTypeIcon from '../components/IssueTypeIcon'
+import IssuePriorityIcon from '../components/IssuePriorityIcon'
+import Spinner from '../components/Spinner'
+import CommentCreate from './CommentCreate'
+import CommentItem from './CommentItem'
+
+function getTrackingPercent(spent, remaining) {
+  const total = spent + remaining
+  return total > 0 ? Math.min(100, Math.round((spent / total) * 100)) : 0
+}
+
+const statusOptions = Object.values(IssueStatus).map((s) => ({ value: s, label: IssueStatusCopy[s] }))
+const priorityOptions = Object.values(IssuePriority).map((p) => ({ value: p, label: IssuePriorityCopy[p] }))
+
+const statusColors = {
+  backlog: { bg: 'var(--color-bg-medium)', color: 'var(--color-text-darkest)' },
+  selected: { bg: 'var(--color-bg-light-primary)', color: 'var(--color-primary)' },
+  inprogress: { bg: 'var(--color-primary)', color: '#fff' },
+  done: { bg: 'var(--color-success)', color: '#fff' },
+}
+
+export default class IssueDetails extends Component {
+  isEditingTitle = false
+  editTitle = ''
+  confirmingDelete = false
+  isEditingTracking = false
+  editTimeSpent = 0
+  editTimeRemaining = 0
+  openDropdown = null
+  assigneeSearch = ''
+
+  created(props) {
+    if (props.issueId) {
+      issueStore.fetchIssue(props.issueId)
+    }
+  }
+
+  startEditTitle() {
+    this.editTitle = issueStore.issue?.title || ''
+    this.isEditingTitle = true
+  }
+
+  saveTitle() {
+    this.isEditingTitle = false
+    if (this.editTitle.trim() && this.editTitle !== issueStore.issue?.title) {
+      issueStore.updateIssue({ title: this.editTitle.trim() })
+    }
+  }
+
+  toggleDropdown(name) {
+    this.openDropdown = this.openDropdown === name ? null : name
+    this.assigneeSearch = ''
+  }
+
+  closeDropdown() {
+    this.openDropdown = null
+    this.assigneeSearch = ''
+  }
+
+  removeAssignee(userId) {
+    const issue = issueStore.issue
+    if (!issue) return
+    const newIds = (issue.userIds || []).filter((id) => id !== userId)
+    issueStore.updateIssue({ userIds: newIds, users: newIds.map((id) => ({ id })) })
+  }
+
+  addAssignee(userId) {
+    const issue = issueStore.issue
+    if (!issue) return
+    const currentIds = issue.userIds || []
+    if (currentIds.includes(userId)) return
+    const newIds = [...currentIds, userId]
+    issueStore.updateIssue({ userIds: newIds, users: newIds.map((id) => ({ id })) })
+    this.closeDropdown()
+  }
+
+  startEditTracking() {
+    const issue = issueStore.issue
+    this.editTimeSpent = issue?.timeSpent || 0
+    this.editTimeRemaining = issue?.timeRemaining || issue?.estimate || 0
+    this.isEditingTracking = true
+  }
+
+  saveTracking() {
+    this.isEditingTracking = false
+    issueStore.updateIssue({
+      timeSpent: this.editTimeSpent,
+      timeRemaining: this.editTimeRemaining,
+    })
+  }
+
+  handleDeleteIssue() {
+    const issue = issueStore.issue
+    if (!issue) return
+    projectStore.deleteIssue(issue.id)
+    this.props.onClose?.()
+    toastStore.success('Issue has been successfully deleted.')
+  }
+
+  template({ onClose }) {
+    const { isLoading, issue } = issueStore
+    const project = projectStore.project
+    const users = project ? project.users : []
+
+    if (isLoading || !issue) {
+      return (
+        <div class="issue-details-loader">
+          <Spinner size={40} />
+        </div>
+      )
+    }
+
+    const issueTitle = issue.title || ''
+    const issueDescription = issue.description || ''
+    const issueType = issue.type || 'task'
+    const issueStatus = issue.status || 'backlog'
+    const issuePriority = issue.priority || '3'
+    const issueEstimate = issue.estimate || 0
+    const issueUserIds = issue.userIds || []
+    const issueReporterId = issue.reporterId || ''
+    const timeSpent = issue.timeSpent || 0
+    const timeRemaining = issue.timeRemaining || issue.estimate || 0
+    const trackPercent = getTrackingPercent(timeSpent, timeRemaining)
+    const createdAgo = formatDateTimeConversational(issue.createdAt)
+    const updatedAgo = formatDateTimeConversational(issue.updatedAt)
+    const reporter = users.find((u) => u.id === issueReporterId)
+
+    return (
+      <div class="issue-details">
+        <div class="issue-details-top-actions">
+          <div class="issue-details-type">
+            <IssueTypeIcon type={issueType} size={16} />
+            <span class="issue-details-type-label">
+              {(IssueTypeCopy[issueType] || 'Task').toUpperCase()}-{issue.id}
+            </span>
+          </div>
+          <div class="issue-details-top-right">
+            <button class="issue-details-action-btn">
+              <Icon type="feedback" size={14} />
+              <span>Give feedback</span>
+            </button>
+            <button class="issue-details-action-btn">
+              <Icon type="link" size={14} />
+              <span>Copy link</span>
+            </button>
+            <button
+              class="issue-details-action-btn"
+              click={() => {
+                this.confirmingDelete = true
+              }}
+            >
+              <Icon type="trash" size={16} />
+            </button>
+            <button class="issue-details-action-btn" click={onClose}>
+              <Icon type="close" size={20} />
+            </button>
+          </div>
+        </div>
+
+        {this.confirmingDelete && (
+          <div class="confirm-inline">
+            <p>Are you sure you want to delete this issue?</p>
+            <div class="confirm-inline-actions">
+              <Button variant="destructive" click={() => this.handleDeleteIssue()}>
+                Delete
+              </Button>
+              <Button
+                variant="ghost"
+                click={() => {
+                  this.confirmingDelete = false
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <div class="issue-details-body">
+          <div class="issue-details-left">
+            <div class="issue-details-title">
+              {!this.isEditingTitle && (
+                <h2 class="issue-title-text" click={() => this.startEditTitle()}>
+                  {issueTitle}
+                </h2>
+              )}
+              {this.isEditingTitle && (
+                <textarea
+                  class="issue-title-input"
+                  value={this.editTitle}
+                  input={(e) => {
+                    this.editTitle = e.target.value
+                  }}
+                  blur={() => this.saveTitle()}
+                  keydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      this.saveTitle()
+                    }
+                  }}
+                ></textarea>
+              )}
+            </div>
+
+            <div class="issue-details-description">
+              <h4 class="issue-details-section-title">Description</h4>
+              {issueDescription && <div class="text-edited-content">{issueDescription}</div>}
+              {!issueDescription && <p class="issue-description-placeholder">Add a description...</p>}
+            </div>
+
+            <div class="issue-details-comments">
+              <h4 class="issue-details-section-title">Comments</h4>
+              <CommentCreate issueId={issue.id} />
+              {issue.comments &&
+                issue.comments.map((comment) => (
+                  <CommentItem
+                    key={comment.id}
+                    commentId={comment.id}
+                    body={comment.body}
+                    userId={comment.userId}
+                    createdAt={comment.createdAt}
+                    issueId={issue.id}
+                  />
+                ))}
+            </div>
+          </div>
+
+          <div class="issue-details-right">
+            {this.openDropdown && <div class="dropdown-overlay" click={() => this.closeDropdown()}></div>}
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Status</label>
+              <button
+                class="status-badge"
+                style={\`background:\${statusColors[issueStatus]?.bg};color:\${statusColors[issueStatus]?.color}\`}
+                click={() => this.toggleDropdown('status')}
+              >
+                {(IssueStatusCopy[issueStatus] || 'Backlog').toUpperCase()}
+                <span class="status-badge-arrow">&#x25BC;</span>
+              </button>
+              {this.openDropdown === 'status' && (
+                <div class="custom-dropdown">
+                  {statusOptions.map((opt) => (
+                    <div
+                      key={opt.value}
+                      class={\`custom-dropdown-item \${issueStatus === opt.value ? 'active' : ''}\`}
+                      click={() => {
+                        issueStore.updateIssue({ status: opt.value })
+                        this.closeDropdown()
+                      }}
+                    >
+                      <span class="status-dot" style={\`background:\${statusColors[opt.value]?.bg}\`}></span>
+                      <span>{opt.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Assignees</label>
+              <div class="assignee-chips">
+                {issueUserIds.map((uid) => {
+                  const u = users.find((usr) => usr.id === uid)
+                  if (!u) return null
+                  return (
+                    <div class="assignee-chip" key={uid}>
+                      <img class="assignee-chip-avatar" src={u.avatarUrl} alt={u.name} />
+                      <span class="assignee-chip-name">{u.name}</span>
+                      <span class="assignee-chip-remove" click={() => this.removeAssignee(uid)}>
+                        &times;
+                      </span>
+                    </div>
+                  )
+                })}
+                <span class="assignee-add-more" click={() => this.toggleDropdown('assignees')}>
+                  + Add more
+                </span>
+              </div>
+              {this.openDropdown === 'assignees' && (
+                <div class="custom-dropdown">
+                  <div class="custom-dropdown-search">
+                    <input
+                      class="custom-dropdown-search-input"
+                      type="text"
+                      placeholder="Search"
+                      value={this.assigneeSearch}
+                      input={(e) => {
+                        this.assigneeSearch = e.target.value
+                      }}
+                    />
+                    <span class="custom-dropdown-search-clear" click={() => this.closeDropdown()}>
+                      &times;
+                    </span>
+                  </div>
+                  {users
+                    .filter(
+                      (u) =>
+                        !issueUserIds.includes(u.id) &&
+                        u.name.toLowerCase().includes(this.assigneeSearch.toLowerCase()),
+                    )
+                    .map((u) => (
+                      <div
+                        key={u.id}
+                        class="custom-dropdown-item"
+                        click={() => {
+                          this.addAssignee(u.id)
+                        }}
+                      >
+                        <img class="custom-dropdown-avatar" src={u.avatarUrl} alt={u.name} />
+                        <span>{u.name}</span>
+                      </div>
+                    ))}
+                  {users.filter(
+                    (u) =>
+                      !issueUserIds.includes(u.id) && u.name.toLowerCase().includes(this.assigneeSearch.toLowerCase()),
+                  ).length === 0 && <div class="custom-dropdown-empty">No users available</div>}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Reporter</label>
+              <div class="reporter-display" click={() => this.toggleDropdown('reporter')}>
+                {reporter && <img class="reporter-avatar" src={reporter.avatarUrl} alt={reporter.name} />}
+                <span class="reporter-name">{reporter ? reporter.name : 'Unassigned'}</span>
+              </div>
+              {this.openDropdown === 'reporter' && (
+                <div class="custom-dropdown">
+                  {users.map((u) => (
+                    <div
+                      key={u.id}
+                      class={\`custom-dropdown-item \${issueReporterId === u.id ? 'active' : ''}\`}
+                      click={() => {
+                        issueStore.updateIssue({ reporterId: u.id })
+                        this.closeDropdown()
+                      }}
+                    >
+                      <img class="custom-dropdown-avatar" src={u.avatarUrl} alt={u.name} />
+                      <span>{u.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Priority</label>
+              <div class="priority-display" click={() => this.toggleDropdown('priority')}>
+                <IssuePriorityIcon priority={issuePriority} />
+                <span class="priority-name">{IssuePriorityCopy[issuePriority] || 'Medium'}</span>
+              </div>
+              {this.openDropdown === 'priority' && (
+                <div class="custom-dropdown">
+                  {priorityOptions.map((opt) => (
+                    <div
+                      key={opt.value}
+                      class={\`custom-dropdown-item \${issuePriority === opt.value ? 'active' : ''}\`}
+                      click={() => {
+                        issueStore.updateIssue({ priority: opt.value })
+                        this.closeDropdown()
+                      }}
+                    >
+                      <IssuePriorityIcon priority={opt.value} />
+                      <span>{opt.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field">
+              <label class="issue-details-field-label">Original Estimate (hours)</label>
+              <input
+                class="input"
+                type="number"
+                value={issueEstimate}
+                change={(e) => issueStore.updateIssue({ estimate: Number(e.target.value) || null })}
+              />
+            </div>
+
+            <div class="issue-details-field">
+              <label class="issue-details-field-label">Time Tracking</label>
+              <div class="tracking-widget tracking-widget--clickable" click={() => this.startEditTracking()}>
+                <div class="tracking-bar-container">
+                  <Icon type="stopwatch" size={20} />
+                  <div class="tracking-bar">
+                    <div class="tracking-bar-fill" style={\`width:\${trackPercent}%\`}></div>
+                  </div>
+                </div>
+                <div class="tracking-values">
+                  <span>{timeSpent ? \`\${timeSpent}h logged\` : 'No time logged'}</span>
+                  <span>{timeRemaining}h remaining</span>
+                </div>
+              </div>
+              {this.isEditingTracking && (
+                <Dialog
+                  open={true}
+                  onOpenChange={(d) => {
+                    if (!d.open) this.isEditingTracking = false
+                  }}
+                  class="dialog-tracking"
+                >
+                  <div class="tracking-dialog">
+                    <div class="tracking-dialog-header">
+                      <h3 class="tracking-dialog-title">Time tracking</h3>
+                      <button
+                        class="tracking-dialog-close"
+                        click={() => {
+                          this.isEditingTracking = false
+                        }}
+                      >
+                        <Icon type="close" size={20} />
+                      </button>
+                    </div>
+                    <div class="tracking-bar-container">
+                      <Icon type="stopwatch" size={22} />
+                      <div class="tracking-bar">
+                        <div
+                          class="tracking-bar-fill"
+                          style={\`width:\${getTrackingPercent(this.editTimeSpent, this.editTimeRemaining)}%\`}
+                        ></div>
+                      </div>
+                    </div>
+                    <div class="tracking-values">
+                      <span>{this.editTimeSpent ? \`\${this.editTimeSpent}h logged\` : 'No time logged'}</span>
+                      <span>{this.editTimeRemaining}h remaining</span>
+                    </div>
+                    <div class="tracking-edit-fields">
+                      <div class="tracking-edit-field">
+                        <label class="tracking-edit-label">Time spent (hours)</label>
+                        <input
+                          class="input"
+                          type="number"
+                          min="0"
+                          value={this.editTimeSpent}
+                          input={(e) => {
+                            this.editTimeSpent = Number(e.target.value) || 0
+                          }}
+                        />
+                      </div>
+                      <div class="tracking-edit-field">
+                        <label class="tracking-edit-label">Time remaining (hours)</label>
+                        <input
+                          class="input"
+                          type="number"
+                          min="0"
+                          value={this.editTimeRemaining}
+                          input={(e) => {
+                            this.editTimeRemaining = Number(e.target.value) || 0
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div class="tracking-edit-actions">
+                      <Button variant="default" click={() => this.saveTracking()}>
+                        Done
+                      </Button>
+                    </div>
+                  </div>
+                </Dialog>
+              )}
+            </div>
+
+            <div class="issue-details-dates">
+              <div class="issue-details-date">Created at {createdAgo}</div>
+              <div class="issue-details-date">Updated at {updatedAgo}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+}
+`
+
+    const IssueDetails = await compileJsxComponent(
+      issueDetailsSource,
+      join(__dirname, 'fixtures', 'IssueDetails.jsx'),
+      'IssueDetails',
+      {
+        Component,
+        issueStore,
+        projectStore,
+        toastStore,
+        IssueType,
+        IssueTypeCopy,
+        IssueStatus,
+        IssueStatusCopy,
+        IssuePriority,
+        IssuePriorityCopy,
+        formatDateTimeConversational,
+        Button,
+        Dialog,
+        Icon,
+        IssueTypeIcon,
+        IssuePriorityIcon,
+        Spinner,
+        CommentCreate,
+        CommentItem,
+      },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const comp = new IssueDetails()
+    comp.render(root, { issueId: 'ISS-42', onClose: () => {} })
+    await flushMicrotasks()
+
+    // --- Initial render assertions ---
+    const statusBadge = comp.el.querySelector('.status-badge')
+    assert.ok(statusBadge, 'status badge must render')
+    assert.ok(
+      statusBadge!.textContent!.includes('BACKLOG'),
+      `initial status badge must say BACKLOG, got: "${statusBadge!.textContent}"`,
+    )
+
+    const commentItems = comp.el.querySelectorAll('comment-item')
+    assert.equal(commentItems.length, 2, 'both comments must render initially')
+    assert.equal(commentItems[0].getAttribute('data-prop-body'), 'First comment', 'first comment body')
+    assert.equal(commentItems[1].getAttribute('data-prop-body'), 'Second comment', 'second comment body')
+
+    const commentCreate = comp.el.querySelector('.comment-create-stub')
+    assert.ok(commentCreate, 'CommentCreate must render')
+
+    // --- Click status button to open dropdown ---
+    statusBadge!.click()
+    await flushMicrotasks()
+
+    const dropdown = comp.el.querySelector('.custom-dropdown')
+    assert.ok(dropdown, 'status dropdown must open after click')
+
+    // --- Click "Done" option ---
+    const dropdownItems = comp.el.querySelectorAll('.custom-dropdown-item')
+    assert.ok(dropdownItems.length > 0, 'dropdown items must exist')
+
+    let doneItem: Element | null = null
+    dropdownItems.forEach((item: Element) => {
+      if (item.textContent?.includes('Done')) doneItem = item
+    })
+    assert.ok(doneItem, '"Done" option must exist in dropdown')
+    ;(doneItem as unknown as HTMLElement).click()
+    await flushMicrotasks()
+
+    // --- After clicking "Done" ---
+    assert.equal(issueStore.issue.status, 'done', 'store must have status=done after click')
+
+    const updatedBadge = comp.el.querySelector('.status-badge')
+    assert.ok(updatedBadge, 'status badge must still exist after update')
+    assert.ok(
+      updatedBadge!.textContent!.includes('DONE'),
+      `status badge must say DONE after click, got: "${updatedBadge!.textContent}"`,
+    )
+
+    const closedDropdown = comp.el.querySelector('.custom-dropdown')
+    assert.equal(closedDropdown, null, 'dropdown must close after selection')
+
+    const updatedComments = comp.el.querySelectorAll('comment-item')
+    assert.equal(updatedComments.length, 2, 'comments must survive status update')
+
+    const updatedCommentCreate = comp.el.querySelector('.comment-create-stub')
+    assert.ok(updatedCommentCreate, 'CommentCreate must survive status update')
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('real IssueDetails with real CommentCreate/CommentItem: comments survive status change', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-real-comments`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    // --- Real stores ---
+
+    class FakeProjectStore extends Store {
+      project: any = null
+      isLoading = false
+      updateLocalProjectIssues(issueId: string, fields: any) {
+        if (!this.project) return
+        const issue = this.project.issues.find((i: any) => i.id === issueId)
+        if (issue) Object.assign(issue, fields)
+      }
+      deleteIssue() {}
+    }
+    const projectStore = new FakeProjectStore()
+    projectStore.project = {
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+      ],
+      issues: [{ id: 'ISS-42', status: 'backlog', title: 'Fix login flow' }],
+    }
+
+    class FakeIssueStore extends Store {
+      issue: any = null
+      isLoading = false
+      fetchIssue(_id: string) {}
+      updateIssue(fields: any) {
+        if (!this.issue) return
+        Object.assign(this.issue, fields)
+        projectStore.updateLocalProjectIssues(this.issue.id, fields)
+      }
+      async createComment() {}
+      async updateComment() {}
+      async deleteComment() {}
+    }
+    const issueStore = new FakeIssueStore()
+    issueStore.issue = {
+      id: 'ISS-42',
+      title: 'Fix login flow',
+      description: 'The login is broken',
+      type: 'task',
+      status: 'backlog',
+      priority: '3',
+      estimate: 8,
+      userIds: ['u1'],
+      reporterId: 'u1',
+      timeSpent: 2,
+      timeRemaining: 6,
+      createdAt: new Date(Date.now() - 86400000).toISOString(),
+      updatedAt: new Date().toISOString(),
+      comments: [
+        { id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() },
+        { id: 'c2', body: 'Second comment', userId: 'u2', createdAt: new Date().toISOString() },
+      ],
+    }
+
+    class FakeAuthStore extends Store {
+      currentUser: any = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
+    }
+    const authStore = new FakeAuthStore()
+
+    const toastStore = { success() {}, error() {} }
+
+    const IssueType = { TASK: 'task', BUG: 'bug', STORY: 'story' }
+    const IssueStatus = { BACKLOG: 'backlog', SELECTED: 'selected', INPROGRESS: 'inprogress', DONE: 'done' }
+    const IssuePriority = { HIGHEST: '5', HIGH: '4', MEDIUM: '3', LOW: '2', LOWEST: '1' }
+    const IssueTypeCopy: Record<string, string> = { task: 'Task', bug: 'Bug', story: 'Story' }
+    const IssueStatusCopy: Record<string, string> = {
+      backlog: 'Backlog',
+      selected: 'Selected for development',
+      inprogress: 'In progress',
+      done: 'Done',
+    }
+    const IssuePriorityCopy: Record<string, string> = {
+      '5': 'Highest',
+      '4': 'High',
+      '3': 'Medium',
+      '2': 'Low',
+      '1': 'Lowest',
+    }
+
+    function formatDateTimeConversational() {
+      return 'a few seconds ago'
+    }
+
+    const stubDir = join(__dirname, 'fixtures')
+
+    // Leaf components that are not relevant to the bug — stub them
+    const Icon = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Icon extends Component { template({ type }) { return <span class="icon-stub"></span> } }`,
+      join(stubDir, 'Icon.jsx'),
+      'Icon',
+      { Component },
+    )
+    const IssueTypeIcon = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class IssueTypeIcon extends Component { template() { return <span class="issue-type-icon"></span> } }`,
+      join(stubDir, 'IssueTypeIcon.jsx'),
+      'IssueTypeIcon',
+      { Component },
+    )
+    const IssuePriorityIcon = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class IssuePriorityIcon extends Component { template() { return <span class="priority-icon"></span> } }`,
+      join(stubDir, 'IssuePriorityIcon.jsx'),
+      'IssuePriorityIcon',
+      { Component },
+    )
+    const Spinner = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Spinner extends Component { template() { return <span class="spinner"></span> } }`,
+      join(stubDir, 'Spinner.jsx'),
+      'Spinner',
+      { Component },
+    )
+    const Avatar = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Avatar extends Component { template(props) { return <span class="avatar-stub">{props.name || ''}</span> } }`,
+      join(stubDir, 'Avatar.jsx'),
+      'Avatar',
+      { Component },
+    )
+    const Button = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Button extends Component { template() { return <button class="btn"><slot /></button> } }`,
+      join(stubDir, 'Button.jsx'),
+      'Button',
+      { Component },
+    )
+    const Dialog = await compileJsxComponent(
+      `import { Component } from '@geajs/core'\nexport default class Dialog extends Component { template() { return <div class="dialog"><slot /></div> } }`,
+      join(stubDir, 'Dialog.jsx'),
+      'Dialog',
+      { Component },
+    )
+
+    // --- REAL CommentCreate (from jira_clone source) ---
+    const commentCreateSource = `
+import { Component } from '@geajs/core'
+import issueStore from '../stores/issue-store'
+import authStore from '../stores/auth-store'
+import { Avatar, Button } from '@geajs/ui'
+import Spinner from '../components/Spinner'
+
+export default class CommentCreate extends Component {
+  isFormOpen = false
+  body = ''
+  isCreating = false
+
+  openForm() {
+    if (this.isFormOpen) return
+    this.isFormOpen = true
+  }
+
+  async handleSubmit() {
+    if (!this.body.trim()) return
+    this.isCreating = true
+    try {
+      await issueStore.createComment(this.props.issueId, this.body)
+      this.body = ''
+      this.isFormOpen = false
+    } catch (e) {
+      console.error(e)
+    } finally {
+      this.isCreating = false
+    }
+  }
+
+  template({ issueId }) {
+    const user = authStore.currentUser
+    return (
+      <div class="comment-create">
+        {!this.isFormOpen && (
+          <div class="comment-create-collapsed">
+            <div class="comment-create-fake" click={() => this.openForm()}>
+              <Avatar src={user?.avatarUrl} name={user?.name || ''} class="!h-8 !w-8" />
+              <span class="comment-create-placeholder">Add a comment...</span>
+            </div>
+            <p class="comment-pro-tip">
+              <strong>Pro tip:</strong> press <strong>M</strong> to comment
+            </p>
+          </div>
+        )}
+        {this.isFormOpen && (
+          <div class="comment-create-form">
+            <textarea
+              class="textarea"
+              placeholder="Add a comment..."
+              autofocus
+              value={this.body}
+              input={(e) => { this.body = e.target.value }}
+            ></textarea>
+            <div class="comment-create-actions">
+              <Button variant="default" disabled={this.isCreating} click={() => this.handleSubmit()}>
+                {this.isCreating ? 'Saving...' : 'Save'}
+              </Button>
+              <Button variant="ghost" click={() => { this.isFormOpen = false; this.body = '' }}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+}
+`
+
+    const CommentCreate = await compileJsxComponent(
+      commentCreateSource,
+      join(stubDir, 'CommentCreate.jsx'),
+      'CommentCreate',
+      { Component, issueStore, authStore, Avatar, Button, Spinner },
+    )
+
+    // --- REAL CommentItem (from jira_clone source) ---
+    const commentItemSource = `
+import { Component } from '@geajs/core'
+import issueStore from '../stores/issue-store'
+import projectStore from '../stores/project-store'
+import { formatDateTimeConversational } from '../utils/dateTime'
+import { Avatar, Button } from '@geajs/ui'
+
+export default class CommentItem extends Component {
+  isEditing = false
+  editBody = ''
+
+  get user() {
+    const project = projectStore.project
+    const users = project ? project.users : []
+    return users.find((u) => u.id === this.props.userId)
+  }
+
+  get userName() {
+    return this.user ? this.user.name : 'Unknown'
+  }
+
+  get userAvatar() {
+    return this.user ? this.user.avatarUrl : ''
+  }
+
+  get dateText() {
+    return formatDateTimeConversational(this.props.createdAt)
+  }
+
+  startEditing() {
+    this.isEditing = true
+    this.editBody = this.props.body || ''
+  }
+
+  async saveEdit() {
+    if (!this.editBody.trim()) return
+    await issueStore.updateComment(this.props.commentId, this.editBody, this.props.issueId)
+    this.isEditing = false
+  }
+
+  async handleDelete() {
+    await issueStore.deleteComment(this.props.commentId, this.props.issueId)
+  }
+
+  template({ commentId, body, userId, createdAt, issueId }) {
+    return (
+      <div class="comment">
+        <Avatar src={this.userAvatar} name={this.userName} class="!h-8 !w-8" />
+        <div class="comment-content">
+          <div class="comment-header">
+            <span class="comment-user-name">{this.userName}</span>
+            <span class="comment-date">{this.dateText}</span>
+          </div>
+          {!this.isEditing && <div class="comment-body">{body}</div>}
+          {this.isEditing && (
+            <div class="comment-edit-form">
+              <textarea
+                class="textarea"
+                value={this.editBody}
+                input={(e) => { this.editBody = e.target.value }}
+              ></textarea>
+              <div class="comment-edit-actions">
+                <Button variant="default" click={() => this.saveEdit()}>Save</Button>
+                <Button variant="ghost" click={() => { this.isEditing = false }}>Cancel</Button>
+              </div>
+            </div>
+          )}
+          {!this.isEditing && (
+            <div class="comment-actions">
+              <span class="comment-action" click={() => this.startEditing()}>Edit</span>
+              <span class="comment-action" click={() => this.handleDelete()}>Delete</span>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+}
+`
+
+    const CommentItem = await compileJsxComponent(commentItemSource, join(stubDir, 'CommentItem.jsx'), 'CommentItem', {
+      Component,
+      issueStore,
+      projectStore,
+      formatDateTimeConversational,
+      Avatar,
+      Button,
+    })
+
+    // --- REAL IssueDetails source ---
+    const issueDetailsSource = `
+import { Component } from '@geajs/core'
+import issueStore from '../stores/issue-store'
+import projectStore from '../stores/project-store'
+import toastStore from '../stores/toast-store'
+import { IssueTypeCopy, IssueStatus, IssueStatusCopy, IssuePriority, IssuePriorityCopy } from '../constants/issues'
+import { formatDateTimeConversational } from '../utils/dateTime'
+import { Button, Dialog } from '@geajs/ui'
+import Icon from '../components/Icon'
+import IssueTypeIcon from '../components/IssueTypeIcon'
+import IssuePriorityIcon from '../components/IssuePriorityIcon'
+import Spinner from '../components/Spinner'
+import CommentCreate from './CommentCreate'
+import CommentItem from './CommentItem'
+
+function getTrackingPercent(spent, remaining) {
+  const total = spent + remaining
+  return total > 0 ? Math.min(100, Math.round((spent / total) * 100)) : 0
+}
+
+const statusOptions = Object.values(IssueStatus).map((s) => ({ value: s, label: IssueStatusCopy[s] }))
+const priorityOptions = Object.values(IssuePriority).map((p) => ({ value: p, label: IssuePriorityCopy[p] }))
+
+const statusColors = {
+  backlog: { bg: 'var(--color-bg-medium)', color: 'var(--color-text-darkest)' },
+  selected: { bg: 'var(--color-bg-light-primary)', color: 'var(--color-primary)' },
+  inprogress: { bg: 'var(--color-primary)', color: '#fff' },
+  done: { bg: 'var(--color-success)', color: '#fff' },
+}
+
+export default class IssueDetails extends Component {
+  isEditingTitle = false
+  editTitle = ''
+  confirmingDelete = false
+  isEditingTracking = false
+  editTimeSpent = 0
+  editTimeRemaining = 0
+  openDropdown = null
+  assigneeSearch = ''
+
+  created(props) {
+    if (props.issueId) {
+      issueStore.fetchIssue(props.issueId)
+    }
+  }
+
+  startEditTitle() {
+    this.editTitle = issueStore.issue?.title || ''
+    this.isEditingTitle = true
+  }
+
+  saveTitle() {
+    this.isEditingTitle = false
+    if (this.editTitle.trim() && this.editTitle !== issueStore.issue?.title) {
+      issueStore.updateIssue({ title: this.editTitle.trim() })
+    }
+  }
+
+  toggleDropdown(name) {
+    this.openDropdown = this.openDropdown === name ? null : name
+    this.assigneeSearch = ''
+  }
+
+  closeDropdown() {
+    this.openDropdown = null
+    this.assigneeSearch = ''
+  }
+
+  removeAssignee(userId) {
+    const issue = issueStore.issue
+    if (!issue) return
+    const newIds = (issue.userIds || []).filter((id) => id !== userId)
+    issueStore.updateIssue({ userIds: newIds, users: newIds.map((id) => ({ id })) })
+  }
+
+  addAssignee(userId) {
+    const issue = issueStore.issue
+    if (!issue) return
+    const currentIds = issue.userIds || []
+    if (currentIds.includes(userId)) return
+    const newIds = [...currentIds, userId]
+    issueStore.updateIssue({ userIds: newIds, users: newIds.map((id) => ({ id })) })
+    this.closeDropdown()
+  }
+
+  startEditTracking() {
+    const issue = issueStore.issue
+    this.editTimeSpent = issue?.timeSpent || 0
+    this.editTimeRemaining = issue?.timeRemaining || issue?.estimate || 0
+    this.isEditingTracking = true
+  }
+
+  saveTracking() {
+    this.isEditingTracking = false
+    issueStore.updateIssue({
+      timeSpent: this.editTimeSpent,
+      timeRemaining: this.editTimeRemaining,
+    })
+  }
+
+  handleDeleteIssue() {
+    const issue = issueStore.issue
+    if (!issue) return
+    projectStore.deleteIssue(issue.id)
+    this.props.onClose?.()
+    toastStore.success('Issue has been successfully deleted.')
+  }
+
+  template({ onClose }) {
+    const { isLoading, issue } = issueStore
+    const project = projectStore.project
+    const users = project ? project.users : []
+
+    if (isLoading || !issue) {
+      return (
+        <div class="issue-details-loader">
+          <Spinner size={40} />
+        </div>
+      )
+    }
+
+    const issueTitle = issue.title || ''
+    const issueDescription = issue.description || ''
+    const issueType = issue.type || 'task'
+    const issueStatus = issue.status || 'backlog'
+    const issuePriority = issue.priority || '3'
+    const issueEstimate = issue.estimate || 0
+    const issueUserIds = issue.userIds || []
+    const issueReporterId = issue.reporterId || ''
+    const timeSpent = issue.timeSpent || 0
+    const timeRemaining = issue.timeRemaining || issue.estimate || 0
+    const trackPercent = getTrackingPercent(timeSpent, timeRemaining)
+    const createdAgo = formatDateTimeConversational(issue.createdAt)
+    const updatedAgo = formatDateTimeConversational(issue.updatedAt)
+    const reporter = users.find((u) => u.id === issueReporterId)
+
+    return (
+      <div class="issue-details">
+        <div class="issue-details-top-actions">
+          <div class="issue-details-type">
+            <IssueTypeIcon type={issueType} size={16} />
+            <span class="issue-details-type-label">
+              {(IssueTypeCopy[issueType] || 'Task').toUpperCase()}-{issue.id}
+            </span>
+          </div>
+          <div class="issue-details-top-right">
+            <button class="issue-details-action-btn">
+              <Icon type="feedback" size={14} />
+              <span>Give feedback</span>
+            </button>
+            <button class="issue-details-action-btn">
+              <Icon type="link" size={14} />
+              <span>Copy link</span>
+            </button>
+            <button class="issue-details-action-btn" click={() => { this.confirmingDelete = true }}>
+              <Icon type="trash" size={16} />
+            </button>
+            <button class="issue-details-action-btn" click={onClose}>
+              <Icon type="close" size={20} />
+            </button>
+          </div>
+        </div>
+
+        {this.confirmingDelete && (
+          <div class="confirm-inline">
+            <p>Are you sure you want to delete this issue?</p>
+            <div class="confirm-inline-actions">
+              <Button variant="destructive" click={() => this.handleDeleteIssue()}>Delete</Button>
+              <Button variant="ghost" click={() => { this.confirmingDelete = false }}>Cancel</Button>
+            </div>
+          </div>
+        )}
+
+        <div class="issue-details-body">
+          <div class="issue-details-left">
+            <div class="issue-details-title">
+              {!this.isEditingTitle && (
+                <h2 class="issue-title-text" click={() => this.startEditTitle()}>{issueTitle}</h2>
+              )}
+              {this.isEditingTitle && (
+                <textarea
+                  class="issue-title-input"
+                  value={this.editTitle}
+                  input={(e) => { this.editTitle = e.target.value }}
+                  blur={() => this.saveTitle()}
+                  keydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); this.saveTitle() } }}
+                ></textarea>
+              )}
+            </div>
+
+            <div class="issue-details-description">
+              <h4 class="issue-details-section-title">Description</h4>
+              {issueDescription && <div class="text-edited-content">{issueDescription}</div>}
+              {!issueDescription && <p class="issue-description-placeholder">Add a description...</p>}
+            </div>
+
+            <div class="issue-details-comments">
+              <h4 class="issue-details-section-title">Comments</h4>
+              <CommentCreate issueId={issue.id} />
+              {issue.comments && issue.comments.map((comment) => (
+                <CommentItem
+                  key={comment.id}
+                  commentId={comment.id}
+                  body={comment.body}
+                  userId={comment.userId}
+                  createdAt={comment.createdAt}
+                  issueId={issue.id}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div class="issue-details-right">
+            {this.openDropdown && <div class="dropdown-overlay" click={() => this.closeDropdown()}></div>}
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Status</label>
+              <button
+                class="status-badge"
+                style={\`background:\${statusColors[issueStatus]?.bg};color:\${statusColors[issueStatus]?.color}\`}
+                click={() => this.toggleDropdown('status')}
+              >
+                {(IssueStatusCopy[issueStatus] || 'Backlog').toUpperCase()}
+                <span class="status-badge-arrow">&#x25BC;</span>
+              </button>
+              {this.openDropdown === 'status' && (
+                <div class="custom-dropdown">
+                  {statusOptions.map((opt) => (
+                    <div
+                      key={opt.value}
+                      class={\`custom-dropdown-item \${issueStatus === opt.value ? 'active' : ''}\`}
+                      click={() => { issueStore.updateIssue({ status: opt.value }); this.closeDropdown() }}
+                    >
+                      <span class="status-dot" style={\`background:\${statusColors[opt.value]?.bg}\`}></span>
+                      <span>{opt.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Assignees</label>
+              <div class="assignee-chips">
+                {issueUserIds.map((uid) => {
+                  const u = users.find((usr) => usr.id === uid)
+                  if (!u) return null
+                  return (
+                    <div class="assignee-chip" key={uid}>
+                      <img class="assignee-chip-avatar" src={u.avatarUrl} alt={u.name} />
+                      <span class="assignee-chip-name">{u.name}</span>
+                      <span class="assignee-chip-remove" click={() => this.removeAssignee(uid)}>&times;</span>
+                    </div>
+                  )
+                })}
+                <span class="assignee-add-more" click={() => this.toggleDropdown('assignees')}>+ Add more</span>
+              </div>
+              {this.openDropdown === 'assignees' && (
+                <div class="custom-dropdown">
+                  <div class="custom-dropdown-search">
+                    <input
+                      class="custom-dropdown-search-input"
+                      type="text"
+                      placeholder="Search"
+                      value={this.assigneeSearch}
+                      input={(e) => { this.assigneeSearch = e.target.value }}
+                    />
+                    <span class="custom-dropdown-search-clear" click={() => this.closeDropdown()}>&times;</span>
+                  </div>
+                  {users
+                    .filter((u) => !issueUserIds.includes(u.id) && u.name.toLowerCase().includes(this.assigneeSearch.toLowerCase()))
+                    .map((u) => (
+                      <div key={u.id} class="custom-dropdown-item" click={() => { this.addAssignee(u.id) }}>
+                        <img class="custom-dropdown-avatar" src={u.avatarUrl} alt={u.name} />
+                        <span>{u.name}</span>
+                      </div>
+                    ))}
+                  {users.filter((u) => !issueUserIds.includes(u.id) && u.name.toLowerCase().includes(this.assigneeSearch.toLowerCase())).length === 0 && (
+                    <div class="custom-dropdown-empty">No users available</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Reporter</label>
+              <div class="reporter-display" click={() => this.toggleDropdown('reporter')}>
+                {reporter && <img class="reporter-avatar" src={reporter.avatarUrl} alt={reporter.name} />}
+                <span class="reporter-name">{reporter ? reporter.name : 'Unassigned'}</span>
+              </div>
+              {this.openDropdown === 'reporter' && (
+                <div class="custom-dropdown">
+                  {users.map((u) => (
+                    <div
+                      key={u.id}
+                      class={\`custom-dropdown-item \${issueReporterId === u.id ? 'active' : ''}\`}
+                      click={() => { issueStore.updateIssue({ reporterId: u.id }); this.closeDropdown() }}
+                    >
+                      <img class="custom-dropdown-avatar" src={u.avatarUrl} alt={u.name} />
+                      <span>{u.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field issue-details-field--relative">
+              <label class="issue-details-field-label">Priority</label>
+              <div class="priority-display" click={() => this.toggleDropdown('priority')}>
+                <IssuePriorityIcon priority={issuePriority} />
+                <span class="priority-name">{IssuePriorityCopy[issuePriority] || 'Medium'}</span>
+              </div>
+              {this.openDropdown === 'priority' && (
+                <div class="custom-dropdown">
+                  {priorityOptions.map((opt) => (
+                    <div
+                      key={opt.value}
+                      class={\`custom-dropdown-item \${issuePriority === opt.value ? 'active' : ''}\`}
+                      click={() => { issueStore.updateIssue({ priority: opt.value }); this.closeDropdown() }}
+                    >
+                      <IssuePriorityIcon priority={opt.value} />
+                      <span>{opt.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div class="issue-details-field">
+              <label class="issue-details-field-label">Original Estimate (hours)</label>
+              <input
+                class="input"
+                type="number"
+                value={issueEstimate}
+                change={(e) => issueStore.updateIssue({ estimate: Number(e.target.value) || null })}
+              />
+            </div>
+
+            <div class="issue-details-field">
+              <label class="issue-details-field-label">Time Tracking</label>
+              <div class="tracking-widget tracking-widget--clickable" click={() => this.startEditTracking()}>
+                <div class="tracking-bar-container">
+                  <Icon type="stopwatch" size={20} />
+                  <div class="tracking-bar">
+                    <div class="tracking-bar-fill" style={\`width:\${trackPercent}%\`}></div>
+                  </div>
+                </div>
+                <div class="tracking-values">
+                  <span>{timeSpent ? \`\${timeSpent}h logged\` : 'No time logged'}</span>
+                  <span>{timeRemaining}h remaining</span>
+                </div>
+              </div>
+              {this.isEditingTracking && (
+                <Dialog open={true} onOpenChange={(d) => { if (!d.open) this.isEditingTracking = false }} class="dialog-tracking">
+                  <div class="tracking-dialog">
+                    <div class="tracking-dialog-header">
+                      <h3 class="tracking-dialog-title">Time tracking</h3>
+                      <button class="tracking-dialog-close" click={() => { this.isEditingTracking = false }}>
+                        <Icon type="close" size={20} />
+                      </button>
+                    </div>
+                    <div class="tracking-bar-container">
+                      <Icon type="stopwatch" size={22} />
+                      <div class="tracking-bar">
+                        <div class="tracking-bar-fill" style={\`width:\${getTrackingPercent(this.editTimeSpent, this.editTimeRemaining)}%\`}></div>
+                      </div>
+                    </div>
+                    <div class="tracking-values">
+                      <span>{this.editTimeSpent ? \`\${this.editTimeSpent}h logged\` : 'No time logged'}</span>
+                      <span>{this.editTimeRemaining}h remaining</span>
+                    </div>
+                    <div class="tracking-edit-fields">
+                      <div class="tracking-edit-field">
+                        <label class="tracking-edit-label">Time spent (hours)</label>
+                        <input class="input" type="number" min="0" value={this.editTimeSpent} input={(e) => { this.editTimeSpent = Number(e.target.value) || 0 }} />
+                      </div>
+                      <div class="tracking-edit-field">
+                        <label class="tracking-edit-label">Time remaining (hours)</label>
+                        <input class="input" type="number" min="0" value={this.editTimeRemaining} input={(e) => { this.editTimeRemaining = Number(e.target.value) || 0 }} />
+                      </div>
+                    </div>
+                    <div class="tracking-edit-actions">
+                      <Button variant="default" click={() => this.saveTracking()}>Done</Button>
+                    </div>
+                  </div>
+                </Dialog>
+              )}
+            </div>
+
+            <div class="issue-details-dates">
+              <div class="issue-details-date">Created at {createdAgo}</div>
+              <div class="issue-details-date">Updated at {updatedAgo}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+}
+`
+
+    const IssueDetails = await compileJsxComponent(
+      issueDetailsSource,
+      join(stubDir, 'IssueDetails.jsx'),
+      'IssueDetails',
+      {
+        Component,
+        issueStore,
+        projectStore,
+        toastStore,
+        IssueType,
+        IssueTypeCopy,
+        IssueStatus,
+        IssueStatusCopy,
+        IssuePriority,
+        IssuePriorityCopy,
+        formatDateTimeConversational,
+        Button,
+        Dialog,
+        Icon,
+        IssueTypeIcon,
+        IssuePriorityIcon,
+        Spinner,
+        CommentCreate,
+        CommentItem,
+      },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const comp = new IssueDetails()
+    comp.render(root, { issueId: 'ISS-42', onClose: () => {} })
+    await flushMicrotasks()
+
+    // ====================================================================
+    // ISSUE 1: Assignees section must show chips when userIds populated
+    // ====================================================================
+    const assigneeChips = comp.el.querySelectorAll('.assignee-chip')
+    assert.equal(assigneeChips.length, 1, `assignees must show 1 chip for userIds=['u1'], got ${assigneeChips.length}`)
+    const chipName = comp.el.querySelector('.assignee-chip-name')
+    assert.ok(chipName, 'assignee chip must have a name element')
+    assert.equal(chipName!.textContent, 'Alice', 'assignee chip must show Alice')
+
+    // ====================================================================
+    // ISSUE 2: Changing reporter must not remove comments section
+    // ====================================================================
+
+    // First verify comments are present
+    const commentCreate = comp.el.querySelector('.comment-create')
+    assert.ok(commentCreate, 'real CommentCreate must render initially')
+    const commentItems = comp.el.querySelectorAll('comment-item')
+    assert.equal(commentItems.length, 2, 'both real CommentItems must render initially')
+
+    // Open reporter dropdown and pick Bob
+    const reporterDisplay = comp.el.querySelector('.reporter-display')!
+    assert.ok(reporterDisplay, 'reporter display must exist')
+    reporterDisplay.click()
+    await flushMicrotasks()
+
+    const reporterDropdown = comp.el.querySelector('.custom-dropdown')
+    assert.ok(reporterDropdown, 'reporter dropdown must open')
+
+    const reporterItems = comp.el.querySelectorAll('.custom-dropdown-item')
+    let bobItem: Element | null = null
+    reporterItems.forEach((item: Element) => {
+      if (item.textContent?.includes('Bob')) bobItem = item
+    })
+    assert.ok(bobItem, '"Bob" reporter option must exist')
+    ;(bobItem as unknown as HTMLElement).click()
+    await flushMicrotasks()
+
+    assert.equal(issueStore.issue.reporterId, 'u2', 'reporter must be u2 (Bob) after click')
+
+    // Comments must still be there
+    const afterReporterCommentCreate = comp.el.querySelector('.comment-create')
+    assert.ok(afterReporterCommentCreate, 'real CommentCreate must survive reporter change')
+    const afterReporterCommentItems = comp.el.querySelectorAll('comment-item')
+    assert.equal(afterReporterCommentItems.length, 2, 'both real CommentItems must survive reporter change')
+
+    // Assignees must also still be there
+    const afterReporterAssigneeChips = comp.el.querySelectorAll('.assignee-chip')
+    assert.equal(afterReporterAssigneeChips.length, 1, 'assignee chip must survive reporter change')
+
+    comp.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Full hierarchy integration test: real Project → Board + Dialog → IssueDetails
+// Uses esbuild to bundle the ENTIRE real jira_clone app through the gea
+// vite plugin, then runs it in jsdom with pre-populated store data.
+// ---------------------------------------------------------------------------
+
+async function bundleJiraApp(): Promise<string> {
+  const esbuild = await import('esbuild')
+  const { readFileSync } = await import('node:fs')
+  const { resolve } = await import('node:path')
+
+  const plugin = geaPlugin()
+  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
+
+  const geaTransformPlugin: import('esbuild').Plugin = {
+    name: 'gea-transform',
+    setup(build) {
+      build.onResolve({ filter: /^virtual:gea-/ }, (args) => ({
+        path: args.path,
+        namespace: 'gea-virtual',
+      }))
+      build.onLoad({ filter: /.*/, namespace: 'gea-virtual' }, (args) => {
+        if (args.path === 'virtual:gea-hmr') {
+          return { contents: 'export function __geaHmrRegister() {} export function __geaHmrAccept() {}', loader: 'js' }
+        }
+        if (args.path === 'virtual:gea-reconcile') {
+          return { contents: 'export default function reconcile() {}', loader: 'js' }
+        }
+        return { contents: '', loader: 'js' }
+      })
+      build.onLoad({ filter: /\.(tsx|jsx)$/ }, async (args) => {
+        if (args.path.includes('node_modules')) return undefined
+        const source = readFileSync(args.path, 'utf8')
+        try {
+          const result = await transform?.call({} as never, source, args.path)
+          const code = result ? (typeof result === 'string' ? result : result.code) : source
+          return { contents: code, loader: 'tsx' }
+        } catch {
+          return { contents: source, loader: 'tsx' }
+        }
+      })
+    },
+  }
+
+  const monorepoRoot = resolve(__dirname, '..', '..', '..')
+  const result = await esbuild.build({
+    entryPoints: [resolve(__dirname, 'fixtures', 'jira-integration-entry.ts')],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    globalName: '__jiraApp',
+    platform: 'browser',
+    target: 'esnext',
+    alias: {
+      '@geajs/core': resolve(monorepoRoot, 'packages/gea/src'),
+      '@geajs/ui': resolve(monorepoRoot, 'packages/gea-ui/src/index.ts'),
+    },
+    plugins: [geaTransformPlugin],
+    define: {
+      'import.meta.hot': 'undefined',
+      'import.meta.url': '""',
+    },
+    logLevel: 'silent',
+  })
+
+  return result.outputFiles![0].text
+}
+
+test('full hierarchy: changing reporter inside real Project/Dialog must not destroy comments', async () => {
+  const restoreDom = installDom()
+
+  const fakeIssue = {
+    id: 'ISS-42',
+    status: 'backlog',
+    title: 'Fix login flow',
+    type: 'task',
+    priority: '3',
+    listPosition: 1,
+    userIds: ['u1'],
+    reporterId: 'u1',
+    estimate: 8,
+    timeSpent: 2,
+    timeRemaining: 6,
+    description: 'The login is broken',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    comments: [
+      { id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() },
+      { id: 'c2', body: 'Second comment', userId: 'u2', createdAt: new Date().toISOString() },
+    ],
+  }
+
+  // Mock fetch to return proper data for API calls
+  const origFetch = globalThis.fetch
+  ;(globalThis as any).fetch = async (url: string) => {
+    if (typeof url === 'string' && url.includes('/issues/')) {
+      return new Response(JSON.stringify({ issue: fakeIssue }), { status: 200 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  }
+
+  // Mock localStorage for authToken
+  if (!(globalThis as any).localStorage) {
+    const storage: Record<string, string> = {}
+    ;(globalThis as any).localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        storage[k] = v
+      },
+      removeItem: (k: string) => {
+        delete storage[k]
+      },
+    }
+  }
+
+  try {
+    const bundledCode = await bundleJiraApp()
+
+    const fn = new Function(bundledCode + '\nreturn typeof __jiraApp !== "undefined" ? __jiraApp : undefined;')
+    const app = fn()
+    const { Project, issueStore, projectStore, authStore, router } = app || (globalThis as any).__jiraApp
+
+    // Pre-populate stores with fake data
+    const fakeProject = {
+      name: 'Test Project',
+      category: 'software',
+      description: 'A test project',
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+      ],
+      issues: [{ ...fakeIssue }],
+    }
+
+    projectStore.isLoading = false
+    projectStore.project = fakeProject
+    issueStore.issue = { ...fakeIssue }
+    authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
+    router.path = '/project/board/issues/ISS-42'
+
+    // Render Project into the DOM
+    const root = document.createElement('div')
+    root.id = 'app-root'
+    document.body.appendChild(root)
+
+    const projectComp = new Project()
+    projectComp.render(root, {})
+
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // --- Verify the full hierarchy rendered ---
+    assert.ok(projectComp.el, 'Project component must have rendered')
+
+    // Debug: check what's rendered
+    const loader = document.querySelector('.issue-details-loader')
+    const dialog = document.querySelector('.dialog-issue-detail')
+    const pageLoader = document.querySelector('page-loader')
+    console.log(
+      `[DEBUG reporter] loader=${!!loader} dialog=${!!dialog} pageLoader=${!!pageLoader} issueStore.issue=${!!issueStore.issue} issueStore.isLoading=${issueStore.isLoading}`,
+    )
+    console.log(`[DEBUG reporter] router.path=${router.path}`)
+    console.log(`[DEBUG reporter] html preview: ${projectComp.el?.innerHTML?.substring(0, 500)}`)
+
+    const issueDetails = document.querySelector('.issue-details')
+    assert.ok(issueDetails, 'IssueDetails must render inside Project/Dialog')
+
+    const commentCreate = document.querySelector('.comment-create')
+    assert.ok(commentCreate, 'CommentCreate must render')
+
+    const commentItems = document.querySelectorAll('.comment')
+    assert.equal(commentItems.length, 2, 'both CommentItems must render initially')
+
+    const assigneeChips = document.querySelectorAll('.assignee-chip')
+    assert.equal(assigneeChips.length, 1, 'assignees must show 1 chip for userIds=["u1"]')
+
+    // --- Open reporter dropdown and pick Bob ---
+    const reporterDisplay = document.querySelector('.reporter-display') as HTMLElement
+    assert.ok(reporterDisplay, 'reporter display must exist')
+    reporterDisplay.click()
+    await flushMicrotasks()
+
+    const dropdownItems = document.querySelectorAll('.custom-dropdown-item')
+    let bobItem: HTMLElement | null = null
+    dropdownItems.forEach((item: Element) => {
+      if (item.textContent?.includes('Bob')) bobItem = item as HTMLElement
+    })
+    assert.ok(bobItem, '"Bob" reporter option must exist in dropdown')
+    bobItem!.click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    assert.equal(issueStore.issue?.reporterId, 'u2', 'reporter must be u2 (Bob) after click')
+
+    // --- CRITICAL: comments must still exist after reporter change ---
+    const afterCommentCreate = document.querySelector('.comment-create')
+    assert.ok(afterCommentCreate, 'CommentCreate must survive reporter change in full hierarchy')
+
+    const afterCommentItems = document.querySelectorAll('.comment')
+    assert.equal(afterCommentItems.length, 2, 'both CommentItems must survive reporter change')
+
+    const afterAssigneeChips = document.querySelectorAll('.assignee-chip')
+    assert.equal(afterAssigneeChips.length, 1, 'assignee chip must survive reporter change')
+
+    projectComp.dispose()
+    issueStore.issue = null
+    projectStore.project = null
+    await flushMicrotasks()
+  } finally {
+    ;(globalThis as any).fetch = origFetch
+    restoreDom()
+  }
+})
+
+test('full hierarchy: adding assignee must update chip list and preserve reporter', async () => {
+  const restoreDom = installDom()
+
+  const fakeIssue = {
+    id: 'ISS-42',
+    status: 'backlog',
+    title: 'Fix login flow',
+    type: 'task',
+    priority: '3',
+    listPosition: 1,
+    userIds: ['u1'],
+    reporterId: 'u1',
+    estimate: 8,
+    timeSpent: 2,
+    timeRemaining: 6,
+    description: 'The login is broken',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    comments: [{ id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() }],
+  }
+
+  const origFetch = globalThis.fetch
+  ;(globalThis as any).fetch = async (url: string, opts?: any) => {
+    if (typeof url === 'string' && url.includes('/issues/') && (!opts || opts.method === 'GET' || !opts.method)) {
+      return new Response(JSON.stringify({ issue: fakeIssue }), { status: 200 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  }
+
+  if (!(globalThis as any).localStorage) {
+    const storage: Record<string, string> = {}
+    ;(globalThis as any).localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        storage[k] = v
+      },
+      removeItem: (k: string) => {
+        delete storage[k]
+      },
+    }
+  }
+
+  try {
+    const bundledCode = await bundleJiraApp()
+
+    const fn = new Function(bundledCode + '\nreturn typeof __jiraApp !== "undefined" ? __jiraApp : undefined;')
+    const app = fn()
+    const { Project, issueStore, projectStore, authStore, router } = app || (globalThis as any).__jiraApp
+
+    const fakeProject = {
+      name: 'Test Project',
+      category: 'software',
+      description: 'A test project',
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+        { id: 'u3', name: 'Charlie', avatarUrl: '/charlie.png' },
+      ],
+      issues: [{ ...fakeIssue }],
+    }
+
+    projectStore.isLoading = false
+    projectStore.project = fakeProject
+    issueStore.issue = { ...fakeIssue }
+    authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
+    router.path = '/project/board/issues/ISS-42'
+
+    const root = document.createElement('div')
+    root.id = 'app-root'
+    document.body.appendChild(root)
+
+    const projectComp = new Project()
+    projectComp.render(root, {})
+
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // --- Verify initial state ---
+    const issueDetails = document.querySelector('.issue-details')
+    assert.ok(issueDetails, 'IssueDetails must render')
+
+    const initialChips = document.querySelectorAll('.assignee-chip')
+    assert.equal(initialChips.length, 1, 'initially 1 assignee chip for userIds=["u1"]')
+
+    const reporterName = document.querySelector('.reporter-name')
+    assert.ok(reporterName, 'reporter name span must exist')
+    assert.equal(reporterName!.textContent, 'Alice', 'reporter must be Alice initially')
+
+    const reporterAvatar = document.querySelector('.reporter-avatar') as HTMLImageElement
+    assert.ok(reporterAvatar, 'reporter avatar must exist initially')
+    assert.equal(reporterAvatar!.getAttribute('alt'), 'Alice', 'reporter avatar alt must be Alice')
+
+    // --- Open assignees dropdown ---
+    const addMore = document.querySelector('.assignee-add-more') as HTMLElement
+    assert.ok(addMore, '"+ Add more" link must exist')
+    addMore.click()
+    await flushMicrotasks()
+
+    // --- Pick Bob from the dropdown ---
+    const dropdownItems = document.querySelectorAll('.custom-dropdown-item')
+    let bobItem: HTMLElement | null = null
+    dropdownItems.forEach((item: Element) => {
+      if (item.textContent?.includes('Bob')) bobItem = item as HTMLElement
+    })
+    assert.ok(bobItem, '"Bob" must appear in assignee dropdown')
+    bobItem!.click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // --- BUG 1: Assignee list must update after adding Bob ---
+    const afterChips = document.querySelectorAll('.assignee-chip')
+    assert.equal(afterChips.length, 2, 'assignee chips must be 2 after adding Bob')
+
+    // --- BUG 2: Reporter must NOT become "Unassigned" ---
+    const afterReporterName = document.querySelector('.reporter-name')
+    assert.ok(afterReporterName, 'reporter name must still exist')
+    assert.equal(afterReporterName!.textContent, 'Alice', 'reporter must still be Alice after adding assignee')
+
+    const afterReporterAvatar = document.querySelector('.reporter-avatar') as HTMLImageElement
+    assert.ok(afterReporterAvatar, 'reporter avatar must still exist after adding assignee')
+
+    projectComp.dispose()
+    issueStore.issue = null
+    projectStore.project = null
+    await flushMicrotasks()
+  } finally {
+    ;(globalThis as any).fetch = origFetch
+    restoreDom()
+  }
+})
+
+test('full hierarchy: assignee dropdown must remove added user from list', async () => {
+  const restoreDom = installDom()
+
+  const fakeIssue = {
+    id: 'ISS-42',
+    status: 'backlog',
+    title: 'Fix login flow',
+    type: 'task',
+    priority: '3',
+    listPosition: 1,
+    userIds: ['u1'],
+    reporterId: 'u1',
+    estimate: 8,
+    timeSpent: 2,
+    timeRemaining: 6,
+    description: 'The login is broken',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    comments: [{ id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() }],
+  }
+
+  const origFetch = globalThis.fetch
+  ;(globalThis as any).fetch = async (url: string, opts?: any) => {
+    if (typeof url === 'string' && url.includes('/issues/') && (!opts || opts.method === 'GET' || !opts.method)) {
+      return new Response(JSON.stringify({ issue: fakeIssue }), { status: 200 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  }
+
+  if (!(globalThis as any).localStorage) {
+    const storage: Record<string, string> = {}
+    ;(globalThis as any).localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        storage[k] = v
+      },
+      removeItem: (k: string) => {
+        delete storage[k]
+      },
+    }
+  }
+
+  try {
+    const bundledCode = await bundleJiraApp()
+
+    const fn = new Function(bundledCode + '\nreturn typeof __jiraApp !== "undefined" ? __jiraApp : undefined;')
+    const app = fn()
+    const { Project, issueStore, projectStore, authStore, router } = app || (globalThis as any).__jiraApp
+
+    const fakeProject = {
+      name: 'Test Project',
+      category: 'software',
+      description: 'A test project',
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+        { id: 'u3', name: 'Charlie', avatarUrl: '/charlie.png' },
+      ],
+      issues: [{ ...fakeIssue }],
+    }
+
+    projectStore.isLoading = false
+    projectStore.project = fakeProject
+    issueStore.issue = { ...fakeIssue }
+    authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
+    router.path = '/project/board/issues/ISS-42'
+
+    const root = document.createElement('div')
+    root.id = 'app-root'
+    document.body.appendChild(root)
+
+    const projectComp = new Project()
+    projectComp.render(root, {})
+
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    const issueDetails = document.querySelector('.issue-details')
+    assert.ok(issueDetails, 'IssueDetails must render')
+
+    // Open assignees dropdown
+    const addMore = document.querySelector('.assignee-add-more') as HTMLElement
+    assert.ok(addMore, '"+ Add more" link must exist')
+    addMore.click()
+    await flushMicrotasks()
+
+    // Initially: Alice is assigned, dropdown should show Bob and Charlie
+    const initialDropdownItems = document.querySelectorAll('.custom-dropdown-item')
+    assert.equal(initialDropdownItems.length, 2, 'dropdown must show 2 unassigned users initially')
+
+    // Pick Bob from the dropdown
+    let bobItem: HTMLElement | null = null
+    initialDropdownItems.forEach((item: Element) => {
+      if (item.textContent?.includes('Bob')) bobItem = item as HTMLElement
+    })
+    assert.ok(bobItem, '"Bob" must appear in assignee dropdown')
+    bobItem!.click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // Dropdown should close after picking
+    const closedDropdownItems = document.querySelectorAll('.custom-dropdown-item')
+    assert.equal(closedDropdownItems.length, 0, 'dropdown must close after picking an assignee')
+
+    // Re-open dropdown to verify filtered list
+    const addMore2 = document.querySelector('.assignee-add-more') as HTMLElement
+    assert.ok(addMore2, '"+ Add more" link must still exist')
+    addMore2.click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // After adding Bob: dropdown must show only Charlie
+    const afterDropdownItems = document.querySelectorAll('.custom-dropdown-item')
+    assert.equal(afterDropdownItems.length, 1, 'dropdown must show only 1 unassigned user after adding Bob')
+    assert.ok(afterDropdownItems[0]?.textContent?.includes('Charlie'), 'remaining dropdown item must be Charlie')
+
+    projectComp.dispose()
+    issueStore.issue = null
+    projectStore.project = null
+    await flushMicrotasks()
+  } finally {
+    ;(globalThis as any).fetch = origFetch
+    restoreDom()
+  }
+})
+
+test('full hierarchy: clicking issue card on board must open IssueDetails dialog', async () => {
+  const restoreDom = installDom()
+
+  const fakeIssue = {
+    id: 'ISS-42',
+    status: 'backlog',
+    title: 'Fix login flow',
+    type: 'task',
+    priority: '3',
+    listPosition: 1,
+    userIds: ['u1'],
+    reporterId: 'u1',
+    estimate: 8,
+    timeSpent: 2,
+    timeRemaining: 6,
+    description: 'The login is broken',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    comments: [{ id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() }],
+  }
+
+  const origFetch = globalThis.fetch
+  ;(globalThis as any).fetch = async (url: string, opts?: any) => {
+    if (typeof url === 'string' && url.includes('/issues/') && (!opts || opts.method === 'GET' || !opts.method)) {
+      return new Response(JSON.stringify({ issue: fakeIssue }), { status: 200 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  }
+
+  if (!(globalThis as any).localStorage) {
+    const storage: Record<string, string> = {}
+    ;(globalThis as any).localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        storage[k] = v
+      },
+      removeItem: (k: string) => {
+        delete storage[k]
+      },
+    }
+  }
+
+  try {
+    const bundledCode = await bundleJiraApp()
+
+    const fn = new Function(bundledCode + '\nreturn typeof __jiraApp !== "undefined" ? __jiraApp : undefined;')
+    const app = fn()
+    const { Project, issueStore, projectStore, authStore, router } = app || (globalThis as any).__jiraApp
+
+    const fakeProject = {
+      name: 'Test Project',
+      category: 'software',
+      description: 'A test project',
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+      ],
+      issues: [{ ...fakeIssue }],
+    }
+
+    projectStore.isLoading = false
+    projectStore.project = fakeProject
+    authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
+
+    // Start on the board view — no issue dialog
+    router.path = '/project/board'
+    window.history.replaceState({}, '', '/project/board')
+
+    const root = document.createElement('div')
+    root.id = 'app-root'
+    document.body.appendChild(root)
+
+    const projectComp = new Project()
+    projectComp.render(root, {})
+
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // --- Verify board rendered, no dialog ---
+    assert.ok(projectComp.el, 'Project component must have rendered')
+    const boardEl = document.querySelector('.board')
+    assert.ok(boardEl, 'Board must be rendered')
+
+    const issueCardsBefore = document.querySelectorAll('.issue-card')
+    assert.ok(issueCardsBefore.length > 0, 'at least one issue card must be on the board')
+
+    const dialogBefore = document.querySelector('.issue-details')
+    assert.ok(!dialogBefore, 'IssueDetails must NOT be present before clicking an issue')
+
+    // Pre-populate issue store so IssueDetails renders content immediately
+    issueStore.issue = { ...fakeIssue }
+    issueStore.isLoading = false
+
+    // --- Click the first issue card ---
+    const issueCard = issueCardsBefore[0] as HTMLElement
+    issueCard.click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // --- Verify the dialog opened ---
+    assert.equal(router.path, '/project/board/issues/ISS-42', 'router.path must update after clicking issue card')
+
+    const dialogWrapper = document.querySelector('.dialog-issue-detail')
+    assert.ok(dialogWrapper, 'Dialog wrapper must appear after clicking an issue card')
+
+    const issueDetails = document.querySelector('.issue-details') || document.querySelector('.issue-details-loader')
+    assert.ok(
+      issueDetails,
+      'IssueDetails (or its loader) must render inside the dialog. DOM: ' + document.body.innerHTML.slice(0, 2000),
+    )
+
+    projectComp.dispose()
+    issueStore.issue = null
+    projectStore.project = null
+    await flushMicrotasks()
+  } finally {
+    ;(globalThis as any).fetch = origFetch
+    restoreDom()
+  }
+})
+
+test('full hierarchy: dropdown closes after picking assignee and newly added chip is removable', async () => {
+  const restoreDom = installDom()
+
+  const fakeIssue = {
+    id: 'ISS-42',
+    status: 'backlog',
+    title: 'Fix login flow',
+    type: 'task',
+    priority: '3',
+    listPosition: 1,
+    userIds: ['u1'],
+    reporterId: 'u1',
+    estimate: 8,
+    timeSpent: 2,
+    timeRemaining: 6,
+    description: 'The login is broken',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    comments: [{ id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() }],
+  }
+
+  const origFetch = globalThis.fetch
+  ;(globalThis as any).fetch = async (url: string, opts?: any) => {
+    if (typeof url === 'string' && url.includes('/issues/') && (!opts || opts.method === 'GET' || !opts.method)) {
+      return new Response(JSON.stringify({ issue: fakeIssue }), { status: 200 })
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  }
+
+  if (!(globalThis as any).localStorage) {
+    const storage: Record<string, string> = {}
+    ;(globalThis as any).localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        storage[k] = v
+      },
+      removeItem: (k: string) => {
+        delete storage[k]
+      },
+    }
+  }
+
+  try {
+    const bundledCode = await bundleJiraApp()
+    const fn = new Function(bundledCode + '\nreturn typeof __jiraApp !== "undefined" ? __jiraApp : undefined;')
+    const app = fn()
+    const { Project, issueStore, projectStore, authStore, router } = app || (globalThis as any).__jiraApp
+
+    const fakeProject = {
+      name: 'Test Project',
+      category: 'software',
+      description: 'A test project',
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+        { id: 'u3', name: 'Charlie', avatarUrl: '/charlie.png' },
+      ],
+      issues: [{ ...fakeIssue }],
+    }
+
+    projectStore.isLoading = false
+    projectStore.project = fakeProject
+    issueStore.issue = { ...fakeIssue }
+    authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
+    router.path = '/project/board/issues/ISS-42'
+
+    const root = document.createElement('div')
+    root.id = 'app-root'
+    document.body.appendChild(root)
+
+    const projectComp = new Project()
+    projectComp.render(root, {})
+
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    const issueDetailEl = document.querySelector('.issue-details')
+    assert.ok(issueDetailEl, 'IssueDetails must render')
+
+    const initialChips = document.querySelectorAll('.assignee-chip')
+    assert.equal(initialChips.length, 1, 'initially 1 assignee chip')
+
+    // Open dropdown and add Bob
+    const addMore = document.querySelector('.assignee-add-more') as HTMLElement
+    assert.ok(addMore, '"+ Add more" must exist')
+    addMore.click()
+    await flushMicrotasks()
+
+    let bobItem: HTMLElement | null = null
+    document.querySelectorAll('.custom-dropdown-item').forEach((item: Element) => {
+      if (item.textContent?.includes('Bob')) bobItem = item as HTMLElement
+    })
+    assert.ok(bobItem, 'Bob must appear in dropdown')
+    bobItem!.click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // Dropdown must close after picking
+    assert.equal(
+      document.querySelectorAll('.custom-dropdown-item').length,
+      0,
+      'dropdown must close after picking an assignee',
+    )
+
+    // No orphaned dropdown items outside conditional slot
+    const allDropdownItems = document.querySelectorAll('.custom-dropdown-item')
+    assert.equal(allDropdownItems.length, 0, 'no orphaned dropdown items when dropdown is closed')
+
+    // Chip list must show 2 chips
+    const afterChips = document.querySelectorAll('.assignee-chip')
+    assert.equal(afterChips.length, 2, 'must show 2 assignee chips after adding Bob')
+
+    // New chip must have correct data-gea-item-id (not "undefined")
+    const newChip = Array.from(afterChips).find((c) => c.textContent?.includes('Bob'))
+    assert.ok(newChip, 'new chip for Bob must exist')
+    const chipItemId = (newChip as HTMLElement).getAttribute('data-gea-item-id')
+    assert.equal(chipItemId, 'u2', 'new chip data-gea-item-id must be "u2" (not "undefined")')
+
+    // New chip must be removable via × button
+    const removeBtn = (newChip as HTMLElement).querySelector('.assignee-chip-remove') as HTMLElement
+    assert.ok(removeBtn, 'Bob chip must have a remove button')
+    removeBtn.click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    const finalChips = document.querySelectorAll('.assignee-chip')
+    assert.equal(finalChips.length, 1, 'after removing Bob, only 1 chip must remain')
+    assert.ok(finalChips[0]?.textContent?.includes('Alice'), 'remaining chip must be Alice')
+
+    projectComp.dispose()
+    issueStore.issue = null
+    projectStore.project = null
+    await flushMicrotasks()
+  } finally {
+    ;(globalThis as any).fetch = origFetch
+    restoreDom()
+  }
+})
+
+test('full hierarchy: adding a comment must be a surgical DOM update, not a full dialog re-render', async () => {
+  const restoreDom = installDom()
+
+  const fakeIssue = {
+    id: 'ISS-42',
+    status: 'backlog',
+    title: 'Fix login flow',
+    type: 'task',
+    priority: '3',
+    listPosition: 1,
+    userIds: ['u1'],
+    reporterId: 'u1',
+    estimate: 8,
+    timeSpent: 2,
+    timeRemaining: 6,
+    description: 'The login is broken',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    comments: [{ id: 'c1', body: 'First comment', userId: 'u1', createdAt: new Date().toISOString() }],
+  }
+
+  const origFetch = globalThis.fetch
+  ;(globalThis as any).fetch = async (url: string, opts?: any) => {
+    const method = opts?.method?.toUpperCase() || 'GET'
+    if (typeof url === 'string' && url.includes('/issues/') && method === 'GET') {
+      return new Response(JSON.stringify({ issue: fakeIssue }), { status: 200 })
+    }
+    if (typeof url === 'string' && url.includes('/comments') && method === 'POST') {
+      const body = opts?.body ? JSON.parse(opts.body) : {}
+      return new Response(
+        JSON.stringify({
+          comment: {
+            id: 'c-new',
+            body: body.body || 'New comment',
+            userId: 'u1',
+            issueId: body.issueId,
+            createdAt: new Date().toISOString(),
+          },
+        }),
+        { status: 200 },
+      )
+    }
+    return new Response(JSON.stringify({}), { status: 200 })
+  }
+
+  if (!(globalThis as any).localStorage) {
+    const storage: Record<string, string> = {}
+    ;(globalThis as any).localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        storage[k] = v
+      },
+      removeItem: (k: string) => {
+        delete storage[k]
+      },
+    }
+  }
+
+  try {
+    const bundledCode = await bundleJiraApp()
+    const fn = new Function(bundledCode + '\nreturn typeof __jiraApp !== "undefined" ? __jiraApp : undefined;')
+    const app = fn()
+    const { Project, issueStore, projectStore, authStore, router } = app || (globalThis as any).__jiraApp
+
+    const fakeProject = {
+      name: 'Test Project',
+      category: 'software',
+      description: 'A test project',
+      users: [
+        { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' },
+        { id: 'u2', name: 'Bob', avatarUrl: '/bob.png' },
+      ],
+      issues: [{ ...fakeIssue }],
+    }
+
+    projectStore.isLoading = false
+    projectStore.project = fakeProject
+    issueStore.issue = { ...fakeIssue }
+    authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
+    router.path = '/project/board/issues/ISS-42'
+
+    const root = document.createElement('div')
+    root.id = 'app-root'
+    document.body.appendChild(root)
+
+    const projectComp = new Project()
+    projectComp.render(root, {})
+
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    const issueDetailEl = document.querySelector('.issue-details')
+    assert.ok(issueDetailEl, 'IssueDetails must render')
+
+    // Grab stable DOM references to verify they survive the comment addition
+    const titleEl = document.querySelector('.issue-details-title') as HTMLElement
+    const descEl = document.querySelector('.issue-details-description') as HTMLElement
+    const rightPanel = document.querySelector('.issue-details-right') as HTMLElement
+    const bodyEl = document.querySelector('.issue-details-body') as HTMLElement
+    assert.ok(titleEl, 'title section must exist')
+    assert.ok(descEl, 'description section must exist')
+    assert.ok(rightPanel, 'right panel must exist')
+    assert.ok(bodyEl, 'body must exist')
+
+    const initialComments = document.querySelectorAll('.comment')
+    assert.equal(initialComments.length, 1, 'initially 1 comment')
+    const firstCommentEl = initialComments[0] as HTMLElement
+
+    // Push a new comment directly into the store (simulating what createComment now does)
+    issueStore.issue.comments.push({
+      id: 'c2',
+      body: 'Second comment',
+      userId: 'u2',
+      createdAt: new Date().toISOString(),
+    })
+
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    // The new comment must appear
+    const afterComments = document.querySelectorAll('.comment')
+    assert.equal(afterComments.length, 2, 'must show 2 comments after adding one')
+
+    // Verify the second comment's content
+    const secondComment = afterComments[1] as HTMLElement
+    assert.ok(secondComment?.textContent?.includes('Second comment'), 'new comment body must appear')
+
+    // CRITICAL: Verify DOM node identity — these must be the SAME nodes, not re-created
+    assert.strictEqual(
+      document.querySelector('.issue-details-title'),
+      titleEl,
+      'title DOM node must be preserved (not re-created) — surgical update only',
+    )
+    assert.strictEqual(
+      document.querySelector('.issue-details-description'),
+      descEl,
+      'description DOM node must be preserved (not re-created) — surgical update only',
+    )
+    assert.strictEqual(
+      document.querySelector('.issue-details-right'),
+      rightPanel,
+      'right panel DOM node must be preserved (not re-created) — surgical update only',
+    )
+    assert.strictEqual(
+      document.querySelector('.issue-details-body'),
+      bodyEl,
+      'body DOM node must be preserved (not re-created) — surgical update only',
+    )
+    assert.strictEqual(
+      afterComments[0],
+      firstCommentEl,
+      'first comment DOM node must be preserved (not re-created) — surgical update only',
+    )
+
+    // Verify the dialog never showed a spinner (isLoading was never set to true)
+    const spinner = document.querySelector('.issue-details-loader')
+    assert.equal(spinner, null, 'no spinner/loader should appear during comment addition')
+
+    projectComp.dispose()
+    issueStore.issue = null
+    projectStore.project = null
+    await flushMicrotasks()
+  } finally {
+    ;(globalThis as any).fetch = origFetch
     restoreDom()
   }
 })

@@ -1,7 +1,6 @@
 import * as slider from '@zag-js/slider'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 const THUMB_CLASS =
   'slider-thumb block h-5 w-5 rounded-full border-2 border-primary bg-background shadow ' +
@@ -41,7 +40,7 @@ export default class Slider extends ZagComponent {
     return slider.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',

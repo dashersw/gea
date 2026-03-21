@@ -1,7 +1,6 @@
 import * as dialog from '@zag-js/dialog'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Dialog extends ZagComponent {
   declare open: boolean
@@ -33,7 +32,7 @@ export default class Dialog extends ZagComponent {
     return dialog.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="backdrop"]': 'getBackdropProps',
       '[data-part="positioner"]': (api: any) => ({
@@ -82,9 +81,11 @@ export default class Dialog extends ZagComponent {
   template(props: any) {
     return (
       <div class={props.class || ''}>
-        <button data-part="trigger" class="dialog-trigger">
-          {props.triggerLabel || 'Open'}
-        </button>
+        {props.triggerLabel && (
+          <button data-part="trigger" class="dialog-trigger">
+            {props.triggerLabel}
+          </button>
+        )}
         <div data-part="backdrop" class="dialog-backdrop fixed inset-0 bg-black/50 z-50" hidden></div>
         <div
           data-part="positioner"

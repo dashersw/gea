@@ -159,43 +159,115 @@ export default class App extends Component {
 
 ## Router
 
-Gea includes a built-in client-side router. The `router` singleton is a `Store` that tracks `path`, `hash`, and `search` from `window.location`. Use `RouterView` for declarative route rendering and `Link` for SPA navigation.
+Gea includes a built-in client-side router. The router is a `Store` that reactively tracks `path`, `params`, `query`, and `hash`. Define routes with `setRoutes` or `createRouter`.
 
-### RouterView
+### Setup
 
-`RouterView` accepts a `routes` prop — an array of `{ path, component }` objects. It renders the first matching component. Both class and function components are supported.
+Create a bare `Router` in `router.ts`. Keep this file free of view imports to avoid circular dependencies (views import `router`, so `router.ts` must not import views).
 
-```jsx
-import { Component, Link, RouterView } from '@geajs/core'
+```ts
+// src/router.ts
+import { Router } from '@geajs/core'
+export const router = new Router()
+```
+
+Set routes in `App.tsx` where both the router and view components are available:
+
+```tsx
+// src/App.tsx
+import { Component, Outlet } from '@geajs/core'
+import { router } from './router'
+import AppShell from './views/AppShell'
 import Home from './views/Home'
 import About from './views/About'
-import UserProfile from './views/UserProfile'
+import NotFound from './views/NotFound'
+
+router.setRoutes({
+  '/': {
+    layout: AppShell,
+    children: {
+      '/': Home,
+      '/about': About,
+      '/users/:id': UserProfile,
+    },
+  },
+  '*': NotFound,
+})
 
 export default class App extends Component {
   template() {
+    return <Outlet />
+  }
+}
+```
+
+Layouts receive the resolved child as a `page` prop:
+
+```tsx
+export default class AppShell extends Component {
+  template({ page }: any) {
     return (
       <div class="app">
         <nav>
           <Link to="/" label="Home" />
           <Link to="/about" label="About" />
-          <Link to="/users/1" label="Alice" />
         </nav>
-        <RouterView routes={[
-          { path: '/', component: Home },
-          { path: '/about', component: About },
-          { path: '/users/:id', component: UserProfile },
-        ]} />
+        <main>{page}</main>
       </div>
     )
   }
 }
 ```
 
+For simple apps without layouts/guards (no circular dependency risk), you can use `createRouter` directly in `router.ts`:
+
+```ts
+import { createRouter } from '@geajs/core'
+import Home from './views/Home'
+import About from './views/About'
+
+export const router = createRouter({
+  '/': Home,
+  '/about': About,
+} as const)
+```
+
+### Guards
+
+Guards are synchronous functions on route groups that control access. A guard returns:
+- `true` — proceed to the route
+- `string` — redirect to that path
+- `Component` — render it instead of the route
+
+```ts
+import authStore from './stores/auth-store'
+
+const AuthGuard = () => {
+  if (authStore.isAuthenticated) return true
+  return '/login'
+}
+
+router.setRoutes({
+  '/login': Login,
+  '/': {
+    layout: AppShell,
+    guard: AuthGuard,
+    children: {
+      '/dashboard': Dashboard,
+      '/settings': Settings,
+    },
+  },
+})
+```
+
+Guards on nested groups stack parent → child. Guards are intentionally synchronous — they check store state, not async APIs. For async checks, use `created()` in the component.
+
 ### Route Patterns
 
 - Static: `/about`
 - Named params: `/users/:id` — extracted as `{ id: '42' }`
-- Wildcard: `/files/*` — captures the rest as `{ '*': 'docs/readme.md' }`
+- Wildcard: `*` — matches any unmatched path
+- Redirects: `'/old': '/new'` — string values trigger a redirect
 
 ### Link
 
@@ -208,9 +280,9 @@ Renders an `<a>` tag that navigates with `history.pushState`. Modifier keys (Cmd
 ### Programmatic Navigation
 
 ```ts
-import { router } from '@geajs/core'
+import { router } from './router'
 
-router.navigate('/about')     // pushState
+router.push('/about')         // pushState
 router.replace('/login')      // replaceState
 router.back()
 router.forward()
@@ -226,17 +298,36 @@ export default function UserProfile({ id }) {
 }
 ```
 
-Class components receive them via `created(props)` and `template(props)`.
+Class components receive them via `created(props)` and `template(props)`. Route params are also available on `router.params`.
+
+### Active State
+
+```ts
+router.isActive('/dashboard')  // true if path starts with /dashboard
+router.isExact('/dashboard')   // true only for exact match
+```
 
 ### matchRoute Utility
 
-Use `matchRoute` for manual route matching outside of `RouterView`:
+Use `matchRoute` for manual route matching:
 
 ```ts
 import { matchRoute } from '@geajs/core'
 
 const result = matchRoute('/users/:id', '/users/42')
 // { path: '/users/42', pattern: '/users/:id', params: { id: '42' } }
+```
+
+### Legacy: RouterView
+
+`RouterView` is an older API that accepts a `routes` array prop. Prefer `createRouter` for new projects.
+
+```jsx
+<RouterView routes={[
+  { path: '/', component: Home },
+  { path: '/about', component: About },
+  { path: '/users/:id', component: UserProfile },
+]} />
 ```
 
 ## JSX Rules

@@ -1,7 +1,6 @@
 import * as pagination from '@zag-js/pagination'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Pagination extends ZagComponent {
   page = 1
@@ -33,7 +32,7 @@ export default class Pagination extends ZagComponent {
     return pagination.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="prev-trigger"]': 'getPrevTriggerProps',

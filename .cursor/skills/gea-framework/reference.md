@@ -701,51 +701,180 @@ Getters are accessed directly on the store instance, e.g. `store.filteredTodos`.
 
 ## Router
 
-Gea includes a built-in client-side router for single-page applications. It consists of a `Router` store, a `RouterView` component, a `Link` component, and a `matchRoute` utility.
+Gea includes a built-in client-side router for single-page applications. The router is a `Store` — its properties are reactive.
 
 ### Import
 
 ```ts
-import { router, Router, RouterView, Link, matchRoute } from '@geajs/core'
-import type { RouteConfig, RouteMatch, RouteParams, RouteComponent } from '@geajs/core'
+import { Router, Outlet, Link, matchRoute } from '@geajs/core'
+import type { RouteMap, RouteEntry, RouteGroupConfig, GuardFn, GuardResult } from '@geajs/core'
 ```
 
-### `router` (singleton)
+### Setup
 
-The `router` singleton is a `Store` instance that tracks the current URL state. Its properties are reactive — components and observers are notified when they change.
+Create a bare `Router` in `router.ts` (no view imports to avoid circular dependencies), then set routes from `App.tsx`:
 
-#### Properties
+```ts
+// src/router.ts
+import { Router } from '@geajs/core'
+export const router = new Router()
+```
 
-| Property | Type     | Description                                       |
-| -------- | -------- | ------------------------------------------------- |
-| `path`   | `string` | Current pathname (e.g. `'/users/42'`)             |
-| `hash`   | `string` | Current hash (e.g. `'#section'`)                  |
-| `search` | `string` | Current search string (e.g. `'?q=hello&page=2'`) |
+```tsx
+// src/App.tsx
+import { router } from './router'
+import AppShell from './views/AppShell'
+import Dashboard from './views/Dashboard'
 
-#### Computed Properties
+router.setRoutes({
+  '/login': Login,
+  '/': {
+    layout: AppShell,
+    guard: AuthGuard,
+    children: {
+      '/dashboard': Dashboard,
+      '/settings': Settings,
+      '/users/:id': UserProfile,
+    },
+  },
+  '*': NotFound,
+})
+```
 
-| Property | Type                    | Description                                                        |
-| -------- | ----------------------- | ------------------------------------------------------------------ |
-| `query`  | `Record<string, string>` | Parsed key-value pairs from `search` (e.g. `{ q: 'hello', page: '2' }`) |
+For simple apps without layouts/guards (no circular dependency risk), use `createRouter` directly in `router.ts`:
 
-#### Methods
+```ts
+import { createRouter } from '@geajs/core'
+export const router = createRouter({ '/': Home, '/about': About } as const)
+```
+
+Route entry types:
+- **Component** — render the component: `'/about': About`
+- **String** — static redirect: `'/old': '/new'`
+- **RedirectConfig** — full redirect control: `'/old/:id': { redirect: (params) => '/new/' + params.id, method: 'replace' }`
+- **RouteGroupConfig** — layout + guard + children: `'/': { layout: AppShell, guard: AuthGuard, children: { ... } }`
+- **Lazy** — code-split: `'/admin': () => import('./views/Admin')`
+
+Options (for `createRouter` or `new Router(routes, options)`):
+- `base` — URL base path (default: `''`)
+- `scroll` — scroll to top on push, restore on back/forward (default: `false`)
+
+### Router Properties
+
+| Property  | Type                             | Description                                       |
+| --------- | -------------------------------- | ------------------------------------------------- |
+| `path`    | `string`                         | Current pathname (e.g. `'/users/42'`)             |
+| `params`  | `Record<string, string>`        | Extracted route params (e.g. `{ id: '42' }`)      |
+| `query`   | `Record<string, string\|string[]>` | Parsed query parameters                          |
+| `hash`    | `string`                         | Current hash (e.g. `'#section'`)                  |
+| `route`   | `string`                         | Matched route pattern                             |
+| `matches` | `string[]`                       | Match chain patterns                              |
+| `error`   | `string \| null`                 | Error message (lazy load failure, etc.)           |
+| `page`    | `Component`                      | Resolved component (guard or leaf)                |
+
+### Router Methods
 
 | Method              | Description                                                        |
 | ------------------- | ------------------------------------------------------------------ |
-| `navigate(path)`    | Push a new history entry and update `path`, `hash`, `search`.      |
-| `replace(path)`     | Replace the current history entry (no new back-button entry).      |
-| `back()`            | Go back one entry (`history.back()`).                              |
-| `forward()`         | Go forward one entry (`history.forward()`).                        |
+| `setRoutes(routes)`  | Set or replace the route config and re-resolve the current URL.   |
+| `push(target)`      | Push a new history entry.                                          |
+| `replace(target)`   | Replace the current history entry.                                 |
+| `back()`            | Go back one entry.                                                 |
+| `forward()`         | Go forward one entry.                                              |
+| `go(delta)`         | Go forward/back by `delta` entries.                                |
+| `isActive(path)`    | `true` if current path starts with `path`.                         |
+| `isExact(path)`     | `true` if current path equals `path` exactly.                      |
 
 ```ts
-router.navigate('/users/42?tab=posts#bio')
+router.push('/users/42?tab=posts#bio')
 console.log(router.path)   // '/users/42'
-console.log(router.search) // '?tab=posts'
-console.log(router.hash)   // '#bio'
+console.log(router.params) // { id: '42' }
 console.log(router.query)  // { tab: 'posts' }
+console.log(router.hash)   // '#bio'
 ```
 
-The `router` also responds to the browser's `popstate` event (back/forward buttons) and updates its properties accordingly.
+### Guards
+
+Guards are synchronous functions on route groups. A guard checks store state and returns one of three values:
+
+| Return      | Effect                                  |
+| ----------- | --------------------------------------- |
+| `true`      | Proceed to the route                    |
+| `string`    | Redirect to that path                   |
+| `Component` | Render it instead of the route          |
+
+```ts
+import authStore from './stores/auth-store'
+
+const AuthGuard = () => {
+  if (authStore.isAuthenticated) return true
+  return '/login'
+}
+```
+
+Apply to a route group:
+```ts
+'/': {
+  layout: AppShell,
+  guard: AuthGuard,
+  children: {
+    '/dashboard': Dashboard,
+    '/settings': Settings,
+  },
+}
+```
+
+Guards on nested groups stack parent → child. Guards are intentionally synchronous — for async checks, use `created()` in the component.
+
+### Layouts and `Outlet`
+
+Layouts are components that receive a `page` prop — the resolved child component.
+
+```tsx
+export default class AppShell extends Component {
+  template({ page }: any) {
+    return (
+      <div class="app">
+        <nav>...</nav>
+        <main>{page}</main>
+      </div>
+    )
+  }
+}
+```
+
+Use `<Outlet />` in the root App component to render the resolved route:
+
+```tsx
+import { Component, Outlet } from '@geajs/core'
+
+export default class App extends Component {
+  template() {
+    return <Outlet />
+  }
+}
+```
+
+### Type Safety
+
+When using `createRouter` (for simple apps without circular dependency), you can infer layout props:
+
+```ts
+import { createRouter, InferRouteProps } from '@geajs/core'
+
+export const router = createRouter({ ... } as const)
+export type RouteProps = InferRouteProps<typeof router>
+```
+
+```tsx
+export default class AppShell extends Component<RouteProps['/']> {
+  template({ page, params }) {
+    // page and params are typed from the route config
+  }
+}
+```
+
+When using `new Router()` + `setRoutes()`, type the layout props manually since `setRoutes` doesn't preserve `as const`.
 
 ### `matchRoute(pattern, path)`
 
@@ -781,26 +910,9 @@ interface RouteMatch {
 
 Param values are URI-decoded automatically. Wildcards match zero or more path segments.
 
-### `RouterView`
+### `RouterView` (legacy)
 
-A component that renders the first matching route from a `routes` array. Observes `router.path` and automatically swaps the rendered component when the URL changes.
-
-**Props:**
-
-| Prop     | Type            | Description                          |
-| -------- | --------------- | ------------------------------------ |
-| `routes` | `RouteConfig[]` | Array of `{ path, component }` objects. First match wins. |
-
-```ts
-type RouteComponent = typeof Component | ((props: Record<string, string>) => string)
-
-interface RouteConfig {
-  path: string
-  component: RouteComponent
-}
-```
-
-**Usage:**
+An older component that renders the first matching route from a `routes` array. Prefer `Router` + `setRoutes` with `Outlet` for new projects.
 
 ```jsx
 <RouterView routes={[
@@ -809,15 +921,6 @@ interface RouteConfig {
   { path: '/users/:id', component: UserProfile },
 ]} />
 ```
-
-**Behavior:**
-
-- Routes are matched in array order; the first match is rendered.
-- Matched params (e.g. `{ id: '42' }`) are passed as props to the component.
-- Both class components (`extends Component`) and function components are supported.
-- When the route changes, the previous component is disposed (class) or removed (function) and the new one is rendered.
-- When navigating between URLs that match the same pattern (e.g. `/users/1` → `/users/2`), class components receive updated props via `__geaUpdateProps` instead of being re-created.
-- If no route matches, nothing is rendered inside the `RouterView`.
 
 ### `Link`
 
@@ -846,15 +949,45 @@ A component that renders an `<a>` tag for SPA navigation. Clicks call `router.na
 
 ### Full Example
 
-```jsx
-// app.tsx
-import { Component, Link, RouterView } from '@geajs/core'
+```ts
+// router.ts
+import { Router } from '@geajs/core'
+export const router = new Router()
+```
+
+```tsx
+// App.tsx
+import { Component, Outlet } from '@geajs/core'
+import { router } from './router'
+import AppShell from './views/AppShell'
 import Home from './views/Home'
 import About from './views/About'
 import UserProfile from './views/UserProfile'
 
+router.setRoutes({
+  '/': {
+    layout: AppShell,
+    children: {
+      '/': Home,
+      '/about': About,
+      '/users/:id': UserProfile,
+    },
+  },
+})
+
 export default class App extends Component {
   template() {
+    return <Outlet />
+  }
+}
+```
+
+```tsx
+// views/AppShell.tsx
+import { Component, Link } from '@geajs/core'
+
+export default class AppShell extends Component {
+  template({ page }: any) {
     return (
       <div class="app">
         <nav>
@@ -863,13 +996,7 @@ export default class App extends Component {
           <Link to="/users/1" label="Alice" />
           <Link to="/users/2" label="Bob" />
         </nav>
-        <main>
-          <RouterView routes={[
-            { path: '/', component: Home },
-            { path: '/about', component: About },
-            { path: '/users/:id', component: UserProfile },
-          ]} />
-        </main>
+        <main>{page}</main>
       </div>
     )
   }
@@ -894,31 +1021,6 @@ export default function UserProfile({ id }) {
   return <h1>User {id}</h1>
 }
 ```
-
-### Alternative: Inline Conditional Routing
-
-For simple apps, you can skip `RouterView` and use Gea's compile-time conditionals directly. This gives you full static analysis and reactive patching:
-
-```jsx
-import { Component } from '@geajs/core'
-import { router, matchRoute } from '@geajs/core'
-
-export default class App extends Component {
-  template() {
-    const path = router.path
-    const userMatch = matchRoute('/users/:id', path)
-    return (
-      <div>
-        {path === '/' && <Home />}
-        {path === '/about' && <About />}
-        {userMatch && <UserProfile id={userMatch.params.id} />}
-      </div>
-    )
-  }
-}
-```
-
-This approach trades configuration-driven routing for tighter integration with Gea's compile-time reactivity system.
 
 ---
 

@@ -26,7 +26,7 @@ export default class ZagComponent extends Component {
     return null
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {}
   }
 

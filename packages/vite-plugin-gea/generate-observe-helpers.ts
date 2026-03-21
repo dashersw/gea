@@ -129,6 +129,11 @@ export function buildSimpleUpdate(
     return js`if (${el}) { ${jsExpr`${el}.classList.toggle(${cls}, ${param})`}; }`
   }
 
+  if (binding.textNodeIndex !== undefined && binding.type === 'text') {
+    const idx = t.numericLiteral(binding.textNodeIndex)
+    return js`if (${el}) { const __tn = ${jsExpr`${el}.childNodes[${idx}]`}; if (__tn && __tn.nodeValue !== ${valueExpr}) __tn.nodeValue = ${valueExpr}; }`
+  }
+
   return js`if (${el}) { ${jsExpr`${el}.${id(target)}`} = ${valueExpr}; }`
 }
 

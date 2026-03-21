@@ -1,7 +1,6 @@
 import * as popover from '@zag-js/popover'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Popover extends ZagComponent {
   declare open: boolean
@@ -32,7 +31,7 @@ export default class Popover extends ZagComponent {
     return popover.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="trigger"]': 'getTriggerProps',
       '[data-part="positioner"]': 'getPositionerProps',

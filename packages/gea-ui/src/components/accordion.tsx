@@ -1,7 +1,6 @@
 import * as accordion from '@zag-js/accordion'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Accordion extends ZagComponent {
   declare value: string[]
@@ -30,7 +29,7 @@ export default class Accordion extends ZagComponent {
     return accordion.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="item"]': (api, el) => api.getItemProps({ value: (el as HTMLElement).dataset.value }),
@@ -50,7 +49,7 @@ export default class Accordion extends ZagComponent {
     return (
       <div data-part="root" class={props.class || ''}>
         {items.map((item: any) => (
-          <div data-part="item" data-value={item.value} class="accordion-item border-b">
+          <div key={item.value} data-part="item" data-value={item.value} class="accordion-item border-b">
             <h3>
               <button
                 data-part="item-trigger"

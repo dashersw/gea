@@ -1,7 +1,6 @@
 import * as tabs from '@zag-js/tabs'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Tabs extends ZagComponent {
   declare value: string | null
@@ -37,7 +36,7 @@ export default class Tabs extends ZagComponent {
     }
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="list"]': 'getListProps',
@@ -69,6 +68,7 @@ export default class Tabs extends ZagComponent {
         <div data-part="list" class="tabs-list relative flex border-b border-gray-200 dark:border-gray-700">
           {items.map((item: any) => (
             <button
+              key={item.value}
               data-part="trigger"
               data-value={item.value}
               class="tabs-trigger px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 data-[selected]:text-blue-600 dark:text-gray-400 dark:hover:text-gray-100 dark:data-[selected]:text-blue-400"
@@ -79,7 +79,7 @@ export default class Tabs extends ZagComponent {
           <div data-part="indicator" class="tabs-indicator bg-blue-600 dark:bg-blue-400"></div>
         </div>
         {items.map((item: any) => (
-          <div data-part="content" data-value={item.value} class="tabs-content p-4">
+          <div key={item.value} data-part="content" data-value={item.value} class="tabs-content p-4">
             {item.content}
           </div>
         ))}

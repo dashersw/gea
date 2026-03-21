@@ -546,7 +546,7 @@ export default function OptionStep({ options, onSelect }) {
   return (
     <div>
       {options.map(opt => (
-        <OptionItem onSelect={() => onSelect(opt.id)} />
+        <OptionItem key={opt.id} onSelect={() => onSelect(opt.id)} />
       ))}
     </div>
   )
@@ -716,6 +716,7 @@ test('multiple handlers on one element reuse a single generated selector id', ()
           <div>
             {store.todos.map(todo => (
               <input
+                key={todo.id}
                 type="text"
                 value={todo.text}
                 input={store.setEditingValue}
@@ -1188,6 +1189,35 @@ test('unresolved map container uses getElementById for tbody lookup', () => {
   )
 })
 
+test('unresolved map getItems includes local template setup when template() has no props param', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import dataStore from './data-store'
+
+    export default class List extends Component {
+      template() {
+        const project = dataStore.project
+        return (
+          <ul>
+            {project.items.map(item => (
+              <li key={item.id}>{item.name}</li>
+            ))}
+          </ul>
+        )
+      }
+    }
+  `)
+
+  // With store-alias resolution, project.items is a known imported path → array observer + list sync
+  // (not an unresolved __geaRegisterMap getItems callback).
+  assert.match(output, /observe\(\["project",\s*"items"\]/, 'must observe project.items, not only project')
+  assert.ok(
+    /__applyListChanges/.test(output) && /__observe_.*project__items/.test(output),
+    'project.items map should compile to array list observer',
+  )
+  assert.match(output, /const project = dataStore\.project/, 'template still hoists project for render helpers')
+})
+
 test('unresolved helper maps reconcile by calling the helper, not helper-local variables', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
@@ -1534,6 +1564,32 @@ test('template-scoped prop variables inside .map() are rewritten to this.props',
   assert.doesNotMatch(renderBody, /[^.]isMulti\b/, 'bare isMulti must not appear in the render item method body')
 })
 
+test('map callback render method includes template-local setup statements for free variables', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import issueStore from './issue-store'
+
+    export default class IssueDetails extends Component {
+      template() {
+        const issue = issueStore.issue
+        if (!issue) return <div>Loading</div>
+        return (
+          <div>
+            {issue.comments.map(comment => (
+              <div key={comment.id} data-issue={issue.id}>{comment.body}</div>
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  const renderMethod = output.match(/render\w+Item\(comment\)\s*\{([\s\S]*?)\n  \}/)
+  assert.ok(renderMethod, 'render item method must be generated')
+  const renderBody = renderMethod![1]
+  assert.match(renderBody, /issueStore\.issue/, 'render method must re-derive issue from store')
+})
+
 test('component class getters that access stores create observers for underlying store paths', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
@@ -1556,6 +1612,81 @@ test('component class getters that access stores create observers for underlying
 
   assert.match(output, /routeStore\.__store/, 'compiler must observe routeStore when a component getter accesses it')
   assert.match(output, /observe\(.*path/, 'observer must be registered for the underlying store path the getter reads')
+})
+
+test('transitive getter-to-getter deps produce __via observers for underlying store paths', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import routeStore from './route-store'
+
+    function matchRoute(pattern, path) {
+      return path.startsWith(pattern) ? { params: { id: '1' } } : null
+    }
+
+    export default class Project extends Component {
+      get isBoard() {
+        return routeStore.path.startsWith('/board')
+      }
+
+      get issueMatch() {
+        return matchRoute('/board/issues/', routeStore.path)
+      }
+
+      get showIssueDetail() {
+        return !!this.issueMatch
+      }
+
+      get issueId() {
+        return this.issueMatch ? this.issueMatch.params.id : ''
+      }
+
+      template() {
+        return (
+          <div>
+            {this.isBoard && <div>Board</div>}
+            {this.showIssueDetail && <div>Issue {this.issueId}</div>}
+          </div>
+        )
+      }
+    }
+  `)
+
+  assert.match(output, /__observe_local_isBoard__via/, 'isBoard (direct store dep) must get a __via observer')
+  assert.match(
+    output,
+    /__observe_local_showIssueDetail__via/,
+    'showIssueDetail (transitive via issueMatch → routeStore.path) must get a __via observer',
+  )
+  assert.match(
+    output,
+    /__observe_local_issueId__via/,
+    'issueId (transitive via issueMatch → routeStore.path) must get a __via observer',
+  )
+  assert.doesNotMatch(
+    output,
+    /__geaRequestRender/,
+    'no fallback full re-render should be generated when all deps resolve to store observers',
+  )
+})
+
+test('component getter reading this.props registers deps for this.getter in template text', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class SelectLike extends Component {
+      get displayLabel() {
+        const { value, options = [] } = this.props
+        return String(value) + options.length
+      }
+      template({ value, options = [] }) {
+        return <span class="lbl">{this.displayLabel}</span>
+      }
+    }
+  `)
+
+  assert.match(output, /this\.displayLabel/, 'template should invoke getter')
+  assert.match(output, /key === "value"/, 'getter reads this.props.value — value must trigger prop patch')
+  assert.match(output, /key === "options"/, 'getter reads this.props.options — options must trigger prop patch')
 })
 
 test('render prop arrow functions containing JSX are compiled to template literals', () => {
@@ -1649,7 +1780,7 @@ test('complex conditional chains inside .map() item attributes compile correctly
         return (
           <div>
             {store.items.map((item) => (
-              <div class={\`card \${item.a && item.b ? (item.c ? 'x' : 'y') : 'z'}\`}>
+              <div key={item.id} class={\`card \${item.a && item.b ? (item.c ? 'x' : 'y') : 'z'}\`}>
                 {item.label}
               </div>
             ))}
@@ -1892,6 +2023,42 @@ test('observer calls __refreshChildProps when guard-dependent props reference th
   )
 })
 
+test('constructor-inlined conditional slot init is guarded when template has early return', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import issueStore from './issue-store'
+
+    export default class IssueDetails extends Component {
+      isEditing = false
+
+      template() {
+        const { issue } = issueStore
+
+        if (!issue) return <div>Loading</div>
+
+        const desc = issue.description || ''
+
+        return (
+          <div>
+            {this.isEditing && <textarea value={desc} />}
+            {!this.isEditing && desc && <p>{desc}</p>}
+            {!this.isEditing && !desc && <p>Add a description...</p>}
+          </div>
+        )
+      }
+    }
+  `)
+
+  assert.match(output, /__geaRegisterCond/, 'should generate __geaRegisterCond calls')
+
+  assert.match(
+    output,
+    /try\s*\{/,
+    'constructor-inlined setup for conditional slots must be wrapped in try-catch ' +
+      'to survive null store values before template early-return guard runs',
+  )
+})
+
 test('component inside .map() with HTML wrapper compiles correctly', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-map-html-wrap-'))
 
@@ -1952,4 +2119,211 @@ test('component inside .map() with HTML wrapper compiles correctly', async () =>
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('conditional slot getTruthyHtml includes template locals used by branch (e.g. filtered)', async () => {
+  const plugin = geaPlugin()
+  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
+  assert.ok(transform)
+  const src = `
+import { Component } from '@geajs/core'
+export default class T extends Component {
+  isOpen = false
+  template({ options }) {
+    const filtered = options.filter((o) => o.k)
+    return (
+      <div>
+        {this.isOpen && <div class="d">{filtered.map((x) => <span key={x.id}>{x.k}</span>)}</div>}
+      </div>
+    )
+  }
+}
+`
+  const result = await transform!.call({} as never, src, '/T.jsx')
+  const code = typeof result === 'string' ? result : (result as { code: string }).code
+  assert.match(
+    code,
+    /__geaRegisterCond\(0, "c0"[\s\S]*?const filtered[\s\S]*?return[\s\S]*?filtered\.map/,
+    'dropdown branch HTML must hoist const filtered from template into getTruthyHtml closure',
+  )
+})
+
+test('conditional slot analyze order matches transform (nested ternary before sibling &&)', async () => {
+  const plugin = geaPlugin()
+  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
+  assert.ok(transform)
+  const src = `
+import { Component } from '@geajs/core'
+export default class SlotOrder extends Component {
+  isOpen = false
+  template({ renderValue, value, options }) {
+    return (
+      <div class="root">
+        <div class="inner">
+          {renderValue ? renderValue(value, options) : <span class="fallback">x</span>}
+        </div>
+        {this.isOpen && <div class="dropdown">open</div>}
+      </div>
+    )
+  }
+}
+`
+  const result = await transform!.call({} as never, src, '/SlotOrder.jsx')
+  const code = typeof result === 'string' ? result : (result as { code: string }).code
+  assert.match(
+    code,
+    /__geaRegisterCond\(0, "c0",\s*\(\)\s*=>\s*\{[^}]*return this\.props\.renderValue;/,
+    'slot c0 must be the inner renderValue ternary, not the outer isOpen &&',
+  )
+  assert.match(
+    code,
+    /__geaRegisterCond\(1, "c1",\s*\(\)\s*=>\s*\{[^}]*return this\.isOpen;/,
+    'slot c1 must be isOpen && dropdown',
+  )
+})
+
+test('store observer for top-level project guard must NOT call __geaRequestRender when only child props depend on nested data', () => {
+  const output = transformComponentSource(
+    `
+    import { Component } from '@geajs/core'
+    import projectStore from './project-store'
+    import Board from './Board'
+
+    export default class Project extends Component {
+      template() {
+        const project = projectStore.project
+        if (!project) return <div>Loading</div>
+        return <div><Board /></div>
+      }
+    }
+  `,
+    new Set(['Board']),
+  )
+
+  const projectObserver = output.match(/__observe_projectStore_project\([\s\S]*?\n  \}/)?.[0]
+  assert.ok(projectObserver, 'must generate __observe_projectStore_project')
+  assert.ok(
+    projectObserver.includes('__geaRequestRender') || projectObserver.includes('__geaPatchCond'),
+    'project observer must handle the loading guard (rerender or patch cond)',
+  )
+})
+
+test('store observer for nested project.users must NOT trigger __geaRequestRender on the parent component', () => {
+  const output = transformComponentSource(
+    `
+    import { Component } from '@geajs/core'
+    import issueStore from './issue-store'
+    import projectStore from './project-store'
+    import Select from './Select'
+
+    export default class IssueDetails extends Component {
+      template() {
+        const { isLoading, issue } = issueStore
+        const project = projectStore.project
+        const users = project ? project.users : []
+        const userOptions = users.map((u) => ({ value: u.id, label: u.name }))
+        if (isLoading || !issue) return <div>Loading</div>
+        return (
+          <div>
+            <Select items={userOptions} value={issue.userIds || []} />
+          </div>
+        )
+      }
+    }
+  `,
+    new Set(['Select']),
+  )
+
+  const projectObserver = output.match(/__observe_projectStore_project\b[^_]([\s\S]*?)\n  \}/)?.[0]
+  assert.ok(projectObserver, 'must generate __observe_projectStore_project')
+  assert.ok(
+    !projectObserver.includes('__geaRequestRender'),
+    '__observe_projectStore_project must NOT call __geaRequestRender (it should only refresh child props). Got: ' +
+      projectObserver,
+  )
+})
+
+test('store-alias nested field must produce inline patch or rerender observer (status badge pattern)', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import itemStore from './item-store'
+
+    const StatusCopy = { backlog: 'Backlog', selected: 'Selected', done: 'Done' }
+
+    export default class Badge extends Component {
+      template() {
+        const issue = itemStore.issue
+        const issueStatus = issue.status || 'backlog'
+
+        return (
+          <div class="badge">
+            <span class="status-text">{(StatusCopy[issueStatus] || 'Backlog').toUpperCase()}</span>
+            <span class="priority-text">{issue.priority}</span>
+          </div>
+        )
+      }
+    }
+  `)
+
+  const hasIssueObserver =
+    /__observe_itemStore_issue\b/.test(output) || /__observe_itemStore_issue__status\b/.test(output)
+  assert.ok(
+    hasIssueObserver,
+    'must generate an observer for itemStore issue or issue.status. Output: ' + output.slice(0, 3000),
+  )
+
+  const observerMatch = output.match(/__observe_itemStore_issue[^(]*\([^)]*\)\s*\{[\s\S]*?\n  \}/)
+  if (observerMatch) {
+    assert.ok(
+      observerMatch[0].includes('__patchNode') ||
+        observerMatch[0].includes('__geaRequestRender') ||
+        observerMatch[0].includes('textContent'),
+      'observer must contain patch logic or rerender. Got: ' + observerMatch[0],
+    )
+  }
+})
+
+test('array .map() without key prop on root element produces a compile error', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+
+    export default class ItemList extends Component {
+      template() {
+        return (
+          <ul>
+            {this.items.map(item => (
+              <li>{item.label}</li>
+            ))}
+          </ul>
+        )
+      }
+    }
+  `
+  assert.throws(
+    () => transformComponentSource(source),
+    (err: Error) => {
+      assert.ok(err.message.includes('must have a `key` prop'), `Expected key error, got: ${err.message}`)
+      return true
+    },
+  )
+})
+
+test('array .map() with key prop on root element compiles successfully', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+
+    export default class ItemList extends Component {
+      template() {
+        return (
+          <ul>
+            {this.items.map(item => (
+              <li key={item.id}>{item.label}</li>
+            ))}
+          </ul>
+        )
+      }
+    }
+  `
+  const output = transformComponentSource(source)
+  assert.ok(output, 'component with keyed .map() must compile successfully')
 })

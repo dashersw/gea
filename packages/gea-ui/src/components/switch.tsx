@@ -1,7 +1,6 @@
 import * as switchMachine from '@zag-js/switch'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Switch extends ZagComponent {
   checked = false
@@ -33,7 +32,7 @@ export default class Switch extends ZagComponent {
     return switchMachine.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',

@@ -834,6 +834,17 @@ export class Store {
               count,
               newValue: value.slice(start),
             }
+            if (cachedArrayMeta) {
+              let lp = leafCache.get(prop)
+              if (!lp) {
+                lp = cachedArrayMeta.baseTail.length > 0 ? [...cachedArrayMeta.baseTail, prop] : [prop]
+                leafCache.set(prop, lp)
+              }
+              change.arrayPathParts = cachedArrayMeta.arrayPathParts
+              change.arrayIndex = cachedArrayMeta.arrayIndex
+              change.leafPathParts = lp
+              change.isArrayItemPropUpdate = true
+            }
             store._pendingChanges.push(change)
             if (!store._flushScheduled) {
               store._flushScheduled = true

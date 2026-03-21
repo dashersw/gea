@@ -3,17 +3,16 @@ import { describe, it } from 'node:test'
 import { resolveRoute } from '../src/lib/router/resolve'
 import type { RouteMap, RouteGroupConfig, RedirectConfig } from '../src/lib/router/types'
 
-// Fake component classes (cast to any to satisfy RouteComponent)
-class Home {}
-class About {}
-class UserProfile {}
-class UserSettings {}
-class NotFound {}
-class Dashboard {}
-class AdminPanel {}
-class MainLayout {}
-class AdminLayout {}
-class SettingsLayout {}
+import Home from '../../../examples/router-simple/src/views/Home'
+import About from '../../../examples/router-simple/src/views/About'
+import UserProfile from '../../../examples/router-simple/src/views/UserProfile'
+import NotFound from '../../../examples/router-simple/src/views/NotFound'
+import UserSettings from '../../../examples/router-v2/src/views/BillingSettings'
+import Dashboard from '../../../examples/router-v2/src/views/Overview'
+import AdminPanel from '../../../examples/router-v2/src/views/Projects'
+import MainLayout from '../../../examples/router-v2/src/layouts/AppShell'
+import AdminLayout from '../../../examples/router-v2/src/layouts/DashboardLayout'
+import SettingsLayout from '../../../examples/router-v2/src/layouts/SettingsLayout'
 
 describe('resolveRoute', () => {
   // ── 1. Flat routes ──────────────────────────────────────────────

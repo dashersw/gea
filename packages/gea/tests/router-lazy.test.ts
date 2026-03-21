@@ -1,20 +1,19 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { resolveLazy } from '../src/lib/router/lazy'
+import Home from '../../../examples/router-simple/src/views/Home'
 
 describe('resolveLazy', () => {
   it('resolves default export', async () => {
-    const Component = class MyComponent {}
-    const loader = () => Promise.resolve({ default: Component })
+    const loader = () => Promise.resolve({ default: Home })
     const result = await resolveLazy(loader)
-    assert.equal(result, Component)
+    assert.equal(result, Home)
   })
 
   it('resolves direct export (no default)', async () => {
-    const Component = class MyComponent {}
-    const loader = () => Promise.resolve(Component)
+    const loader = () => Promise.resolve(Home)
     const result = await resolveLazy(loader)
-    assert.equal(result, Component)
+    assert.equal(result, Home)
   })
 
   it('throws on import failure', async () => {
@@ -26,14 +25,13 @@ describe('resolveLazy', () => {
 
   it('retries on failure then succeeds', async () => {
     let calls = 0
-    const Component = class MyComponent {}
     const loader = () => {
       calls++
       if (calls < 3) return Promise.reject(new Error('network error'))
-      return Promise.resolve({ default: Component })
+      return Promise.resolve({ default: Home })
     }
     const result = await resolveLazy(loader, 3, 0)
-    assert.equal(result, Component)
+    assert.equal(result, Home)
     assert.equal(calls, 3)
   })
 })

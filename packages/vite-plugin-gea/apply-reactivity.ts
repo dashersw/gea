@@ -266,17 +266,45 @@ export function applyStaticReactivity(
                   ])
             const valueExpr = pb.expression && pb.setupStatements ? t.identifier('__boundValue') : t.identifier('value')
             let updateStmt: t.Statement
-            if (pb.type === 'text') {
+            if (pb.type === 'text' && pb.textNodeIndex !== undefined) {
+              const tnAccess = t.memberExpression(
+                t.memberExpression(t.identifier('__el'), t.identifier('childNodes')),
+                t.numericLiteral(pb.textNodeIndex),
+                true,
+              )
+              updateStmt = t.blockStatement([
+                t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__tn'), tnAccess)]),
+                t.ifStatement(
+                  t.logicalExpression(
+                    '&&',
+                    t.identifier('__tn'),
+                    t.binaryExpression(
+                      '!==',
+                      t.memberExpression(t.identifier('__tn'), t.identifier('nodeValue')),
+                      valueExpr,
+                    ),
+                  ),
+                  t.expressionStatement(
+                    t.assignmentExpression(
+                      '=',
+                      t.memberExpression(t.identifier('__tn'), t.identifier('nodeValue')),
+                      t.cloneNode(valueExpr, true),
+                    ),
+                  ),
+                ),
+              ])
+            } else if (pb.type === 'text') {
+              const targetProp = pb.propName === 'children' ? 'innerHTML' : 'textContent'
               updateStmt = t.ifStatement(
                 t.binaryExpression(
                   '!==',
-                  t.memberExpression(t.identifier('__el'), t.identifier('textContent')),
+                  t.memberExpression(t.identifier('__el'), t.identifier(targetProp)),
                   valueExpr,
                 ),
                 t.expressionStatement(
                   t.assignmentExpression(
                     '=',
-                    t.memberExpression(t.identifier('__el'), t.identifier('textContent')),
+                    t.memberExpression(t.identifier('__el'), t.identifier(targetProp)),
                     t.cloneNode(valueExpr, true),
                   ),
                 ),
@@ -469,6 +497,21 @@ export function applyStaticReactivity(
             containerBindingId?: string
             eventToken?: string
           }> = []
+          const tmplBody = templateMethod?.body.body ?? []
+          let tmplReturnIdx = -1
+          for (let ri = tmplBody.length - 1; ri >= 0; ri--) {
+            if (t.isReturnStatement(tmplBody[ri])) {
+              tmplReturnIdx = ri
+              break
+            }
+          }
+          const tmplSetupCtx = templateMethod
+            ? {
+                params: templateMethod.params,
+                statements: tmplReturnIdx >= 0 ? tmplBody.slice(0, tmplReturnIdx) : [],
+              }
+            : undefined
+
           analysis.unresolvedMaps.forEach((um, idx) => {
             const isComponentSlot = isUnresolvedMapWithComponentChild(um, imports)
             const arrayPropName = um.computationExpr ? getArrayPropNameFromExpr(um.computationExpr) : null
@@ -486,20 +529,6 @@ export function applyStaticReactivity(
               }
 
               const propNames = getTemplatePropNames(classPath.node.body)
-              const tmplBody = templateMethod?.body.body ?? []
-              let tmplReturnIdx = -1
-              for (let ri = tmplBody.length - 1; ri >= 0; ri--) {
-                if (t.isReturnStatement(tmplBody[ri])) {
-                  tmplReturnIdx = ri
-                  break
-                }
-              }
-              const tmplSetupCtx = templateMethod
-                ? {
-                    params: templateMethod.params,
-                    statements: tmplReturnIdx >= 0 ? tmplBody.slice(0, tmplReturnIdx) : [],
-                  }
-                : undefined
               const methods = generateComponentArrayMethods(
                 um,
                 arrayPropName,
@@ -594,6 +623,7 @@ export function applyStaticReactivity(
               itemTemplate: um.itemTemplate,
               isImportedState: false,
               itemIdProperty: um.itemIdProperty,
+              ...(um.callbackBodyStatements?.length ? { callbackBodyStatements: um.callbackBodyStatements } : {}),
             }
             unresolvedBindings.push({ info: um, binding: syntheticBinding })
             const prevEventLen = unresolvedEventHandlers.length
@@ -603,6 +633,7 @@ export function applyStaticReactivity(
               unresolvedEventHandlers,
               eventIdCounter,
               classPath.node.body,
+              tmplSetupCtx,
             )
             const newHandlers = unresolvedEventHandlers.slice(prevEventLen)
             const tokenMatch = newHandlers[0]?.selector?.match(/data-gea-event="([^"]+)"/)
@@ -616,7 +647,12 @@ export function applyStaticReactivity(
               classPath.node.body.body.push(method)
               applied = true
             }
-            const createMethod = generateCreateItemMethod(syntheticBinding)
+            const createMethod = generateCreateItemMethod(
+              syntheticBinding,
+              getTemplatePropNames(classPath.node.body),
+              getTemplateParamIdentifier(classPath.node.body),
+              tmplSetupCtx,
+            )
             if (createMethod) classPath.node.body.body.push(createMethod)
             if (handlerPropsInMap.length > 0 && um.computationExpr) {
               if (arrayPropName) {
@@ -732,6 +768,15 @@ export function applyStaticReactivity(
             }
           })
 
+          for (const [observeKey] of conditionalSlotObserveIndices) {
+            if (!stateProps.has(observeKey)) {
+              const { parts, storeVar } = parseObserveKey(observeKey)
+              if (!storeVar) {
+                stateProps.set(observeKey, parts)
+              }
+            }
+          }
+
           const hasOnPropChange = classPath.node.body.body.some(
             (member) => t.isClassMethod(member) && t.isIdentifier(member.key) && member.key.name === '__onPropChange',
           )
@@ -759,13 +804,25 @@ export function applyStaticReactivity(
           )
 
           const componentGetterStoreDeps = new Map<string, Array<{ storeVar: string; pathParts: PathParts }>>()
+          const getterLocalRefs = new Map<string, Set<string>>()
+          const getterNames = new Set<string>()
+          for (const member of classPath.node.body.body) {
+            if (t.isClassMethod(member) && member.kind === 'get' && t.isIdentifier(member.key))
+              getterNames.add(member.key.name)
+          }
           for (const member of classPath.node.body.body) {
             if (!t.isClassMethod(member) || member.kind !== 'get' || !t.isIdentifier(member.key)) continue
             const deps: Array<{ storeVar: string; pathParts: PathParts }> = []
+            const localRefs = new Set<string>()
             const program = t.program(member.body.body.map((s) => t.cloneNode(s, true) as t.Statement))
             traverse(program, {
               noScope: true,
               MemberExpression(mePath: NodePath<t.MemberExpression>) {
+                if (t.isThisExpression(mePath.node.object) && t.isIdentifier(mePath.node.property)) {
+                  const propName = mePath.node.property.name
+                  if (getterNames.has(propName) && propName !== member.key.name) localRefs.add(propName)
+                  return
+                }
                 if (!t.isIdentifier(mePath.node.object)) return
                 const objName = mePath.node.object.name
                 const ref = stateRefs.get(objName)
@@ -775,6 +832,72 @@ export function applyStaticReactivity(
               },
             })
             if (deps.length > 0) componentGetterStoreDeps.set(member.key.name, deps)
+            if (localRefs.size > 0) getterLocalRefs.set(member.key.name, localRefs)
+          }
+          // Propagate transitive deps: if getter A refs this.B and B has store deps, merge into A
+          let changed = true
+          while (changed) {
+            changed = false
+            for (const [getterName, refs] of getterLocalRefs) {
+              for (const refName of refs) {
+                const refDeps = componentGetterStoreDeps.get(refName)
+                if (!refDeps) continue
+                const existing = componentGetterStoreDeps.get(getterName) || []
+                for (const dep of refDeps) {
+                  const key = `${dep.storeVar}.${dep.pathParts.join('.')}`
+                  if (!existing.some((e) => `${e.storeVar}.${e.pathParts.join('.')}` === key)) {
+                    existing.push(dep)
+                    changed = true
+                  }
+                }
+                if (!componentGetterStoreDeps.has(getterName)) componentGetterStoreDeps.set(getterName, existing)
+              }
+            }
+          }
+
+          const guardStateKeys = new Set<string>()
+          if (templateMethod && t.isBlockStatement(templateMethod.body)) {
+            const tmplBody = templateMethod.body.body
+            const returnIdx = tmplBody.findIndex((s) => t.isReturnStatement(s))
+            if (returnIdx > 0) {
+              for (let gi = 0; gi < returnIdx; gi++) {
+                const stmt = tmplBody[gi]
+                if (
+                  !t.isIfStatement(stmt) ||
+                  !(
+                    t.isReturnStatement(stmt.consequent) ||
+                    (t.isBlockStatement(stmt.consequent) && stmt.consequent.body.some((b) => t.isReturnStatement(b)))
+                  )
+                )
+                  continue
+                const guardProg = t.program([t.expressionStatement(t.cloneNode(stmt.test, true) as t.Expression)])
+                traverse(guardProg, {
+                  noScope: true,
+                  Identifier(idPath: NodePath<t.Identifier>) {
+                    if (
+                      t.isMemberExpression(idPath.parent) &&
+                      idPath.parent.property === idPath.node &&
+                      !idPath.parent.computed
+                    )
+                      return
+                    const resolved = resolvePath(idPath.node, stateRefs)
+                    if (!resolved?.parts?.length) return
+                    if (!resolved.isImportedState) return
+                    const observeKey = buildObserveKey(resolved.parts, resolved.storeVar)
+                    guardStateKeys.add(observeKey)
+                    if (!stateProps.has(observeKey)) stateProps.set(observeKey, [...resolved.parts])
+                  },
+                })
+              }
+            }
+          }
+
+          const arrayContainerBindingIds = new Set<string>()
+          for (const am of analysis.arrayMaps) {
+            if (am.containerBindingId) arrayContainerBindingIds.add(am.containerBindingId)
+          }
+          for (const um of analysis.unresolvedMaps) {
+            if (um.containerBindingId) arrayContainerBindingIds.add(um.containerBindingId)
           }
 
           for (const [observeKey, propPath] of stateProps) {
@@ -857,6 +980,7 @@ export function applyStaticReactivity(
               if (coveredBindings) {
                 const patchStatements: t.Statement[] = []
                 for (const pb of coveredBindings) {
+                  if (pb.type === 'text' && pb.bindingId && arrayContainerBindingIds.has(pb.bindingId)) continue
                   const body = patchStatementsByBinding.get(pb)
                   if (body) {
                     if (coveredBindings.size === 1)
@@ -882,7 +1006,7 @@ export function applyStaticReactivity(
 
             if (arrayHandled) continue
             if (isNestedArrayPath) continue
-            if (analysis.arrayMaps.length > 0) continue
+            if (analysis.arrayMaps.length > 0 && !guardStateKeys.has(observeKey)) continue
             if (unresolvedMapKeys.has(observeKey)) continue
 
             if (stateChildObserveKeys.has(observeKey)) {
@@ -944,17 +1068,15 @@ export function applyStaticReactivity(
             const hasNonRelationalDeps = deps.some(
               (dep) => !(info.relationalClassBindings || []).find((rb) => rb.observeKey === dep.observeKey),
             )
-            if (hasNonRelationalDeps) {
-              mapRegistrations.push(
-                generateMapRegistration(
-                  binding,
-                  info,
-                  getTemplatePropNames(classPath.node.body),
-                  getTemplateParamIdentifier(classPath.node.body),
-                ),
-              )
-              applied = true
-            }
+            mapRegistrations.push(
+              generateMapRegistration(
+                binding,
+                info,
+                getTemplatePropNames(classPath.node.body),
+                getTemplateParamIdentifier(classPath.node.body),
+              ),
+            )
+            if (hasNonRelationalDeps) applied = true
             let delegateEmitted = false
             deps.forEach((dep) => {
               const relBinding = (info.relationalClassBindings || []).find((rb) => rb.observeKey === dep.observeKey)
@@ -1026,6 +1148,7 @@ export function applyStaticReactivity(
               renderEventHandlers,
               eventIdCounter,
               classPath.node.body,
+              tmplSetupCtx,
             )
             if (method) {
               classPath.node.body.body.push(method)
@@ -1035,7 +1158,12 @@ export function applyStaticReactivity(
               replaceMapInConditionalSlots(analysis.conditionalSlots || [], arrayMap, renderMethodName)
             }
 
-            const createMethod = generateCreateItemMethod(arrayMap)
+            const createMethod = generateCreateItemMethod(
+              arrayMap,
+              getTemplatePropNames(classPath.node.body),
+              getTemplateParamIdentifier(classPath.node.body),
+              tmplSetupCtx,
+            )
             if (createMethod) {
               classPath.node.body.body.push(createMethod)
             }
@@ -1974,32 +2102,40 @@ function generateConditionalPatchMethods(
   templatePropNames: Set<string>,
   wholeParamName?: string,
 ): void {
-  const seenVarNames = new Set<string>()
-  const allSetupStatements: t.Statement[] = []
-  for (const slot of slots) {
-    for (const stmt of slot.setupStatements) {
+  const collectDeduped = (stmts: t.Statement[], seen: Set<string>, out: t.Statement[]) => {
+    for (const stmt of stmts) {
       if (t.isVariableDeclaration(stmt)) {
         const decl = stmt.declarations[0]
         if (t.isIdentifier(decl.id)) {
-          if (!seenVarNames.has(decl.id.name)) {
-            seenVarNames.add(decl.id.name)
-            allSetupStatements.push(stmt)
+          if (!seen.has(decl.id.name)) {
+            seen.add(decl.id.name)
+            out.push(stmt)
           }
         } else if (t.isObjectPattern(decl.id)) {
           const names = decl.id.properties
             .map((p) => (t.isObjectProperty(p) && t.isIdentifier(p.value) ? p.value.name : null))
             .filter(Boolean) as string[]
-          if (names.some((n) => !seenVarNames.has(n))) {
-            names.forEach((n) => seenVarNames.add(n))
-            allSetupStatements.push(stmt)
+          if (names.some((n) => !seen.has(n))) {
+            names.forEach((n) => seen.add(n))
+            out.push(stmt)
           }
         } else {
-          allSetupStatements.push(stmt)
+          out.push(stmt)
         }
       } else {
-        allSetupStatements.push(stmt)
+        out.push(stmt)
       }
     }
+  }
+  const seenVarNames = new Set<string>()
+  const allSetupStatements: t.Statement[] = []
+  for (const slot of slots) {
+    collectDeduped(slot.setupStatements, seenVarNames, allSetupStatements)
+  }
+  const seenHtmlVarNames = new Set<string>()
+  const allHtmlSetupStatements: t.Statement[] = []
+  for (const slot of slots) {
+    collectDeduped(slot.htmlSetupStatements || slot.setupStatements, seenHtmlVarNames, allHtmlSetupStatements)
   }
 
   const rpExpr = (e: t.Expression) => replacePropRefsInExpression(e, templatePropNames, wholeParamName)
@@ -2010,9 +2146,9 @@ function generateConditionalPatchMethods(
     rpStmts(allSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement)),
     rewrittenCondExprs,
   )
-  const initBody: t.Statement[] = [...initSetup]
+  const condAssignments: t.Statement[] = []
   for (let i = 0; i < slots.length; i++) {
-    initBody.push(
+    condAssignments.push(
       t.expressionStatement(
         t.assignmentExpression(
           '=',
@@ -2023,6 +2159,7 @@ function generateConditionalPatchMethods(
     )
   }
 
+  const registerCondCalls: t.Statement[] = []
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i]
     const rewrittenCondExpr = rpExpr(t.cloneNode(slot.conditionExpr, true))
@@ -2037,7 +2174,7 @@ function generateConditionalPatchMethods(
       if (!htmlExpr) return t.nullLiteral()
       const clonedHtmlExpr = rpExpr(t.cloneNode(htmlExpr, true))
       const htmlSetup = pruneDeadParamDestructuring(
-        rpStmts(allSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement)),
+        rpStmts(allHtmlSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement)),
         [clonedHtmlExpr],
       )
       if (htmlSetup.length > 0) {
@@ -2046,7 +2183,7 @@ function generateConditionalPatchMethods(
       return t.arrowFunctionExpression([], clonedHtmlExpr)
     }
 
-    initBody.push(
+    registerCondCalls.push(
       t.expressionStatement(
         t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__geaRegisterCond')), [
           t.numericLiteral(i),
@@ -2058,6 +2195,15 @@ function generateConditionalPatchMethods(
       ),
     )
   }
+
+  const evalStatements = [...initSetup, ...condAssignments]
+  const initBody: t.Statement[] =
+    evalStatements.length > 0
+      ? [
+          t.tryStatement(t.blockStatement(evalStatements), t.catchClause(null, t.blockStatement([]))),
+          ...registerCondCalls,
+        ]
+      : registerCondCalls
 
   inlineIntoConstructor(classBody, initBody)
 }
@@ -2141,7 +2287,11 @@ function injectMapItemAttrsIntoTemplate(
   }>,
 ): void {
   if (mapInfos.length === 0) return
-  const infoByVar = new Map(mapInfos.map((info) => [info.itemVariable, info]))
+  const infoQueueByVar = new Map<string, typeof mapInfos>()
+  for (const info of mapInfos) {
+    if (!infoQueueByVar.has(info.itemVariable)) infoQueueByVar.set(info.itemVariable, [])
+    infoQueueByVar.get(info.itemVariable)!.push(info)
+  }
   const tempProg = t.program([
     t.expressionStatement(t.arrowFunctionExpression(templateMethod.params as t.Identifier[], templateMethod.body)),
   ])
@@ -2154,7 +2304,7 @@ function injectMapItemAttrsIntoTemplate(
       if (!t.isArrowFunctionExpression(fn)) return
       const paramName = t.isIdentifier(fn.params[0]) ? fn.params[0].name : null
       if (!paramName) return
-      const info = infoByVar.get(paramName)
+      const info = infoQueueByVar.get(paramName)?.shift()
       if (!info) return
 
       const rootTL = findRootTemplateLiteral(t.isBlockStatement(fn.body) ? fn.body : fn.body)

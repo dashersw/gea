@@ -573,6 +573,42 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
     o.render(container)
     o.__geaSyncMap(99) // should not throw
   })
+
+  it('re-resolves map container after DOM replacement so sync targets the live tree', () => {
+    let data = ['a', 'b']
+    class M extends Component {
+      template() {
+        return '<div><ul id="map-' + this.id_ + '"></ul></div>'
+      }
+    }
+    const m = new M()
+    const wrap = document.createElement('div')
+    document.body.appendChild(wrap)
+    m.render(wrap)
+    const createFn = (item: any) => {
+      const li = document.createElement('li')
+      li.textContent = item
+      li.setAttribute('data-gea-item-id', item)
+      return li
+    }
+    m.__geaRegisterMap(
+      0,
+      'liveMapContainer',
+      () => document.getElementById('map-' + m.id_)!,
+      () => data,
+      createFn,
+    )
+    m.__geaSyncMap(0)
+    const firstList = document.getElementById('map-' + m.id_)!
+    assert.equal(firstList.children.length, 2)
+    m.element_.innerHTML = '<ul id="map-' + m.id_ + '"></ul>'
+    const secondList = document.getElementById('map-' + m.id_)!
+    assert.notEqual(firstList, secondList)
+    assert.equal(secondList.children.length, 0, 'fresh ul is empty before resync')
+    m.__geaSyncMap(0)
+    assert.equal(secondList.children.length, 2, 'live list must repopulate after root HTML swap')
+    assert.equal(firstList.isConnected, false)
+  })
 })
 
 describe('Component – __geaSyncItems', () => {
@@ -593,6 +629,7 @@ describe('Component – __geaSyncItems', () => {
     const el = document.createElement('div')
     el.setAttribute('data-gea-item-id', id)
     el.textContent = id
+    ;(el as any).__geaItem = id
     return el
   }
 
@@ -1424,6 +1461,7 @@ describe('Component – __geaSyncItems same-length diff content', () => {
     const el = document.createElement('div')
     el.setAttribute('data-gea-item-id', id)
     el.textContent = id
+    ;(el as any).__geaItem = id
     return el
   }
 
@@ -1812,6 +1850,7 @@ describe('Component – __geaSyncItems with removal partial match', () => {
     const el = document.createElement('div')
     el.setAttribute('data-gea-item-id', id)
     el.textContent = id
+    ;(el as any).__geaItem = id
     return el
   }
 

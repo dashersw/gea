@@ -1,7 +1,6 @@
 import * as ratingGroup from '@zag-js/rating-group'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class RatingGroup extends ZagComponent {
   declare value: number
@@ -34,7 +33,7 @@ export default class RatingGroup extends ZagComponent {
     return ratingGroup.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',
@@ -95,6 +94,7 @@ export default class RatingGroup extends ZagComponent {
         <div data-part="control" class="rating-group-control flex gap-0.5">
           {items.map((i: number) => (
             <span
+              key={i}
               data-part="item"
               data-index={String(i)}
               class="rating-group-item cursor-pointer text-2xl text-muted-foreground data-[highlighted]:text-yellow-400 data-[checked]:text-yellow-400"

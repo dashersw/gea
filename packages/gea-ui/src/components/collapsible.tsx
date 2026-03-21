@@ -1,7 +1,6 @@
 import * as collapsible from '@zag-js/collapsible'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Collapsible extends ZagComponent {
   declare open: boolean
@@ -27,7 +26,7 @@ export default class Collapsible extends ZagComponent {
     return collapsible.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="trigger"]': 'getTriggerProps',

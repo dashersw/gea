@@ -1,7 +1,6 @@
 import * as checkbox from '@zag-js/checkbox'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Checkbox extends ZagComponent {
   checked: boolean | 'indeterminate' = false
@@ -33,7 +32,7 @@ export default class Checkbox extends ZagComponent {
     return checkbox.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',

@@ -4,6 +4,13 @@ import { Store } from '../store'
 import type { StoreChange } from '../store'
 import type { ListConfig } from './list'
 
+function __geaSyncItemKey(item: any): string {
+  if (item != null && typeof item === 'object' && 'id' in item) {
+    return String((item as any).id)
+  }
+  return String(item)
+}
+
 export default class Component extends Store {
   static __componentClasses: Map<string, Function> = new Map()
 
@@ -107,7 +114,11 @@ export default class Component extends Store {
   }
 
   __applyListChanges(container: HTMLElement, array: any[], changes: StoreChange[] | null, config: ListConfig) {
-    return applyListChanges(container, array, changes, config)
+    const prevCount = container.childElementCount
+    applyListChanges(container, array, changes, config)
+    if (container.childElementCount !== prevCount) {
+      this.instantiateChildComponents_()
+    }
   }
 
   render(rootEl, opt_index = Infinity) {
@@ -397,10 +408,12 @@ export default class Component extends Store {
         value.forEach(collect)
         return
       }
-      if (value instanceof Component && value.__geaCompiledChild && value.parentComponent === this) {
+      if (value && typeof value === 'object' && value.__geaCompiledChild && value.parentComponent === this) {
         if (!seen.has(value)) {
           seen.add(value)
-          this.__childComponents.push(value)
+          if (!this.__childComponents.includes(value)) {
+            this.__childComponents.push(value)
+          }
         }
       }
     }
@@ -412,6 +425,7 @@ export default class Component extends Store {
     seen.forEach((child) => {
       const existing = document.getElementById(child.id)
       if (!existing) return
+      if (child.rendered_ && child.element_ === existing) return
       existing.setAttribute('data-gea-compiled-child-root', '')
       child.element_ = existing
       child.rendered_ = true
@@ -538,14 +552,47 @@ export default class Component extends Store {
     if (!this.rendered_) return
     const map = this.__geaMaps?.[idx]
     if (!map) return
-    if (!map.container) {
-      map.container = map.getContainer()
-      ;(this as any)[map.containerProp] = map.container
+    // Always re-resolve: after a full template rerender, `getContainer()` points at the
+    // live subtree but a cached `map.container` would still reference a detached node.
+    let container = map.getContainer()
+    if (!container) return
+
+    // When a map is inside a conditional slot, its items may be nested in a
+    // descendant element (e.g. a wrapper div rendered by the slot content)
+    // rather than being direct children of the registered container.
+    // Resolve the actual parent by finding an item whose id starts with
+    // the container's own id prefix.
+    if (container.id) {
+      let hasDirectItems = false
+      for (let n: ChildNode | null = container.firstChild; n; n = n.nextSibling) {
+        if (n.nodeType === 1 && (n as HTMLElement).hasAttribute('data-gea-item-id')) {
+          hasDirectItems = true
+          break
+        }
+        if (n.nodeType === 8 && !(n as any).data) break
+      }
+      if (!hasDirectItems) {
+        const nested = container.querySelector(`[id^="${container.id}-"][data-gea-item-id]`)
+        if (nested?.parentElement && nested.parentElement !== container) {
+          container = nested.parentElement
+        } else if (!nested) {
+          let insideCondSlot = false
+          for (let s: ChildNode | null = container.firstChild; s; s = s.nextSibling) {
+            if (s.nodeType === 8 && (s as Comment).data && /-c\d+$/.test((s as Comment).data)) {
+              insideCondSlot = true
+              break
+            }
+          }
+          if (insideCondSlot) return
+        }
+      }
     }
-    if (!map.container) return
+
+    map.container = container
+    ;(this as any)[map.containerProp] = container
     const items = map.getItems()
     const normalizedItems = Array.isArray(items) ? items : []
-    this.__geaSyncItems(map.container, normalizedItems, map.createItem)
+    this.__geaSyncItems(container, normalizedItems, map.createItem)
   }
 
   __geaSyncItems(container: HTMLElement, items: any[], createItemFn: (item: any, index?: number) => HTMLElement): void {
@@ -565,7 +612,7 @@ export default class Component extends Store {
     if (prev.length === items.length) {
       let same = true
       for (let j = 0; j < prev.length; j++) {
-        if (String(prev[j]) !== String(items[j])) {
+        if (__geaSyncItemKey(prev[j]) !== __geaSyncItemKey(items[j])) {
           same = false
           break
         }
@@ -579,7 +626,7 @@ export default class Component extends Store {
     if (items.length > prev.length) {
       let appendOk = true
       for (let j = 0; j < prev.length; j++) {
-        if (String(prev[j]) !== String(items[j])) {
+        if (__geaSyncItemKey(prev[j]) !== __geaSyncItemKey(items[j])) {
           appendOk = false
           break
         }
@@ -605,7 +652,7 @@ export default class Component extends Store {
 
     if (items.length < prev.length) {
       const newSet = new Set<string>()
-      for (let j = 0; j < items.length; j++) newSet.add(String(items[j]))
+      for (let j = 0; j < items.length; j++) newSet.add(__geaSyncItemKey(items[j]))
       const removals: ChildNode[] = []
       for (let sc: ChildNode | null = container.firstChild; sc; sc = sc.nextSibling) {
         if (sc.nodeType === 1) {
@@ -710,7 +757,12 @@ export default class Component extends Store {
   __geaPatchCond(idx: number): boolean {
     const conf = this.__geaConds?.[idx]
     if (!conf) return false
-    const cond = !!conf.getCond()
+    let cond: boolean
+    try {
+      cond = !!conf.getCond()
+    } catch {
+      return false
+    }
     const condProp = '__geaCond_' + idx
     const prev = (this as any)[condProp]
     const needsPatch = cond !== prev
@@ -749,17 +801,56 @@ export default class Component extends Store {
         } else {
           const tpl = document.createElement('template')
           tpl.innerHTML = html
+          Component.__syncValueProps(tpl.content)
           parent.insertBefore(tpl.content, endMarker)
         }
       }
     }
 
     if (needsPatch) {
+      if (!cond) {
+        const disposed = new Set<Component>()
+        let node: ChildNode | null = marker.nextSibling
+        while (node && node !== endMarker) {
+          if (node.nodeType === 1) {
+            const el = node as HTMLElement
+            for (const child of this.__childComponents) {
+              if (
+                child.__geaCompiledChild &&
+                child.element_ &&
+                (child.element_ === el || el.contains(child.element_))
+              ) {
+                disposed.add(child)
+              }
+            }
+          }
+          node = node.nextSibling
+        }
+        for (const child of disposed) {
+          child.dispose()
+          for (const key of Object.keys(this)) {
+            if ((this as any)[key] === child) {
+              ;(this as any)[key] = null
+              break
+            }
+          }
+        }
+        if (disposed.size > 0) {
+          this.__childComponents = this.__childComponents.filter((c) => !disposed.has(c))
+        }
+      }
       replaceSlotContent(cond ? conf.getTruthyHtml : conf.getFalsyHtml)
+      if (cond) {
+        this.mountCompiledChildComponents_()
+        this.instantiateChildComponents_()
+        this.setupEventDirectives_()
+        Component.__syncAutofocus(marker, endMarker)
+      }
     } else if (cond && conf.getTruthyHtml) {
-      const newHtml = conf.getTruthyHtml()
       const existingNode = marker.nextSibling as HTMLElement | null
       if (existingNode && existingNode !== endMarker && existingNode.nodeType === 1) {
+        if (existingNode.hasAttribute('data-gea-compiled-child-root')) return needsPatch
+        const newHtml = conf.getTruthyHtml()
         const tpl = document.createElement('template')
         tpl.innerHTML = newHtml
         const newEl = tpl.content.firstElementChild
@@ -769,6 +860,30 @@ export default class Component extends Store {
       }
     }
     return needsPatch
+  }
+
+  static __syncValueProps(root: DocumentFragment | Element): void {
+    const els = (root as Element).querySelectorAll?.('textarea[value], input[value], select[value]')
+    if (!els) return
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i] as HTMLInputElement | HTMLTextAreaElement
+      el.value = el.getAttribute('value') || ''
+    }
+  }
+
+  static __syncAutofocus(startMarker: Comment, endMarker: Comment): void {
+    let node: ChildNode | null = startMarker.nextSibling
+    while (node && node !== endMarker) {
+      if (node.nodeType === 1) {
+        const el = node as HTMLElement
+        const target = el.hasAttribute('autofocus') ? el : el.querySelector('[autofocus]')
+        if (target) {
+          ;(target as HTMLElement).focus()
+          return
+        }
+      }
+      node = node.nextSibling
+    }
   }
 
   static __patchNode(existing: Element, desired: Element): void {
@@ -786,6 +901,9 @@ export default class Component extends Store {
     for (let i = 0; i < newAttrs.length; i++) {
       const { name, value } = newAttrs[i]
       if (existing.getAttribute(name) !== value) existing.setAttribute(name, value)
+      if (name === 'value' && 'value' in existing) {
+        ;(existing as HTMLInputElement | HTMLTextAreaElement).value = value
+      }
     }
 
     const oldChildren = existing.childNodes

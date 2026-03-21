@@ -22,7 +22,7 @@ export interface ParseResult {
 }
 
 export interface StateRefMeta {
-  kind: 'local' | 'imported' | 'imported-destructured' | 'local-destructured'
+  kind: 'local' | 'imported' | 'imported-destructured' | 'local-destructured' | 'store-alias'
   source?: string
   storeVar?: string
   propName?: string
@@ -176,6 +176,25 @@ export function collectStateReferences(
               })
             }
           }
+        }
+      }
+
+      // const project = projectStore.project — enables resolvePath(project.users) → ['project','users']
+      if (
+        t.isIdentifier(path.node.id) &&
+        t.isMemberExpression(init) &&
+        t.isIdentifier(init.object) &&
+        storeImports.has(init.object.name) &&
+        t.isIdentifier(init.property) &&
+        !init.computed
+      ) {
+        const localName = path.node.id.name
+        if (!stateRefs.has(localName)) {
+          stateRefs.set(localName, {
+            kind: 'store-alias',
+            storeVar: init.object.name,
+            propName: init.property.name,
+          })
         }
       }
     },

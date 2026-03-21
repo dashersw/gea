@@ -1,7 +1,6 @@
 import * as avatar from '@zag-js/avatar'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Avatar extends ZagComponent {
   loaded = false
@@ -21,7 +20,7 @@ export default class Avatar extends ZagComponent {
     return avatar.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="image"]': 'getImageProps',

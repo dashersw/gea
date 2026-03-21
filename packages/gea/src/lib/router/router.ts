@@ -106,9 +106,10 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
     }
     document.addEventListener('click', this._clickHandler)
 
-    if (routes) {
-      this._resolve()
-    }
+    // Sync reactive path/params from the current URL even when no routes are registered
+    // yet (lazy singleton). Without this, `router.path` stays "" and apps that redirect
+    // based on it can clobber deep links on first load.
+    this._resolve()
   }
 
   setRoutes(routes: RouteMap): void {
@@ -153,6 +154,15 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
     if (depth < this._layouts.length) {
       const layout = this._layouts[depth]
       const props: Record<string, any> = { ...this.params }
+      props.route = this.route
+
+      const nextDepth = depth + 1
+      if (nextDepth < this._layouts.length) {
+        props.page = this._layouts[nextDepth]
+      } else {
+        props.page = this._guardComponent ?? this._currentComponent
+      }
+
       let cacheKey: string | null = null
       const modeInfo = this._queryModes.get(depth)
       if (modeInfo) {

@@ -135,6 +135,56 @@ export function extractItemTemplate(arrowFn: t.ArrowFunctionExpression): t.JSXEl
   return body ? unwrapJSX(body) : undefined
 }
 
+/** Extract statements from a block-body map callback that precede the JSX return.
+ *  Includes variable declarations and early-return guards (e.g. `if (!u) return null`).
+ *  Converts early `return null`/`return undefined` to `return ''` so they produce empty strings in .join('').  */
+export function extractCallbackBodyStatements(arrowFn: t.ArrowFunctionExpression): t.Statement[] {
+  if (!t.isBlockStatement(arrowFn.body)) return []
+  const stmts: t.Statement[] = []
+  for (const s of arrowFn.body.body) {
+    if (t.isReturnStatement(s) && s.argument) {
+      if (t.isJSXElement(s.argument) || t.isJSXFragment(s.argument) || t.isParenthesizedExpression(s.argument)) {
+        break
+      }
+      stmts.push(t.returnStatement(t.stringLiteral('')))
+    } else {
+      const cloned = t.cloneNode(s, true) as t.Statement
+      rewriteEarlyReturns(cloned)
+      stmts.push(cloned)
+    }
+  }
+  return stmts
+}
+
+function rewriteEarlyReturns(node: t.Statement): void {
+  if (t.isIfStatement(node)) {
+    if (t.isReturnStatement(node.consequent)) {
+      if (
+        !node.consequent.argument ||
+        t.isNullLiteral(node.consequent.argument) ||
+        (t.isIdentifier(node.consequent.argument) && node.consequent.argument.name === 'undefined')
+      ) {
+        node.consequent = t.returnStatement(t.stringLiteral(''))
+      }
+    } else if (t.isBlockStatement(node.consequent)) {
+      node.consequent.body.forEach(rewriteEarlyReturns)
+    }
+    if (node.alternate) {
+      if (t.isReturnStatement(node.alternate)) {
+        if (
+          !node.alternate.argument ||
+          t.isNullLiteral(node.alternate.argument) ||
+          (t.isIdentifier(node.alternate.argument) && node.alternate.argument.name === 'undefined')
+        ) {
+          node.alternate = t.returnStatement(t.stringLiteral(''))
+        }
+      } else {
+        rewriteEarlyReturns(node.alternate)
+      }
+    }
+  }
+}
+
 export function detectItemIdProperty(
   template: t.JSXElement | t.JSXFragment | undefined,
   itemVar: string,

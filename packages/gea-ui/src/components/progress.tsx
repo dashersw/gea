@@ -1,7 +1,6 @@
 import * as progress from '@zag-js/progress'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Progress extends ZagComponent {
   declare value: number | null
@@ -27,7 +26,7 @@ export default class Progress extends ZagComponent {
     return progress.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',

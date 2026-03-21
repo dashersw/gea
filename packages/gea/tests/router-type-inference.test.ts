@@ -3,32 +3,13 @@ import assert from 'node:assert/strict'
 import type { InferRouteProps, ExtractParams } from '../src/lib/router/types'
 import type { GeaRouter } from '../src/lib/router/router'
 
-// ── Fake component classes ──────────────────────────────────────
-// These stand in for real Component subclasses. We use `as any` when
-// building the route config so the literal types are preserved for
-// inference while bypassing the runtime Component constraint.
-
-class Home {
-  static _name = 'Home'
-}
-class Projects {
-  static _name = 'Projects'
-}
-class Project {
-  static _name = 'Project'
-}
-class DashboardLayout {
-  static _name = 'DashboardLayout'
-}
-class SettingsLayout {
-  static _name = 'SettingsLayout'
-}
-class ProfileSettings {
-  static _name = 'ProfileSettings'
-}
-class BillingSettings {
-  static _name = 'BillingSettings'
-}
+import Home from '../../../examples/router-simple/src/views/Home'
+import Projects from '../../../examples/router-v2/src/views/Projects'
+import Project from '../../../examples/router-v2/src/views/Project'
+import DashboardLayout from '../../../examples/router-v2/src/layouts/DashboardLayout'
+import SettingsLayout from '../../../examples/router-v2/src/layouts/SettingsLayout'
+import ProfileSettings from '../../../examples/router-v2/src/views/ProfileSettings'
+import BillingSettings from '../../../examples/router-v2/src/views/BillingSettings'
 
 // ── ExtractParams tests ─────────────────────────────────────────
 

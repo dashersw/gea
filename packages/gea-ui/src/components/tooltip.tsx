@@ -1,7 +1,6 @@
 import * as tooltip from '@zag-js/tooltip'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Tooltip extends ZagComponent {
   declare open: boolean
@@ -35,7 +34,7 @@ export default class Tooltip extends ZagComponent {
     return tooltip.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="trigger"]': 'getTriggerProps',
       '[data-part="positioner"]': 'getPositionerProps',

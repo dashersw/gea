@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { runGuards } from '../src/lib/router/guard'
+import NoAccess from '../../../examples/router-v2/src/views/NotFound'
 
 describe('runGuards', () => {
   it('returns true for empty list', () => {
@@ -18,7 +19,6 @@ describe('runGuards', () => {
   })
 
   it('returns first non-true result (component class)', () => {
-    class NoAccess {}
     const guards = [() => true as const, () => NoAccess, () => true as const]
     assert.equal(runGuards(guards), NoAccess)
   })

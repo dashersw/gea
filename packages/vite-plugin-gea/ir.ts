@@ -131,6 +131,8 @@ export interface ConditionalSlot {
   slotId: string
   conditionExpr: t.Expression
   setupStatements: t.Statement[]
+  /** Setup statements needed by the truthy/falsy HTML expressions (may include extra vars) */
+  htmlSetupStatements?: t.Statement[]
   dependentPropNames: string[]
   dependencies: ObserveDependency[]
   /** The original JSX expression from the template (the full conditional expression) */
@@ -163,6 +165,8 @@ export interface UnresolvedMapInfo {
   containerElementPath?: string[]
   containerBindingId?: string
   dependencies?: ObserveDependency[]
+  /** Statements from the map callback body that precede the JSX return (e.g. variable lookups, early-return guards) */
+  callbackBodyStatements?: t.Statement[]
   /** Per-item class toggles that can be patched surgically without full list rebuild */
   relationalClassBindings?: UnresolvedRelationalClassBinding[]
 }

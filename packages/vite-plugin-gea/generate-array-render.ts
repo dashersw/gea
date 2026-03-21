@@ -8,6 +8,8 @@ import {
   replacePropRefsInExpression,
   replacePropRefsInStatements,
 } from './utils.ts'
+import { collectTemplateSetupStatements } from './transform-attributes.ts'
+import type { TemplateSetupContext } from './transform-attributes.ts'
 
 function buildHandlerRegistrationStatements(
   handlerProps: HandlerPropInMap[],
@@ -162,6 +164,7 @@ export function generateRenderItemMethod(
   eventHandlers?: EventHandler[],
   eventIdCounter?: { value: number },
   classBody?: t.ClassBody,
+  templateSetupContext?: TemplateSetupContext,
 ): { method: t.ClassMethod | null; handlers: EventHandler[]; handlerPropsInMap: HandlerPropInMap[] } {
   const renderEventHandlers: EventHandler[] = []
   if (!arrayMap.itemTemplate) return { method: null, handlers: renderEventHandlers, handlerPropsInMap: [] }
@@ -219,11 +222,35 @@ export function generateRenderItemMethod(
     wholeParam,
   )
 
+  const callbackBodyStmts = arrayMap.callbackBodyStatements || []
+  const setupScope =
+    callbackBodyStmts.length > 0
+      ? t.blockStatement([
+          ...callbackBodyStmts.map((s) => t.cloneNode(s, true) as t.Statement),
+          t.expressionStatement(wrapped),
+        ])
+      : wrapped
+  const setupStmts = collectTemplateSetupStatements(setupScope, templateSetupContext)
+  const rewrittenSetup = setupStmts
+    .map((stmt) => replacePropRefsInStatements([t.cloneNode(stmt, true) as t.Statement], propNames, wholeParam))
+    .flat()
+
+  const rewrittenCallbackBody = callbackBodyStmts
+    .map((stmt) => replacePropRefsInStatements([t.cloneNode(stmt, true) as t.Statement], propNames, wholeParam))
+    .flat()
+
   const baseMethod = jsMethod`${id(methodName)}(${id(arrayMap.itemVariable)}) {}`
   if (arrayMap.indexVariable) {
     baseMethod.params.push(t.identifier(arrayMap.indexVariable))
   }
-  const method = appendToBody(baseMethod, buildValueUnwrapHelper(), ...handlerRegStmts, t.returnStatement(wrapped))
+  const method = appendToBody(
+    baseMethod,
+    ...rewrittenSetup,
+    buildValueUnwrapHelper(),
+    ...rewrittenCallbackBody,
+    ...handlerRegStmts,
+    t.returnStatement(wrapped),
+  )
 
   if (handlerPropsInMap.length > 0 && classBody) {
     const handleItemHandler = jsMethod`__handleItemHandler(itemId, e) {
@@ -257,6 +284,7 @@ function insertItemMarker(
   itemIdProperty: string | undefined,
   containerBindingId?: string,
   eventToken?: string,
+  indexParam?: string,
 ): t.TemplateLiteral {
   const first = tl.quasis[0].value.raw
   const tagMatch = first.match(/^(<[\w-]+)(\s|>)/)
@@ -264,7 +292,9 @@ function insertItemMarker(
   let rewrittenFirst: string
   const itemIdExpr = itemIdProperty
     ? t.memberExpression(t.identifier(itemVar), t.identifier(itemIdProperty))
-    : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
+    : indexParam
+      ? t.identifier(indexParam)
+      : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
 
   if (tagMatch) {
     if (containerBindingId) {

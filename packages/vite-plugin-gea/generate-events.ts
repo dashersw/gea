@@ -46,6 +46,22 @@ function ensureMapItemHelper(
   if (classBody.body.some((m) => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === helperName)) return
 
   const itemsExpr = (() => {
+    const [first] = ctx.arrayPathParts
+    const unresolvedMatch = first?.match(/^__unresolved_(\d+)$/)
+    if (unresolvedMatch) {
+      const mapIdx = Number(unresolvedMatch[1])
+      return t.callExpression(
+        t.memberExpression(
+          t.memberExpression(
+            t.memberExpression(t.thisExpression(), t.identifier('__geaMaps')),
+            t.numericLiteral(mapIdx),
+            true,
+          ),
+          t.identifier('getItems'),
+        ),
+        [],
+      )
+    }
     const base = ctx.isImportedState
       ? t.memberExpression(
           t.memberExpression(t.thisExpression(), t.identifier('__stores')),
@@ -53,7 +69,7 @@ function ensureMapItemHelper(
         )
       : t.thisExpression()
     if (ctx.arrayPathParts.length === 0) return base
-    const [first, ...rest] = ctx.arrayPathParts
+    const [, ...rest] = ctx.arrayPathParts
     const isIndex = /^\d+$/.test(first)
     const optionalFirst = t.optionalMemberExpression(
       base,
@@ -64,13 +80,21 @@ function ensureMapItemHelper(
     return rest.length > 0 ? buildMemberChainFromParts(optionalFirst, rest) : optionalFirst
   })()
 
-  const idAccess = ctx.itemIdProperty
-    ? t.optionalMemberExpression(t.identifier('__candidate'), t.identifier(ctx.itemIdProperty), false, true)
-    : t.identifier('__candidate')
-  const findPredicate = t.arrowFunctionExpression(
-    [t.identifier('__candidate')],
-    t.binaryExpression('===', t.callExpression(t.identifier('String'), [idAccess]), t.identifier('__itemId')),
-  )
+  const findPredicate = ctx.itemIdProperty
+    ? t.arrowFunctionExpression(
+        [t.identifier('__candidate')],
+        t.binaryExpression(
+          '===',
+          t.callExpression(t.identifier('String'), [
+            t.optionalMemberExpression(t.identifier('__candidate'), t.identifier(ctx.itemIdProperty), false, true),
+          ]),
+          t.identifier('__itemId'),
+        ),
+      )
+    : t.arrowFunctionExpression(
+        [t.identifier('_'), t.identifier('__i')],
+        t.binaryExpression('===', t.callExpression(t.identifier('String'), [t.identifier('__i')]), t.identifier('__itemId')),
+      )
   const method = jsMethod`${id(helperName)}(e) {
     const __el = e.target.closest('[data-gea-item-id]');
     if (!__el) return null;

@@ -111,6 +111,15 @@ export function transformComponentFile(
         (s) =>
           ({ slotId: s.slotId }) as { slotId: string; truthyHtmlExpr?: t.Expression; falsyHtmlExpr?: t.Expression },
       )
+      const slotInfoById = new Map(conditionalSlotInfos.map((info) => [info.slotId, info]))
+      const conditionalSlotNodeMap = new Map<
+        t.Node,
+        { slotId: string; truthyHtmlExpr?: t.Expression; falsyHtmlExpr?: t.Expression }
+      >()
+      for (const [node, slotId] of analysis.conditionalSlotNodeMap) {
+        const info = slotInfoById.get(slotId)
+        if (info) conditionalSlotNodeMap.set(node, info)
+      }
       const stateChildSlots: import('./transform-jsx').StateChildSlot[] = []
       const ctx = {
         imports,
@@ -128,6 +137,7 @@ export function transformComponentFile(
         isRoot: true,
         conditionalSlots: conditionalSlotInfos,
         conditionalSlotCursor: { value: 0 },
+        conditionalSlotNodeMap,
         stateChildSlots,
         stateChildSlotCounter: { value: 0 },
       }
@@ -191,10 +201,11 @@ export function transformComponentFile(
         }
       }
 
-      for (let i = 0; i < conditionalSlotInfos.length; i++) {
-        if (analysis.conditionalSlots[i]) {
-          analysis.conditionalSlots[i].truthyHtmlExpr = conditionalSlotInfos[i].truthyHtmlExpr
-          analysis.conditionalSlots[i].falsyHtmlExpr = conditionalSlotInfos[i].falsyHtmlExpr
+      for (const info of conditionalSlotInfos) {
+        const slot = analysis.conditionalSlots.find((s) => s.slotId === info.slotId)
+        if (slot) {
+          slot.truthyHtmlExpr = info.truthyHtmlExpr
+          slot.falsyHtmlExpr = info.falsyHtmlExpr
         }
       }
 

@@ -1,7 +1,6 @@
 import * as select from '@zag-js/select'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Select extends ZagComponent {
   declare open: boolean
@@ -55,7 +54,7 @@ export default class Select extends ZagComponent {
     return select.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',
@@ -121,6 +120,7 @@ export default class Select extends ZagComponent {
             <div data-part="list">
               {items.map((item: any) => (
                 <div
+                  key={item.value}
                   data-part="item"
                   data-value={item.value}
                   data-label={item.label}

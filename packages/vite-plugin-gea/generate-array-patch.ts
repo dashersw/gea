@@ -2,7 +2,7 @@ import * as t from '@babel/types'
 import { appendToBody, id, js, jsMethod } from 'eszter'
 import type { NodePath } from '@babel/traverse'
 import type { ArrayMapBinding } from './ir.ts'
-import { normalizePathParts, pathPartsToString } from './utils.ts'
+import { normalizePathParts, pathPartsToString, replacePropRefsInExpression } from './utils.ts'
 import { createRequire } from 'module'
 
 const require = createRequire(import.meta.url)
@@ -238,7 +238,12 @@ function hoistStoreReads(
   return { hoists: Array.from(hoistMap.values()), patchedEntries }
 }
 
-export function generateCreateItemMethod(arrayMap: ArrayMapBinding): t.ClassMethod | null {
+export function generateCreateItemMethod(
+  arrayMap: ArrayMapBinding,
+  templatePropNames?: Set<string>,
+  wholeParamName?: string,
+  templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
+): t.ClassMethod | null {
   if (!arrayMap.itemTemplate) return null
   const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''))
   const arrayName = arrayPath.replace(/\./g, '')
@@ -247,7 +252,58 @@ export function generateCreateItemMethod(arrayMap: ArrayMapBinding): t.ClassMeth
   const renderMethodName = `render${capName}Item`
   const containerProp = `__${arrayPath.replace(/\./g, '_')}_container`
   const itemIdProperty = arrayMap.itemIdProperty
-  const { entries, requiresRerender } = collectPatchEntries(arrayMap)
+  let { entries, requiresRerender } = collectPatchEntries(arrayMap)
+
+  if (arrayMap.callbackBodyStatements?.length) {
+    requiresRerender = true
+  }
+
+  if (!requiresRerender && templateSetupContext && templateSetupContext.statements.length > 0) {
+    const setupVarNames = new Set<string>()
+    for (const stmt of templateSetupContext.statements) {
+      if (t.isVariableDeclaration(stmt)) {
+        for (const decl of stmt.declarations) {
+          if (t.isIdentifier(decl.id)) setupVarNames.add(decl.id.name)
+          else if (t.isObjectPattern(decl.id)) {
+            for (const prop of decl.id.properties) {
+              if (t.isObjectProperty(prop) && t.isIdentifier(prop.value)) setupVarNames.add(prop.value.name)
+              else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) setupVarNames.add(prop.argument.name)
+            }
+          }
+        }
+      }
+    }
+    if (setupVarNames.size > 0) {
+      const freeVars = new Set<string>()
+      for (const entry of entries) {
+        traverse(t.expressionStatement(t.cloneNode(entry.expression, true)), {
+          noScope: true,
+          Identifier(p: NodePath<t.Identifier>) {
+            if (t.isMemberExpression(p.parent) && p.parent.property === p.node && !p.parent.computed) return
+            freeVars.add(p.node.name)
+          },
+        })
+      }
+      for (const name of setupVarNames) {
+        if (freeVars.has(name)) {
+          requiresRerender = true
+          break
+        }
+      }
+    }
+  }
+
+  const propNames = templatePropNames ?? new Set<string>()
+  if (propNames.size > 0 || wholeParamName) {
+    entries = entries.map((e) => ({
+      ...e,
+      expression: replacePropRefsInExpression(
+        t.cloneNode(e.expression, true) as t.Expression,
+        propNames,
+        wholeParamName,
+      ),
+    }))
+  }
 
   if (requiresRerender) {
     const createMethod = jsMethod`${id(methodName)}(item) {}`

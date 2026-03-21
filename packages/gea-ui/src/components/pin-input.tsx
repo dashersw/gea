@@ -1,7 +1,6 @@
 import * as pinInput from '@zag-js/pin-input'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class PinInput extends ZagComponent {
   declare value: string[]
@@ -42,7 +41,7 @@ export default class PinInput extends ZagComponent {
     return pinInput.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',
@@ -65,10 +64,15 @@ export default class PinInput extends ZagComponent {
     const inputs = Array.from({ length: count }, (_, i) => i)
     return (
       <div data-part="root" class={props.class || ''}>
-        {props.label && <label data-part="label" class="pin-input-label text-sm font-medium mb-2 block">{props.label}</label>}
+        {props.label && (
+          <label data-part="label" class="pin-input-label text-sm font-medium mb-2 block">
+            {props.label}
+          </label>
+        )}
         <div data-part="control" class="pin-input-control flex gap-2">
           {inputs.map((i: number) => (
             <input
+              key={i}
               data-part="input"
               data-index={String(i)}
               class="pin-input-field h-9 w-9 rounded-md border border-input bg-transparent text-center text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"

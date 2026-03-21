@@ -1,7 +1,6 @@
 import * as combobox from '@zag-js/combobox'
 import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
-import type { SpreadMap } from '../primitives/zag-component'
 
 export default class Combobox extends ZagComponent {
   declare open: boolean
@@ -84,7 +83,7 @@ export default class Combobox extends ZagComponent {
     return combobox.connect(service, normalizeProps)
   }
 
-  getSpreadMap(): SpreadMap {
+  getSpreadMap() {
     return {
       '[data-part="root"]': 'getRootProps',
       '[data-part="label"]': 'getLabelProps',
@@ -147,6 +146,7 @@ export default class Combobox extends ZagComponent {
             <div data-part="list">
               {this.filteredItems.map((item: any) => (
                 <div
+                  key={item.value}
                   data-part="item"
                   data-value={item.value}
                   data-label={item.label}
