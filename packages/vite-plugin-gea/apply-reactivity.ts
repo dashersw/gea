@@ -595,6 +595,54 @@ export function applyStaticReactivity(
                       }
                     })
                   }
+                  const itemPropsMethod = methods[0]
+                  if (itemPropsMethod && t.isBlockStatement(itemPropsMethod.body)) {
+                    const returnStmt = itemPropsMethod.body.body.find((s) => t.isReturnStatement(s)) as
+                      | t.ReturnStatement
+                      | undefined
+                    if (returnStmt?.argument && t.isObjectExpression(returnStmt.argument)) {
+                      const setupStmts = itemPropsMethod.body.body.filter(
+                        (s) => !t.isReturnStatement(s),
+                      ) as t.Statement[]
+                      const itemPropsDeps = collectExpressionDependencies(
+                        returnStmt.argument,
+                        stateRefs,
+                        setupStmts,
+                      ).filter((dep) => dep.storeVar)
+                      const computedDepKeys = new Set(
+                        computedDeps.map((cd) => `${cd.storeVar}:${pathPartsToString(cd.pathParts)}`),
+                      )
+                      for (const dep of itemPropsDeps) {
+                        const key = `${dep.storeVar}:${pathPartsToString(dep.pathParts)}`
+                        if (computedDepKeys.has(key)) continue
+                        computedDepKeys.add(key)
+                        mergeObserveMethod(
+                          dep.observeKey,
+                          t.classMethod(
+                            'method',
+                            t.identifier(getObserveMethodName(dep.pathParts, dep.storeVar)),
+                            [t.identifier('value'), t.identifier('change')],
+                            t.blockStatement([
+                              t.expressionStatement(
+                                t.callExpression(
+                                  t.memberExpression(
+                                    t.thisExpression(),
+                                    t.identifier(getComponentArrayRefreshMethodName(arrayPropName)),
+                                  ),
+                                  [],
+                                ),
+                              ),
+                            ]),
+                          ),
+                        )
+                        storeComponentArrayObservers.push({
+                          storeVar: dep.storeVar!,
+                          refreshMethodName: getComponentArrayRefreshMethodName(arrayPropName),
+                          pathParts: dep.pathParts,
+                        })
+                      }
+                    }
+                  }
                   const itemTemplateProps = collectPropNamesFromItemTemplate(um.itemTemplate, propNames)
                   const allStoreManaged = computedDeps.length > 0 && computedDeps.every((dep) => dep.storeVar)
                   componentArrayRefreshDeps.push({

@@ -2327,3 +2327,59 @@ test('array .map() with key prop on root element compiles successfully', () => {
   const output = transformComponentSource(source)
   assert.ok(output, 'component with keyed .map() must compile successfully')
 })
+
+test('store deps used in component array item props must route to __refreshXxxItems, not __geaRequestRender', () => {
+  const output = transformComponentSource(
+    `
+    import { Component } from '@geajs/core'
+    import projectStore from './project-store'
+    import IssueCard from './IssueCard'
+
+    function resolveAssignees(issue, users) {
+      return (issue.userIds || []).map(uid => users.find(u => u.id === uid)).filter(Boolean)
+    }
+
+    export default class BoardColumn extends Component {
+      template({ status, issues = [] }) {
+        const project = projectStore.project
+        const users = project ? project.users : []
+        return (
+          <div class="board-list">
+            <div class="board-list-issues">
+              {issues.map(issue => (
+                <IssueCard
+                  key={issue.id}
+                  issueId={issue.id}
+                  title={issue.title}
+                  assignees={resolveAssignees(issue, users)}
+                />
+              ))}
+            </div>
+          </div>
+        )
+      }
+    }
+  `,
+    new Set(['IssueCard']),
+  )
+
+  const projectObserver = output.match(/__observe_projectStore_project\b[^_]([\s\S]*?)\n  \}/)?.[0]
+  assert.ok(projectObserver, 'must generate __observe_projectStore_project')
+  assert.ok(
+    !projectObserver.includes('__geaRequestRender'),
+    '__observe_projectStore_project must NOT call __geaRequestRender (should call __refreshIssuesItems). Got: ' +
+      projectObserver,
+  )
+  assert.ok(
+    projectObserver.includes('__refreshIssuesItems'),
+    '__observe_projectStore_project must call __refreshIssuesItems. Got: ' + projectObserver,
+  )
+
+  const usersObserver = output.match(/__observe_projectStore_project__users([\s\S]*?)\n  \}/)?.[0]
+  if (usersObserver) {
+    assert.ok(
+      !usersObserver.includes('__geaRequestRender'),
+      '__observe_projectStore_project__users must NOT call __geaRequestRender. Got: ' + usersObserver,
+    )
+  }
+})

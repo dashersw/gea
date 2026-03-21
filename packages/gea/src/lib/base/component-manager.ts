@@ -282,6 +282,7 @@ export default class ComponentManager {
       const selector = `[data-gea-event="${geaEvt}"]`
       const handler = handlers[selector]
       if (typeof handler === 'function') {
+        Object.defineProperty(e, 'currentTarget', { value: targetEl, configurable: true })
         const result = handler.call(comp, e)
         if (result === false) return false
       }
@@ -295,6 +296,7 @@ export default class ComponentManager {
         const handler = handlers[selector]
         if (typeof handler === 'function') {
           const targetComponent = this.getOwningComponent(targetEl)
+          Object.defineProperty(e, 'currentTarget', { value: targetEl, configurable: true })
           const result = handler.call(comp, e, targetComponent !== comp ? targetComponent : undefined)
           if (result === false) return false
         }
