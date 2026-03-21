@@ -104,7 +104,9 @@ export default class Outlet extends Component {
       }
     }
 
-    if (isSameComponent && isLeaf && router.path === (this as any)._lastPath) {
+    if (isSameComponent && isLeaf) {
+      this._lastCacheKey = item.cacheKey
+      ;(this as any)._lastPath = router.path
       return
     }
 
@@ -114,6 +116,9 @@ export default class Outlet extends Component {
       const child = new item.component(item.props)
       child.parentComponent = this
       child.render(this.el)
+      if (child.element_) {
+        child.element_.setAttribute('data-gea-compiled-child-root', '')
+      }
       this._currentChild = child
       this._currentComponentClass = item.component
       this.__childComponents = [child]

@@ -141,9 +141,10 @@ export default class IssueDetails extends Component {
   handleDeleteIssue() {
     const issue = issueStore.issue
     if (!issue) return
-    projectStore.deleteIssue(issue.id)
+    const issueId = issue.id
     this.confirmingDelete = false
     this.props.onClose?.()
+    projectStore.deleteIssue(issueId)
     toastStore.success('Issue has been successfully deleted.')
   }
 

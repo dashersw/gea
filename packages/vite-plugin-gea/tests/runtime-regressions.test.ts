@@ -4775,10 +4775,14 @@ test('component getter displayLabel text updates when value prop changes (Select
 
 test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRequestRender', async () => {
   const restoreDom = installDom()
+  let Outlet: any = null
+  let router: any = null
 
   try {
-    const seed = `runtime-${Date.now()}-jira-board-rerender`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager')
+    ComponentManager.instance = undefined
+    const { default: Component } = await import('../../gea/src/lib/base/component.tsx')
+    const { Store } = await import('../../gea/src/lib/store.ts')
 
     const { readFileSync } = await import('node:fs')
     const jiraRoot = join(__dirname, '../../../examples/jira_clone/src')
@@ -4867,10 +4871,11 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
       })
     }
 
-    const { Router } = await import(`../../gea/src/lib/router/router.ts?${seed}`)
-    const { matchRoute } = await import(`../../gea/src/lib/router/match.ts?${seed}`)
-    const router = new Router()
-    router.path = '/project/board'
+    const { Router } = await import('../../gea/src/lib/router/router.ts')
+    const { matchRoute } = await import('../../gea/src/lib/router/match.ts')
+    Outlet = (await import('../../gea/src/lib/router/outlet.ts')).default
+    router = new Router()
+    Outlet._router = router
 
     const IssueStatus = { BACKLOG: 'backlog', SELECTED: 'selected', INPROGRESS: 'inprogress', DONE: 'done' }
     const IssueStatusCopy: Record<string, string> = {
@@ -4933,7 +4938,7 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
     try {
       avatar = await import('@zag-js/avatar')
       ;({ normalizeProps } = await import('@zag-js/vanilla'))
-      const zagMod = await import(`../../gea-ui/src/primitives/zag-component.ts?${seed}`)
+      const zagMod = await import('../../gea-ui/src/primitives/zag-component.ts')
       ZagComponent = zagMod.default
     } catch {
       // If zag not available, use a simple stub
@@ -4979,6 +4984,32 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
       Avatar,
       Breadcrumbs,
       BoardColumn,
+    })
+
+    // QuillEditor — real source
+    let Quill: any
+    try {
+      Quill = (await import('quill')).default
+    } catch {
+      Quill = class {
+        constructor() {}
+        on() {}
+        focus() {}
+        root = { innerHTML: '' }
+        clipboard = { dangerouslyPasteHTML() {} }
+      }
+    }
+    const QuillEditor = await compileJsxComponent(
+      readJira('components/QuillEditor.tsx'),
+      join(jiraRoot, 'components/QuillEditor.tsx'),
+      'QuillEditor',
+      { Component, Quill },
+    )
+
+    // Set up routes so Outlet can resolve components
+    router.setRoutes({
+      '/project/board': Board,
+      '/project/board/issues/:issueId': Board,
     })
 
     // Sidebar — real source
@@ -5132,6 +5163,7 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
         Spinner,
         CommentCreate,
         CommentItem,
+        QuillEditor,
       },
     )
 
@@ -5185,6 +5217,7 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
       'Project',
       {
         Component,
+        Outlet,
         router,
         matchRoute,
         Dialog,
@@ -5267,6 +5300,9 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
 
     const view = new Project()
     view.render(root)
+
+    router.replace('/project/board')
+    await flushMicrotasks()
     await flushMicrotasks()
 
     // Board must be rendered and have the attribute
@@ -5286,7 +5322,7 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
     const boardIdBefore = boardEl!.id
 
     // --- Simulate route change — open issue 2 (userIds: ['u1', 'u3']) ---
-    router.path = '/project/board/issues/2'
+    router.replace('/project/board/issues/2')
     await flushMicrotasks()
     await flushMicrotasks()
 
@@ -5367,7 +5403,7 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
     assert.ok(detailsAfterComment, 'IssueDetails must still show full details after adding a comment (not spinner)')
 
     // --- Close the dialog and verify body styles are cleaned up ---
-    router.path = '/project/board'
+    router.replace('/project/board')
     issueStore.clear()
     await flushMicrotasks()
     await flushMicrotasks()
@@ -5383,6 +5419,8 @@ test('jira_clone: Board keeps data-gea-compiled-child-root after Project.__geaRe
     await flushMicrotasks()
     await flushMicrotasks()
   } finally {
+    if (Outlet) Outlet._router = null
+    if (router) router.dispose()
     restoreDom()
   }
 })
@@ -7955,7 +7993,6 @@ test('full hierarchy: changing reporter inside real Project/Dialog must not dest
     projectStore.project = fakeProject
     issueStore.issue = { ...fakeIssue }
     authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
-    router.path = '/project/board/issues/ISS-42'
 
     // Render Project into the DOM
     const root = document.createElement('div')
@@ -7965,22 +8002,10 @@ test('full hierarchy: changing reporter inside real Project/Dialog must not dest
     const projectComp = new Project()
     projectComp.render(root, {})
 
+    router.replace('/project/board/issues/ISS-42')
     await flushMicrotasks()
     await flushMicrotasks()
     await flushMicrotasks()
-
-    // --- Verify the full hierarchy rendered ---
-    assert.ok(projectComp.el, 'Project component must have rendered')
-
-    // Debug: check what's rendered
-    const loader = document.querySelector('.issue-details-loader')
-    const dialog = document.querySelector('.dialog-issue-detail')
-    const pageLoader = document.querySelector('page-loader')
-    console.log(
-      `[DEBUG reporter] loader=${!!loader} dialog=${!!dialog} pageLoader=${!!pageLoader} issueStore.issue=${!!issueStore.issue} issueStore.isLoading=${issueStore.isLoading}`,
-    )
-    console.log(`[DEBUG reporter] router.path=${router.path}`)
-    console.log(`[DEBUG reporter] html preview: ${projectComp.el?.innerHTML?.substring(0, 500)}`)
 
     const issueDetails = document.querySelector('.issue-details')
     assert.ok(issueDetails, 'IssueDetails must render inside Project/Dialog')
@@ -8097,7 +8122,6 @@ test('full hierarchy: adding assignee must update chip list and preserve reporte
     projectStore.project = fakeProject
     issueStore.issue = { ...fakeIssue }
     authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
-    router.path = '/project/board/issues/ISS-42'
 
     const root = document.createElement('div')
     root.id = 'app-root'
@@ -8106,6 +8130,7 @@ test('full hierarchy: adding assignee must update chip list and preserve reporte
     const projectComp = new Project()
     projectComp.render(root, {})
 
+    router.replace('/project/board/issues/ISS-42')
     await flushMicrotasks()
     await flushMicrotasks()
     await flushMicrotasks()
@@ -8230,7 +8255,6 @@ test('full hierarchy: assignee dropdown must remove added user from list', async
     projectStore.project = fakeProject
     issueStore.issue = { ...fakeIssue }
     authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
-    router.path = '/project/board/issues/ISS-42'
 
     const root = document.createElement('div')
     root.id = 'app-root'
@@ -8239,6 +8263,7 @@ test('full hierarchy: assignee dropdown must remove added user from list', async
     const projectComp = new Project()
     projectComp.render(root, {})
 
+    router.replace('/project/board/issues/ISS-42')
     await flushMicrotasks()
     await flushMicrotasks()
     await flushMicrotasks()
@@ -8356,16 +8381,15 @@ test('full hierarchy: clicking issue card on board must open IssueDetails dialog
     projectStore.project = fakeProject
     authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
 
-    // Start on the board view — no issue dialog
-    router.path = '/project/board'
-    window.history.replaceState({}, '', '/project/board')
-
     const root = document.createElement('div')
     root.id = 'app-root'
     document.body.appendChild(root)
 
     const projectComp = new Project()
     projectComp.render(root, {})
+
+    // Start on the board view — no issue dialog
+    router.replace('/project/board')
 
     await flushMicrotasks()
     await flushMicrotasks()
@@ -8480,7 +8504,6 @@ test('full hierarchy: dropdown closes after picking assignee and newly added chi
     projectStore.project = fakeProject
     issueStore.issue = { ...fakeIssue }
     authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
-    router.path = '/project/board/issues/ISS-42'
 
     const root = document.createElement('div')
     root.id = 'app-root'
@@ -8489,6 +8512,7 @@ test('full hierarchy: dropdown closes after picking assignee and newly added chi
     const projectComp = new Project()
     projectComp.render(root, {})
 
+    router.replace('/project/board/issues/ISS-42')
     await flushMicrotasks()
     await flushMicrotasks()
     await flushMicrotasks()
@@ -8635,7 +8659,6 @@ test('full hierarchy: adding a comment must be a surgical DOM update, not a full
     projectStore.project = fakeProject
     issueStore.issue = { ...fakeIssue }
     authStore.currentUser = { id: 'u1', name: 'Alice', avatarUrl: '/alice.png' }
-    router.path = '/project/board/issues/ISS-42'
 
     const root = document.createElement('div')
     root.id = 'app-root'
@@ -8644,6 +8667,7 @@ test('full hierarchy: adding a comment must be a surgical DOM update, not a full
     const projectComp = new Project()
     projectComp.render(root, {})
 
+    router.replace('/project/board/issues/ISS-42')
     await flushMicrotasks()
     await flushMicrotasks()
     await flushMicrotasks()

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { describe, it, beforeEach, afterEach } from 'node:test'
+import { describe, it, before, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
 
 // ── DOM setup ──────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ function installDom(url = 'http://localhost/') {
     CustomEvent: globalThis.CustomEvent,
     requestAnimationFrame: globalThis.requestAnimationFrame,
     cancelAnimationFrame: globalThis.cancelAnimationFrame,
+    localStorage: (globalThis as any).localStorage,
   }
 
   Object.assign(globalThis, {
@@ -35,6 +36,7 @@ function installDom(url = 'http://localhost/') {
     CustomEvent: dom.window.CustomEvent,
     requestAnimationFrame: raf,
     cancelAnimationFrame: caf,
+    localStorage: dom.window.localStorage,
   })
 
   return () => {
@@ -56,21 +58,29 @@ async function loadModules() {
   return { GeaRouter: GeaRouter as typeof import('../src/lib/router/router').GeaRouter }
 }
 
-import Home from '../../../examples/router-simple/src/views/Home'
-import About from '../../../examples/router-simple/src/views/About'
-import UserProfile from '../../../examples/router-simple/src/views/UserProfile'
-import NotFound from '../../../examples/router-simple/src/views/NotFound'
-import Dashboard from '../../../examples/router-v2/src/views/Overview'
-import LoginPage from '../../../examples/router-v2/src/views/Login'
-import AdminPanel from '../../../examples/router-v2/src/views/Projects'
-import ProjectDetail from '../../../examples/router-v2/src/views/Project'
-import AppShell from '../../../examples/router-v2/src/layouts/AppShell'
-import DashboardLayout from '../../../examples/router-v2/src/layouts/DashboardLayout'
+let Home: any, About: any, UserProfile: any, NotFound: any
+let Dashboard: any, LoginPage: any, AdminPanel: any, ProjectDetail: any
+let AppShell: any, DashboardLayout: any
 
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('GeaRouter', () => {
   let restoreDom: () => void
+
+  before(async () => {
+    restoreDom = installDom('http://localhost/')
+    Home = (await import('../../../examples/router-simple/src/views/Home')).default
+    About = (await import('../../../examples/router-simple/src/views/About')).default
+    UserProfile = (await import('../../../examples/router-simple/src/views/UserProfile')).default
+    NotFound = (await import('../../../examples/router-simple/src/views/NotFound')).default
+    Dashboard = (await import('../../../examples/router-v2/src/views/Overview')).default
+    LoginPage = (await import('../../../examples/router-v2/src/views/Login')).default
+    AdminPanel = (await import('../../../examples/router-v2/src/views/Projects')).default
+    ProjectDetail = (await import('../../../examples/router-v2/src/views/Project')).default
+    AppShell = (await import('../../../examples/router-v2/src/layouts/AppShell')).default
+    DashboardLayout = (await import('../../../examples/router-v2/src/layouts/DashboardLayout')).default
+    restoreDom()
+  })
 
   beforeEach(() => {
     restoreDom = installDom('http://localhost/')
