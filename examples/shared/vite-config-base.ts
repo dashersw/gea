@@ -19,6 +19,7 @@ export function createConfig(metaUrl: string, port: number) {
         plugins: [
           tailwindcss({
             content: [resolve(geaUiRoot, 'src/**/*.{ts,tsx}')],
+            safelist: ['dark'],
             presets: [tailwindPreset],
           } as any),
           autoprefixer(),

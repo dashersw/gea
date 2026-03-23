@@ -19,6 +19,7 @@ export default defineConfig({
       plugins: [
         tailwindcss({
           content: [resolve(geaUiRoot, 'src/**/*.{ts,tsx}')],
+          safelist: ['dark'],
           presets: [tailwindPreset],
         } as any),
         autoprefixer(),
