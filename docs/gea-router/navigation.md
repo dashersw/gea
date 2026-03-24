@@ -78,6 +78,7 @@ import { Link } from '@geajs/core'
 | `replace` | `boolean` | Use `router.replace()` instead of `router.push()` |
 | `target` | `string` | Link target (e.g. `_blank`) |
 | `rel` | `string` | Link relationship (e.g. `noopener`) |
+| `exact` | `boolean` | Use exact matching for `data-active` (default: prefix match) |
 | `onNavigate` | `(e: MouseEvent) => void` | Callback fired before SPA navigation |
 
 ### replace
@@ -94,6 +95,24 @@ Use `target` and `rel` for links that should open in a new tab:
 
 ```tsx
 <Link to="https://docs.example.com" target="_blank" rel="noopener">Docs</Link>
+```
+
+### Active State
+
+`Link` automatically sets a `data-active` attribute on the rendered `<a>` tag when the current route matches. By default it uses prefix matching (`isActive`) — add the `exact` prop for exact matching (`isExact`).
+
+```tsx
+<Link to="/dashboard">Dashboard</Link>           // data-active on /dashboard, /dashboard/projects, etc.
+<Link to="/dashboard" exact>Dashboard</Link>      // data-active only on /dashboard
+```
+
+Style active links with CSS:
+
+```css
+a[data-active] {
+  font-weight: bold;
+  color: var(--accent);
+}
 ```
 
 ### Styling

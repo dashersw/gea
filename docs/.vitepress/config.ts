@@ -66,7 +66,6 @@ export default defineConfig({
           { text: 'JSX Syntax', link: '/core-concepts/jsx-syntax' },
           { text: 'Rendering', link: '/core-concepts/rendering' },
           { text: 'Computed Values', link: '/core-concepts/computed-values' },
-          { text: 'Router', link: '/core-concepts/router' },
         ],
       },
       {
@@ -79,6 +78,7 @@ export default defineConfig({
           { text: 'Layouts', link: '/gea-router/layouts' },
           { text: 'Guards', link: '/gea-router/guards' },
           { text: 'Type Safety', link: '/gea-router/type-safety' },
+          { text: 'Utilities', link: '/gea-router/utilities' },
         ],
       },
       {

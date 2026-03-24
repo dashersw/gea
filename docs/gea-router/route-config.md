@@ -52,6 +52,18 @@ export default class Project extends Component {
 
 Params are always strings. Parse them yourself if you need numbers.
 
+### Pattern Reference
+
+| Pattern | Example URL | Params |
+| --- | --- | --- |
+| `/about` | `/about` | `{}` |
+| `/users/:id` | `/users/42` | `{ id: '42' }` |
+| `/users/:userId/posts/:postId` | `/users/7/posts/99` | `{ userId: '7', postId: '99' }` |
+| `/files/*` | `/files/docs/readme.md` | `{ '*': 'docs/readme.md' }` |
+| `/repo/:owner/*` | `/repo/dashersw/src/index.ts` | `{ owner: 'dashersw', '*': 'src/index.ts' }` |
+
+Named parameters (`:param`) match a single path segment. Wildcards (`*`) capture the rest of the path. Parameter values are URI-decoded automatically.
+
 ### Recommendations
 
 - Keep param names descriptive: `:projectId` over `:id` when multiple param routes exist in the same config.
