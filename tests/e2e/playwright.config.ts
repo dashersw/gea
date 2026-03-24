@@ -24,6 +24,8 @@ const FORMS_PORT = 5305
 const SHOWCASE_PORT = 5306
 const DOCS_PORT = 5307
 const PLAYGROUND_PORT = 5308
+const RUNTIME_ONLY_PORT = 5309
+const RUNTIME_ONLY_JSX_PORT = 5310
 
 export default defineConfig({
   testDir: '.',
@@ -130,6 +132,16 @@ export default defineConfig({
       name: 'playground',
       use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${PLAYGROUND_PORT}` },
       testMatch: 'playground.spec.ts',
+    },
+    {
+      name: 'runtime-only',
+      use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${RUNTIME_ONLY_PORT}` },
+      testMatch: 'runtime-only.spec.ts',
+    },
+    {
+      name: 'runtime-only-jsx',
+      use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${RUNTIME_ONLY_JSX_PORT}` },
+      testMatch: 'runtime-only-jsx.spec.ts',
     },
   ],
   webServer: [
@@ -292,6 +304,24 @@ export default defineConfig({
       url: `http://localhost:${PLAYGROUND_PORT}`,
       reuseExistingServer: false,
       timeout: 30_000,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+    {
+      command: `npx vite dev --port ${RUNTIME_ONLY_PORT}`,
+      cwd: resolve(EXAMPLES_ROOT, 'runtime-only'),
+      url: `http://localhost:${RUNTIME_ONLY_PORT}`,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: 'ignore',
+      stderr: 'pipe',
+    },
+    {
+      command: `npx vite dev --port ${RUNTIME_ONLY_JSX_PORT}`,
+      cwd: resolve(EXAMPLES_ROOT, 'runtime-only-jsx'),
+      url: `http://localhost:${RUNTIME_ONLY_JSX_PORT}`,
+      reuseExistingServer: false,
+      timeout: 120_000,
       stdout: 'ignore',
       stderr: 'pipe',
     },

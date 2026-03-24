@@ -431,8 +431,8 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     // Dialog should close and board should have one fewer card
     await expect(page.locator('.dialog-issue-detail [data-part="content"]')).not.toBeVisible({ timeout: 5000 })
-    const totalAfter = await page.locator('.issue-card').count()
-    expect(totalAfter).toBe(totalBefore - 1)
+    // deleteIssue() is fire-and-forget — wait for the board to re-render
+    await expect(page.locator('.issue-card')).toHaveCount(totalBefore - 1, { timeout: 5000 })
   })
 
   test('cancel delete keeps issue', async ({ page }) => {
