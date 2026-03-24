@@ -37,6 +37,7 @@
     "example:router-simple": "vite dev examples/router-simple",
     "example:router-v2": "vite dev examples/router-v2",
     "example:tic-tac-toe": "vite dev --config examples/tic-tac-toe/vite.config.ts",
+    "example:router-file-based": "vite dev examples/router-file-based",
     "example:todo": "vite dev examples/todo",
     "test:e2e": "npx playwright test --config=tests/e2e/playwright.config.ts"
   },

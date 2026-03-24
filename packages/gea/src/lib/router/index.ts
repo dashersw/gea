@@ -32,6 +32,7 @@ export { Link }
 export { Outlet }
 export { RouterView }
 export { matchRoute } from './match'
+export { buildFileRoutes } from './file-routes'
 export type {
   RouteMap,
   RouteEntry,

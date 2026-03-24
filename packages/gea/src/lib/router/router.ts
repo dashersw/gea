@@ -120,6 +120,29 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
     if (typeof window !== 'undefined') this._resolve()
   }
 
+  /**
+   * Enable file-based routing from a directory.
+   *
+   * This method is transformed at build time by `@geajs/vite-plugin` into a
+   * `setRoutes()` call powered by `import.meta.glob`. If you see this error
+   * at runtime, make sure `geaPlugin()` is configured in your `vite.config.ts`.
+   *
+   * Conventions:
+   * - `page.tsx`    — page component for the route
+   * - `layout.tsx`  — layout wrapping all routes in this directory
+   * - `[param]/`    — dynamic segment (→ `:param`)
+   * - `[...slug]/`  — catch-all segment (→ `*`)
+   *
+   * @example
+   * router.setPath('./pages')
+   */
+  setPath(_path: string): void {
+    throw new Error(
+      '[gea] router.setPath() must be transformed by @geajs/vite-plugin. ' +
+        'Ensure geaPlugin() is added to your vite.config.ts.',
+    )
+  }
+
   get page(): any {
     return this._guardComponent ?? this._currentComponent
   }
