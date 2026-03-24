@@ -60,6 +60,7 @@
     "@zag-js/clipboard": "^1.37.0",
     "@zag-js/collapsible": "^1.37.0",
     "@zag-js/combobox": "^1.37.0",
+    "@zag-js/date-picker": "^1.37.0",
     "@zag-js/dialog": "^1.37.0",
     "@zag-js/file-upload": "^1.37.0",
     "@zag-js/hover-card": "^1.37.0",

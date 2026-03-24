@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import test from 'node:test'
 
 import { GEA_DOM_COMPONENT, GEA_ON_PROP_CHANGE } from '@geajs/core'
@@ -11,6 +12,8 @@ import {
   loadComponentUnseeded,
   readGeaUiSource,
 } from '../../vite-plugin-gea/tests/helpers/compile'
+
+const requireModule = createRequire(import.meta.url)
 
 function installDom() {
   const dom = new JSDOMWithVisuals('<!doctype html><html><body></body></html>')
@@ -540,6 +543,185 @@ test('Dialog: spread queries preserve nested child Zag subtrees with overlapping
 
     assert.ok(comboRoot.isConnected, 'child subtree remains connected after dialog spread updates')
     assert.equal(comboTrigger.getAttribute('aria-haspopup'), 'listbox', 'dialog updates do not clobber child trigger')
+
+    view.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+// ── DatePicker ────────────────────────────────────────────────────────────
+
+test('DatePicker: value changes sync to parent and rendered calendar views update', async () => {
+  const restoreDom = installDom()
+  try {
+    const { Component, ZagComponent } = await loadHarness()
+    const datepicker = requireModule('@zag-js/date-picker')
+    const { spreadProps } = await import('@zag-js/vanilla')
+    const { CalendarDate } = requireModule('@internationalized/date')
+
+    const DatePicker = await loadRealComponent('date-picker.tsx', 'DatePicker', ZagComponent, {
+      datepicker,
+      spreadProps,
+    })
+
+    const Parent = await compileJsxComponent(
+      `
+      import { Component } from '@geajs/core'
+      import DatePicker from './DatePicker'
+      export default class Parent extends Component {
+        dateVal = ''
+        template() {
+          return (
+            <div>
+              <DatePicker
+                label="Select date"
+                defaultFocusedValue={this.props.focusedDate}
+                onValueChange={(d) => { this.dateVal = d.valueAsString[0] || '' }}
+              />
+              <span class="display">{this.dateVal || '(none)'}</span>
+            </div>
+          )
+        }
+      }
+      `,
+      '/virtual/DatePickerParent.jsx',
+      'Parent',
+      { Component, DatePicker },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const view = new Parent({ focusedDate: new CalendarDate(2025, 6, 1) })
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.equal(view.el!.querySelector('.display')?.textContent, '(none)', 'initial display is empty')
+
+    const child = componentFromRoot<any>(view.el!.querySelector('[data-part="root"]'))
+    assert.ok(child._api, 'Zag API is connected')
+
+    let content = view.el!.querySelector('[data-part="content"]') as HTMLElement
+    assert.ok(content, 'content element found')
+    assert.equal(content.querySelectorAll('[data-part="table-cell-trigger"]').length, 42, 'day view renders a day grid')
+
+    const targetDate = new CalendarDate(2025, 6, 15)
+    child._api.setValue([targetDate])
+    await flushMicrotasks()
+
+    assert.equal(child.value[0]?.toString(), targetDate.toString(), 'child value updates')
+    assert.equal((view as any).dateVal, child.valueAsString[0], 'parent callback receives selected date')
+    assert.equal(view.el!.querySelector('.display')?.textContent, child.valueAsString[0], 'parent DOM updates')
+
+    child._api.setView('month')
+    await flushMicrotasks()
+
+    assert.equal(child._api.view, 'month', 'view is month')
+    content = view.el!.querySelector('[data-part="content"]') as HTMLElement
+    assert.equal(content.querySelectorAll('[data-part="table-cell-trigger"]').length, 12, 'month view renders months')
+
+    child._api.setView('year')
+    await flushMicrotasks()
+
+    assert.equal(child._api.view, 'year', 'view is year')
+    content = view.el!.querySelector('[data-part="content"]') as HTMLElement
+    assert.equal(content.querySelectorAll('[data-part="table-cell-trigger"]').length, 10, 'year view renders years')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('DatePicker: day trigger state tracks selection and focus', async () => {
+  const restoreDom = installDom()
+  try {
+    const { Component, ZagComponent } = await loadHarness()
+    const datepicker = requireModule('@zag-js/date-picker')
+    const { spreadProps } = await import('@zag-js/vanilla')
+    const { CalendarDate } = requireModule('@internationalized/date')
+
+    const DatePicker = await loadRealComponent('date-picker.tsx', 'DatePicker', ZagComponent, {
+      datepicker,
+      spreadProps,
+    })
+
+    const Parent = await compileJsxComponent(
+      `
+      import { Component } from '@geajs/core'
+      import DatePicker from './DatePicker'
+      export default class Parent extends Component {
+        template() {
+          return (
+            <div>
+              <DatePicker
+                label="Pick a date"
+                defaultFocusedValue={this.props.focusedDate}
+              />
+            </div>
+          )
+        }
+      }
+      `,
+      '/virtual/DatePickerStateParent.jsx',
+      'Parent',
+      { Component, DatePicker },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const initialFocus = new CalendarDate(2025, 6, 1)
+    const view = new Parent({ focusedDate: initialFocus })
+    view.render(root)
+    await flushMicrotasks()
+
+    const child = componentFromRoot<any>(view.el!.querySelector('[data-part="root"]'))
+    assert.ok(child._api, 'Zag API is connected')
+
+    child._api.setFocusedValue(initialFocus)
+    await flushMicrotasks()
+
+    const content = view.el!.querySelector('[data-part="content"]') as HTMLElement
+    assert.ok(content, 'content found')
+
+    const dayTriggers = Array.from(content.querySelectorAll('[data-part="table-cell-trigger"]')) as HTMLElement[]
+    const initialTrigger = dayTriggers.find(
+      (trigger) => trigger.textContent === '1' && trigger.hasAttribute('data-focus'),
+    )
+    assert.ok(initialTrigger, 'initial focused day trigger found')
+    assert.equal(initialTrigger.getAttribute('data-focus'), '', 'initial day starts focused')
+    assert.equal(initialTrigger.getAttribute('tabindex'), '0', 'initial day starts tabbable')
+
+    const selectedDate = new CalendarDate(2025, 6, 15)
+    child._api.setValue([selectedDate])
+    await flushMicrotasks()
+
+    const selectedTriggers = Array.from(content.querySelectorAll('[data-part="table-cell-trigger"]')) as HTMLElement[]
+    const selectedTrigger = selectedTriggers.find((trigger) => trigger.textContent === '15')
+    const unselectedTrigger = selectedTriggers.find((trigger) => trigger.textContent === '1')
+    assert.ok(selectedTrigger, 'selected day trigger found')
+    assert.ok(unselectedTrigger, 'unselected day trigger found')
+    assert.equal(selectedTrigger.getAttribute('data-selected'), '', 'selected day is marked selected')
+    assert.equal(unselectedTrigger.hasAttribute('data-selected'), false, 'unselected day is not marked selected')
+
+    const nextFocus = new CalendarDate(2025, 6, 20)
+    child._api.setFocusedValue(nextFocus)
+    await flushMicrotasks()
+
+    const focusedTriggers = Array.from(content.querySelectorAll('[data-part="table-cell-trigger"]')) as HTMLElement[]
+    const focusedTrigger = focusedTriggers.find((trigger) => trigger.textContent === '20')
+    const previousFocusedTrigger = focusedTriggers.find((trigger) => trigger.textContent === '1')
+    assert.ok(focusedTrigger, 'new focused day trigger found')
+    assert.ok(previousFocusedTrigger, 'previous focused day trigger found')
+    assert.equal(focusedTrigger.getAttribute('data-focus'), '', 'new focused day is marked focused')
+    assert.equal(focusedTrigger.getAttribute('tabindex'), '0', 'new focused day is tabbable')
+    assert.equal(previousFocusedTrigger.hasAttribute('data-focus'), false, 'previous focused day loses focus state')
+    assert.equal(
+      previousFocusedTrigger.getAttribute('tabindex'),
+      '-1',
+      'previous focused day is removed from tab order',
+    )
 
     view.dispose()
     await flushMicrotasks()
