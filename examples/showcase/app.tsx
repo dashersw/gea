@@ -9,6 +9,7 @@ import Checkbox from '@geajs/ui/checkbox'
 import Clipboard from '@geajs/ui/clipboard'
 import Collapsible from '@geajs/ui/collapsible'
 import Combobox from '@geajs/ui/combobox'
+import DatePicker from '@geajs/ui/date-picker'
 import Dialog from '@geajs/ui/dialog'
 import FileUpload from '@geajs/ui/file-upload'
 import HoverCard from '@geajs/ui/hover-card'
@@ -276,6 +277,16 @@ export default class App extends Component {
                     { value: 'tr', label: 'Turkey' },
                   ]}
                 />
+              </div>
+            </div>
+
+            <div class="component-card">
+              <div class="component-card-header">
+                <h3>Date Picker</h3>
+                <p>Calendar date selection with day, month, and year views.</p>
+              </div>
+              <div class="component-card-body">
+                <DatePicker label="Date of Birth" />
               </div>
             </div>
 
@@ -591,7 +602,7 @@ export default class App extends Component {
 
         <Separator class="my-6" />
 
-        <p class="footer-note">gea-ui — {35} components. Built with Gea, Zag.js, and Tailwind CSS.</p>
+        <p class="footer-note">gea-ui — {39} components. Built with Gea, Zag.js, and Tailwind CSS.</p>
 
         <Toaster />
       </div>
