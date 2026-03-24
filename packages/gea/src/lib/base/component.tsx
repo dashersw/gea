@@ -484,6 +484,19 @@ export default class Component extends Store {
     })
   }
 
+  __child<T extends Component>(Ctor: new (props: any) => T, props: any, key?: any): T {
+    const child = new Ctor(props)
+    child.parentComponent = this
+    child.__geaCompiledChild = true
+    if (key !== undefined) {
+      child.__geaItemKey = String(key)
+    }
+    if (!this.__childComponents.includes(child)) {
+      this.__childComponents.push(child)
+    }
+    return child
+  }
+
   __geaSwapChild(markerId: string, newChild: Component | false | null | undefined) {
     const marker = document.getElementById(this.id_ + '-' + markerId)
     if (!marker) return
