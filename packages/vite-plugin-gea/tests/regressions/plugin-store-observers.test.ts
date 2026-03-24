@@ -102,8 +102,8 @@ test('imported store array text bindings inject id on stats element for getEleme
     'todo-stats div must have id attribute for getElementById lookup',
   )
   assert.ok(
-    /getElementById\([^)]*this\.id[^)]*\+[^)]*"-b\d"\)/.test(output),
-    'stats binding must use getElementById, not this.$(selector) fallback',
+    /this\.__updateText\('b\d'/.test(output),
+    'stats binding must use __updateText helper, not inline getElementById',
   )
 })
 
@@ -635,7 +635,8 @@ test('store-alias nested field must produce inline patch or rerender observer (s
     assert.ok(
       observerMatch[0].includes('__patchNode') ||
         observerMatch[0].includes('__geaRequestRender') ||
-        observerMatch[0].includes('textContent'),
+        observerMatch[0].includes('textContent') ||
+        observerMatch[0].includes('__updateText'),
       'observer must contain patch logic or rerender. Got: ' + observerMatch[0],
     )
   }

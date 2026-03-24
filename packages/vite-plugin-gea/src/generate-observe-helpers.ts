@@ -135,6 +135,11 @@ export function buildSimpleUpdate(
     return js`if (${el}) { const __tn = ${jsExpr`${el}.childNodes[${idx}]`}; if (__tn && __tn.nodeValue !== ${valueExpr}) __tn.nodeValue = ${valueExpr}; }`
   }
 
+  if (target === 'textContent' && binding.bindingId && binding.bindingId !== '') {
+    const suffix = t.stringLiteral(binding.bindingId)
+    return js`${jsExpr`this.__updateText(${suffix}, ${valueExpr})`};`
+  }
+
   return js`if (${el}) { ${jsExpr`${el}.${id(target)}`} = ${valueExpr}; }`
 }
 
