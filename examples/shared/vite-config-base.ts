@@ -32,6 +32,7 @@ export function createConfig(metaUrl: string, port: number) {
         '@geajs/ui': resolve(__dirname, '../../packages/gea-ui/src'),
       },
     },
+    cacheDir: resolve(__dirname, 'node_modules/.vite'),
     optimizeDeps: {
       entries: ['index.html'],
     },
