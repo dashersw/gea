@@ -189,10 +189,17 @@ function generateCreatedHooks(
       const itemPropsMethodName = `__itemProps_${config.arrayPropName}`
 
       // Build the config object for __observeList
+      // Note: items may be undefined at createdHooks time (runs during super()
+      // before constructor body sets the instance variable). The runtime uses
+      // itemsKey to lazily resolve the items array from the component instance.
       const configProps: t.ObjectProperty[] = [
         t.objectProperty(
           t.identifier('items'),
           t.memberExpression(t.thisExpression(), t.identifier(itemsName)),
+        ),
+        t.objectProperty(
+          t.identifier('itemsKey'),
+          t.stringLiteral(itemsName),
         ),
         t.objectProperty(
           t.identifier('container'),
@@ -1584,6 +1591,10 @@ export function applyStaticReactivity(
               if (conditionalSlotIndices.length > 0) continue
               if (analysis.conditionalSlotScopedStoreKeys?.has(observeKey)) continue
               mergeObserveMethod(observeKey, generateRerenderObserver(propPath, storeVar, guardStateKeys.has(observeKey)))
+            } else if (guardStateKeys.has(observeKey)) {
+              // Guard keys that also have child observers need a re-render observer
+              // so that null<->non-null transitions trigger a full DOM rebuild.
+              mergeObserveMethod(observeKey, generateRerenderObserver(propPath, storeVar, true))
             }
           }
 
@@ -2280,6 +2291,36 @@ export function applyStaticReactivity(
               ensureStoreGroup(obs.storeVar).observeHandlers.set(`__storeCompArray_${obs.refreshMethodName}`, {
                 pathParts: obs.pathParts,
                 methodName: obs.refreshMethodName,
+              })
+            }
+
+            // Inject null guards for observer methods on paths under early-return
+            // guards.  When `issue` is null, observers on `["issue","type"]` etc.
+            // would crash accessing `issue.type`.  Prepend `if (store.parent == null) return;`
+            // so the observer silently skips — the guard-key observer will re-render.
+            if (guardStateKeys.size > 0) {
+              addedMethods.forEach((method, observeKey) => {
+                const { parts, storeVar: sv } = parseObserveKey(observeKey)
+                if (!sv || parts.length < 2) return
+                // Check every prefix (e.g. ["issue"] for ["issue","type"])
+                for (let prefixLen = 1; prefixLen < parts.length; prefixLen++) {
+                  const prefixKey = buildObserveKey(parts.slice(0, prefixLen), sv)
+                  if (guardStateKeys.has(prefixKey)) {
+                    // Prepend: if (storeVar.parentProp == null) return;
+                    const guardCheck = t.ifStatement(
+                      t.binaryExpression(
+                        '==',
+                        t.memberExpression(t.identifier(sv), t.identifier(parts[prefixLen - 1])),
+                        t.nullLiteral(),
+                      ),
+                      t.returnStatement(),
+                    )
+                    if (t.isBlockStatement(method.body)) {
+                      method.body.body.unshift(guardCheck)
+                    }
+                    break // Only need the shallowest guard
+                  }
+                }
               })
             }
 

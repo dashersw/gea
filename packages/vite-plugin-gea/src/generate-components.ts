@@ -44,6 +44,7 @@ export function injectChildComponents(
   const childComponents = Array.from(componentInstances.values()).flat()
   const constructionOrder = [...childComponents].sort((a, b) => (b.dfsIndex ?? 0) - (a.dfsIndex ?? 0))
   const instanceStatements = buildInstanceStatements(constructionOrder, directForwardingChildren)
+  const lazyChildren = constructionOrder.filter((child) => child.lazy)
 
   let injected = false
   traverse(ast, {
@@ -64,6 +65,62 @@ export function injectChildComponents(
         )
         path.node.body.body.unshift(ctor)
         injected = true
+      }
+
+      // Generate lazy getters for children inside conditional slots.
+      // These children must not be constructed eagerly because their
+      // created() may depend on props that aren't available yet.
+      for (const child of lazyChildren) {
+        const isDirect = directForwardingChildren?.has(child.instanceVar)
+        const noProps = childHasNoProps(child)
+        const hasPropsBuilder = !isDirect && !noProps
+        const backingField = `__lazy${child.instanceVar}`
+
+        let propsArg: t.Expression
+        if (hasPropsBuilder) {
+          propsArg = t.callExpression(
+            t.memberExpression(t.thisExpression(), t.identifier(getPropsBuilderMethodName(child))),
+            [],
+          )
+        } else if (child.directMappings && child.directMappings.length > 0) {
+          propsArg = t.objectExpression(
+            child.directMappings.map((m) =>
+              t.objectProperty(
+                t.identifier(m.childPropName),
+                t.memberExpression(
+                  t.memberExpression(t.thisExpression(), t.identifier('props')),
+                  t.identifier(m.parentPropName),
+                ),
+              ),
+            ),
+          )
+        } else {
+          propsArg = t.objectExpression([])
+        }
+
+        // Generate: get _child() { if (!this.__lazy_child) this.__lazy_child = this.__child(Ctor, props); return this.__lazy_child; }
+        const getter = t.classMethod(
+          'get',
+          t.identifier(child.instanceVar),
+          [],
+          t.blockStatement([
+            t.ifStatement(
+              t.unaryExpression('!', t.memberExpression(t.thisExpression(), t.identifier(backingField))),
+              t.expressionStatement(
+                t.assignmentExpression(
+                  '=',
+                  t.memberExpression(t.thisExpression(), t.identifier(backingField)),
+                  t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__child')), [
+                    t.identifier(child.tagName),
+                    propsArg,
+                  ]),
+                ),
+              ),
+            ),
+            t.returnStatement(t.memberExpression(t.thisExpression(), t.identifier(backingField))),
+          ]),
+        )
+        path.node.body.body.push(getter)
       }
 
       childComponents.forEach((child) => {
@@ -100,6 +157,11 @@ function buildInstanceStatements(
 ): t.ExpressionStatement[] {
   const stmts: t.ExpressionStatement[] = []
   instances.forEach((child) => {
+    // Lazy children (inside conditional slots like && or ternary) are
+    // constructed on first access, not eagerly in the constructor.
+    // Eager construction breaks when the child's created() needs props
+    // that aren't available until the condition becomes true.
+    if (child.lazy) return
     let propsArg: t.Expression
     const isDirect = directForwardingChildren?.has(child.instanceVar)
     const noProps = childHasNoProps(child)

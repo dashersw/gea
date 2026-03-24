@@ -332,6 +332,43 @@ export default class Component extends Store {
       ;(this as any).__setupRefs()
     }
 
+    // Re-sync list items after full re-render. When a parent object changes
+    // (e.g. issue null→object), __observeList on ["issue","comments"] doesn't
+    // fire because the proxy only emits on ["issue"]. Rebuild items from
+    // current store data and render any new ones into their containers.
+    if ((this as any).__geaListConfigs) {
+      for (const { store: s, path: p, config: c } of (this as any).__geaListConfigs) {
+        // Lazily resolve items from the instance property if not yet available
+        // (createdHooks runs before constructor body sets the instance variable)
+        if (!c.items && c.itemsKey) c.items = (this as any)[c.itemsKey]
+        if (!c.items) continue
+        const arr = p.reduce((obj: any, key: string) => obj?.[key], s.__store) ?? []
+        if (arr.length === c.items.length) continue
+        const oldByKey = new Map<string, Component>()
+        for (const item of c.items) {
+          if (item.__geaItemKey != null) oldByKey.set(item.__geaItemKey, item)
+        }
+        const next = arr.map((data: any) => {
+          const key = String(c.key(data))
+          const existing = oldByKey.get(key)
+          if (existing) {
+            existing.__geaUpdateProps(c.props(data))
+            oldByKey.delete(key)
+            return existing
+          }
+          return this.__child(c.Ctor, c.props(data), key)
+        })
+        c.items.length = 0
+        c.items.push(...next)
+        const container = c.container()
+        if (container) {
+          for (const item of next) {
+            if (!item.rendered_) item.render(container)
+          }
+        }
+      }
+    }
+
     if (shouldRestoreFocus) {
       const focusTarget =
         (focusedId ? (document.getElementById(focusedId) as HTMLElement | null) || null : null) ||
@@ -587,6 +624,7 @@ export default class Component extends Store {
     path: string[],
     config: {
       items: Component[]
+      itemsKey?: string
       container: () => HTMLElement | null
       Ctor: new (props: any) => Component
       props: (item: any) => any
@@ -594,7 +632,14 @@ export default class Component extends Store {
       onchange?: () => void
     },
   ): void {
+    // Track list configs for re-sync during __geaRequestRender
+    if (!(this as any).__geaListConfigs) (this as any).__geaListConfigs = []
+    ;(this as any).__geaListConfigs.push({ store, path, config })
+
     this.__observe(store, path, (_value, changes) => {
+      // Lazily resolve items from the instance property if not yet available
+      if (!config.items && config.itemsKey) config.items = (this as any)[config.itemsKey]
+      if (!config.items) return
       const storeData = store.__store
       const arr = path.reduce((obj: any, key: string) => obj?.[key], storeData) ?? []
 

@@ -24,7 +24,10 @@ test('conditional child components are instantiated lazily', () => {
 
   assert.match(output, /this\._childView/)
   assert.match(output, /store\.show && store\.payload && `\$\{this\._childView\}`/)
-  assert.match(output, /this\._childView = this\.__child\(ChildView/)
+  // Conditional children use lazy getters instead of eager constructor assignment
+  assert.match(output, /get _childView\(\)/, 'should generate a lazy getter for conditional child')
+  assert.match(output, /__lazy_childView/, 'lazy getter should use a backing field')
+  assert.match(output, /this\.__child\(ChildView/, 'lazy getter should call __child on first access')
   assert.doesNotMatch(output, /__ensureChild_childView/)
 })
 

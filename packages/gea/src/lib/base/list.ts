@@ -120,7 +120,8 @@ export function applyListChanges(
   changes: StoreChange[] | null,
   config: ListConfig,
 ): void {
-  const items = Array.isArray(array) ? array : []
+  const proxiedItems = Array.isArray(array) ? array : []
+  const items = proxiedItems && (proxiedItems as any).__getTarget ? (proxiedItems as any).__getTarget : proxiedItems
 
   if (!changes || changes.length === 0) {
     rerenderListInPlace(container, items, config.create)

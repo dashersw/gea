@@ -52112,7 +52112,10 @@ function applyStaticReactivity(ast, originalAST, className, sourceFile, imports,
                     appendCompiledEventMethods(classPath.node.body, delegatedEvents);
                   }
                 }
-                inlineIntoConstructor(classPath.node.body, [arrayResult.constructorInit]);
+                inlineIntoConstructor(classPath.node.body, [
+                  ...arrayResult.arrSetupStatements.map((s) => libExports.cloneNode(s, true)),
+                  arrayResult.constructorInit
+                ]);
                 if (storeArrayAccess) {
                   observeListConfigs.push({
                     storeVar: storeArrayAccess.storeVar,
@@ -52943,7 +52946,10 @@ function applyStaticReactivity(ast, originalAST, className, sourceFile, imports,
                   appendCompiledEventMethods(classPath.node.body, delegatedEvents);
                 }
               }
-              inlineIntoConstructor(classPath.node.body, [arrayResult.constructorInit]);
+              inlineIntoConstructor(classPath.node.body, [
+                ...arrayResult.arrSetupStatements.map((s) => libExports.cloneNode(s, true)),
+                arrayResult.constructorInit
+              ]);
               if (arrayMap.storeVar) {
                 observeListConfigs.push({
                   storeVar: arrayMap.storeVar,

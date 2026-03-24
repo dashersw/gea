@@ -139,11 +139,16 @@
 
   // ── Async helpers ──────────────────────────────────────────────────
 
+  let _postFlushTime = 0
+
   function waitForFlush() {
-    // Store uses queueMicrotask, so we need to wait for microtasks + a frame
+    // Store uses queueMicrotask, so we need to wait for microtasks + a frame.
+    // Capture the time after microtasks drain (post-flush) to separate
+    // framework work from browser layout/reflow + scheduling overhead.
     return new Promise((resolve) => {
       queueMicrotask(() => {
         queueMicrotask(() => {
+          _postFlushTime = performance.now()
           requestAnimationFrame(() => {
             setTimeout(resolve, 0)
           })
@@ -167,11 +172,15 @@
       resetTimings()
       const t0 = performance.now()
       action(store, i)
+      const tSync = performance.now()
       await waitForFlush()
-      const totalTime = performance.now() - t0
+      const tEnd = performance.now()
 
       results.push({
-        totalTime: +totalTime.toFixed(3),
+        totalTime: +(tEnd - t0).toFixed(3),
+        syncTime: +(tSync - t0).toFixed(3),
+        flushTime: +(_postFlushTime - tSync).toFixed(3),
+        layoutTime: +(tEnd - _postFlushTime).toFixed(3),
         breakdown: getTimings(),
       })
     }
@@ -316,7 +325,11 @@
       const stddev = Math.sqrt(
         data.results.reduce((s, r) => s + (r.totalTime - avgTotal) ** 2, 0) / n,
       )
+      const avgSync = data.results.reduce((s, r) => s + r.syncTime, 0) / n
+      const avgFlush = data.results.reduce((s, r) => s + r.flushTime, 0) / n
+      const avgLayout = data.results.reduce((s, r) => s + r.layoutTime, 0) / n
       lines.push(`  Total: ${avgTotal.toFixed(2)}ms ±${stddev.toFixed(2)}ms (${n} runs)`)
+      lines.push(`  Phases: sync ${avgSync.toFixed(2)}ms │ flush ${avgFlush.toFixed(2)}ms │ layout/paint ${avgLayout.toFixed(2)}ms`)
       lines.push('')
 
       // Aggregate breakdown
@@ -354,10 +367,34 @@
         }
       }
 
-      const overhead = avgTotal - accountedLeaf
-      if (overhead > 0.05) {
+      // Break down unaccounted time using phase measurements
+      const storeMethodKeys = ['run', 'runLots', 'add', 'update', 'clear', 'swapRows', 'select', 'remove']
+      let instrumentedAction = 0
+      for (const m of storeMethodKeys) {
+        const entry = aggregated['benchmarkStore.' + m]
+        if (entry) { instrumentedAction = entry.total / entry.count; break }
+      }
+      const proxyOverhead = Math.max(0, avgSync - instrumentedAction)
+
+      // DOM overhead = flush phase time minus instrumented flush internals
+      const instrumentedFlush = aggregated['store._flushChanges']
+        ? aggregated['store._flushChanges'].total / aggregated['store._flushChanges'].count
+        : 0
+      const domOverhead = Math.max(0, avgFlush - instrumentedFlush)
+
+      if (proxyOverhead > 0.01) {
         lines.push(
-          `  * ${'overhead (proxy traps, microtask scheduling)'.padEnd(48)} ${overhead.toFixed(3).padStart(10)} ${''.padStart(8)} ${((overhead / avgTotal) * 100).toFixed(1).padStart(7)}%`,
+          `  * ${'proxy/mutation overhead (sync − instrumented)'.padEnd(48)} ${proxyOverhead.toFixed(3).padStart(10)} ${''.padStart(8)} ${((proxyOverhead / avgTotal) * 100).toFixed(1).padStart(7)}%`,
+        )
+      }
+      if (domOverhead > 0.01) {
+        lines.push(
+          `  * ${'DOM overhead (flush − instrumented)'.padEnd(48)} ${domOverhead.toFixed(3).padStart(10)} ${''.padStart(8)} ${((domOverhead / avgTotal) * 100).toFixed(1).padStart(7)}%`,
+        )
+      }
+      if (avgLayout > 0.01) {
+        lines.push(
+          `  * ${'browser layout/paint + scheduling'.padEnd(48)} ${avgLayout.toFixed(3).padStart(10)} ${''.padStart(8)} ${((avgLayout / avgTotal) * 100).toFixed(1).padStart(7)}%`,
         )
       }
     }
@@ -368,7 +405,12 @@
     lines.push('Legend:')
     lines.push('  ▸  = parent category (time includes child categories)')
     lines.push('     = leaf category (actual self-time)')
-    lines.push('  *  = unaccounted time (proxy trap overhead, microtask scheduling, GC)')
+    lines.push('  *  = unaccounted time, split by phase:')
+    lines.push('       proxy/mutation  = sync action time not covered by instrumented store methods')
+    lines.push('       DOM overhead    = flush phase time not covered by instrumented _flushChanges')
+    lines.push('       layout/paint    = browser reflow + rAF/setTimeout scheduling after flush')
+    lines.push('')
+    lines.push('  Phases: sync = action() call │ flush = microtask drain │ layout/paint = post-flush')
     lines.push('')
     return lines.join('\n')
   }
@@ -400,9 +442,16 @@
         }
       }
 
+      const avgSync = data.results.reduce((s, r) => s + r.syncTime, 0) / n
+      const avgFlush = data.results.reduce((s, r) => s + r.flushTime, 0) / n
+      const avgLayout = data.results.reduce((s, r) => s + r.layoutTime, 0) / n
+
       exported[key] = {
         name: data.name,
         avgTotalMs: +avgTotal.toFixed(3),
+        avgSyncMs: +avgSync.toFixed(3),
+        avgFlushMs: +avgFlush.toFixed(3),
+        avgLayoutMs: +avgLayout.toFixed(3),
         runs: n,
         breakdown,
       }
