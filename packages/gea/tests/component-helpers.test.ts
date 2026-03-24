@@ -46,8 +46,10 @@ async function loadModules() {
   const mgr = await import(`../src/lib/base/component-manager?${seed}`)
   mgr.default.instance = undefined
   const compMod = await import(`../src/lib/base/component.tsx?${seed}`)
+  const storeMod = await import(`../src/lib/store?${seed}`)
   return {
     Component: compMod.default as typeof import('../src/lib/base/component').default,
+    Store: storeMod.Store as typeof import('../src/lib/store').Store,
   }
 }
 
@@ -256,5 +258,42 @@ describe('Component.__updateText', () => {
     comp.render(document.body)
     // Should not throw when suffix does not exist in the rendered output
     comp.__updateText('nonexistent', 'text')
+  })
+})
+
+describe('Component.__observe', () => {
+  let restoreDom: () => void
+  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
+  let Store: Awaited<ReturnType<typeof loadModules>>['Store']
+
+  beforeEach(async () => {
+    restoreDom = installDom()
+    const mods = await loadModules()
+    Component = mods.Component
+    Store = mods.Store
+  })
+
+  afterEach(() => {
+    restoreDom()
+  })
+
+  it('registers observer and pushes remover to __observer_removers__', async () => {
+    class MyComp extends Component {
+      template() { return `<div id="${this.id}"></div>` }
+    }
+    class TestStore extends Store { count = 0 }
+    const store = new TestStore()
+    const comp = new MyComp()
+    const values: number[] = []
+    comp.__observe(store, ['count'], (v: number) => values.push(v))
+    assert.equal(comp.__observer_removers__.length, 1)
+    store.count = 5
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.deepEqual(values, [5])
+    // Dispose should clean up
+    comp.dispose()
+    store.count = 10
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.deepEqual(values, [5]) // No new value
   })
 })

@@ -516,6 +516,11 @@ export default class Component extends Store {
     if (el) el.textContent = text
   }
 
+  __observe(store: any, path: string[], handler: (value: any, changes: any[]) => void): void {
+    const remover = store.__store.observe(path, handler)
+    this.__observer_removers__.push(remover)
+  }
+
   __geaSwapChild(markerId: string, newChild: Component | false | null | undefined) {
     const marker = document.getElementById(this.id_ + '-' + markerId)
     if (!marker) return
