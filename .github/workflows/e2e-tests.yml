@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: e2e-tests-${{ github.head_ref || github.ref }}
@@ -20,11 +21,14 @@ jobs:
       projects: ${{ steps.find.outputs.projects }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tests/e2e
+          sparse-checkout-cone-mode: false
       - name: Find e2e test projects
         id: find
         run: |
-          projects=$(ls tests/e2e/*.spec.ts \
-            | xargs -I{} basename {} .spec.ts \
+          projects=$(find tests/e2e -maxdepth 1 -name '*.spec.ts' -printf '%f\n' \
+            | sed 's/\.spec\.ts$//' \
             | jq -R -s -c 'split("\n") | map(select(. != ""))')
           echo "projects=$projects" >> "$GITHUB_OUTPUT"
           echo "Discovered projects: $projects"
@@ -85,3 +89,11 @@ jobs:
         run: npx playwright test --config=tests/e2e/playwright.config.ts --project=${{ matrix.project }}
         env:
           CI: true
+          E2E_PROJECT: ${{ matrix.project }}
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.project }}
+          path: test-results/
+          retention-days: 7
