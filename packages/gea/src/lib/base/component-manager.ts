@@ -202,12 +202,15 @@ export default class ComponentManager {
     }).observe(document.body, { childList: true, subtree: true })
   }
 
+  private static NON_BUBBLING_EVENTS_ = new Set(['blur', 'focus', 'scroll', 'mouseenter', 'mouseleave'])
+
   addDocumentEventListeners_(eventTypes: string[]): void {
     if (!document.body) return
 
     eventTypes.forEach((type) => {
       if (this.registeredDocumentEvents_.has(type)) return
-      document.body.addEventListener(type, this.boundHandleEvent_)
+      const useCapture = ComponentManager.NON_BUBBLING_EVENTS_.has(type)
+      document.body.addEventListener(type, this.boundHandleEvent_, useCapture)
       this.registeredDocumentEvents_.add(type)
     })
   }
