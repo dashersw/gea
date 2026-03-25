@@ -1,0 +1,20 @@
+{
+  "name": "__PACKAGE_NAME__",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@geajs/core": "^1.0.0",
+    "@geajs/mobile": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0",
+    "@geajs/vite-plugin": "^1.0.0"
+  }
+}
