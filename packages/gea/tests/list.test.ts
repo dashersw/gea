@@ -155,6 +155,29 @@ describe('applyListChanges', () => {
   })
 
   describe('add changes', () => {
+    it('add at 0 rebuilds when first child is a non-list placeholder (same length as items)', () => {
+      const container = document.createElement('div')
+      const placeholder = document.createElement('div')
+      placeholder.className = 'gesture-log-empty'
+      placeholder.textContent = 'No gestures yet'
+      container.appendChild(placeholder)
+
+      const changes: StoreChange[] = [
+        {
+          type: 'add',
+          property: '0',
+          target: [],
+          pathParts: ['gestureLog', '0'],
+          newValue: 'first',
+        },
+      ]
+
+      applyListChanges(container, ['first'], changes, makeConfig(['gestureLog']))
+      assert.equal(container.children.length, 1)
+      assert.equal(container.children[0].getAttribute('data-gea-item-id'), 'first')
+      assert.equal(container.children[0].textContent, 'first')
+    })
+
     it('inserts rows at specified positions', () => {
       const container = document.createElement('div')
       container.appendChild(createRow('a'))

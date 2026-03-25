@@ -29,6 +29,26 @@ export function camelToKebab(name: string): string {
   return name.replace(/([A-Z])/g, '-$1').toLowerCase()
 }
 
+/**
+ * Coerce a dynamic `class` expression to string (`expr != null ? String(expr) : ''`) then `.trim()`.
+ * Template literals like `base ${cond ? 'x' : ''}` often leave a trailing space when the branch is empty.
+ */
+export function buildTrimmedClassValueExpression(expr: t.Expression): t.Expression {
+  const forCompare = t.cloneNode(expr, true) as t.Expression
+  const forString = t.cloneNode(expr, true) as t.Expression
+  const coerced = t.conditionalExpression(
+    t.binaryExpression('!=', forCompare, t.nullLiteral()),
+    t.callExpression(t.identifier('String'), [forString]),
+    t.stringLiteral(''),
+  )
+  return t.callExpression(t.memberExpression(t.parenthesizedExpression(coerced), t.identifier('trim')), [])
+}
+
+/** `.trim()` on a class string already produced at runtime (e.g. object-syntax class join). */
+export function buildTrimmedClassJoinedExpression(expr: t.Expression): t.Expression {
+  return t.callExpression(t.memberExpression(t.cloneNode(expr, true), t.identifier('trim')), [])
+}
+
 export function generateSelector(selectorPath: string[]): string {
   if (selectorPath.length === 0) return ':scope'
   return `:scope > ${selectorPath.join(' > ')}`

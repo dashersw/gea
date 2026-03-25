@@ -230,9 +230,10 @@ test('identity-based imported map conditionals patch rows without rerender metho
     }
   `)
 
-  assert.match(output, /__v\(store\.selectedId\) === __v\(todo\.id\)/)
+  assert.match(output, /store\.selectedId === todo\.id/)
   assert.match(output, /data-gea-item-id/)
-  assert.match(output, /class="\$\{__v\(store\.selectedId\) === __v\(todo\.id\) \? 'danger' : ''\}"/)
+  assert.match(output, /class="\$\{\(\(store\.selectedId === todo\.id \? 'danger' : ''\)/)
+  assert.match(output, /\.trim\(\)\}/)
   assert.doesNotMatch(output, /render(?:__unresolved_0|Todos)Item[\s\S]*replaceWith/)
   assert.doesNotMatch(output, /__idMap/)
 })

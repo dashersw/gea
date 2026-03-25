@@ -147,6 +147,32 @@ test.describe('mobile-showcase views and navigation', () => {
     await expect(page.locator('.gesture-target-label')).toHaveText('Touch here')
   })
 
+  // Regression: GestureView toggles between an empty placeholder and `.map()` on the same
+  // container; incremental list updates plus the conditional branch can duplicate keyed rows
+  // (same `data-gea-item-id` and duplicate `id` — invalid HTML).
+  test('gesture log has at most one DOM node per list item (unique data-gea-item-id)', async ({ page }) => {
+    await page.locator('.home-card').nth(2).click()
+    await expect(page.locator('.gesture-content')).toBeVisible({ timeout: 5000 })
+
+    const target = page.locator('.gesture-target')
+    const log = page.locator('.gesture-log')
+
+    for (let i = 0; i < 4; i++) {
+      await target.click()
+      await expect(log.locator('.gesture-log-entry').first()).toBeVisible({ timeout: 5000 })
+    }
+
+    const itemIds = await log
+      .locator('.gesture-log-entry')
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-gea-item-id')))
+    const unique = new Set(itemIds)
+    expect(unique.size).toBe(itemIds.length)
+
+    const domIds = await log.locator('.gesture-log-entry').evaluateAll((els) => els.map((el) => el.id))
+    const uniqueDomIds = new Set(domIds)
+    expect(uniqueDomIds.size).toBe(domIds.length)
+  })
+
   test('sidebar hint text is shown on home', async ({ page }) => {
     await expect(page.locator('.home-hint')).toContainText('Swipe from the right edge')
   })
@@ -166,9 +192,12 @@ test.describe('mobile-showcase views and navigation', () => {
       await expect(page.locator('tab-view')).toBeVisible({ timeout: 5000 })
 
       // ViewManager keeps old views in the DOM — verify the marker survived
-      const markerSurvived = await page.locator('.home-card').nth(0).evaluate((el) => {
-        return (el as any).__domStabilityMarker === true
-      })
+      const markerSurvived = await page
+        .locator('.home-card')
+        .nth(0)
+        .evaluate((el) => {
+          return (el as any).__domStabilityMarker === true
+        })
       expect(markerSurvived).toBe(true)
     })
 

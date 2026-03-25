@@ -3,14 +3,15 @@ import { appendToBody, id, js, jsMethod } from 'eszter'
 import type { NodePath } from '@babel/traverse'
 import type { ArrayMapBinding } from './ir.ts'
 import {
+  buildTrimmedClassValueExpression,
+  camelToKebab,
+  getJSXTagName,
+  isComponentTag,
+  loggingCatchClause,
   normalizePathParts,
+  optionalizeMemberChainsAfterComputedItemKey,
   pathPartsToString,
   replacePropRefsInExpression,
-  isComponentTag,
-  getJSXTagName,
-  camelToKebab,
-  loggingCatchClause,
-  optionalizeMemberChainsAfterComputedItemKey,
 } from './utils.ts'
 import { ITEM_IS_KEY } from './analyze-helpers.ts'
 import { createRequire } from 'module'
@@ -617,7 +618,11 @@ export function generateCreateItemMethod(
       case 'className':
         body.push(
           t.expressionStatement(
-            t.assignmentExpression('=', t.memberExpression(navExpr, t.identifier('className')), entry.expression),
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(navExpr, t.identifier('className')),
+              buildTrimmedClassValueExpression(t.cloneNode(entry.expression, true) as t.Expression),
+            ),
           ),
         )
         break

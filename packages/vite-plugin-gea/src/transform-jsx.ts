@@ -1,7 +1,13 @@
 import * as t from '@babel/types'
 import type { ChildComponent, EventHandler, HandlerPropInMap, ObserveDependency } from './ir.ts'
 import type { StateRefMeta } from './parse.ts'
-import { getDirectChildElements, getJSXTagName, isComponentTag as isCompTag } from './utils.ts'
+import {
+  buildTrimmedClassJoinedExpression,
+  buildTrimmedClassValueExpression,
+  getDirectChildElements,
+  getJSXTagName,
+  isComponentTag as isCompTag,
+} from './utils.ts'
 import {
   buildComponentPropsExpression,
   collectExpressionDependencies,
@@ -1135,7 +1141,7 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
             return
           }
           parts.push({ type: 'string', value: html })
-          const classExpr = buildClassObjectExpression(rawExpr)
+          const classExpr = buildTrimmedClassJoinedExpression(buildClassObjectExpression(rawExpr))
           parts.push({ type: 'string', value: ` class="` })
           parts.push({ type: 'expression', value: classExpr })
           html = '"'
@@ -1180,7 +1186,7 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
         parts.push({ type: 'string', value: html })
         const expr = transformJSXExpression(rawExpr, ctx)
         const skipCondition = buildAttrSkipCondition(expr, rawExpr)
-        const templateExpr = expr
+        const templateExpr = propAttrName === 'class' ? buildTrimmedClassValueExpression(expr) : expr
         if (t.isBooleanLiteral(skipCondition) && !skipCondition.value) {
           // Attribute is always present — inline it without a conditional wrapper
           parts.push({ type: 'string', value: ` ${propAttrName}="` })

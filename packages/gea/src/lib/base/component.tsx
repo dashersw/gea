@@ -1117,25 +1117,48 @@ export default class Component extends Store {
     const parent = endMarker && endMarker.parentNode
     if (!marker || !endMarker || !parent) return false
     const replaceSlotContent = (htmlFn: (() => string) | null) => {
+      if (!htmlFn) {
+        let node: ChildNode | null = marker.nextSibling
+        while (node && node !== endMarker) {
+          const next: ChildNode | null = node.nextSibling
+          node.remove()
+          node = next
+        }
+        return
+      }
+      const html = htmlFn()
+      // Empty reinjection = no static HTML for this branch; __applyListChanges may already own
+      // keyed rows between markers. Remove only non–list nodes (placeholders, text) so patch order
+      // vs list observers does not wipe data-gea-item-id rows (mobile-showcase gesture log).
+      if (html === '') {
+        let node: ChildNode | null = marker.nextSibling
+        while (node && node !== endMarker) {
+          const next: ChildNode | null = node.nextSibling
+          if (node.nodeType !== 1) {
+            node.remove()
+          } else if (!(node as HTMLElement).hasAttribute('data-gea-item-id')) {
+            node.remove()
+          }
+          node = next
+        }
+        return
+      }
       let node: ChildNode | null = marker.nextSibling
       while (node && node !== endMarker) {
         const next: ChildNode | null = node.nextSibling
         node.remove()
         node = next
       }
-      if (htmlFn) {
-        const html = htmlFn()
-        const isSvg = 'namespaceURI' in parent && (parent as Element).namespaceURI === 'http://www.w3.org/2000/svg'
-        if (isSvg) {
-          const wrap = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-          wrap.innerHTML = html
-          while (wrap.firstChild) parent.insertBefore(wrap.firstChild, endMarker)
-        } else {
-          const tpl = document.createElement('template')
-          tpl.innerHTML = html
-          Component.__syncValueProps(tpl.content)
-          parent.insertBefore(tpl.content, endMarker)
-        }
+      const isSvg = 'namespaceURI' in parent && (parent as Element).namespaceURI === 'http://www.w3.org/2000/svg'
+      if (isSvg) {
+        const wrap = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        wrap.innerHTML = html
+        while (wrap.firstChild) parent.insertBefore(wrap.firstChild, endMarker)
+      } else {
+        const tpl = document.createElement('template')
+        tpl.innerHTML = html
+        Component.__syncValueProps(tpl.content)
+        parent.insertBefore(tpl.content, endMarker)
       }
     }
 

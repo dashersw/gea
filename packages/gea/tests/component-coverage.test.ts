@@ -983,6 +983,39 @@ describe('Component – __geaRegisterCond and __geaPatchCond', () => {
     const changed = c.__geaPatchCond(4)
     assert.equal(changed, true)
   })
+
+  it('empty falsy reinjection removes placeholder but keeps keyed list rows between markers', () => {
+    class C extends Component {
+      template() {
+        return '<div><!--' + this.id_ + '-cond5--><p class="ph">empty</p><!--' + this.id_ + '-cond5-end--></div>'
+      }
+    }
+    const c = new C()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    c.render(container)
+    const root = c.element_ as HTMLElement
+    const endWalker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT)
+    let endMarker: Comment | null = null
+    let n: Comment | null = endWalker.nextNode() as Comment | null
+    while (n) {
+      if (n.nodeValue === c.id_ + '-cond5-end') {
+        endMarker = n
+        break
+      }
+      n = endWalker.nextNode() as Comment | null
+    }
+    assert.ok(endMarker)
+    const row = document.createElement('div')
+    row.setAttribute('data-gea-item-id', '1')
+    row.textContent = 'row'
+    root.insertBefore(row, endMarker)
+    c.__geaRegisterCond(5, 'cond5', () => false, () => '<span>t</span>', () => '')
+    ;(c as any).__geaCond_5 = true
+    c.__geaPatchCond(5)
+    assert.ok(root.querySelector('[data-gea-item-id="1"]'))
+    assert.equal(root.querySelector('.ph'), null)
+  })
 })
 
 describe('Component – extractComponentProps_', () => {

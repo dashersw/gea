@@ -214,9 +214,17 @@ export function applyListChanges(
   if (addIndexes.length > 0 && addIndexes.includes(0)) {
     const firstChild = container.children[0] as HTMLElement | undefined
     if (firstChild && !firstChild.hasAttribute('data-gea-item-id')) {
-      if (container.children.length === items.length) return
-      rebuildList(container, items, config.create)
-      return
+      if (container.children.length !== items.length) {
+        rebuildList(container, items, config.create)
+        return
+      }
+      // Lengths match: either legacy no-op (multiple non-row nodes) or a single empty-state
+      // placeholder next to one item — remove only the latter (avoid rebuildList: cond markers).
+      if (container.children.length === 1) {
+        firstChild.remove()
+      } else {
+        return
+      }
     }
   }
 

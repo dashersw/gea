@@ -1,7 +1,14 @@
 import * as t from '@babel/types'
 import { appendToBody, id, js, jsBlockBody, jsExpr, jsMethod } from 'eszter'
 import type { ArrayMapBinding, ConditionalMapBinding, RelationalMapBinding } from './ir.ts'
-import { buildMemberChain, normalizePathParts, pathPartsToString, isComponentTag, getJSXTagName } from './utils.ts'
+import {
+  buildMemberChain,
+  buildTrimmedClassValueExpression,
+  getJSXTagName,
+  isComponentTag,
+  normalizePathParts,
+  pathPartsToString,
+} from './utils.ts'
 import { collectPatchEntries, childPathRefName } from './generate-array-patch.ts'
 import type { NodePath } from '@babel/traverse'
 import { createRequire } from 'module'
@@ -231,7 +238,7 @@ function buildPatchEntryPropPatcher(entry: {
         t.assignmentExpression(
           '=',
           t.memberExpression(ref, t.identifier('className')),
-          t.cloneNode(entry.expression, true),
+          buildTrimmedClassValueExpression(t.cloneNode(entry.expression, true) as t.Expression),
         ),
       ),
     )
@@ -729,7 +736,7 @@ function buildConditionalPatchStatement(
     return js`${jsExpr`${target}.textContent`} = ${expression};`
   }
   if (binding.type === 'className') {
-    return js`${jsExpr`${target}.className`} = ${expression};`
+    return js`${jsExpr`${target}.className`} = ${buildTrimmedClassValueExpression(expression)};`
   }
   if (binding.attributeName === 'style') {
     return t.blockStatement(

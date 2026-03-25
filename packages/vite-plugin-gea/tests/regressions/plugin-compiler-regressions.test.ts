@@ -128,3 +128,23 @@ test('user createdHooks is merged: compiler prepends __observe, user body remain
     'generated store setup should run before user createdHooks body',
   )
 })
+
+// Template class like `kanban-card ${cond ? 'dragging' : ''}` leaves a trailing space when falsy;
+// compiler wraps dynamic `class` with String(...).trim() so the DOM attribute stays clean.
+test('dynamic class expression is coerced and trimmed in template output', () => {
+  const output = transformComponentSource(
+    `
+    import { Component } from '@geajs/core'
+
+    export default class Col extends Component {
+      template() {
+        const flag = false
+        return <div class={\`kanban-card \${flag ? 'dragging' : ''}\`} />
+      }
+    }
+  `,
+    new Set(),
+  )
+
+  assert.match(output, /\.trim\(\)/, 'compiled output should trim dynamic class strings')
+})

@@ -420,3 +420,40 @@ export default class App extends Component {
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('conditional empty vs store html map: template() must not embed gestureLog.map (list DOM is __applyListChanges only)', () => {
+  const output = transformComponentSource(`
+    import { View } from '@geajs/mobile'
+    import appStore from './app-store'
+
+    export default class GestureLogPanel extends View {
+      template() {
+        return (
+          <view>
+            <div class="gesture-log">
+              {appStore.gestureLog.length === 0 ? (
+                <div class="gesture-log-empty">No gestures</div>
+              ) : (
+                appStore.gestureLog.map((entry) => (
+                  <div key={entry.id} class="gesture-log-entry">
+                    <span>{entry.gesture}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </view>
+        )
+      }
+    }
+  `)
+
+  assert.match(output, /__geaRegisterCond\(/)
+  assert.match(output, /__applyListChanges/)
+  const tmpl = output.match(/template\([^)]*\)\s*\{([\s\S]*)\n  \}/)
+  assert.ok(tmpl, 'template method should exist')
+  assert.doesNotMatch(
+    tmpl![1],
+    /gestureLog\.map\(/,
+    'store-backed list inside conditional slot must not serialize .map() into template() (duplicates __applyListChanges rows)',
+  )
+})

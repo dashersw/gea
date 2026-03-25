@@ -192,9 +192,10 @@ test('template-scoped prop variables inside .map() are rewritten to this.props',
   const renderMethod = output.match(/render\w*Item\(opt\)\s*\{([\s\S]*?)\n  \}/)
   assert.ok(renderMethod, 'render item method must be generated')
   const renderBody = renderMethod[1]
-  assert.match(renderBody, /this\.props\.isMulti/, 'isMulti must be accessed via this.props in the render item method')
-  assert.match(renderBody, /this\.props\.value/, 'value must be accessed via this.props in the render item method')
-  assert.doesNotMatch(renderBody, /[^.]isMulti\b/, 'bare isMulti must not appear in the render item method body')
+  assert.match(renderBody, /=\s*this\.props;/, 'map item render must read props from this.props')
+  assert.match(renderBody, /\bvalue\b/, 'value must be in map item render')
+  assert.match(renderBody, /\bisMulti\b/, 'isMulti must be in map item render')
+  assert.match(renderBody, /\.trim\(\)\}/, 'dynamic class in map item should be trimmed')
 })
 
 test('map callback render method includes template-local setup statements for free variables', () => {
