@@ -1,6 +1,6 @@
+import { Component } from '@geajs/core'
 import * as toast from '@zag-js/toast'
 import { VanillaMachine, normalizeProps, spreadProps } from '@zag-js/vanilla'
-import { Component } from '@geajs/core'
 
 function stripStyle(props: Record<string, any>): Record<string, any> {
   const { style: _style, ...rest } = props
@@ -88,14 +88,33 @@ export class Toaster extends Component {
     div.className =
       'toast-root group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-md border p-4 shadow-lg transition-all bg-background text-foreground'
 
-    let inner = '<div class="grid gap-1">'
-    if (t.title) inner += `<div data-part="title" class="toast-title text-sm font-semibold">${t.title}</div>`
-    if (t.description)
-      inner += `<div data-part="description" class="toast-description text-sm opacity-90">${t.description}</div>`
-    inner += '</div>'
-    inner +=
-      '<button data-part="close-trigger" class="toast-close-trigger text-foreground/50 hover:text-foreground">&#x2715;</button>'
-    div.innerHTML = inner
+    const content = document.createElement('div')
+    content.className = 'grid gap-1'
+
+    if (t.title) {
+      const title = document.createElement('div')
+      title.setAttribute('data-part', 'title')
+      title.className = 'toast-title text-sm font-semibold'
+      title.textContent = t.title
+      content.appendChild(title)
+    }
+
+    if (t.description) {
+      const description = document.createElement('div')
+      description.setAttribute('data-part', 'description')
+      description.className = 'toast-description text-sm opacity-90'
+      description.textContent = t.description
+      content.appendChild(description)
+    }
+
+    div.appendChild(content)
+
+    const closeBtn = document.createElement('button')
+    closeBtn.setAttribute('data-part', 'close-trigger')
+    closeBtn.className = 'toast-close-trigger text-foreground/50 hover:text-foreground'
+    closeBtn.innerHTML = '&#x2715;'
+    div.appendChild(closeBtn)
+
     return div
   }
 
