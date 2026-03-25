@@ -169,7 +169,6 @@ export default class Component extends Store {
     return this.rendered_
   }
 
-
   onAfterRender() {}
 
   onAfterRenderAsync() {}
@@ -561,15 +560,26 @@ export default class Component extends Store {
         item.render(container)
       }
     }
-    let cursor = container.firstChild
+
+    const ordered: Node[] = []
     for (const item of items) {
-      let el = item.element_
+      let el: HTMLElement | null = item.element_
       if (!el) continue
       while (el.parentElement && el.parentElement !== container) el = el.parentElement
+      ordered.push(el)
+    }
+    if (ordered.length === 0) return
+
+    const itemSet = new Set(ordered)
+    let cursor: ChildNode | null = container.firstChild
+    while (cursor && !itemSet.has(cursor)) cursor = cursor.nextSibling
+
+    for (const el of ordered) {
       if (el !== cursor) {
         container.insertBefore(el, cursor || null)
       } else {
-        cursor = cursor.nextSibling
+        cursor = cursor!.nextSibling
+        while (cursor && !itemSet.has(cursor)) cursor = cursor.nextSibling
       }
     }
   }

@@ -1,4 +1,10 @@
+import babelTraverse from '@babel/traverse'
 import * as t from '@babel/types'
+
+const traverse =
+  typeof (babelTraverse as { default?: unknown }).default === 'function'
+    ? (babelTraverse as { default: typeof babelTraverse }).default
+    : babelTraverse
 import { id, jsImport } from 'eszter'
 import type { PathParts } from './ir.ts'
 import type { StateRefMeta } from './parse.ts'
@@ -528,6 +534,41 @@ export function replaceThisPropsRootWithValueParam(expr: t.Expression, propName:
 export function derivedExprGuardsValueWhenNullish(expr: t.Expression): boolean {
   if (!t.isConditionalExpression(expr)) return false
   return testBranchesOnValueNullish(expr.test)
+}
+
+function unwrapExpressionRoot(e: t.Expression): t.Expression {
+  let x: t.Expression = e
+  while (t.isParenthesizedExpression(x)) x = x.expression
+  while (t.isTSAsExpression(x) || t.isTSSatisfiesExpression(x)) x = x.expression
+  return x
+}
+
+/**
+ * True if `expr` or `setupStmts` contains a non-optional member read on `valueId`
+ * (e.g. `value.x`, `value[0]`), which can throw when `value` is null/undefined.
+ * Optional chaining (`value?.x`) is excluded.
+ */
+export function expressionAccessesValueProperties(
+  expr: t.Expression | null | undefined,
+  setupStmts: readonly t.Statement[] | null | undefined,
+  valueId = 'value',
+): boolean {
+  const body: t.Statement[] = [...(setupStmts ?? [])]
+  if (expr) body.push(t.expressionStatement(expr))
+  const program = t.program([t.blockStatement(body)])
+  let found = false
+  traverse(program, {
+    noScope: true,
+    MemberExpression(path) {
+      if (found) return
+      const obj = unwrapExpressionRoot(path.node.object as t.Expression)
+      if (t.isIdentifier(obj, { name: valueId })) {
+        found = true
+        path.stop()
+      }
+    },
+  })
+  return found
 }
 
 /** Binding that is falsy on the early-return branch (e.g. `!item` → `item`, `item == null` → `item`).

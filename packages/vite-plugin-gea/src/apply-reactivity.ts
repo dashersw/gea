@@ -43,6 +43,7 @@ import {
   pathPartsToString,
   pruneDeadParamDestructuring,
   derivedExprGuardsValueWhenNullish,
+  expressionAccessesValueProperties,
   replacePropRefsInExpression,
   replacePropRefsInStatements,
   replaceThisPropsRootWithValueParam,
@@ -667,6 +668,7 @@ export function applyStaticReactivity(
             const elDecl = t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__el'), elExpr)])
             const corePatch: t.Statement[] = [elDecl]
             let derivedRewrittenExpr: t.Expression | undefined
+            let derivedPrunedSetup: t.Statement[] = []
             if (useDerivedPropExpr) {
               const rewrittenSetup = replacePropRefsInStatements(
                 pb.setupStatements!,
@@ -676,7 +678,8 @@ export function applyStaticReactivity(
               let rewrittenExpr = replacePropRefsInExpression(pb.expression!, templatePropNames, templateWholeParam)
               rewrittenExpr = replaceThisPropsRootWithValueParam(rewrittenExpr, pb.propName)
               derivedRewrittenExpr = rewrittenExpr
-              corePatch.push(...pruneDeadParamDestructuring(rewrittenSetup, [rewrittenExpr]))
+              derivedPrunedSetup = pruneDeadParamDestructuring(rewrittenSetup, [rewrittenExpr])
+              corePatch.push(...derivedPrunedSetup)
               corePatch.push(
                 t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__boundValue'), rewrittenExpr)]),
               )
@@ -691,10 +694,14 @@ export function applyStaticReactivity(
             const guardsNullishInExpr =
               Boolean(derivedRewrittenExpr) && derivedExprGuardsValueWhenNullish(derivedRewrittenExpr!)
 
-            const blockStatements: t.Statement[] =
-              useDerivedPropExpr && !guardsNullishInExpr
-                ? [t.ifStatement(t.unaryExpression('!', nullishValue), t.blockStatement(corePatch))]
-                : corePatch
+            const needsValueNullishGuard =
+              useDerivedPropExpr &&
+              !guardsNullishInExpr &&
+              expressionAccessesValueProperties(derivedRewrittenExpr!, derivedPrunedSetup)
+
+            const blockStatements: t.Statement[] = needsValueNullishGuard
+              ? [t.ifStatement(t.unaryExpression('!', nullishValue), t.blockStatement(corePatch))]
+              : corePatch
 
             patchStatementsByBinding.set(pb, blockStatements)
             applied = true
