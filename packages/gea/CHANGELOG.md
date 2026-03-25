@@ -1,5 +1,19 @@
 # @geajs/core
 
+## 1.0.6
+
+### Patch Changes
+
+- [`e523db8`](https://github.com/dashersw/gea/commit/e523db8dd8d08890213cbb5313012a3642684a71) Thanks [@dashersw](https://github.com/dashersw)! - Fix conditional-slot list rendering so compiler-managed empty states and runtime list patches stay in sync. This prevents duplicate rows, preserves empty placeholders, and restores initial list mounts for mapped views like the mobile gesture log and ecommerce cart drawer.
+
+- [`7a34baa`](https://github.com/dashersw/gea/commit/7a34baa67f08ab0b2bc7332d4f1d8fa4ff551ec7) Thanks [@dashersw](https://github.com/dashersw)! - Fix duplicate list rows when `.map()` output lives under conditional slots (e.g. email-client folder switching): rewrite maps inside conditional-slot HTML, emit an empty string instead of `_items.join('')` in those branches so `__geaPatchCond` does not stack on `__observeList`, register map-sync observers for every resolved getter dependency path, and tighten `__reorderChildren` so empty→non-empty transitions and zero-count placeholders resync the live DOM correctly. Adds a JSDOM regression that mounts the real `examples/email-client` app.
+
+- [`4edb00f`](https://github.com/dashersw/gea/commit/4edb00fdd197986becfba1bad021b56ce8cc56ff) Thanks [@dashersw](https://github.com/dashersw)! - Fix multiple runtime TypeErrors across examples: unify `__rerender` into `__geaRequestRender` for a single full-DOM-replacement code path, generate nested dummy objects in the compiler's array template initializer so sub-property access like `product.name[0]` no longer crashes, guard `Input`'s `onInput` prop with optional chaining, and add a truthiness-only check to early-return observers to preserve DOM stability.
+
+- [`e84edb4`](https://github.com/dashersw/gea/commit/e84edb4cd7ad962d0c9cb4cbd54c168e0f451aea) Thanks [@dashersw](https://github.com/dashersw)! - Fix compiler merging of `createdHooks` — generated store setup is now prepended into user-defined `createdHooks` instead of emitting a duplicate method that silently overwrote user code. Generate null-safe `__onPropChange` handlers by substituting `this.props.<name>` with the incoming `value` parameter, adding optional chaining from early-return binding roots, and tracking `earlyReturnBarrierIndex` so setup statements after a guard don't execute before it. Remove the runtime try-catch around `__onPropChange` dispatch since the compiler now produces safe code paths.
+
+- [`2235805`](https://github.com/dashersw/gea/commit/223580563f2137d140f86ef94ecf05f1fdec91b6) Thanks [@dashersw](https://github.com/dashersw)! - Add regression tests for `__reorderChildren` with static siblings before keyed list items, for `expressionAccessesValueProperties` / conditional `__onPropChange` nullish guards, and for clearing child text when a primitive prop becomes null (`value || ''`).
+
 ## 1.0.5
 
 ### Patch Changes

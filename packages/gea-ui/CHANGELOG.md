@@ -1,5 +1,14 @@
 # @geajs/ui
 
+## 0.1.3
+
+### Patch Changes
+
+- [`4edb00f`](https://github.com/dashersw/gea/commit/4edb00fdd197986becfba1bad021b56ce8cc56ff) Thanks [@dashersw](https://github.com/dashersw)! - Fix multiple runtime TypeErrors across examples: unify `__rerender` into `__geaRequestRender` for a single full-DOM-replacement code path, generate nested dummy objects in the compiler's array template initializer so sub-property access like `product.name[0]` no longer crashes, guard `Input`'s `onInput` prop with optional chaining, and add a truthiness-only check to early-return observers to preserve DOM stability.
+
+- Updated dependencies [[`e523db8`](https://github.com/dashersw/gea/commit/e523db8dd8d08890213cbb5313012a3642684a71), [`7a34baa`](https://github.com/dashersw/gea/commit/7a34baa67f08ab0b2bc7332d4f1d8fa4ff551ec7), [`4edb00f`](https://github.com/dashersw/gea/commit/4edb00fdd197986becfba1bad021b56ce8cc56ff), [`e84edb4`](https://github.com/dashersw/gea/commit/e84edb4cd7ad962d0c9cb4cbd54c168e0f451aea), [`2235805`](https://github.com/dashersw/gea/commit/223580563f2137d140f86ef94ecf05f1fdec91b6)]:
+  - @geajs/core@1.0.6
+
 ## 0.1.2
 
 ### Patch Changes
