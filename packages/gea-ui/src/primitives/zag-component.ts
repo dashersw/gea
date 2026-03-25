@@ -14,6 +14,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
   declare _spreadCleanups: Map<string, SpreadCleanup>
   declare _spreadScheduled: boolean
   declare _zagIdMap: Map<string, Element>
+  declare _elementCache: Map<string, Element[]>
 
   createMachine(_props: any): any {
     return null
@@ -37,6 +38,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
     if (!this._spreadCleanups) this._spreadCleanups = new Map()
     if (this._spreadScheduled === undefined) this._spreadScheduled = false
     if (!this._zagIdMap) this._zagIdMap = new Map()
+    if (!this._elementCache) this._elementCache = new Map()
 
     const machineDef = this.createMachine(props)
     if (!machineDef) return
@@ -112,7 +114,12 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
 
     for (const selector in map) {
       const getter = map[selector]
-      const elements = this._queryAllIncludingSelf(selector)
+      
+      let elements = this._elementCache.get(selector)
+      if (!elements) {
+        elements = this._queryAllIncludingSelf(selector)
+        this._elementCache.set(selector, elements)
+      }
 
       for (let i = 0; i < elements.length; i++) {
         const el = elements[i]
@@ -140,6 +147,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
 
   __geaSyncMap(idx: number) {
     super.__geaSyncMap(idx)
+    this._elementCache.clear()
     // After the map syncs new/updated DOM items, Zag spreads must be
     // re-applied because createItemFn produces elements without Zag's
     // event handlers and attributes.
@@ -148,6 +156,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
 
   onAfterRender() {
     this._cacheArrayContainers()
+    this._elementCache.clear()
     this._applyAllSpreads()
   }
 
@@ -173,6 +182,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
     }
     this._api = null
     this._zagIdMap?.clear()
+    this._elementCache?.clear()
 
     super.dispose()
   }
