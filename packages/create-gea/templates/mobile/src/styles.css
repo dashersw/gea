@@ -60,7 +60,7 @@ h1 {
 
 code {
   color: #f8fafc;
-  font-family: 'SFMono-Regular', ui-monospace, monospace;
+  font-family: SFMono-Regular, ui-monospace, monospace;
 }
 
 .panel {

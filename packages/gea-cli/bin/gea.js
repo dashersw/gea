@@ -13,14 +13,16 @@ const program = new Command()
 
 async function getProjectRoot() {
   let current = process.cwd()
-  while (current !== '/') {
+  while (true) {
     if (await fs.pathExists(resolve(current, 'package.json'))) {
       const pkg = await fs.readJson(resolve(current, 'package.json'))
       if (pkg.dependencies?.['@geajs/core'] || pkg.devDependencies?.['@geajs/core']) {
         return current
       }
     }
-    current = dirname(current)
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
   }
   return null
 }
@@ -58,6 +60,7 @@ program
       outro(`Happy coding with ${cyan('Gea')}!`)
     } catch (e) {
       cancel(`Error: ${e.message}`)
+      process.exit(1)
     }
   })
 
@@ -86,6 +89,11 @@ program
       process.exit(1)
     }
 
+    if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+      console.error(yellow('Invalid name: path segments are not allowed'))
+      process.exit(1)
+    }
+
     const s = spinner()
     s.start(`Adding ${type} ${name}...`)
 
@@ -100,13 +108,15 @@ program
 
       const content = `import { Component } from '@geajs/core';
 
-export const ${name}: Component = () => {
-  return (
-    <div className="${name.toLowerCase()}">
-      <h2>Hello from ${name}</h2>
-    </div>
-  );
-};
+export default class ${name} extends Component {
+  template() {
+    return (
+      <div class="${name.toLowerCase()}">
+        <h2>Hello from ${name}</h2>
+      </div>
+    );
+  }
+}
 `
       await fs.writeFile(filePath, content)
       s.stop(green(`Added component: ${gray(filePath)}`))
@@ -114,18 +124,17 @@ export const ${name}: Component = () => {
       const fileName = name.endsWith('.ts') ? name : `${name}.ts`
       const filePath = resolve(srcDir, fileName)
 
-      const content = `import { createStore } from '@geajs/core';
+      const content = `import { Store } from '@geajs/core';
 
-export const ${name} = createStore({
+export const ${name} = new Store({
   count: 0,
-  inc() { this.count++; },
-  dec() { this.count--; }
 });
 `
       await fs.writeFile(filePath, content)
       s.stop(green(`Added store: ${gray(filePath)}`))
     } else {
       s.stop(yellow(`Unknown type: ${type}`))
+      process.exit(1)
     }
   })
 

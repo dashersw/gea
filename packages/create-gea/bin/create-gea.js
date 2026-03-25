@@ -63,11 +63,6 @@ async function main() {
       message: 'Project name:',
       placeholder: 'my-gea-app',
       defaultValue: 'my-gea-app',
-      validate(value) {
-        if (value && existsSync(resolve(process.cwd(), value)) && !isEmptyDir(resolve(process.cwd(), value))) {
-          return 'Target directory is not empty'
-        }
-      },
     })
     if (isCancel(targetDir)) {
       cancel('Operation cancelled')
@@ -75,7 +70,17 @@ async function main() {
     }
   }
 
+  if (!targetDir || targetDir.trim() === '') {
+    cancel('Project name cannot be empty')
+    process.exit(1)
+  }
+
   const projectRoot = resolve(process.cwd(), targetDir)
+
+  if (existsSync(projectRoot) && !isEmptyDir(projectRoot)) {
+    cancel('Target directory is not empty')
+    process.exit(1)
+  }
 
   const template = await select({
     message: 'Select a template:',
@@ -121,7 +126,7 @@ async function main() {
   const devCommand = packageManager === 'yarn' ? 'yarn dev' : `${packageManager} run dev`
 
   outro(`Next steps:
-  ${targetDir !== '.' ? `cd ${targetDir}\n  ` : ''}${installCommand}\n  ${devCommand}
+  ${targetDir !== '.' ? `cd "${targetDir}"\n  ` : ''}${installCommand}\n  ${devCommand}
   `)
 }
 

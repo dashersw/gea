@@ -25,7 +25,6 @@
   "homepage": "https://github.com/dashersw/gea#readme",
   "dependencies": {
     "@clack/prompts": "^1.1.0",
-    "kolorist": "^1.8.0",
-    "picocolors": "^1.1.1"
+    "kolorist": "^1.8.0"
   }
 }
