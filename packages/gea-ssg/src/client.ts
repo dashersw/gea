@@ -37,9 +37,9 @@ export const ssg = {
  * Scans for elements with `data-gea` attributes and attaches
  * component instances to existing DOM without re-rendering.
  */
-export function hydrate(components: Record<string, new (props?: any) => any>): void {
+export function hydrate(components: Record<string, new (props?: any) => any>): boolean {
   const elements = Array.from(document.querySelectorAll<HTMLElement>('[data-gea]'))
-  if (!elements.length) return
+  if (!elements.length) return false
 
   const cm = ComponentManager.getInstance()
   const originalGetUid = cm.getUid
@@ -65,4 +65,5 @@ export function hydrate(components: Record<string, new (props?: any) => any>): v
   }
 
   cm.getUid = originalGetUid
+  return true
 }
