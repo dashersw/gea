@@ -65,6 +65,7 @@ This scaffolds a Vite-powered project with TypeScript, a sample store, class and
 | [`@geajs/core`](packages/gea) | Core framework — stores, components, reactivity, DOM patching | [![npm](https://img.shields.io/npm/v/@geajs/core.svg)](https://www.npmjs.com/package/@geajs/core) |
 | [`@geajs/ui`](packages/gea-ui) | Headless UI primitives — accessible, composable components built on [Zag.js](https://zagjs.com) | [![npm](https://img.shields.io/npm/v/@geajs/ui.svg)](https://www.npmjs.com/package/@geajs/ui) |
 | [`@geajs/mobile`](packages/gea-mobile) | Mobile UI primitives — views, navigation, gestures, layout | [![npm](https://img.shields.io/npm/v/@geajs/mobile.svg)](https://www.npmjs.com/package/@geajs/mobile) |
+| [`@geajs/ssg`](packages/gea-ssg) | Static site generation — markdown content, dynamic routes, sitemap | [![npm](https://img.shields.io/npm/v/@geajs/ssg.svg)](https://www.npmjs.com/package/@geajs/ssg) |
 | [`@geajs/vite-plugin`](packages/vite-plugin-gea) | Vite plugin — JSX transform, reactivity wiring, HMR | [![npm](https://img.shields.io/npm/v/@geajs/vite-plugin.svg)](https://www.npmjs.com/package/@geajs/vite-plugin) |
 | [`create-gea`](packages/create-gea) | Project scaffolder — `npm create gea@latest` | [![npm](https://img.shields.io/npm/v/create-gea.svg)](https://www.npmjs.com/package/create-gea) |
 | [`gea-tools`](packages/gea-tools) | VS Code / Cursor extension — completions, hover, diagnostics | — |
@@ -117,6 +118,7 @@ See the full comparisons: [React vs Gea](docs/comparison/react-vs-gea.md) | [Vue
 | [router](examples/router) | Client-side routing with `RouterView`, `Link`, and dynamic params |
 | [kanban](examples/kanban) | Kanban board with drag semantics |
 | [mobile-showcase](examples/mobile-showcase) | Mobile UI showcase using `@geajs/mobile` components |
+| [ssg-basic](examples/ssg-basic) | Static site with markdown content, dynamic routes, and sitemap |
 
 ## Documentation
 
@@ -126,6 +128,7 @@ Full documentation is available in the [docs](docs/) directory, covering:
 - [Stores](docs/core-concepts/stores.md) and [Components](docs/core-concepts/components.md)
 - [JSX Syntax](docs/core-concepts/jsx-syntax.md)
 - [Router](docs/gea-router/overview.md)
+- [Static Site Generation](docs/tooling/ssg.md)
 - [Gea UI](docs/gea-ui/overview.md)
 - [Gea Mobile](docs/gea-mobile/overview.md)
 - [API Reference](docs/api-reference.md)
