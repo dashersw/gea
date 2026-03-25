@@ -63,10 +63,13 @@ describe('crawlRoutes', () => {
     assert.equal(result.length, 1)
   })
 
-  it('skips wildcard routes', async () => {
+  it('generates 404 page from wildcard routes', async () => {
     const routes = { '/': HomePage, '*': NotFoundPage }
     const result = await crawlRoutes(routes as any)
-    assert.equal(result.length, 1)
+    assert.equal(result.length, 2)
+    const notFound = result.find((r) => r.path === '/404')
+    assert.ok(notFound)
+    assert.equal(notFound!.component, NotFoundPage)
   })
 
   it('resolves lazy components', async () => {

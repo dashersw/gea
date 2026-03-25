@@ -1,10 +1,11 @@
 import { Component } from '@geajs/core'
-import { Link, RouterView } from '@geajs/core'
+import { Head, Link, RouterView } from '@geajs/core'
 import Home from './views/Home'
 import About from './views/About'
 import Contact from './views/Contact'
 import Blog from './views/Blog'
 import BlogPost from './views/BlogPost'
+import NotFound from './views/NotFound'
 
 export const routes = {
   '/': Home,
@@ -12,12 +13,14 @@ export const routes = {
   '/contact': Contact,
   '/blog': Blog,
   '/blog/:slug': { component: BlogPost, content: 'blog' },
+  '*': NotFound,
 }
 
 export default class App extends Component {
   template() {
     return (
       <div class="app">
+        <Head title="SSG Basic — Gea" description="A static site generated with Gea SSG" />
         <nav class="nav">
           <Link to="/" label="Home" exact class="nav-link" />
           <Link to="/about" label="About" class="nav-link" />

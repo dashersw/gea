@@ -1,10 +1,10 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, mkdir, access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { generate } from '../src/generate'
-import { RouterView, Outlet } from '@geajs/core'
+import { RouterView, Outlet, Head } from '@geajs/core'
 
 const SHELL_HTML = `<!DOCTYPE html>
 <html>
@@ -355,7 +355,7 @@ describe('generate', () => {
 
     const sitemap = await readFile(join(tempDir, 'sitemap.xml'), 'utf-8')
     assert.ok(sitemap.includes('<loc>https://example.com/</loc>'))
-    assert.ok(sitemap.includes('<loc>https://example.com/about</loc>'))
+    assert.ok(sitemap.includes('<loc>https://example.com/about/</loc>'))
   })
 
   it('returns duration in result', async () => {
@@ -389,5 +389,229 @@ describe('generate', () => {
         }),
       /Path traversal detected/,
     )
+  })
+
+  it('generates 404.html from wildcard route', async () => {
+    class NotFoundPage {
+      props: any
+      constructor(props?: any) {
+        this.props = props || {}
+      }
+      template() {
+        return '<h1>Not Found</h1>'
+      }
+      dispose() {}
+    }
+
+    const result = await generate({
+      routes: { '/': HomePage, '*': NotFoundPage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+    })
+
+    assert.equal(result.pages.length, 2)
+    const notFoundPage = result.pages.find((p) => p.path === '/404')
+    assert.ok(notFoundPage)
+
+    const html = await readFile(join(tempDir, '404.html'), 'utf-8')
+    assert.ok(html.includes('<h1>Not Found</h1>'))
+  })
+
+  it('generates robots.txt with boolean option', async () => {
+    await generate({
+      routes: { '/': HomePage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      robots: true,
+      sitemap: { hostname: 'https://example.com' },
+    })
+
+    const robots = await readFile(join(tempDir, 'robots.txt'), 'utf-8')
+    assert.ok(robots.includes('User-agent: *'))
+    assert.ok(robots.includes('Allow: /'))
+    assert.ok(robots.includes('Sitemap: https://example.com/sitemap.xml'))
+  })
+
+  it('generates robots.txt with custom options', async () => {
+    await generate({
+      routes: { '/': HomePage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      robots: { disallow: ['/admin', '/private'] },
+    })
+
+    const robots = await readFile(join(tempDir, 'robots.txt'), 'utf-8')
+    assert.ok(robots.includes('Disallow: /admin'))
+    assert.ok(robots.includes('Disallow: /private'))
+  })
+
+  it('minifies HTML output when enabled', async () => {
+    await generate({
+      routes: { '/': HomePage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      minify: true,
+    })
+
+    const html = await readFile(join(tempDir, 'index.html'), 'utf-8')
+    assert.ok(!html.includes('<!--'))
+    assert.ok(!html.includes('\n'))
+  })
+
+  it('generates trailing slash false output', async () => {
+    await generate({
+      routes: { '/': HomePage, '/about': AboutPage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      trailingSlash: false,
+    })
+
+    const aboutHtml = await readFile(join(tempDir, 'about.html'), 'utf-8')
+    assert.ok(aboutHtml.includes('<h1>About</h1>'))
+  })
+
+  it('injects head tags when Head._current is set', async () => {
+    class HeadPage {
+      props: any
+      constructor(props?: any) {
+        this.props = props || {}
+      }
+      template() {
+        Head._current = { title: 'Custom Title', description: 'Custom Desc', url: '/head-test' }
+        return '<h1>Head Test</h1>'
+      }
+      dispose() {}
+    }
+
+    class HeadApp {
+      props: any
+      constructor(props?: any) {
+        this.props = props || {}
+      }
+      template() {
+        let routeContent = ''
+        if (RouterView._ssgRoute) {
+          const child = new (RouterView._ssgRoute.component as any)(RouterView._ssgRoute.params)
+          routeContent = String(child.template(child.props)).trim()
+          if (typeof child.dispose === 'function') child.dispose()
+        }
+        return `<div>${routeContent}</div>`
+      }
+      dispose() {}
+    }
+
+    await generate({
+      routes: { '/': HeadPage } as any,
+      app: HeadApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+    })
+
+    const html = await readFile(join(tempDir, 'index.html'), 'utf-8')
+    assert.ok(html.includes('<title>Custom Title</title>'))
+    assert.ok(html.includes('og:title'))
+    assert.ok(html.includes('Custom Desc'))
+    assert.ok(html.includes('rel="canonical"'))
+  })
+
+  it('includes lastmod in sitemap from Head config', async () => {
+    class DatedPage {
+      props: any
+      constructor(props?: any) {
+        this.props = props || {}
+      }
+      template() {
+        Head._current = { title: 'Dated', lastmod: '2026-01-15' }
+        return '<h1>Dated</h1>'
+      }
+      dispose() {}
+    }
+
+    class DatedApp {
+      props: any
+      constructor(props?: any) {
+        this.props = props || {}
+      }
+      template() {
+        let routeContent = ''
+        if (RouterView._ssgRoute) {
+          const child = new (RouterView._ssgRoute.component as any)(RouterView._ssgRoute.params)
+          routeContent = String(child.template(child.props)).trim()
+          if (typeof child.dispose === 'function') child.dispose()
+        }
+        return `<div>${routeContent}</div>`
+      }
+      dispose() {}
+    }
+
+    await generate({
+      routes: { '/': DatedPage } as any,
+      app: DatedApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      sitemap: { hostname: 'https://example.com' },
+    })
+
+    const sitemap = await readFile(join(tempDir, 'sitemap.xml'), 'utf-8')
+    assert.ok(sitemap.includes('<lastmod>2026-01-15</lastmod>'))
+  })
+
+  it('excludes /404 from sitemap', async () => {
+    class NotFoundPage {
+      props: any
+      constructor(props?: any) {
+        this.props = props || {}
+      }
+      template() {
+        return '<h1>404</h1>'
+      }
+      dispose() {}
+    }
+
+    await generate({
+      routes: { '/': HomePage, '*': NotFoundPage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      sitemap: { hostname: 'https://example.com' },
+    })
+
+    const sitemap = await readFile(join(tempDir, 'sitemap.xml'), 'utf-8')
+    assert.ok(sitemap.includes('<loc>https://example.com/</loc>'))
+    assert.ok(!sitemap.includes('/404'))
+  })
+
+  it('sitemap uses trailing slash in URLs', async () => {
+    await generate({
+      routes: { '/': HomePage, '/about': AboutPage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      sitemap: { hostname: 'https://example.com' },
+      trailingSlash: true,
+    })
+
+    const sitemap = await readFile(join(tempDir, 'sitemap.xml'), 'utf-8')
+    assert.ok(sitemap.includes('<loc>https://example.com/about/</loc>'))
+  })
+
+  it('sitemap omits trailing slash when disabled', async () => {
+    await generate({
+      routes: { '/': HomePage, '/about': AboutPage } as any,
+      app: MockApp as any,
+      shell: shellPath,
+      outDir: tempDir,
+      sitemap: { hostname: 'https://example.com' },
+      trailingSlash: false,
+    })
+
+    const sitemap = await readFile(join(tempDir, 'sitemap.xml'), 'utf-8')
+    assert.ok(sitemap.includes('<loc>https://example.com/about</loc>'))
+    assert.ok(!sitemap.includes('/about/'))
   })
 })

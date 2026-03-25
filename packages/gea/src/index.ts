@@ -9,6 +9,7 @@ export { applyListChanges } from './lib/base/list'
 export type { ListConfig } from './lib/base/list'
 export { createRouter, Router, router, matchRoute, resolveRoute, Link, Outlet, RouterView } from './lib/router'
 export { Client } from './lib/client'
+export { Head } from './lib/head'
 export type {
   RouteMap,
   RouteEntry,

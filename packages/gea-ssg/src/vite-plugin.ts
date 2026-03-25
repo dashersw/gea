@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url'
 import type { Plugin, ResolvedConfig } from 'vite'
 import type { SSGPluginOptions } from './types'
 
-// Resolve to src/ directory — import.meta.url may point to dist/ at runtime
 const __dir = dirname(fileURLToPath(import.meta.url))
 const SSG_SRC_DIR = __dir.endsWith('/dist') || __dir.endsWith('\\dist') ? join(__dir, '..', 'src') : __dir
 
@@ -55,6 +54,9 @@ export function geaSSG(options: SSGPluginOptions = {}): Plugin[] {
               appElementId: options.appElementId || 'app',
               contentDir: options.contentDir ? resolve(config.root, options.contentDir) : undefined,
               sitemap: options.sitemap,
+              robots: options.robots,
+              minify: options.minify,
+              trailingSlash: options.trailingSlash,
               onBeforeRender: options.onBeforeRender,
               onAfterRender: options.onAfterRender,
               onRenderError: options.onRenderError,
@@ -148,12 +150,29 @@ export function geaSSG(options: SSGPluginOptions = {}): Plugin[] {
       },
 
       configurePreviewServer(server) {
-        server.middlewares.use((req, _res, next) => {
+        const ts = options.trailingSlash !== false
+
+        server.middlewares.use((req, res, next) => {
           if (req.url && !extname(req.url)) {
             const url = req.url.split('?')[0]
-            const indexPath = join(config.build.outDir, url, 'index.html')
-            if (url !== '/' && existsSync(indexPath)) {
-              req.url = url.endsWith('/') ? url + 'index.html' : url + '/index.html'
+
+            if (url !== '/') {
+              const testPath = ts
+                ? join(config.build.outDir, url, 'index.html')
+                : join(config.build.outDir, url + '.html')
+
+              if (existsSync(testPath)) {
+                req.url = ts ? (url.endsWith('/') ? url + 'index.html' : url + '/index.html') : url + '.html'
+                return next()
+              }
+            }
+
+            const notFoundPath = join(config.build.outDir, '404.html')
+            if (existsSync(notFoundPath)) {
+              res.statusCode = 404
+              const { createReadStream } = require('fs')
+              createReadStream(notFoundPath).pipe(res)
+              return
             }
           }
           next()

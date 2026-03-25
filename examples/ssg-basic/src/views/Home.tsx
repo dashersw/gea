@@ -1,9 +1,10 @@
-import { Component } from '@geajs/core'
+import { Component, Head } from '@geajs/core'
 
 export default class Home extends Component {
   template() {
     return (
       <div class="view">
+        <Head title="Home — SSG Basic" description="A Gea SSG example with static HTML generation" />
         <span class="badge">Static Site Generation</span>
         <h1>Welcome to Gea SSG</h1>
         <p>

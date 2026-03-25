@@ -77,7 +77,10 @@ async function collectPaths(
       return
     }
 
-    if (pattern === '*') return
+    if (pattern === '*') {
+      result.push({ path: '/404', component, layouts: parentLayouts, params: {} })
+      return
+    }
 
     result.push({ path: fullPath, component, layouts: parentLayouts, params: {} })
     return
@@ -89,7 +92,12 @@ async function collectPaths(
     component = 'default' in mod ? mod.default : mod
   }
 
-  if (pattern.includes(':') || pattern === '*') return
+  if (pattern === '*') {
+    result.push({ path: '/404', component: component as any, layouts: parentLayouts, params: {} })
+    return
+  }
+
+  if (pattern.includes(':')) return
 
   result.push({
     path: fullPath,

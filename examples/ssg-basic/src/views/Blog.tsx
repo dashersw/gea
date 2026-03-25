@@ -1,4 +1,4 @@
-import { Component } from '@geajs/core'
+import { Component, Head } from '@geajs/core'
 import { ssg } from '@geajs/ssg'
 
 export default class Blog extends Component {
@@ -9,6 +9,7 @@ export default class Blog extends Component {
 
     return (
       <div class="view">
+        <Head title="Blog — SSG Basic" description="Articles about Gea and modern web development" />
         <h1>Blog</h1>
         <p>Articles about Gea and modern web development.</p>
         <div class="post-list">

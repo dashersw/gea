@@ -1,4 +1,4 @@
-import { Component } from '@geajs/core'
+import { Component, Head } from '@geajs/core'
 import { ssg } from '@geajs/ssg'
 
 const features = [
@@ -16,6 +16,7 @@ export default class About extends Component {
 
     return (
       <div class="view">
+        <Head title="About — SSG Basic" description="Learn about Gea and its features" />
         <h1>About</h1>
         <p>
           Gea is a lightweight reactive UI framework that compiles JSX at build time and uses proxy-based stores for

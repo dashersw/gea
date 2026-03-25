@@ -11,6 +11,8 @@ export default defineConfig({
       sitemap: {
         hostname: 'https://gea-ssg-example.com',
       },
+      robots: true,
+      minify: true,
     }),
   ],
   resolve: {

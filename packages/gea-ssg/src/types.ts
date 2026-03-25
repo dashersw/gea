@@ -6,6 +6,9 @@ export interface SSGOptions {
   appElementId?: string
   contentDir?: string
   sitemap?: SitemapOptions | boolean
+  robots?: boolean | RobotsOptions
+  minify?: boolean
+  trailingSlash?: boolean
   onBeforeRender?: (context: RenderContext) => void | Promise<void>
   onAfterRender?: (context: RenderContext, html: string) => string | Promise<string>
   onRenderError?: (path: string, error: Error) => void
@@ -31,6 +34,12 @@ export interface SitemapOptions {
   changefreq?: string
   priority?: number
   exclude?: string[]
+}
+
+export interface RobotsOptions {
+  disallow?: string[]
+  allow?: string[]
+  sitemap?: boolean
 }
 
 export interface SSGPluginOptions extends Omit<SSGOptions, 'shell' | 'outDir' | 'app' | 'routes'> {

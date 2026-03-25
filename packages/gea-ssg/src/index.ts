@@ -11,6 +11,9 @@ export type { ShellParts } from './shell'
 export { ssg, preloadContent, clearContentCache, serializeContentCache, getContentSlugs } from './content'
 export type { ContentFile } from './content'
 
+export { buildHeadTags, replaceTitle, minifyHtml } from './head'
+export type { HeadConfig } from './head'
+
 export { geaSSG } from './vite-plugin'
 
 export type {
@@ -19,6 +22,7 @@ export type {
   StaticRoute,
   RenderContext,
   SitemapOptions,
+  RobotsOptions,
   GenerateResult,
   GeneratedPage,
 } from './types'

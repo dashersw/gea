@@ -1,9 +1,10 @@
-import { Component } from '@geajs/core'
+import { Component, Head } from '@geajs/core'
 
 export default class Contact extends Component {
   template() {
     return (
       <div class="view">
+        <Head title="Contact — SSG Basic" description="Get in touch with us" />
         <h1>Contact</h1>
         <p>Get in touch with us through the channels below.</p>
         <div class="card">

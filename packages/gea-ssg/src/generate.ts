@@ -1,12 +1,14 @@
 import { writeFile, mkdir, readFile } from 'node:fs/promises'
 import { join, dirname, resolve, relative } from 'node:path'
 
-import { RouterView, Link } from '@geajs/core'
+import { RouterView, Link, Head } from '@geajs/core'
 import { renderToString } from './render'
 import { crawlRoutes } from './crawl'
 import { parseShell, injectIntoShell, stripScripts } from './shell'
 import { preloadContent, clearContentCache, serializeContentCache } from './content'
-import type { SSGOptions, GenerateResult, GeneratedPage, StaticRoute } from './types'
+import { buildHeadTags, replaceTitle, minifyHtml } from './head'
+import type { HeadConfig } from './head'
+import type { SSGOptions, GenerateResult, GeneratedPage, StaticRoute, RobotsOptions } from './types'
 
 export async function generate(options: SSGOptions): Promise<GenerateResult> {
   const {
@@ -19,11 +21,15 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
     onRenderError,
     concurrency = 4,
     sitemap,
+    robots,
+    minify = false,
+    trailingSlash = true,
   } = options
 
   const startTime = performance.now()
   const pages: GeneratedPage[] = []
   const errors: Array<{ path: string; error: Error }> = []
+  const headConfigs = new Map<string, HeadConfig>()
 
   try {
     if (options.contentDir) {
@@ -44,7 +50,7 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
     const absOut = resolve(outDir)
     const seenPaths = new Set<string>()
     for (const route of staticRoutes) {
-      const target = resolve(join(outDir, route.path, 'index.html'))
+      const target = resolve(getOutputPath(route.path, outDir, trailingSlash))
       const rel = relative(absOut, target)
       if (rel.startsWith('..') || resolve(rel) === rel) {
         throw new Error(`[gea-ssg] Path traversal detected: "${route.path}" escapes outDir.`)
@@ -68,6 +74,7 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
           })
         }
 
+        Head._current = null
         let html: string
         try {
           RouterView._ssgRoute = {
@@ -84,6 +91,20 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
 
         let fullHtml = stripScripts(injectIntoShell(shellParts, html))
 
+        if (Head._current) {
+          const headConfig = { ...Head._current } as HeadConfig
+          headConfigs.set(route.path, headConfig)
+
+          if (headConfig.title) {
+            fullHtml = replaceTitle(fullHtml, headConfig.title)
+          }
+
+          const headTags = buildHeadTags(headConfig)
+          if (headTags) {
+            fullHtml = fullHtml.replace('</head>', headTags + '\n</head>')
+          }
+        }
+
         if (onAfterRender) {
           const transformed = await onAfterRender(
             {
@@ -97,7 +118,11 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
           if (transformed) fullHtml = transformed
         }
 
-        const outputPath = getOutputPath(route.path, outDir)
+        if (minify) {
+          fullHtml = minifyHtml(fullHtml)
+        }
+
+        const outputPath = getOutputPath(route.path, outDir, trailingSlash)
         await mkdir(dirname(outputPath), { recursive: true })
         await writeFile(outputPath, fullHtml, 'utf-8')
 
@@ -121,7 +146,11 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
 
     if (sitemap) {
       const sitemapOpts = typeof sitemap === 'boolean' ? { hostname: 'https://example.com' } : sitemap
-      await generateSitemap(pages, sitemapOpts, outDir)
+      await generateSitemap(pages, sitemapOpts, outDir, headConfigs, trailingSlash)
+    }
+
+    if (robots) {
+      await generateRobots(robots, sitemap, outDir)
     }
 
     const duration = performance.now() - startTime
@@ -131,14 +160,21 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
   } finally {
     clearContentCache()
     delete (globalThis as any).__SSG_CONTENT__
+    Head._current = null
   }
 }
 
-function getOutputPath(routePath: string, outDir: string): string {
+function getOutputPath(routePath: string, outDir: string, trailingSlash: boolean = true): string {
   if (routePath === '/' || routePath === '') {
     return join(outDir, 'index.html')
   }
-  return join(outDir, routePath, 'index.html')
+  if (routePath === '/404') {
+    return join(outDir, '404.html')
+  }
+  if (trailingSlash) {
+    return join(outDir, routePath, 'index.html')
+  }
+  return join(outDir, routePath + '.html')
 }
 
 async function runWithConcurrency<T>(
@@ -166,18 +202,23 @@ async function generateSitemap(
   pages: GeneratedPage[],
   options: { hostname: string; changefreq?: string; priority?: number; exclude?: string[] },
   outDir: string,
+  headConfigs: Map<string, HeadConfig>,
+  trailingSlash: boolean,
 ): Promise<void> {
   const { hostname, changefreq = 'weekly', priority = 0.8, exclude = [] } = options
 
   const urls = pages
-    .filter((p) => !exclude.includes(p.path))
-    .map(
-      (p) => `  <url>
-    <loc>${hostname}${p.path}</loc>
+    .filter((p) => !exclude.includes(p.path) && p.path !== '/404')
+    .map((p) => {
+      const head = headConfigs.get(p.path)
+      const lastmod = head?.lastmod ? `\n    <lastmod>${head.lastmod}</lastmod>` : ''
+      const loc = trailingSlash && p.path !== '/' ? `${hostname}${p.path}/` : `${hostname}${p.path}`
+      return `  <url>
+    <loc>${loc}</loc>${lastmod}
     <changefreq>${changefreq}</changefreq>
     <priority>${priority}</priority>
-  </url>`,
-    )
+  </url>`
+    })
     .join('\n')
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -187,4 +228,34 @@ ${urls}
 
   await mkdir(outDir, { recursive: true })
   await writeFile(join(outDir, 'sitemap.xml'), xml, 'utf-8')
+}
+
+async function generateRobots(
+  options: boolean | RobotsOptions,
+  sitemap: SSGOptions['sitemap'],
+  outDir: string,
+): Promise<void> {
+  const lines: string[] = ['User-agent: *']
+  const hostname = typeof sitemap === 'object' && sitemap ? sitemap.hostname : undefined
+
+  if (typeof options === 'object') {
+    if (options.allow) {
+      for (const path of options.allow) lines.push(`Allow: ${path}`)
+    }
+    if (options.disallow) {
+      for (const path of options.disallow) lines.push(`Disallow: ${path}`)
+    } else {
+      lines.push('Allow: /')
+    }
+    if (options.sitemap !== false && hostname) {
+      lines.push('', `Sitemap: ${hostname}/sitemap.xml`)
+    }
+  } else {
+    lines.push('Allow: /')
+    if (hostname) {
+      lines.push('', `Sitemap: ${hostname}/sitemap.xml`)
+    }
+  }
+
+  await writeFile(join(outDir, 'robots.txt'), lines.join('\n') + '\n', 'utf-8')
 }
