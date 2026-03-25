@@ -1,7 +1,6 @@
 {
   "name": "create-gea",
   "version": "1.0.1",
-  "description": "Scaffold a new Gea app with Vite in seconds",
   "type": "module",
   "bin": {
     "create-gea": "bin/create-gea.js"
@@ -11,17 +10,10 @@
   },
   "files": [
     "bin",
-    "template"
+    "templates"
   ],
-  "keywords": [
-    "gea",
-    "create-gea",
-    "vite",
-    "scaffold",
-    "starter",
-    "boilerplate"
-  ],
-  "author": "Armagan Amcalar <armagan@amcalar.com>",
+  "keywords": [],
+  "author": "Hacı Mert Gökhan <hacimertgokhan@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -30,5 +22,9 @@
   "bugs": {
     "url": "https://github.com/dashersw/gea/issues"
   },
-  "homepage": "https://github.com/dashersw/gea#readme"
+  "homepage": "https://github.com/dashersw/gea#readme",
+  "dependencies": {
+    "@clack/prompts": "^1.1.0",
+    "kolorist": "^1.8.0"
+  }
 }

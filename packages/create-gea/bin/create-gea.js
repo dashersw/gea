@@ -1,25 +1,17 @@
-#!/usr/bin/env node
-
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { stdin as input, stdout as output } from 'node:process'
-import { createInterface } from 'node:readline/promises'
+import { intro, outro, text, select, confirm, isCancel, cancel, spinner } from '@clack/prompts'
+import { cyan, gray, green, reset } from 'kolorist'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const templateDir = resolve(__dirname, '../template')
+const templatesDir = resolve(__dirname, '../templates')
 
-function printHelp() {
-  console.log(`create-gea
-
-Usage:
-  npm create gea@latest [project-name]
-
-Examples:
-  npm create gea@latest my-gea-app
-  npm create gea@latest .
-`)
-}
+const TEMPLATES = [
+  { value: 'default', label: 'Standard', hint: 'Simple Gea app with Vite' },
+  { value: 'mobile', label: 'Mobile', hint: 'Gea mobile app with touch-friendly UI' },
+  { value: 'dashboard', label: 'Dashboard', hint: 'Gea dashboard starter with layout' },
+]
 
 function isValidPackageName(value) {
   return /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(value)
@@ -37,7 +29,6 @@ function toValidPackageName(value) {
 
 function getPackageManager() {
   const userAgent = process.env.npm_config_user_agent ?? ''
-
   if (userAgent.startsWith('pnpm/')) return 'pnpm'
   if (userAgent.startsWith('yarn/')) return 'yarn'
   if (userAgent.startsWith('bun/')) return 'bun'
@@ -45,11 +36,12 @@ function getPackageManager() {
 }
 
 function isEmptyDir(dir) {
-  return readdirSync(dir).length === 0
+  return !existsSync(dir) || readdirSync(dir).length === 0
 }
 
 function writeTemplateFile(projectRoot, fileName, replacements) {
   const filePath = resolve(projectRoot, fileName)
+  if (!existsSync(filePath)) return
   const source = readFileSync(filePath, 'utf8')
 
   let next = source
@@ -60,46 +52,65 @@ function writeTemplateFile(projectRoot, fileName, replacements) {
   writeFileSync(filePath, next)
 }
 
-async function getTargetDir(args) {
-  const firstArg = args.find((arg) => !arg.startsWith('-'))
-  if (firstArg) return firstArg
-
-  const rl = createInterface({ input, output })
-  try {
-    const answer = await rl.question('Project name: ')
-    return answer.trim() || 'gea-app'
-  } finally {
-    rl.close()
-  }
-}
-
 async function main() {
-  const args = process.argv.slice(2)
+  intro(cyan('create-gea'))
 
-  if (args.includes('--help') || args.includes('-h')) {
-    printHelp()
-    process.exit(0)
+  const args = process.argv.slice(2)
+  let targetDir = args[0]
+
+  if (!targetDir) {
+    targetDir = await text({
+      message: 'Project name:',
+      placeholder: 'my-gea-app',
+      defaultValue: 'my-gea-app',
+    })
+    if (isCancel(targetDir)) {
+      cancel('Operation cancelled')
+      process.exit(0)
+    }
   }
 
-  const targetDir = await getTargetDir(args)
-  const projectRoot = resolve(process.cwd(), targetDir)
-
-  if (existsSync(projectRoot) && !isEmptyDir(projectRoot)) {
-    console.error(`Target directory is not empty: ${projectRoot}`)
+  if (!targetDir || targetDir.trim() === '') {
+    cancel('Project name cannot be empty')
     process.exit(1)
   }
 
-  mkdirSync(projectRoot, { recursive: true })
+  const projectRoot = resolve(process.cwd(), targetDir)
 
-  const rawName = targetDir === '.' ? basename(process.cwd()) : basename(projectRoot)
-  const packageName = isValidPackageName(rawName) ? rawName : toValidPackageName(rawName)
+  if (existsSync(projectRoot) && !isEmptyDir(projectRoot)) {
+    cancel('Target directory is not empty')
+    process.exit(1)
+  }
 
-  cpSync(templateDir, projectRoot, { recursive: true })
+  const template = await select({
+    message: 'Select a template:',
+    options: TEMPLATES,
+  })
+
+  if (isCancel(template)) {
+    cancel('Operation cancelled')
+    process.exit(0)
+  }
+
+  const s = spinner()
+  s.start(`Scaffolding project in ${gray(projectRoot)}...`)
+
+  if (!existsSync(projectRoot)) {
+    mkdirSync(projectRoot, { recursive: true })
+  }
+
+  const selectedTemplateDir = resolve(templatesDir, template)
+
+  const templateToUse = existsSync(selectedTemplateDir) ? template : 'default'
+  cpSync(resolve(templatesDir, templateToUse), projectRoot, { recursive: true })
 
   const gitignoreSource = resolve(projectRoot, '_gitignore')
   if (existsSync(gitignoreSource)) {
     renameSync(gitignoreSource, resolve(projectRoot, '.gitignore'))
   }
+
+  const rawName = targetDir === '.' ? basename(process.cwd()) : basename(projectRoot)
+  const packageName = isValidPackageName(rawName) ? rawName : toValidPackageName(rawName)
 
   writeTemplateFile(projectRoot, 'package.json', {
     __PACKAGE_NAME__: packageName,
@@ -108,20 +119,18 @@ async function main() {
     __PROJECT_TITLE__: packageName,
   })
 
+  s.stop(green(`Success! Project scaffolded in ${targetDir}`))
+
   const packageManager = getPackageManager()
   const installCommand = packageManager === 'yarn' ? 'yarn' : `${packageManager} install`
   const devCommand = packageManager === 'yarn' ? 'yarn dev' : `${packageManager} run dev`
 
-  console.log(`\nScaffolded an Gea app in ${projectRoot}\n`)
-  console.log('Next steps:')
-  if (targetDir !== '.') {
-    console.log(`  cd ${targetDir}`)
-  }
-  console.log(`  ${installCommand}`)
-  console.log(`  ${devCommand}`)
+  outro(`Next steps:
+  ${targetDir !== '.' ? `cd "${targetDir}"\n  ` : ''}${installCommand}\n  ${devCommand}
+  `)
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error)
+  cancel(error instanceof Error ? error.message : String(error))
   process.exit(1)
 })

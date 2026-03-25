@@ -1,0 +1,22 @@
+{
+  "name": "gea-cli",
+  "version": "1.0.0",
+  "description": "The command line interface for the Gea framework",
+  "type": "module",
+  "bin": {
+    "gea": "bin/gea.js"
+  },
+  "scripts": {
+    "test": "node --test ./test/*.test.js"
+  },
+  "author": "Hacı Mert Gökhan <hacimertgokhan@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^13.1.0",
+    "@clack/prompts": "^1.1.0",
+    "kolorist": "^1.8.0",
+    "picocolors": "^1.1.1",
+    "execa": "^9.0.2",
+    "fs-extra": "^11.3.0"
+  }
+}
