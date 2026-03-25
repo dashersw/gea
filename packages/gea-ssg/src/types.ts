@@ -5,6 +5,8 @@ export interface SSGOptions {
   outDir?: string
   appElementId?: string
   contentDir?: string
+  /** Base path for assets (default: '/') */
+  base?: string
   sitemap?: SitemapOptions | boolean
   robots?: boolean | RobotsOptions
   minify?: boolean

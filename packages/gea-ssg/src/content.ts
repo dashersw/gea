@@ -59,6 +59,15 @@ export function serializeContentCache(): string {
   return JSON.stringify(obj)
 }
 
+/** Serialize for client bundle — strips raw markdown `content` field to reduce payload */
+export function serializeContentCacheForClient(): string {
+  const obj: Record<string, Omit<ContentFile, 'content'>[]> = {}
+  for (const [key, value] of cache) {
+    obj[key] = value.map(({ content: _content, ...rest }) => rest)
+  }
+  return JSON.stringify(obj)
+}
+
 export function getContentSlugs(subdir: string): string[] {
   return (cache.get(subdir) || []).map((f) => f.slug)
 }

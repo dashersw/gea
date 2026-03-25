@@ -73,6 +73,7 @@ export function geaSSG(options: SSGPluginOptions = {}): Plugin[] {
             const ssgOpts: Record<string, any> = {
               shell: `${config.build.outDir}/index.html`,
               outDir: config.build.outDir,
+              base: config.base || '/',
               appElementId: options.appElementId || 'app',
               contentDir: options.contentDir ? resolve(config.root, options.contentDir) : undefined,
               sitemap: options.sitemap,
@@ -135,7 +136,7 @@ export function geaSSG(options: SSGPluginOptions = {}): Plugin[] {
         if (!contentLoaded) {
           const mod = await ctx.server.ssrLoadModule(`${SSG_SRC_DIR}/content.ts`)
           await mod.preloadContent(resolve(config.root, options.contentDir))
-          cachedContentJson = mod.serializeContentCache()
+          cachedContentJson = mod.serializeContentCacheForClient()
           contentLoaded = true
         }
 

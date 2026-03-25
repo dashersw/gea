@@ -1,7 +1,8 @@
 export interface ContentFile<T = Record<string, any>> {
   slug: string
   frontmatter: T
-  content: string
+  /** Raw markdown — available during SSR, omitted in client bundle */
+  content?: string
   html: string
 }
 

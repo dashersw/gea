@@ -5,7 +5,7 @@ import { RouterView, Link, Head } from '@geajs/core'
 import { renderToString } from './render'
 import { crawlRoutes } from './crawl'
 import { parseShell, injectIntoShell } from './shell'
-import { preloadContent, clearContentCache, serializeContentCache } from './content'
+import { preloadContent, clearContentCache, serializeContentCache, serializeContentCacheForClient } from './content'
 import { buildHeadTags, replaceTitle, minifyHtml } from './head'
 import type { HeadConfig } from './head'
 import type { SSGOptions, GenerateResult, GeneratedPage, StaticRoute, RobotsOptions } from './types'
@@ -92,8 +92,8 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
         let fullHtml = injectIntoShell(shellParts, html)
 
         if (options.contentDir) {
-          const contentJson = serializeContentCache().replace(/<\//g, '<\\/')
-          fullHtml = fullHtml.replace('</head>', `<script>window.__SSG_CONTENT__=${contentJson}</script>\n</head>`)
+          const base = options.base || '/'
+          fullHtml = fullHtml.replace('</head>', `<script src="${base}_ssg/content.js"></script>\n</head>`)
         }
 
         if (Head._current) {
@@ -148,6 +148,13 @@ export async function generate(options: SSGOptions): Promise<GenerateResult> {
     }
 
     await runWithConcurrency(staticRoutes, renderRoute, concurrency)
+
+    if (options.contentDir) {
+      const ssgDir = join(outDir, '_ssg')
+      await mkdir(ssgDir, { recursive: true })
+      const clientJson = serializeContentCacheForClient().replace(/<\//g, '<\\/')
+      await writeFile(join(ssgDir, 'content.js'), `window.__SSG_CONTENT__=${clientJson}`, 'utf-8')
+    }
 
     if (sitemap) {
       const sitemapOpts = typeof sitemap === 'boolean' ? { hostname: 'https://example.com' } : sitemap
