@@ -1,5 +1,29 @@
 # @geajs/core
 
+## 1.0.8
+
+### Minor Changes
+
+- **New Feature**: Added `<Teleport>` component for rendering content outside the component tree
+  - Zero-reset: Component state preserved during teleporting
+  - Event delegation: Event handlers work normally on teleported content
+  - Reactivity: Dynamic target selector changes supported
+  - Conditional teleporting via `disabled` prop
+  - Automatic cleanup on component disposal
+  - TypeScript support with `TeleportProps` interface
+
+### Usage
+
+```jsx
+<Teleport to-selector="#modal-root">
+  <Modal />
+</Teleport>
+
+<Teleport to-selector="#sidebar" disabled={!showSidebar}>
+  <SidebarContent />
+</Teleport>
+```
+
 ## 1.0.7
 
 ### Patch Changes

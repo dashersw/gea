@@ -3,6 +3,11 @@ declare namespace JSX {
   type Element = string
   interface IntrinsicElements {
     [elemName: string]: any
+    Teleport: {
+      'to-selector': string
+      disabled?: boolean
+      children?: any
+    }
   }
   interface IntrinsicAttributes {
     key?: string | number

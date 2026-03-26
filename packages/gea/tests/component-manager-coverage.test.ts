@@ -418,6 +418,8 @@ describe('ComponentManager – event handling', () => {
         events: { customtest: { '.a': () => {} } },
       }
       mgr.setComponent(comp)
+      // Event registration now happens in markComponentRendered, not setComponent
+      mgr.markComponentRendered(comp)
       assert.ok(mgr.registeredDocumentEvents_.has('customtest'))
     })
   })

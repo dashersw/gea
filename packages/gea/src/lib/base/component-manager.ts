@@ -237,6 +237,38 @@ export default class ComponentManager {
       return parentComps
     }
 
+    // Check if this is a teleported element or descendant of teleported element
+    let currentNode: HTMLElement | null = child
+    while (currentNode) {
+      const originalComponentId = (currentNode as any).__geaOriginalComponent
+      if (originalComponentId) {
+        const originalComponent = this.componentRegistry[originalComponentId]
+        if (originalComponent) {
+          parentComps.push(originalComponent)
+          child.parentComps = originalComponentId
+          return parentComps
+        }
+      }
+
+      // Also check for data-gea-teleport-component attribute as fallback
+      const teleportComponentId = currentNode.getAttribute?.('data-gea-teleport-component')
+      if (teleportComponentId) {
+        const teleportComponent = this.componentRegistry[teleportComponentId]
+        if (teleportComponent) {
+          parentComps.push(teleportComponent)
+          child.parentComps = teleportComponentId
+          return parentComps
+        }
+      }
+
+      currentNode = currentNode.parentNode as HTMLElement | null
+
+      // Stop if we reach document body or a component boundary
+      if (!currentNode || currentNode === document.body || this.componentRegistry[currentNode.id]) {
+        break
+      }
+    }
+
     ids = []
 
     do {
@@ -343,11 +375,7 @@ export default class ComponentManager {
   setComponent(comp: ComponentLike): void {
     this.componentRegistry[comp.id] = comp
     if (!comp.rendered) this.componentsToRender[comp.id] = comp
-    if (this.loaded_) {
-      if (comp.events) {
-        this.addDocumentEventListeners_(Object.keys(comp.events))
-      }
-    }
+    // Event registration is now handled lazily in markComponentRendered
   }
 
   removeComponent(comp: ComponentLike): void {
@@ -389,6 +417,11 @@ export default class ComponentManager {
 
   markComponentRendered(comp: ComponentLike): void {
     delete this.componentsToRender[comp.id]
+
+    // Register events when component is fully rendered and events are available
+    if (this.loaded_ && comp.events) {
+      this.addDocumentEventListeners_(Object.keys(comp.events))
+    }
   }
 
   getActiveDocumentEventTypes_(): string[] {
@@ -402,7 +435,9 @@ export default class ComponentManager {
   }
 
   static getInstance(): ComponentManager {
-    if (!ComponentManager.instance) ComponentManager.instance = new ComponentManager()
+    if (!ComponentManager.instance) {
+      ComponentManager.instance = new ComponentManager()
+    }
 
     return ComponentManager.instance
   }

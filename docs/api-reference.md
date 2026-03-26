@@ -528,6 +528,106 @@ Supported gestures: `tap`, `longTap`, `swipeRight`, `swipeLeft`, `swipeUp`, `swi
 
 ---
 
+## Teleport
+
+### Import
+
+```ts
+import type { TeleportProps } from '@geajs/core'
+```
+
+### Usage
+
+Teleport renders content in a different part of the DOM tree while keeping it logically part of your component. This is useful for modals, tooltips, and other UI elements that need to escape their parent's styling or z-index context.
+
+```jsx
+import { Component } from '@geajs/core'
+
+export default class App extends Component {
+  showModal = false
+
+  template() {
+    return (
+      <div class="app">
+        <button onclick={() => this.showModal = true}>Open Modal</button>
+        
+        <Teleport to-selector="#modal-root">
+          <div class={`modal ${this.showModal ? 'visible' : 'hidden'}`}>
+            <h2>Modal Title</h2>
+            <p>This content is rendered in #modal-root, not here!</p>
+            <button onclick={() => this.showModal = false}>Close</button>
+          </div>
+        </Teleport>
+      </div>
+    )
+  }
+}
+```
+
+### Props
+
+| Prop | Type | Required | Description |
+| --- | --- | --- | --- |
+| `to-selector` | `string` | Yes | CSS selector for target element where content should be teleported |
+| `disabled` | `boolean` | No | When `true`, prevents teleporting and keeps content in original location |
+
+### Features
+
+- **Zero-Reset**: Component state is preserved during teleporting
+- **Event Delegation**: Event handlers work normally on teleported content
+- **Reactivity**: When `to-selector` changes, content is moved to the new target
+- **Conditional**: Use `disabled` prop to toggle teleporting on/off
+- **Cleanup**: Teleported content is automatically cleaned up when component is disposed
+
+### Examples
+
+```jsx
+// Basic teleport
+<Teleport to-selector="#modal-root">
+  <Modal />
+</Teleport>
+
+// Conditional teleport
+<Teleport to-selector="#sidebar" disabled={!this.showSidebar}>
+  <SidebarContent />
+</Teleport>
+
+// Dynamic target
+<Teleport to-selector={this.isMobile ? '#mobile-container' : '#desktop-container'}>
+  <ResponsiveContent />
+</Teleport>
+
+// Multiple teleports
+<div>
+  <Teleport to-selector="#modals">
+    <ConfirmDialog />
+  </Teleport>
+  <Teleport to-selector="#notifications">
+    <Toast message={this.message} />
+  </Teleport>
+</div>
+```
+
+### Target Element Requirements
+
+- The target element must exist in the DOM when the component renders
+- If the target is not found, a warning is logged and content remains in its original location
+- Target elements can be anywhere in the document, including outside the React root
+
+### TypeScript
+
+```ts
+import type { TeleportProps } from '@geajs/core'
+
+// Type-safe teleport props
+const teleportProps: TeleportProps = {
+  'to-selector': '#modal-root',
+  disabled: false
+}
+```
+
+---
+
 ## Project Setup
 
 ### Vite Configuration

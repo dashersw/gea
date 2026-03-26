@@ -1,7 +1,8 @@
 export { default as Component } from './lib/base/component'
 export { Store, isInternalProp } from './lib/store'
 export { h } from './lib/h'
-export type { DOMEvent } from './lib/types'
+export type { DOMEvent, TeleportProps } from './lib/types'
+
 export { default as ComponentManager } from './lib/base/component-manager'
 export { applyListChanges } from './lib/base/list'
 export type { ListConfig } from './lib/base/list'
