@@ -78,9 +78,8 @@ export default class Component<P = Record<string, any>> extends Store {
 
     ComponentManager.getInstance().setComponent(this)
 
-    this.created(this.props)
-
     if (!Component._ssgMode) {
+      this.created(this.props)
       this.createdHooks(this.props)
 
       if (typeof (this as any).__setupLocalStateObservers === 'function') {

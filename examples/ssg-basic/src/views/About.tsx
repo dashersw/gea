@@ -1,5 +1,4 @@
 import { Component, Head } from '@geajs/core'
-import { ssg } from '@geajs/ssg'
 
 const features = [
   { name: 'Compile-time JSX', description: 'No runtime template parsing — JSX is compiled at build time' },
@@ -10,10 +9,6 @@ const features = [
 
 export default class About extends Component {
   template() {
-    const changelog = ssg.content('changelog', {
-      sort: (a, b) => new Date(b.frontmatter.date).getTime() - new Date(a.frontmatter.date).getTime(),
-    })
-
     return (
       <div class="view">
         <Head title="About — SSG Basic" description="Learn about Gea and its features" />
@@ -36,21 +31,6 @@ export default class About extends Component {
             )
             .join('')}
         </div>
-
-        <h2>Changelog</h2>
-        {changelog
-          .map(
-            (c) => `
-            <div class="card changelog-entry">
-              <div class="changelog-header">
-                <strong>v${c.frontmatter.version}</strong>
-                <time>${new Date(c.frontmatter.date).toISOString().split('T')[0]}</time>
-              </div>
-              <div class="changelog-body">${c.html}</div>
-            </div>
-          `,
-          )
-          .join('')}
       </div>
     )
   }

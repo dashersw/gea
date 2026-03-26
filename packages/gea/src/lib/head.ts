@@ -60,7 +60,12 @@ export class Head extends Component {
 
     if (props.link) {
       for (const attrs of props.link) {
-        const selector = attrs.rel ? `link[rel="${attrs.rel}"]` : null
+        let selector: string | null = null
+        if (attrs.rel && attrs.href) {
+          selector = `link[rel="${attrs.rel}"][href="${attrs.href}"]`
+        } else if (attrs.rel) {
+          selector = `link[rel="${attrs.rel}"]`
+        }
         let el = selector ? (document.querySelector(selector) as HTMLLinkElement) : null
         if (!el) {
           el = document.createElement('link')
@@ -114,9 +119,13 @@ export class Head extends Component {
   }
 
   _setMeta(nameOrProperty: string, content?: string) {
-    if (!content) return
     const isOg = nameOrProperty.startsWith('og:') || nameOrProperty.startsWith('twitter:')
     const attr = isOg ? 'property' : 'name'
+    if (!content) {
+      const el = document.querySelector(`meta[${attr}="${nameOrProperty}"]`)
+      if (el) el.remove()
+      return
+    }
     let el = document.querySelector(`meta[${attr}="${nameOrProperty}"]`) as HTMLMetaElement
     if (!el) {
       el = document.createElement('meta')

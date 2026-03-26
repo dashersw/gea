@@ -28,21 +28,32 @@ export default class RouterView extends Component<{ router?: Router; routes?: Ro
 
       if (!layouts.length) {
         const child = new component(params)
-        const html = String(child.template(child.props)).trim()
-        if (typeof child.dispose === 'function') child.dispose()
+        let html: string
+        try {
+          html = String(child.template(child.props)).trim()
+        } finally {
+          if (typeof child.dispose === 'function') child.dispose()
+        }
         return `<div id="${this.id}">${html}</div>` as any
       }
 
       const leaf = new component(params)
-      let innerHtml = String(leaf.template(leaf.props)).trim()
-      if (typeof leaf.dispose === 'function') leaf.dispose()
+      let innerHtml: string
+      try {
+        innerHtml = String(leaf.template(leaf.props)).trim()
+      } finally {
+        if (typeof leaf.dispose === 'function') leaf.dispose()
+      }
 
       for (let i = layouts.length - 1; i >= 0; i--) {
         Outlet._ssgHtml = innerHtml
         const layout = new layouts[i]({ ...params })
-        innerHtml = String(layout.template(layout.props)).trim()
-        if (typeof layout.dispose === 'function') layout.dispose()
-        Outlet._ssgHtml = null
+        try {
+          innerHtml = String(layout.template(layout.props)).trim()
+        } finally {
+          if (typeof layout.dispose === 'function') layout.dispose()
+          Outlet._ssgHtml = null
+        }
       }
 
       return `<div id="${this.id}">${innerHtml}</div>` as any
