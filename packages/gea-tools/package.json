@@ -41,9 +41,10 @@
     "watch": "tsc -w -p ./"
   },
   "dependencies": {
+    "quill": "2.0.2",
+    "vscode-languageclient": "^6.1.4",
     "vscode-languageserver": "^8.1.0",
-    "vscode-languageserver-textdocument": "^1.0.8",
-    "vscode-languageclient": "^8.1.0"
+    "vscode-languageserver-textdocument": "^1.0.8"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

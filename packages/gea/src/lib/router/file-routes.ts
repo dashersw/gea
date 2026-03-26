@@ -52,34 +52,44 @@ function layoutFileToPrefix(filePath: string, basePath: string): string {
   return path.replace(/\[([^\]]+)\]/g, ':$1')
 }
 
-// ── Prefix matching (segment-aware, handles dynamic params) ──────
-
 /**
- * Returns true if `route` is under `prefix` (exact match or a sub-path).
- * Handles dynamic segments like `:id`.
+ * Raw filesystem prefix for a layout file — like layoutFileToPrefix but keeps
+ * `[param]` segments as-is (no conversion to `:param`).  Used for tree-ancestry
+ * checks so dynamic layout dirs don't claim unrelated sibling pages.
  */
-function isUnderPrefix(route: string, prefix: string): boolean {
-  if (prefix === '/') return true
-  if (route === '*') return false // bare wildcard belongs only to root
-
-  const prefixParts = prefix.split('/').filter(Boolean)
-  const routeParts = route === '*' ? [] : route.split('/').filter(Boolean)
-
-  if (routeParts.length < prefixParts.length) return false
-
-  for (let i = 0; i < prefixParts.length; i++) {
-    const pp = prefixParts[i]
-    if (pp.startsWith(':')) continue // dynamic — always matches
-    if (pp !== routeParts[i]) return false
-  }
-
-  return true
+function layoutFileToFsPrefix(filePath: string, basePath: string): string {
+  const base = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
+  let path = filePath.slice(base.length)
+  path = path.replace(/\/layout\.(tsx|ts|jsx|js)$/, '')
+  if (!path || path === '/') return '/'
+  return path
 }
 
-/** True if `ancestorPrefix` is a strict ancestor of `childPrefix`. */
-function isAncestor(ancestorPrefix: string, childPrefix: string): boolean {
-  if (ancestorPrefix === childPrefix) return false
-  return isUnderPrefix(childPrefix, ancestorPrefix)
+/**
+ * Raw filesystem path for a page file — strips `/page.ext` but keeps
+ * `[param]` segments as-is.  Used for layout-ownership checks.
+ */
+function pageFileToFsPath(filePath: string, basePath: string): string {
+  const base = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
+  let path = filePath.slice(base.length)
+  path = path.replace(/\/page\.(tsx|ts|jsx|js)$/, '')
+  if (!path || path === '/') return '/'
+  return path
+}
+
+// ── Filesystem-path ancestry (literal segment matching) ──────────
+
+/** True if `ancestorFsPrefix` is a strict filesystem ancestor of `childFsPrefix`. */
+function isFsAncestor(ancestorFsPrefix: string, childFsPrefix: string): boolean {
+  if (ancestorFsPrefix === childFsPrefix) return false
+  if (ancestorFsPrefix === '/') return true
+  return childFsPrefix.startsWith(ancestorFsPrefix + '/')
+}
+
+/** True if `pageFsPath` is at or under `layoutFsPrefix` in the filesystem tree. */
+function isFsUnderPrefix(pageFsPath: string, layoutFsPrefix: string): boolean {
+  if (layoutFsPrefix === '/') return true
+  return pageFsPath === layoutFsPrefix || pageFsPath.startsWith(layoutFsPrefix + '/')
 }
 
 // ── Relative path ────────────────────────────────────────────────
@@ -104,15 +114,19 @@ function relativePath(fullRoute: string, prefix: string): string {
 // ── Layout tree ──────────────────────────────────────────────────
 
 interface LayoutNode {
-  prefix: string
+  fsPrefix: string      // raw filesystem prefix, e.g. '/users/[id]'
+  patternPrefix: string // route-pattern prefix, e.g. '/users/:id'
   layout: any
   children: LayoutNode[]
 }
 
-function buildLayoutTree(prefixes: string[], layouts: Map<string, any>): LayoutNode[] {
-  const nodes: LayoutNode[] = prefixes.map((prefix) => ({
-    prefix,
-    layout: layouts.get(prefix)!,
+function buildLayoutTree(
+  sortedLayouts: Array<{ fsPrefix: string; patternPrefix: string; layout: any }>,
+): LayoutNode[] {
+  const nodes: LayoutNode[] = sortedLayouts.map(({ fsPrefix, patternPrefix, layout }) => ({
+    fsPrefix,
+    patternPrefix,
+    layout,
     children: [],
   }))
 
@@ -124,9 +138,9 @@ function buildLayoutTree(prefixes: string[], layouts: Map<string, any>): LayoutN
 
     for (let j = 0; j < i; j++) {
       const candidate = nodes[j]
-      if (isAncestor(candidate.prefix, node.prefix)) {
-        // Pick the deepest ancestor
-        if (!parent || candidate.prefix.length > parent.prefix.length) {
+      if (isFsAncestor(candidate.fsPrefix, node.fsPrefix)) {
+        // Pick the deepest filesystem ancestor
+        if (!parent || candidate.fsPrefix.length > parent.fsPrefix.length) {
           parent = candidate
         }
       }
@@ -144,31 +158,34 @@ function buildLayoutTree(prefixes: string[], layouts: Map<string, any>): LayoutN
 
 // ── RouteMap builder ─────────────────────────────────────────────
 
-/** True if `route` belongs directly to `node` (not to a child layout). */
-function belongsToNode(route: string, node: LayoutNode): boolean {
-  if (!isUnderPrefix(route, node.prefix)) return false
+/** True if `page` belongs directly to `node` (not to a child layout). */
+function belongsToNode(
+  page: { route: string; fsPath: string },
+  node: LayoutNode,
+): boolean {
+  if (!isFsUnderPrefix(page.fsPath, node.fsPrefix)) return false
   // Must not fall under any child layout
   for (const child of node.children) {
-    if (isUnderPrefix(route, child.prefix)) return false
+    if (isFsUnderPrefix(page.fsPath, child.fsPrefix)) return false
   }
   return true
 }
 
 function buildGroupChildren(
   node: LayoutNode,
-  pages: Array<{ route: string; loader: LazyComponent }>,
+  pages: Array<{ route: string; fsPath: string; loader: LazyComponent }>,
 ): RouteMap {
   const children: Record<string, any> = {}
 
   // Pages owned directly by this node
-  for (const { route, loader } of pages) {
-    if (!belongsToNode(route, node)) continue
-    children[relativePath(route, node.prefix)] = loader
+  for (const page of pages) {
+    if (!belongsToNode(page, node)) continue
+    children[relativePath(page.route, node.patternPrefix)] = page.loader
   }
 
   // Nested layout groups
   for (const child of node.children) {
-    const key = relativePath(child.prefix, node.prefix)
+    const key = relativePath(child.patternPrefix, node.patternPrefix)
     const group: RouteGroupConfig = {
       layout: child.layout,
       children: buildGroupChildren(child, pages),
@@ -180,22 +197,16 @@ function buildGroupChildren(
 }
 
 function buildNestedRouteMap(
-  pages: Array<{ route: string; loader: LazyComponent }>,
-  layouts: Map<string, any>,
+  pages: Array<{ route: string; fsPath: string; loader: LazyComponent }>,
+  sortedLayouts: Array<{ fsPrefix: string; patternPrefix: string; layout: any }>,
 ): RouteMap {
-  const sortedPrefixes = [...layouts.keys()].sort((a, b) => {
-    const da = a === '/' ? 0 : a.split('/').filter(Boolean).length
-    const db = b === '/' ? 0 : b.split('/').filter(Boolean).length
-    return da - db
-  })
-
-  const roots = buildLayoutTree(sortedPrefixes, layouts)
+  const roots = buildLayoutTree(sortedLayouts)
   const result: Record<string, any> = {}
 
   // Pages not under any root layout node
-  for (const { route, loader } of pages) {
-    const underRoot = roots.some((r) => isUnderPrefix(route, r.prefix))
-    if (!underRoot) result[route] = loader
+  for (const page of pages) {
+    const underRoot = roots.some((r) => isFsUnderPrefix(page.fsPath, r.fsPrefix))
+    if (!underRoot) result[page.route] = page.loader
   }
 
   // Layout groups
@@ -204,7 +215,7 @@ function buildNestedRouteMap(
       layout: root.layout,
       children: buildGroupChildren(root, pages),
     }
-    result[root.prefix] = group
+    result[root.patternPrefix] = group
   }
 
   return result as RouteMap
@@ -233,22 +244,36 @@ export function buildFileRoutes(
   layoutGlob: Record<string, any>,
   basePath: string,
 ): RouteMap {
-  const pages: Array<{ route: string; loader: LazyComponent }> = []
+  const pages: Array<{ route: string; fsPath: string; loader: LazyComponent }> = []
   for (const [filePath, loader] of Object.entries(pageGlob)) {
-    pages.push({ route: pageFileToRoute(filePath, basePath), loader })
+    pages.push({
+      route: pageFileToRoute(filePath, basePath),
+      fsPath: pageFileToFsPath(filePath, basePath),
+      loader,
+    })
   }
 
-  const layouts: Map<string, any> = new Map()
+  const layoutsList: Array<{ fsPrefix: string; patternPrefix: string; layout: any }> = []
   for (const [filePath, mod] of Object.entries(layoutGlob)) {
-    layouts.set(layoutFileToPrefix(filePath, basePath), mod.default ?? mod)
+    layoutsList.push({
+      fsPrefix: layoutFileToFsPrefix(filePath, basePath),
+      patternPrefix: layoutFileToPrefix(filePath, basePath),
+      layout: mod.default ?? mod,
+    })
   }
 
-  if (layouts.size === 0) {
+  if (layoutsList.length === 0) {
     // No layouts — flat map
     const flat: Record<string, any> = {}
     for (const { route, loader } of pages) flat[route] = loader
     return flat as RouteMap
   }
 
-  return buildNestedRouteMap(pages, layouts)
+  const sortedLayouts = layoutsList.sort((a, b) => {
+    const da = a.fsPrefix === '/' ? 0 : a.fsPrefix.split('/').filter(Boolean).length
+    const db = b.fsPrefix === '/' ? 0 : b.fsPrefix.split('/').filter(Boolean).length
+    return da - db
+  })
+
+  return buildNestedRouteMap(pages, sortedLayouts)
 }

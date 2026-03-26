@@ -11,43 +11,107 @@
  *
  * The `buildFileRoutes` helper is imported from `@geajs/core` under the
  * `__geaBuildFileRoutes` alias to avoid collisions with user code.
+ *
+ * Uses an AST-based approach so that template literals, strings in comments,
+ * and other non-call occurrences are never accidentally mutated.
  */
 
-const SET_PATH_RE = /\.setPath\(\s*(['"])((?:\.{1,2}\/)[^'"]*)\1\s*\)/g
+import { parse } from '@babel/parser'
+import * as t from '@babel/types'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
+const traverse = require('@babel/traverse').default
+const generate = require('@babel/generator').default
+
 const IMPORT_MARKER = '__geaBuildFileRoutes'
-const IMPORT_STMT = `import { buildFileRoutes as ${IMPORT_MARKER} } from '@geajs/core';\n`
+const IMPORT_SOURCE = '@geajs/core'
+
+function buildGlobCall(pattern: string, options?: t.ObjectExpression): t.CallExpression {
+  const callee = t.memberExpression(
+    t.metaProperty(t.identifier('import'), t.identifier('meta')),
+    t.identifier('glob'),
+  )
+  const args: t.Expression[] = [t.stringLiteral(pattern)]
+  if (options) args.push(options)
+  return t.callExpression(callee, args)
+}
 
 export function transformFileRoutes(code: string): { code: string; map: null } | null {
   if (!code.includes('.setPath(')) return null
 
-  SET_PATH_RE.lastIndex = 0
-  if (!SET_PATH_RE.test(code)) return null
+  let ast: t.File
+  try {
+    ast = parse(code, {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx', 'decorators-legacy', 'classProperties'],
+    })
+  } catch {
+    return null
+  }
 
-  SET_PATH_RE.lastIndex = 0
-  const transformed = code.replace(SET_PATH_RE, (match, _quote, dirPath, offset) => {
-    // Skip if inside a block/JSDoc comment (line starts with optional whitespace then *)
-    const lineStart = code.lastIndexOf('\n', offset) + 1
-    const linePrefix = code.slice(lineStart, offset)
-    if (/^\s*\*/.test(linePrefix)) return match
+  let hasSetPath = false
+  let alreadyImported = false
 
-    const pageGlob = JSON.stringify(`${dirPath}/**/page.{tsx,ts,jsx,js}`)
-    const layoutGlob = JSON.stringify(`${dirPath}/**/layout.{tsx,ts,jsx,js}`)
-    return (
-      `.setRoutes(${IMPORT_MARKER}(` +
-      `import.meta.glob(${pageGlob}), ` +
-      `import.meta.glob(${layoutGlob}, { eager: true }), ` +
-      `${JSON.stringify(dirPath)}` +
-      `))`
-    )
+  traverse(ast, {
+    ImportDeclaration(path: any) {
+      if (path.node.source.value !== IMPORT_SOURCE) return
+      for (const spec of path.node.specifiers) {
+        if (
+          t.isImportSpecifier(spec) &&
+          t.isIdentifier(spec.imported) &&
+          spec.imported.name === 'buildFileRoutes' &&
+          spec.local.name === IMPORT_MARKER
+        ) {
+          alreadyImported = true
+        }
+      }
+    },
+
+    CallExpression(path: any) {
+      const node = path.node as t.CallExpression
+      if (
+        !t.isMemberExpression(node.callee) ||
+        !t.isIdentifier(node.callee.property) ||
+        node.callee.property.name !== 'setPath' ||
+        node.arguments.length < 1 ||
+        !t.isStringLiteral(node.arguments[0]) ||
+        !/^\.{1,2}\//.test((node.arguments[0] as t.StringLiteral).value)
+      ) {
+        return
+      }
+
+      hasSetPath = true
+      const dirPath = (node.arguments[0] as t.StringLiteral).value
+
+      const eagerOpts = t.objectExpression([
+        t.objectProperty(t.identifier('eager'), t.booleanLiteral(true)),
+      ])
+
+      const buildCall = t.callExpression(t.identifier(IMPORT_MARKER), [
+        buildGlobCall(`${dirPath}/**/page.{tsx,ts,jsx,js}`),
+        buildGlobCall(`${dirPath}/**/layout.{tsx,ts,jsx,js}`, eagerOpts),
+        t.stringLiteral(dirPath),
+      ])
+
+      path.replaceWith(
+        t.callExpression(t.memberExpression(node.callee.object, t.identifier('setRoutes')), [
+          buildCall,
+        ]),
+      )
+    },
   })
 
-  if (transformed === code) return null
+  if (!hasSetPath) return null
 
-  // Prepend the import only once (it may already be present from a previous
-  // HMR pass or if the user imports buildFileRoutes themselves).
-  const final = transformed.includes(IMPORT_MARKER) && code.includes(IMPORT_MARKER)
-    ? transformed
-    : IMPORT_STMT + transformed
+  if (!alreadyImported) {
+    const importDecl = t.importDeclaration(
+      [t.importSpecifier(t.identifier(IMPORT_MARKER), t.identifier('buildFileRoutes'))],
+      t.stringLiteral(IMPORT_SOURCE),
+    )
+    ast.program.body.unshift(importDecl)
+  }
 
-  return { code: final, map: null }
+  const { code: generated } = generate(ast, {}, code)
+  return { code: generated, map: null }
 }
