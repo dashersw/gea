@@ -84,6 +84,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
   _scheduleSpreadApplication() {
     if (this._spreadScheduled) return
     this._spreadScheduled = true
+    this._elementCache.clear()
     queueMicrotask(() => {
       this._spreadScheduled = false
       this._applyAllSpreads()

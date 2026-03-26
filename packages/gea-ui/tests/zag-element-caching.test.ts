@@ -101,7 +101,23 @@ test('ZagComponent: should cache element queries and handle invalidation', async
   instance._applyAllSpreads()
   assert.strictEqual(queryCount, 3, 'Should re-query after onAfterRender clears cache')
 
-  // Run 5: Memory Leak Check (Dispose)
+  // Run 5: Invalidation via _scheduleSpreadApplication (Machine Transition)
+  // Logic: Scheduling should clear cache immediately so that when the microtask runs,
+  // it has a fresh view of the DOM.
+  instance._spreadScheduled = false // Ensure we trigger the clear() logic
+  instance._scheduleSpreadApplication()
+  
+  // Simulate Slider mutating DOM after state change but before spread application
+  const newThumb = document.createElement('span')
+  newThumb.setAttribute('data-part', 'item')
+  instance.el.appendChild(newThumb)
+  
+  instance._applyAllSpreads() 
+  assert.strictEqual(queryCount, 4, 'Should re-query after _scheduleSpreadApplication clears cache')
+  
+  const cachedElements = instance._elementCache.get('[data-part="item"]')
+  assert.strictEqual(cachedElements.length, 2, 'Should find the newly added element')
+
+  // Run 6: Memory Leak Check (Dispose)
   instance.dispose()
-  // assert.strictEqual(instance._elementCache.size, 0, 'Cache should be empty after dispose')
 })
