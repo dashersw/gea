@@ -196,7 +196,7 @@ function getOutputPath(routePath: string, outDir: string, trailingSlash: boolean
     return join(outDir, 'index.html')
   }
   if (routePath === '/404') {
-    return join(outDir, '404.html')
+    return join(outDir, '404', 'index.html')
   }
   if (trailingSlash) {
     return join(outDir, routePath, 'index.html')
