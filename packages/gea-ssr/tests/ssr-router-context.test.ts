@@ -148,3 +148,32 @@ describe('createSSRRouterState', () => {
     assert.equal(state.page, MockComponent)
   })
 })
+
+describe('handleRequest with SSR router context', () => {
+  it('router singleton returns SSR state during render', async () => {
+    Router._ssrRouterResolver = resolveSSRRouter
+
+    const mockResult: ServerRouteResult = {
+      path: '/test-route',
+      route: '/test-route',
+      params: {},
+      query: {},
+      hash: '',
+      matches: ['/test-route'],
+      component: null,
+      guardRedirect: null,
+      isNotFound: false,
+    }
+    const state = createSSRRouterState(mockResult)
+
+    let capturedPath = ''
+    runWithSSRRouter(state, () => {
+      capturedPath = router.path
+    })
+
+    assert.equal(capturedPath, '/test-route')
+
+    // Clean up
+    Router._ssrRouterResolver = null
+  })
+})

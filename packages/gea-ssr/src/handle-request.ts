@@ -6,11 +6,17 @@ import { parseShell } from './shell'
 import { createSSRStream } from './stream'
 import { serializeHead } from './head'
 import type { GeaComponentConstructor, StoreRegistry, SSRContext, RouteMap } from './types'
-import { Store } from '@geajs/core'
+import { Store, Router } from '@geajs/core'
+import { resolveSSRRouter, runWithSSRRouter, createSSRRouterState } from './ssr-router-context'
 
 // Wire the SSR overlay resolver into the Store Proxy
 if (!Store._ssrOverlayResolver) {
   Store._ssrOverlayResolver = resolveOverlay
+}
+
+// Wire the SSR router resolver into the Router singleton proxy
+if (!Router._ssrRouterResolver) {
+  Router._ssrRouterResolver = resolveSSRRouter
 }
 
 function generateDigest(error: Error): string {
@@ -72,75 +78,79 @@ export function handleRequest(
               isNotFound: false,
             }
 
-        // 2. Handle guard redirects
-        if (routeResult.guardRedirect) {
-          return new Response(null, {
-            status: 302,
-            headers: { Location: routeResult.guardRedirect },
+        const ssrRouterState = createSSRRouterState(routeResult)
+
+        return await runWithSSRRouter(ssrRouterState, async () => {
+          // 2. Handle guard redirects
+          if (routeResult.guardRedirect) {
+            return new Response(null, {
+              status: 302,
+              headers: { Location: routeResult.guardRedirect },
+            })
+          }
+
+          // 3. Data loading — runs BEFORE streaming so errors produce clean error responses
+          const ssrCtx: SSRContext = {
+            request,
+            params: routeResult.params,
+            query: routeResult.query,
+            hash: routeResult.hash,
+            route: routeResult.route,
+            head: {},
+          }
+          if (options.onBeforeRender) {
+            await options.onBeforeRender(ssrCtx)
+          }
+
+          // 4. Render — synchronous after data loading
+          const ssrProps: Record<string, unknown> = {}
+          if (routeResult.component) {
+            ssrProps.__ssrRouteComponent = routeResult.component
+            ssrProps.__ssrRouteProps = { ...routeResult.params }
+          }
+          const appHtml = renderToString(App, ssrProps, {
+            onRenderError: options.onRenderError,
           })
-        }
 
-        // 3. Data loading — runs BEFORE streaming so errors produce clean error responses
-        const ssrCtx: SSRContext = {
-          request,
-          params: routeResult.params,
-          query: routeResult.query,
-          hash: routeResult.hash,
-          route: routeResult.route,
-          head: {},
-        }
-        if (options.onBeforeRender) {
-          await options.onBeforeRender(ssrCtx)
-        }
+          // 5. Serialize state
+          const stateJson =
+            stores.length > 0 ? serializeStores(stores, options.storeRegistry!) : '{}'
 
-        // 4. Render — synchronous after data loading
-        const ssrProps: Record<string, unknown> = {}
-        if (routeResult.component) {
-          ssrProps.__ssrRouteComponent = routeResult.component
-          ssrProps.__ssrRouteProps = { ...routeResult.params }
-        }
-        const appHtml = renderToString(App, ssrProps, {
-          onRenderError: options.onRenderError,
-        })
+          // 6. Parse shell and stream
+          const indexHtml =
+            context?.indexHtml ??
+            options.indexHtml ??
+            `<!DOCTYPE html><html><head></head><body><div id="${appElementId}"></div></body></html>`
+          const shellParts = parseShell(indexHtml, appElementId)
 
-        // 5. Serialize state
-        const stateJson =
-          stores.length > 0 ? serializeStores(stores, options.storeRegistry!) : '{}'
-
-        // 6. Parse shell and stream
-        const indexHtml =
-          context?.indexHtml ??
-          options.indexHtml ??
-          `<!DOCTYPE html><html><head></head><body><div id="${appElementId}"></div></body></html>`
-        const shellParts = parseShell(indexHtml, appElementId)
-
-        let stream: ReadableStream<Uint8Array> = createSSRStream({
-          shellBefore: shellParts.before,
-          shellAfter: shellParts.after,
-          headHtml: serializeHead(ssrCtx.head ?? {}),
-          headEnd: shellParts.headEnd,
-          render: async () => ({ appHtml, stateJson }),
-          deferreds: ssrCtx.deferreds,
-        })
-
-        // 7. afterResponse hook — wrap stream to trigger callback on completion
-        if (options.afterResponse) {
-          const afterFn = options.afterResponse
-          const passthrough = new TransformStream<Uint8Array, Uint8Array>({
-            transform(chunk, controller) { controller.enqueue(chunk) },
-            flush() {
-              return Promise.resolve(afterFn(ssrCtx)).catch((e: unknown) => {
-                console.error('[gea-ssr] afterResponse error:', e)
-              })
-            },
+          let stream: ReadableStream<Uint8Array> = createSSRStream({
+            shellBefore: shellParts.before,
+            shellAfter: shellParts.after,
+            headHtml: serializeHead(ssrCtx.head ?? {}),
+            headEnd: shellParts.headEnd,
+            render: async () => ({ appHtml, stateJson }),
+            deferreds: ssrCtx.deferreds,
           })
-          stream = stream.pipeThrough(passthrough)
-        }
 
-        const status = routeResult.isNotFound ? 404 : 200
-        return new Response(stream, {
-          status,
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          // 7. afterResponse hook — wrap stream to trigger callback on completion
+          if (options.afterResponse) {
+            const afterFn = options.afterResponse
+            const passthrough = new TransformStream<Uint8Array, Uint8Array>({
+              transform(chunk, controller) { controller.enqueue(chunk) },
+              flush() {
+                return Promise.resolve(afterFn(ssrCtx)).catch((e: unknown) => {
+                  console.error('[gea-ssr] afterResponse error:', e)
+                })
+              },
+            })
+            stream = stream.pipeThrough(passthrough)
+          }
+
+          const status = routeResult.isNotFound ? 404 : 200
+          return new Response(stream, {
+            status,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          })
         })
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error))
