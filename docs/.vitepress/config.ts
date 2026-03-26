@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitepress'
 import llmstxt, { copyOrDownloadAsMarkdownButtons } from 'vitepress-plugin-llms'
+import { moveLlmsTxtToOutDirParent } from './move-llms-txt-to-outdir-parent'
 
 export default defineConfig({
   vite: {
-    plugins: [llmstxt() as any],
+    plugins: [...(llmstxt() as any[]), moveLlmsTxtToOutDirParent() as any],
   },
   markdown: {
     config(md) {
@@ -12,7 +13,7 @@ export default defineConfig({
   },
   title: 'Gea',
   description: 'A lightweight, reactive JavaScript UI framework with compile-time JSX and proxy-based stores.',
-  base: '/docs/',
+  base: '/docs',
   outDir: '../website/docs',
   head: [
     [
