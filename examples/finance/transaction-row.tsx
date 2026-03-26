@@ -10,14 +10,14 @@ export default class TransactionRow extends Component {
     const color = CATEGORY_COLORS[tx.category]
     return (
       <div class="tx-row" data-tx-id={tx.id}>
-        <div class="tx-icon" style={`background: ${color}22; color: ${color}`}>
+        <div class="tx-icon" style={{ background: `${color}22`, color }}>
           {tx.category[0]}
         </div>
         <div class="tx-info">
           <span class="tx-desc">{tx.description}</span>
           <span class="tx-date">{tx.date}</span>
         </div>
-        <Badge class="tx-cat-badge" variant="outline" style={`color: ${color}; border-color: ${color}40`}>
+        <Badge class="tx-cat-badge" variant="outline" style={{ color, borderColor: `${color}40` }}>
           {tx.category}
         </Badge>
         <span class={`tx-amount ${tx.type}`}>

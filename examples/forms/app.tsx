@@ -63,7 +63,7 @@ export default class App extends Component {
             <CardDescription>Configure your experience.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div class="form-field" style="margin-bottom: 1.5rem;">
+            <div class="form-field" style={{ marginBottom: '1.5rem' }}>
               <Select
                 label="Language"
                 placeholder="Select a language..."
@@ -77,7 +77,7 @@ export default class App extends Component {
               />
             </div>
 
-            <div class="form-field" style="margin-bottom: 1.5rem;">
+            <div class="form-field" style={{ marginBottom: '1.5rem' }}>
               <RadioGroup
                 label="Theme"
                 defaultValue="system"
@@ -116,7 +116,7 @@ export default class App extends Component {
 
             <Separator class="my-4" />
 
-            <div class="form-field" style="margin-bottom: 1rem;">
+            <div class="form-field" style={{ marginBottom: '1rem' }}>
               <Checkbox label="I agree to the Terms of Service" />
             </div>
             <div class="form-field">
@@ -131,7 +131,7 @@ export default class App extends Component {
             <CardDescription>Adjust display and interaction settings.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div class="form-field" style="margin-bottom: 1.5rem;">
+            <div class="form-field" style={{ marginBottom: '1.5rem' }}>
               <Slider label="Font Size" defaultValue={[16]} min={12} max={24} step={1} />
             </div>
 
@@ -152,7 +152,7 @@ export default class App extends Component {
             <CardDescription>Protect your account.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div class="form-field" style="margin-bottom: 1.5rem;">
+            <div class="form-field" style={{ marginBottom: '1.5rem' }}>
               <PinInput
                 label="Two-Factor Code"
                 count={6}
@@ -162,7 +162,7 @@ export default class App extends Component {
               />
             </div>
 
-            <div class="form-field" style="margin-bottom: 1.5rem;">
+            <div class="form-field" style={{ marginBottom: '1.5rem' }}>
               <TagsInput
                 label="Trusted IP Addresses"
                 placeholder="Add IP..."

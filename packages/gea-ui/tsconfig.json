@@ -1,5 +1,20 @@
 {
   "extends": "../gea/tsconfig.json",
-  "include": ["src/**/*.ts", "src/**/*.tsx", "../vite-plugin-gea/gea-env.d.ts"],
-  "exclude": ["dist", "node_modules"]
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@geajs/core": [
+        "../gea/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../gea/src/jsx-global.d.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
 }

@@ -8,7 +8,7 @@ export interface SpreadMap {
   [selector: string]: PropsGetter
 }
 
-export default class ZagComponent extends Component {
+export default class ZagComponent<P = Record<string, unknown>> extends Component<P> {
   declare _machine: VanillaMachine<any> | null
   declare _api: any
   declare _spreadCleanups: Map<string, SpreadCleanup>
@@ -33,7 +33,7 @@ export default class ZagComponent extends Component {
 
   syncState(_api: any): void {}
 
-  created(props: any) {
+  created(props: P) {
     if (!this._spreadCleanups) this._spreadCleanups = new Map()
     if (this._spreadScheduled === undefined) this._spreadScheduled = false
     if (!this._zagIdMap) this._zagIdMap = new Map()
@@ -49,9 +49,9 @@ export default class ZagComponent extends Component {
     // The mapping lets Zag find elements by their expected Zag IDs.
     const zagIdMap = this._zagIdMap
     const origGetById = this._machine.scope.getById
-    this._machine.scope.getById = (id: string) => {
+    this._machine.scope.getById = ((id: string) => {
       return origGetById(id) || zagIdMap.get(id) || null
-    }
+    }) as typeof origGetById
 
     this._machine.start()
 

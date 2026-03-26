@@ -98,7 +98,7 @@ export default class RatingGroup extends ZagComponent {
               data-part="item"
               data-index={String(i)}
               class="rating-group-item cursor-pointer text-2xl text-muted-foreground data-[highlighted]:text-yellow-400 data-[checked]:text-yellow-400"
-              style="line-height: 1;"
+              style={{ lineHeight: 1 }}
             >
               &#x2605;
             </span>

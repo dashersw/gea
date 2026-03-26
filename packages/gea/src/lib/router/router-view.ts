@@ -1,8 +1,9 @@
 import Component from '../base/component'
 import type { Router } from './router'
+import type { RouteMap } from './types'
 import Outlet from './outlet'
 
-export default class RouterView extends Component {
+export default class RouterView extends Component<{ router?: Router; routes?: RouteMap }> {
   __isRouterOutlet = true
   _routerDepth = 0
 
@@ -103,6 +104,11 @@ export default class RouterView extends Component {
     }
 
     this._clearCurrent()
+
+    // Remove any orphaned DOM that _clearCurrent couldn't track
+    // (e.g., route content rendered during SSR hydration before
+    // _currentChild was established)
+    while (this.el.firstChild) this.el.removeChild(this.el.firstChild)
 
     if (this._isClassComponent(item.component)) {
       const child = new item.component(item.props)

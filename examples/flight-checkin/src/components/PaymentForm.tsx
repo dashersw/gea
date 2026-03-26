@@ -32,7 +32,7 @@ export default function PaymentForm({
   const showErrors = passengerName !== '' || cardNumber !== '' || expiry !== ''
 
   return (
-    <div class="payment-form" style="margin-top: 24px">
+    <div class="payment-form" style={{ marginTop: '24px' }}>
       <div class="form-group">
         <input
           value={passengerName}

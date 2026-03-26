@@ -1,5 +1,20 @@
 import { Component } from '@geajs/core'
+import type { MouseEventHandler, ReactNode } from 'react'
 import { cn } from '../utils/cn'
+
+export type ButtonVariant = 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link'
+export type ButtonSize = 'default' | 'sm' | 'lg' | 'icon'
+
+export interface ButtonProps {
+  variant?: ButtonVariant | (string & {})
+  size?: ButtonSize | (string & {})
+  type?: 'button' | 'submit' | 'reset'
+  disabled?: boolean
+  class?: string
+  click?: MouseEventHandler<HTMLButtonElement>
+  onClick?: MouseEventHandler<HTMLButtonElement>
+  children?: ReactNode
+}
 
 const variants: Record<string, string> = {
   default: 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
@@ -17,8 +32,8 @@ const sizes: Record<string, string> = {
   icon: 'h-9 w-9',
 }
 
-export default class Button extends Component {
-  template(props: any) {
+export default class Button extends Component<ButtonProps> {
+  template(props: ButtonProps) {
     const variant = variants[props.variant || 'default'] || variants.default
     const size = sizes[props.size || 'default'] || sizes.default
     const handleClick = props.click || props.onClick

@@ -44,7 +44,7 @@ export default class HoverCard extends ZagComponent {
 
   template(props: any) {
     return (
-      <div class={props.class || ''} style="display: inline-block;">
+      <div class={props.class || ''} style={{ display: 'inline-block' }}>
         <a data-part="trigger" href={props.href || '#'} class="hover-card-trigger inline-block">
           {props.triggerLabel || 'Hover me'}
         </a>

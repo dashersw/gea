@@ -14,7 +14,7 @@ interface FeedCardProps {
 export default function FeedCard({ item }: FeedCardProps) {
   return (
     <div class="feed-card">
-      <div class="feed-card-avatar" style={`background-color: ${item.color}`}>
+      <div class="feed-card-avatar" style={{ backgroundColor: item.color }}>
         {item.author[0]}
       </div>
       <div class="feed-card-content">

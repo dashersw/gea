@@ -89,7 +89,7 @@ export default class App extends Component {
                 click={() => store.toggleLabelFilter(l.id)}
                 data-label={l.id}
               >
-                <span class="label-dot" style={`background: ${LABEL_COLORS[l.id]}`} />
+                <span class="label-dot" style={{ background: LABEL_COLORS[l.id] }} />
                 <span class="label-name">{l.label}</span>
               </button>
             ))}
@@ -140,7 +140,7 @@ export default class App extends Component {
         {/* Compose Modal */}
         {store.composeOpen && (
           <div class="modal-backdrop" click={store.closeCompose}>
-            <div class="modal-box compose-box" click={(e: Event) => e.stopPropagation()}>
+            <div class="modal-box compose-box" click={(e) => e.stopPropagation()}>
               <div class="compose-header">
                 <h3 class="modal-title">New Message</h3>
                 <button class="modal-close" click={store.closeCompose}>

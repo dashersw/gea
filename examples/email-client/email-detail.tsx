@@ -53,7 +53,7 @@ export default class EmailDetail extends Component {
 
         <div class="detail-labels">
           {email.labels.map((l) => (
-            <Badge key={l} variant="outline" style={`color: ${LABEL_COLORS[l]}; border-color: ${LABEL_COLORS[l]}40`}>
+            <Badge key={l} variant="outline" style={{ color: LABEL_COLORS[l], borderColor: `${LABEL_COLORS[l]}40` }}>
               {l}
             </Badge>
           ))}

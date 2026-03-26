@@ -43,10 +43,10 @@ export default class App extends Component {
       <div class="dashboard">
         <div class="dashboard-header">
           <div>
-            <h1 style="font-size: 1.5rem; font-weight: 700;">Dashboard</h1>
-            <p style="color: hsl(var(--muted-foreground)); font-size: 0.875rem;">Welcome back, here's your overview.</p>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Dashboard</h1>
+            <p style={{ color: 'hsl(var(--muted-foreground))', fontSize: '0.875rem' }}>Welcome back, here's your overview.</p>
           </div>
-          <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <Badge>Live</Badge>
             <Button variant="outline" size="sm">
               Download Report
@@ -82,14 +82,14 @@ export default class App extends Component {
                   { value: 'customers', label: 'Customers', content: '' },
                 ]}
               />
-              <div class="chart-placeholder" style="margin-top: 1rem;">
+              <div class="chart-placeholder" style={{ marginTop: '1rem' }}>
                 Revenue chart would render here
               </div>
               <Separator class="my-4" />
-              <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <p style="font-size: 0.875rem; font-weight: 500;">Monthly Target</p>
-                  <p style="font-size: 0.75rem; color: hsl(var(--muted-foreground));">72% of $50,000 goal</p>
+                  <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>Monthly Target</p>
+                  <p style={{ fontSize: '0.75rem', color: 'hsl(var(--muted-foreground))' }}>72% of $50,000 goal</p>
                 </div>
                 <Badge variant="secondary">On Track</Badge>
               </div>
@@ -97,7 +97,7 @@ export default class App extends Component {
             </CardContent>
           </Card>
 
-          <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             <Card>
               <CardHeader>
                 <CardTitle>Recent Activity</CardTitle>
@@ -144,9 +144,9 @@ export default class App extends Component {
               </CardHeader>
               <CardContent>
                 <div class="skeleton-group">
-                  <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <Skeleton class="h-10 w-10 rounded-full" />
-                    <div style="flex: 1;">
+                    <div style={{ flex: 1 }}>
                       <Skeleton class="h-4 w-3/4 mb-2" />
                       <Skeleton class="h-3 w-1/2" />
                     </div>
@@ -162,7 +162,11 @@ export default class App extends Component {
 
         <CardFooter
           class="mt-6"
-          style="justify-content: center; color: hsl(var(--muted-foreground)); font-size: 0.75rem;"
+          style={{
+            justifyContent: 'center',
+            color: 'hsl(var(--muted-foreground))',
+            fontSize: '0.75rem',
+          }}
         >
           gea-ui Dashboard Example — All components are accessible and fully keyboard-navigable.
         </CardFooter>

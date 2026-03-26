@@ -137,6 +137,12 @@ export function isInternalProp(prop: string): boolean {
  * }
  */
 export class Store {
+  /** SSR overlay resolver — set by @geajs/ssr to route reads/writes to per-request data */
+  static _ssrOverlayResolver: ((target: object) => Record<string, unknown> | undefined) | null = null
+
+  /** Sentinel value used as a tombstone for SSR overlay deletes */
+  static _ssrDeleted: symbol = Symbol('ssrDeleted')
+
   private _selfProxy?: this
   private _pendingChanges: StoreChange[] = []
   private _flushScheduled = false
@@ -155,7 +161,20 @@ export class Store {
         if (typeof prop === 'symbol') return Reflect.get(t, prop, receiver)
         if (prop === '__isProxy') return true
         if (prop === '__raw') return t
+        if (prop === '__getRawTarget') return t
         if (isInternalProp(prop)) return Reflect.get(t, prop, receiver)
+        // SSR overlay: return per-request data instead of singleton data
+        const resolver = Store._ssrOverlayResolver
+        if (resolver) {
+          const overlay = resolver(t)
+          if (overlay !== undefined) {
+            if (Object.prototype.hasOwnProperty.call(overlay, prop)) {
+              const val = overlay[prop]
+              return val === Store._ssrDeleted ? undefined : val
+            }
+            return Reflect.get(t, prop, receiver)
+          }
+        }
         if (!Object.prototype.hasOwnProperty.call(t, prop)) {
           return Reflect.get(t, prop, receiver)
         }
@@ -180,6 +199,15 @@ export class Store {
         if (isInternalProp(prop)) {
           ;(t as any)[prop] = value
           return true
+        }
+        // SSR overlay: write to per-request data, skip change tracking
+        const resolver = Store._ssrOverlayResolver
+        if (resolver) {
+          const overlay = resolver(t)
+          if (overlay !== undefined) {
+            overlay[prop] = value
+            return true
+          }
         }
         if (typeof value === 'function') {
           ;(t as any)[prop] = value
@@ -247,6 +275,15 @@ export class Store {
           delete (t as any)[prop]
           return true
         }
+        // SSR overlay: tombstone in per-request data (don't fall through to shared store)
+        const resolver = Store._ssrOverlayResolver
+        if (resolver) {
+          const overlay = resolver(t)
+          if (overlay !== undefined) {
+            overlay[prop] = Store._ssrDeleted
+            return true
+          }
+        }
         const hadProp = Object.prototype.hasOwnProperty.call(t, prop)
         if (!hadProp) return true
         const oldValue = (t as any)[prop]
@@ -266,6 +303,53 @@ export class Store {
           },
         ])
         return true
+      },
+      has(t, prop) {
+        if (typeof prop === 'symbol') return Reflect.has(t, prop)
+        if (isInternalProp(prop)) return Reflect.has(t, prop)
+        const resolver = Store._ssrOverlayResolver
+        if (resolver) {
+          const overlay = resolver(t)
+          if (overlay !== undefined) {
+            if (Object.prototype.hasOwnProperty.call(overlay, prop)) {
+              return overlay[prop] !== Store._ssrDeleted
+            }
+          }
+        }
+        return Reflect.has(t, prop)
+      },
+      ownKeys(t) {
+        const resolver = Store._ssrOverlayResolver
+        if (resolver) {
+          const overlay = resolver(t)
+          if (overlay !== undefined) {
+            const targetKeys = Reflect.ownKeys(t)
+            const overlayKeys = Object.keys(overlay)
+            const combined = new Set<string | symbol>([...targetKeys, ...overlayKeys])
+            for (const key of combined) {
+              if (typeof key === 'string' && !isInternalProp(key) && key !== 'constructor') {
+                if (Object.prototype.hasOwnProperty.call(overlay, key) && overlay[key] === Store._ssrDeleted) {
+                  combined.delete(key)
+                }
+              }
+            }
+            return [...combined]
+          }
+        }
+        return Reflect.ownKeys(t)
+      },
+      getOwnPropertyDescriptor(t, prop) {
+        const resolver = Store._ssrOverlayResolver
+        if (resolver && typeof prop === 'string' && !isInternalProp(prop)) {
+          const overlay = resolver(t)
+          if (overlay !== undefined) {
+            if (Object.prototype.hasOwnProperty.call(overlay, prop)) {
+              if (overlay[prop] === Store._ssrDeleted) return undefined
+              return { value: overlay[prop], writable: true, enumerable: true, configurable: true }
+            }
+          }
+        }
+        return Reflect.getOwnPropertyDescriptor(t, prop)
       },
       defineProperty(t, prop, descriptor) {
         return Reflect.defineProperty(t, prop, descriptor)
@@ -348,6 +432,24 @@ export class Store {
     }
 
     return matches
+  }
+
+  private _collectDescendantObserverNodes(node: ObserverNode, matches: ObserverNode[]): void {
+    for (const child of node.children.values()) {
+      if (child.handlers.size > 0) matches.push(child)
+      if (child.children.size > 0) this._collectDescendantObserverNodes(child, matches)
+    }
+  }
+
+  /** When a property is replaced with a new object, descendant observers
+   *  must be notified because their nested values may have changed. */
+  private _addDescendantsForObjectReplacement(change: StoreChange, matches: ObserverNode[]): void {
+    if ((change.type === 'update' || change.type === 'add') && change.newValue && typeof change.newValue === 'object') {
+      const node = this._getObserverNode(change.pathParts)
+      if (node && node.children.size > 0) {
+        this._collectDescendantObserverNodes(node, matches)
+      }
+    }
   }
 
   private _getObserverNode(pathParts: string[]): ObserverNode | null {
@@ -531,7 +633,9 @@ export class Store {
     if (this._deliverArrayItemPropBatch(batch)) return
 
     if (batch.length === 1) {
-      const matches = this._collectMatchingObserverNodes(batch[0].pathParts)
+      const change = batch[0]
+      const matches = this._collectMatchingObserverNodes(change.pathParts)
+      this._addDescendantsForObjectReplacement(change, matches)
       for (let i = 0; i < matches.length; i++) {
         this._notifyHandlers(matches[i], batch)
       }
@@ -542,6 +646,7 @@ export class Store {
     for (let i = 0; i < batch.length; i++) {
       const change = batch[i]
       const matches = this._collectMatchingObserverNodes(change.pathParts)
+      this._addDescendantsForObjectReplacement(change, matches)
       for (let j = 0; j < matches.length; j++) {
         const node = matches[j]
         let relevant = deliveries.get(node)

@@ -1,5 +1,11 @@
 # @geajs/core
 
+## 1.0.8
+
+### Patch Changes
+
+- [`1ba2172`](https://github.com/dashersw/gea/commit/1ba217230ca243a76fea596544507b7a91128798) Thanks [@dashersw](https://github.com/dashersw)! - Replace the catch-all `JSX.IntrinsicElements` index signature with React DOM typings plus Gea-specific augmentations (`class`, short event names, `for` on labels). Make `Component` generic for typed props. Add `ButtonProps` / `DialogProps` and tighten a few UI components for TypeScript compatibility.
+
 ## 1.0.7
 
 ### Patch Changes

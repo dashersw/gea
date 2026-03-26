@@ -29,6 +29,7 @@ The "magic" is invisible and lives entirely in the build step. The Vite plugin a
 | --- | --- |
 | [`@geajs/core`](https://www.npmjs.com/package/@geajs/core) | Core framework — stores, components, reactivity, DOM patching |
 | [`@geajs/mobile`](https://www.npmjs.com/package/@geajs/mobile) | Mobile UI primitives — views, navigation, gestures, layout |
+| [`@geajs/ssr`](ssr.md) | Server-side rendering — streaming HTML, hydration, head management |
 | [`@geajs/vite-plugin`](https://www.npmjs.com/package/@geajs/vite-plugin) | Vite plugin — JSX transform, reactivity wiring, HMR |
 | [`create-gea`](https://www.npmjs.com/package/create-gea) | Project scaffolder |
 | [`gea-tools`](https://github.com/dashersw/gea/tree/master/packages/gea-tools) | VS Code / Cursor extension |

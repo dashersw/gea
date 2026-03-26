@@ -84,7 +84,7 @@ export default class BoardingPass extends Component {
             </div>
           </div>
         </div>
-        <div class="nav-buttons" style="margin-top: 24px">
+        <div class="nav-buttons" style={{ marginTop: '24px' }}>
           <button class="btn btn-primary" click={onStartOver}>
             New Check-in
           </button>

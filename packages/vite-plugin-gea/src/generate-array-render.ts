@@ -11,6 +11,7 @@ import {
   optionalizeComputedItemKeyInStatements,
 } from './utils.ts'
 import { ITEM_IS_KEY } from './analyze-helpers.ts'
+import { getTemplateParamBinding } from './template-param-utils.ts'
 import { collectTemplateSetupStatements } from './transform-attributes.ts'
 import type { TemplateSetupContext } from './transform-attributes.ts'
 
@@ -229,13 +230,14 @@ export function generateRenderItemMethod(
     const templateMethod = classBody.body.find(
       (m): m is t.ClassMethod => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === 'template',
     )
-    if (templateMethod?.params[0] && t.isObjectPattern(templateMethod.params[0])) {
-      templateMethod.params[0].properties.forEach((p) => {
+    const rootBinding = templateMethod ? getTemplateParamBinding(templateMethod.params[0]) : undefined
+    if (rootBinding && t.isObjectPattern(rootBinding)) {
+      rootBinding.properties.forEach((p) => {
         if (t.isObjectProperty(p) && t.isIdentifier(p.key)) propNames.add(p.key.name)
       })
     }
-    if (templateMethod?.params[0] && t.isIdentifier(templateMethod.params[0])) {
-      wholeParam = templateMethod.params[0].name
+    if (rootBinding && t.isIdentifier(rootBinding)) {
+      wholeParam = rootBinding.name
     }
   }
 

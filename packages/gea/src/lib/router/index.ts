@@ -14,10 +14,14 @@ let _router: Router | null = null
  *  projects that don't use the router pay zero cost. */
 const router: Router = new Proxy({} as Router, {
   get(_target, prop, receiver) {
+    const ssrRouter = Router._ssrRouterResolver?.()
+    if (ssrRouter) return Reflect.get(ssrRouter, prop, receiver)
     if (!_router) _router = new Router()
     return Reflect.get(_router, prop, receiver)
   },
   set(_target, prop, value) {
+    const ssrRouter = Router._ssrRouterResolver?.()
+    if (ssrRouter) return Reflect.set(ssrRouter, prop, value)
     if (!_router) _router = new Router()
     return Reflect.set(_router, prop, value)
   },

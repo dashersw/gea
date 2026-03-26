@@ -61,7 +61,7 @@ export default class OverviewView extends Component {
               <div class="chart-bars">
                 {[62, 78, 55, 90, 72, 85, 68].map((v, i) => (
                   <div key={i} class="chart-bar-wrap">
-                    <div class="chart-bar" style={`height: ${v}%`} />
+                    <div class="chart-bar" style={{ height: `${v}%` }} />
                     <span class="chart-label">{['M', 'T', 'W', 'T', 'F', 'S', 'S'][i]}</span>
                   </div>
                 ))}

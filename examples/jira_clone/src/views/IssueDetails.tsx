@@ -347,7 +347,7 @@ export default class IssueDetails extends Component {
               <label class="issue-details-field-label">Status</label>
               <button
                 class="status-badge"
-                style={`background:${statusColors[issueStatus]?.bg};color:${statusColors[issueStatus]?.color}`}
+                style={{ background: statusColors[issueStatus]?.bg, color: statusColors[issueStatus]?.color }}
                 click={() => this.toggleDropdown('status')}
               >
                 {(IssueStatusCopy[issueStatus] || 'Backlog').toUpperCase()}
@@ -364,7 +364,7 @@ export default class IssueDetails extends Component {
                         this.closeDropdown()
                       }}
                     >
-                      <span class="status-dot" style={`background:${statusColors[opt.value]?.bg}`}></span>
+                      <span class="status-dot" style={{ background: statusColors[opt.value]?.bg }}></span>
                       <span>{opt.label}</span>
                     </div>
                   ))}
@@ -500,7 +500,7 @@ export default class IssueDetails extends Component {
                 <div class="tracking-bar-container">
                   <Icon type="stopwatch" size={20} />
                   <div class="tracking-bar">
-                    <div class="tracking-bar-fill" style={`width:${trackPercent}%`}></div>
+                    <div class="tracking-bar-fill" style={{ width: `${trackPercent}%` }}></div>
                   </div>
                 </div>
                 <div class="tracking-values">
@@ -533,7 +533,7 @@ export default class IssueDetails extends Component {
                       <div class="tracking-bar">
                         <div
                           class="tracking-bar-fill"
-                          style={`width:${getTrackingPercent(this.editTimeSpent, this.editTimeRemaining)}%`}
+                          style={{ width: `${getTrackingPercent(this.editTimeSpent, this.editTimeRemaining)}%` }}
                         ></div>
                       </div>
                     </div>

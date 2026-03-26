@@ -1,7 +1,7 @@
 {
   "name": "@geajs/core",
   "type": "module",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A lightweight, reactive JavaScript UI framework with compile-time JSX and proxy-based stores",
   "main": "./dist/index.mjs",
   "module": "./dist/index.mjs",
@@ -51,6 +51,9 @@
     "url": "https://github.com/dashersw/gea/issues"
   },
   "homepage": "https://github.com/dashersw/gea#readme",
+  "dependencies": {
+    "@types/react": "^19.0.0"
+  },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "c8": "^11.0.0",

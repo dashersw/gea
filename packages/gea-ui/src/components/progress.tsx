@@ -58,7 +58,7 @@ export default class Progress extends ZagComponent {
           <div
             data-part="range"
             class="progress-range h-full w-full flex-1 bg-primary transition-all"
-            style={`width: ${this.percent}%`}
+            style={{ width: `${this.percent}%` }}
           ></div>
         </div>
       </div>

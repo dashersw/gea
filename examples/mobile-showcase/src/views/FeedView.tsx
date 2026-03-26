@@ -66,7 +66,7 @@ export default class FeedView extends View {
             <div class="feed-list">
               {feedStore.items.map((item) => (
                 <article class="feed-card" key={item?.id}>
-                  <div class="feed-card-avatar" style={`background-color: ${item?.color || '#9CA3AF'}`}>
+                  <div class="feed-card-avatar" style={{ backgroundColor: item?.color || '#9CA3AF' }}>
                     {item?.author ? item.author.slice(0, 1) : ''}
                   </div>
                   <div class="feed-card-content">

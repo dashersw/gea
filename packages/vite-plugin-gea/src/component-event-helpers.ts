@@ -2,6 +2,7 @@ import * as t from '@babel/types'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { parseSource } from './parse.ts'
+import { getTemplateParamBinding } from './template-param-utils.ts'
 
 export interface PropContext {
   propsParamName?: string
@@ -28,18 +29,18 @@ export function getPropContext(params?: Array<t.Identifier | t.Pattern | t.RestE
   }
   const firstParam = params?.[0]
   if (!firstParam || t.isRestElement(firstParam)) return context
-  if (t.isIdentifier(firstParam)) {
-    context.propsParamName = firstParam.name
+  const binding = getTemplateParamBinding(firstParam)
+  if (!binding) return context
+  if (t.isIdentifier(binding)) {
+    context.propsParamName = binding.name
     return context
   }
-  if (t.isObjectPattern(firstParam)) {
-    context.propsParamName = 'props'
-    firstParam.properties.forEach((prop) => {
-      if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-        context.destructuredPropNames.add(prop.key.name)
-      }
-    })
-  }
+  context.propsParamName = 'props'
+  binding.properties.forEach((prop) => {
+    if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
+      context.destructuredPropNames.add(prop.key.name)
+    }
+  })
   return context
 }
 

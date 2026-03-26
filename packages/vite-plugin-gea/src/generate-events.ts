@@ -1,4 +1,5 @@
 import * as t from '@babel/types'
+import { getTemplateParamBinding } from './template-param-utils.ts'
 import { id, jsBlockBody, jsMethod } from 'eszter'
 import type { EventHandler } from './ir.ts'
 import { buildMemberChainFromParts, extractHandlerBody, replacePropRefsInStatements } from './utils.ts'
@@ -17,14 +18,14 @@ function getTemplateParamContext(classBody: t.ClassBody): TemplateParamContext {
   if (!templateMethod || templateMethod.params.length === 0) {
     return { propNames: new Set() }
   }
-  const param = templateMethod.params[0]
-  if (t.isIdentifier(param)) {
-    return { propNames: new Set(), propsObjectName: param.name }
+  const binding = getTemplateParamBinding(templateMethod.params[0])
+  if (t.isIdentifier(binding)) {
+    return { propNames: new Set(), propsObjectName: binding.name }
   }
-  if (t.isObjectPattern(param)) {
+  if (t.isObjectPattern(binding)) {
     return {
       propNames: new Set(
-        param.properties
+        binding.properties
           .filter((p): p is t.ObjectProperty => t.isObjectProperty(p) && t.isIdentifier(p.key))
           .map((p) => (p.key as t.Identifier).name),
       ),

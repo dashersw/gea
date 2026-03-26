@@ -24,7 +24,7 @@ export default class HomeView extends View {
 
           <div class="home-cards">
             <div class="home-card" tap={() => this.navigateTo('feed')}>
-              <div class="home-card-icon" style="background-color: #4F46E5">
+              <div class="home-card-icon" style={{ backgroundColor: '#4F46E5' }}>
                 &#8595;
               </div>
               <div class="home-card-text">
@@ -34,7 +34,7 @@ export default class HomeView extends View {
             </div>
 
             <div class="home-card" tap={() => this.navigateTo('tabs')}>
-              <div class="home-card-icon" style="background-color: #059669">
+              <div class="home-card-icon" style={{ backgroundColor: '#059669' }}>
                 &#9644;
               </div>
               <div class="home-card-text">
@@ -44,7 +44,7 @@ export default class HomeView extends View {
             </div>
 
             <div class="home-card" tap={() => this.navigateTo('gestures')}>
-              <div class="home-card-icon" style="background-color: #D97706">
+              <div class="home-card-icon" style={{ backgroundColor: '#D97706' }}>
                 &#9995;
               </div>
               <div class="home-card-text">

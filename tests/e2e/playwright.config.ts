@@ -46,16 +46,17 @@ const examples: ExampleDef[] = [
   },
   { name: 'runtime-only', port: 5309 },
   { name: 'runtime-only-jsx', port: 5310 },
+  { name: 'ssr-router-simple', port: 5311, dir: 'ssr/router-simple' },
 ]
 
 const activeExamples = targetProject ? examples.filter((e) => e.name === targetProject) : examples
 
 export default defineConfig({
   testDir: '.',
-  fullyParallel: false,
+  fullyParallel: !!targetProject,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: 1,
+  workers: targetProject ? 4 : 1,
   reporter: 'list',
   timeout: 30000,
   expect: { timeout: 5000 },

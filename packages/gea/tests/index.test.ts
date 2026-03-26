@@ -64,7 +64,7 @@ describe('gea entry point', () => {
   })
 })
 
-describe('jsx.ts declarations', () => {
+describe('JSX type entry (jsx.ts)', () => {
   it('can be imported without error', async () => {
     const jsx = await import('../src/jsx')
     assert.ok(jsx)

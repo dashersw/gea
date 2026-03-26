@@ -11,15 +11,31 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const pluginDir = dirname(fileURLToPath(import.meta.url))
-const traverse = typeof (babelTraverse as any).default === 'function' ? (babelTraverse as any).default : babelTraverse
-const generate =
-  typeof (babelGenerator as any).default === 'function' ? (babelGenerator as any).default : babelGenerator
+// CJS/ESM interop: some bundlers wrap the export in { default: fn }
+function resolveDefault(mod: unknown): Function {
+  if (typeof mod === 'function') return mod
+  if (typeof mod === 'object' && mod !== null && 'default' in mod && typeof mod.default === 'function') {
+    return mod.default
+  }
+  throw new Error('resolveDefault: expected a function or module with default export')
+}
+const traverse = resolveDefault(babelTraverse)
+const generate = resolveDefault(babelGenerator)
+
+function hasSSREnvironment(ctx: object): boolean {
+  if (!('environment' in ctx)) return false
+  const env = ctx.environment
+  return typeof env === 'object' && env !== null && 'name' in env && env.name === 'ssr'
+}
 
 const RECONCILE_ID = 'virtual:gea-reconcile'
 const RESOLVED_RECONCILE_ID = '\0' + RECONCILE_ID
 
 const HMR_RUNTIME_ID = 'virtual:gea-hmr'
 const RESOLVED_HMR_RUNTIME_ID = '\0' + HMR_RUNTIME_ID
+
+const STORE_REGISTRY_ID = 'virtual:gea-store-registry'
+const RESOLVED_STORE_REGISTRY_ID = '\0' + STORE_REGISTRY_ID
 
 const RECONCILE_SOURCE = `
 function getKey(el) {
@@ -254,6 +270,8 @@ export function geaPlugin(): Plugin {
   const storeModules = new Set<string>()
   const componentModules = new Set<string>()
   let isServeCommand = true
+  // Maps absolute file path → { className, hasDefaultExport }
+  const storeRegistry = new Map<string, { className: string; hasDefaultExport: boolean }>()
 
   const resolveImportPath = (importer: string, source: string): string | null => {
     const base = resolve(dirname(importer), source)
@@ -276,6 +294,11 @@ export function geaPlugin(): Plugin {
     return null
   }
 
+  const extractStoreClassName = (source: string): string | null => {
+    const match = source.match(/class\s+(\w+)\s+extends\s+Store\b/)
+    return match ? match[1] : null
+  }
+
   const isStoreModule = (filePath: string): boolean => {
     if (storeModules.has(filePath)) return true
     if (!existsSync(filePath)) return false
@@ -283,6 +306,13 @@ export function geaPlugin(): Plugin {
       const source = readFileSync(filePath, 'utf8')
       if (source.includes('extends Store') || source.includes('new Store(')) {
         storeModules.add(filePath)
+        const className = extractStoreClassName(source)
+        if (className) {
+          const hasDefaultExport =
+            /export\s+default\s+new\s+\w+/.test(source) ||
+            /export\s+default\s+\w+/.test(source)
+          storeRegistry.set(filePath, { className, hasDefaultExport })
+        }
         return true
       }
       if (
@@ -311,6 +341,22 @@ export function geaPlugin(): Plugin {
     } catch {
       return false
     }
+  }
+
+  const generateStoreRegistrySource = (): string => {
+    const imports: string[] = []
+    const entries: string[] = []
+    let idx = 0
+    for (const [filePath, { className, hasDefaultExport }] of storeRegistry) {
+      if (!hasDefaultExport) continue
+      const alias = `__s${idx++}`
+      imports.push(`import ${alias} from '${filePath}'`)
+      entries.push(`  "${className}": ${alias}`)
+    }
+    if (imports.length === 0) {
+      return 'export default {}'
+    }
+    return `${imports.join('\n')}\nexport default {\n${entries.join(',\n')}\n}`
   }
 
   const envPath = existsSync(resolve(pluginDir, 'gea-env.d.ts'))
@@ -347,17 +393,25 @@ export function geaPlugin(): Plugin {
     resolveId(id) {
       if (id === RECONCILE_ID) return RESOLVED_RECONCILE_ID
       if (id === HMR_RUNTIME_ID) return RESOLVED_HMR_RUNTIME_ID
+      if (id === STORE_REGISTRY_ID) return RESOLVED_STORE_REGISTRY_ID
     },
     load(id) {
       if (id === RESOLVED_RECONCILE_ID) return RECONCILE_SOURCE
       if (id === RESOLVED_HMR_RUNTIME_ID) return HMR_RUNTIME_SOURCE
+      if (id === RESOLVED_STORE_REGISTRY_ID) return generateStoreRegistrySource()
     },
     transform(code, id) {
+      const isSSR = hasSSREnvironment(this)
       const cleanId = id.split('?')[0]
       if (!cleanId.match(/\.(js|jsx|ts|tsx)$/) || cleanId.includes('node_modules')) return null
 
       if (code.includes('extends Store') || code.includes('new Store(')) {
         storeModules.add(cleanId)
+        const storeClassName = extractStoreClassName(code)
+        if (storeClassName) {
+          const hasDefaultExport = /export\s+default\s+new\s+\w+/.test(code) || /export\s+default\s+\w+/.test(code)
+          storeRegistry.set(cleanId, { className: storeClassName, hasDefaultExport })
+        }
       }
 
       if (/\bclass\s+Component\s+extends\s+Store\b/.test(code)) return null
@@ -470,6 +524,7 @@ export function geaPlugin(): Plugin {
                 originalAST,
                 componentImportsUsedAsTags,
                 knownComponentImports,
+                isSSR,
               )
               if (result) transformed = true
             }

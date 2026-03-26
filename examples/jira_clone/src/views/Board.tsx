@@ -71,7 +71,7 @@ export default class Board extends Component {
           <h1 class="board-header-title">Kanban board</h1>
           <a href="https://github.com/oldboyxx/jira_clone" target="_blank" rel="noreferrer noopener">
             <button class="button button--secondary">
-              <i class="icon icon-github" style="margin-right:7px;font-size:18px"></i>Github Repo
+              <i class="icon icon-github" style={{ marginRight: '7px', fontSize: '18px' }}></i>Github Repo
             </button>
           </a>
         </div>

@@ -20,6 +20,7 @@ import {
   getDirectChildElements,
   getJSXTagName,
 } from './utils.ts'
+import { getTemplateParamBinding } from './template-param-utils.ts'
 import { analyzeJSXInMap } from './analyze-map.ts'
 import {
   resolveExpr,
@@ -151,12 +152,12 @@ export function analyzeTemplate(
   const conditionalSlots: import('./ir').ConditionalSlot[] = []
   let propsParamName: string | undefined
   const destructuredPropNames = new Set<string>()
-  const firstParam = templateMethod.params[0]
-  if (firstParam) {
-    if (t.isIdentifier(firstParam)) propsParamName = firstParam.name
-    else if (t.isObjectPattern(firstParam)) {
+  const binding = getTemplateParamBinding(templateMethod.params[0])
+  if (binding) {
+    if (t.isIdentifier(binding)) propsParamName = binding.name
+    else {
       propsParamName = 'props'
-      for (const prop of firstParam.properties) {
+      for (const prop of binding.properties) {
         if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && !prop.computed)
           destructuredPropNames.add(prop.key.name)
       }

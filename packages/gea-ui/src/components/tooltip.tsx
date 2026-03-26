@@ -50,8 +50,8 @@ export default class Tooltip extends ZagComponent {
 
   template(props: any) {
     return (
-      <div class={props.class || ''} style="display: inline-block;">
-        <div data-part="trigger" class="tooltip-trigger" style="display: inline-block;">
+      <div class={props.class || ''} style={{ display: 'inline-block' }}>
+        <div data-part="trigger" class="tooltip-trigger" style={{ display: 'inline-block' }}>
           {props.children}
         </div>
         <div data-part="positioner" class="tooltip-positioner">

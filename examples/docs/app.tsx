@@ -125,8 +125,8 @@ export default class App extends Component {
         </nav>
 
         <main class="docs-main">
-          <h1 style="font-size: 2rem; font-weight: 800; letter-spacing: -0.03em;">Components</h1>
-          <p style="color: hsl(var(--muted-foreground)); margin-bottom: 2rem;">
+          <h1 style={{ fontSize: '2rem', fontWeight: 800, letterSpacing: '-0.03em' }}>Components</h1>
+          <p style={{ color: 'hsl(var(--muted-foreground))', marginBottom: '2rem' }}>
             Comprehensive documentation for every gea-ui component. Each entry includes live demos, code examples, and a
             full property reference.
           </p>
@@ -158,7 +158,7 @@ export default class App extends Component {
 
             <h3>Sizes</h3>
             <div class="demo-block">
-              <div class="demo-preview" style="align-items: center;">
+              <div class="demo-preview" style={{ alignItems: 'center' }}>
                 <Button size="sm">Small</Button>
                 <Button>Default</Button>
                 <Button size="lg">Large</Button>
@@ -305,10 +305,10 @@ export default class App extends Component {
             <h2>Separator</h2>
             <p class="doc-desc">Visually divides content. Supports horizontal and vertical orientations.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column;">
-                <span style="font-size: 0.875rem;">Content above</span>
+              <div class="demo-preview" style={{ flexDirection: 'column' }}>
+                <span style={{ fontSize: '0.875rem' }}>Content above</span>
                 <Separator />
-                <span style="font-size: 0.875rem;">Content below</span>
+                <span style={{ fontSize: '0.875rem' }}>Content below</span>
               </div>
               <div class="demo-code">{`<Separator />
 <Separator orientation="vertical" />`}</div>
@@ -349,7 +349,7 @@ export default class App extends Component {
             <h2>Skeleton</h2>
             <p class="doc-desc">Placeholder with pulse animation for loading states.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column; gap: 0.5rem;">
+              <div class="demo-preview" style={{ flexDirection: 'column', gap: '0.5rem' }}>
                 <Skeleton class="h-4 w-[250px]" />
                 <Skeleton class="h-4 w-[200px]" />
                 <Skeleton class="h-12 w-12 rounded-full" />
@@ -386,14 +386,14 @@ export default class App extends Component {
             <h2>Card</h2>
             <p class="doc-desc">Container with structured sections: Header, Title, Description, Content, Footer.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column;">
+              <div class="demo-preview" style={{ flexDirection: 'column' }}>
                 <Card>
                   <CardHeader>
                     <CardTitle>Card Title</CardTitle>
                     <CardDescription>Card description text.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <p style="font-size: 0.875rem;">Card body content.</p>
+                    <p style={{ fontSize: '0.875rem' }}>Card body content.</p>
                   </CardContent>
                   <CardFooter>
                     <Button size="sm">Action</Button>
@@ -451,7 +451,7 @@ export default class App extends Component {
             <h2>Alert</h2>
             <p class="doc-desc">Contextual feedback for typical user actions.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column;">
+              <div class="demo-preview" style={{ flexDirection: 'column' }}>
                 <Alert>
                   <AlertTitle>Heads up!</AlertTitle>
                   <AlertDescription>You can add components via the CLI.</AlertDescription>
@@ -501,7 +501,7 @@ export default class App extends Component {
               Displays a user image with fallback to initials. Powered by Zag.js for image load state tracking.
             </p>
             <div class="demo-block">
-              <div class="demo-preview" style="align-items: center;">
+              <div class="demo-preview" style={{ alignItems: 'center' }}>
                 <Avatar src="/logo.jpg" name="Gea" />
                 <Avatar name="Armagan Amcalar" />
                 <Avatar name="John Doe" fallback="JD" />
@@ -554,7 +554,7 @@ export default class App extends Component {
             <h2>Progress</h2>
             <p class="doc-desc">Visual indicator of task completion.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column; width: 100%;">
+              <div class="demo-preview" style={{ flexDirection: 'column', width: '100%' }}>
                 <Progress label="Upload" value={45} />
                 <Progress label="Complete" value={100} />
               </div>
@@ -613,8 +613,8 @@ export default class App extends Component {
             <h2>Input</h2>
             <p class="doc-desc">Single-line text input field.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column; width: 100%;">
-                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+              <div class="demo-preview" style={{ flexDirection: 'column', width: '100%' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                   <Label htmlFor="doc-email">Email</Label>
                   <Input
                     inputId="doc-email"
@@ -626,7 +626,7 @@ export default class App extends Component {
                     }}
                   />
                 </div>
-                <p style="width: 100%; margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.inputVal || '(none)'}</code>
                 </p>
                 <Input placeholder="Disabled" disabled />
@@ -705,7 +705,7 @@ export default class App extends Component {
             <h2>Textarea</h2>
             <p class="doc-desc">Multi-line text input.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%;">
+              <div class="demo-preview" style={{ width: '100%' }}>
                 <Textarea
                   placeholder="Type your message..."
                   rows={3}
@@ -714,7 +714,7 @@ export default class App extends Component {
                     this.textareaVal = e.target.value
                   }}
                 />
-                <p style="width: 100%; margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.textareaVal || '(none)'}</code>
                 </p>
               </div>
@@ -771,7 +771,7 @@ export default class App extends Component {
               Dropdown selection with full keyboard navigation, ARIA roles, and positioning. Powered by Zag.js.
             </p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%; flex-wrap: wrap;">
+              <div class="demo-preview" style={{ width: '100%', flexWrap: 'wrap' }}>
                 <Select
                   label="Framework"
                   placeholder="Pick one..."
@@ -785,7 +785,7 @@ export default class App extends Component {
                     this.selectVal = d.value[0] || ''
                   }}
                 />
-                <p style="width: 100%; margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.selectVal || '(none)'}</code>
                 </p>
               </div>
@@ -891,7 +891,7 @@ export default class App extends Component {
             <h2>Combobox</h2>
             <p class="doc-desc">Searchable select with type-ahead filtering.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%; flex-wrap: wrap;">
+              <div class="demo-preview" style={{ width: '100%', flexWrap: 'wrap' }}>
                 <Combobox
                   label="Country"
                   value={this.comboboxVal ? [this.comboboxVal] : []}
@@ -905,7 +905,7 @@ export default class App extends Component {
                     this.comboboxVal = d.value[0] || ''
                   }}
                 />
-                <p style="width: 100%; margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.comboboxVal || '(none)'}</code>
                 </p>
               </div>
@@ -995,7 +995,7 @@ export default class App extends Component {
             <h2>Switch</h2>
             <p class="doc-desc">Boolean toggle. Accessible via keyboard (Space/Enter).</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-wrap: wrap; gap: 1rem;">
+              <div class="demo-preview" style={{ flexWrap: 'wrap', gap: '1rem' }}>
                 <Switch
                   label="Airplane Mode"
                   checked={this.switchAirplane}
@@ -1010,7 +1010,7 @@ export default class App extends Component {
                     this.switchDefault = d.checked
                   }}
                 />
-                <p style="width: 100%; margin: 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: 0, fontSize: '0.875rem', color: '#71717a' }}>
                   Airplane Mode: <code>{String(this.switchAirplane)}</code> · On by default:{' '}
                   <code>{String(this.switchDefault)}</code>
                 </p>
@@ -1078,7 +1078,7 @@ export default class App extends Component {
             <h2>Checkbox</h2>
             <p class="doc-desc">Multi-select control with indeterminate state support.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column;">
+              <div class="demo-preview" style={{ flexDirection: 'column' }}>
                 <Checkbox
                   label="Accept terms"
                   checked={this.checkTerms}
@@ -1093,7 +1093,7 @@ export default class App extends Component {
                     this.checkDefault = d.checked
                   }}
                 />
-                <p style="margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Accept terms: <code>{String(this.checkTerms)}</code> · Checked by default:{' '}
                   <code>{String(this.checkDefault)}</code>
                 </p>
@@ -1161,7 +1161,7 @@ export default class App extends Component {
             <h2>Radio Group</h2>
             <p class="doc-desc">Single selection from a set of options.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-wrap: wrap; gap: 1rem;">
+              <div class="demo-preview" style={{ flexWrap: 'wrap', gap: '1rem' }}>
                 <RadioGroup
                   label="Plan"
                   value={this.radioVal}
@@ -1174,7 +1174,7 @@ export default class App extends Component {
                     this.radioVal = d.value
                   }}
                 />
-                <p style="width: 100%; margin: 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: 0, fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.radioVal}</code>
                 </p>
               </div>
@@ -1259,11 +1259,11 @@ export default class App extends Component {
               slider with multiple thumbs.
             </p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-direction: column; width: 300px; gap: 2rem;">
-                <div style="width: 100%;">
-                  <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
-                    <span style="font-size: 0.875rem; font-weight: 500;">Volume</span>
-                    <span style="font-size: 0.875rem; color: #71717a; font-variant-numeric: tabular-nums;">
+              <div class="demo-preview" style={{ flexDirection: 'column', width: 300, gap: '2rem' }}>
+                <div style={{ width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                    <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Volume</span>
+                    <span style={{ fontSize: '0.875rem', color: '#71717a', fontVariantNumeric: 'tabular-nums' }}>
                       {this.sliderVolume}
                     </span>
                   </div>
@@ -1276,10 +1276,10 @@ export default class App extends Component {
                     }}
                   />
                 </div>
-                <div style="width: 100%;">
-                  <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
-                    <span style="font-size: 0.875rem; font-weight: 500;">Price Range</span>
-                    <span style="font-size: 0.875rem; color: #71717a; font-variant-numeric: tabular-nums;">
+                <div style={{ width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                    <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Price Range</span>
+                    <span style={{ fontSize: '0.875rem', color: '#71717a', fontVariantNumeric: 'tabular-nums' }}>
                       {this.sliderRangeMin} – {this.sliderRangeMax}
                     </span>
                   </div>
@@ -1376,7 +1376,7 @@ export default class App extends Component {
             <h2>Number Input</h2>
             <p class="doc-desc">Numeric input with increment/decrement buttons and keyboard control.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%; flex-wrap: wrap;">
+              <div class="demo-preview" style={{ width: '100%', flexWrap: 'wrap' }}>
                 <NumberInput
                   label="Quantity"
                   value={this.numberVal}
@@ -1386,7 +1386,7 @@ export default class App extends Component {
                     this.numberVal = d.value
                   }}
                 />
-                <p style="width: 100%; margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.numberVal}</code>
                 </p>
               </div>
@@ -1468,7 +1468,7 @@ export default class App extends Component {
             <h2>Pin Input</h2>
             <p class="doc-desc">Segmented input for codes and OTPs. Auto-advances between fields.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-wrap: wrap; gap: 1rem;">
+              <div class="demo-preview" style={{ flexWrap: 'wrap', gap: '1rem' }}>
                 <PinInput
                   count={4}
                   type="numeric"
@@ -1478,7 +1478,7 @@ export default class App extends Component {
                     this.pinVal = d.value
                   }}
                 />
-                <p style="width: 100%; margin: 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: 0, fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.pinVal.join('') || '(empty)'}</code>
                 </p>
               </div>
@@ -1552,7 +1552,7 @@ export default class App extends Component {
             <h2>Tags Input</h2>
             <p class="doc-desc">Add and remove string tags with keyboard (Enter to add, Backspace to remove).</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%; flex-wrap: wrap;">
+              <div class="demo-preview" style={{ width: '100%', flexWrap: 'wrap' }}>
                 <TagsInput
                   label="Skills"
                   placeholder="Add skill..."
@@ -1561,7 +1561,7 @@ export default class App extends Component {
                     this.tagsVal = d.value
                   }}
                 />
-                <p style="width: 100%; margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.tagsVal.join(', ') || '(none)'}</code>
                 </p>
               </div>
@@ -1631,7 +1631,7 @@ export default class App extends Component {
             <h2>Rating Group</h2>
             <p class="doc-desc">Star rating input with half-star support.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-wrap: wrap; gap: 1rem;">
+              <div class="demo-preview" style={{ flexWrap: 'wrap', gap: '1rem' }}>
                 <RatingGroup
                   count={5}
                   value={this.ratingVal}
@@ -1647,7 +1647,7 @@ export default class App extends Component {
                     this.ratingHalfVal = d.value
                   }}
                 />
-                <p style="width: 100%; margin: 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: 0, fontSize: '0.875rem', color: '#71717a' }}>
                   Integer: <code>{this.ratingVal}</code> · Half-star: <code>{this.ratingHalfVal}</code>
                 </p>
               </div>
@@ -1722,7 +1722,7 @@ export default class App extends Component {
             <h2>Toggle Group</h2>
             <p class="doc-desc">Grouped toggles with single or multiple selection.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-wrap: wrap; gap: 1rem;">
+              <div class="demo-preview" style={{ flexWrap: 'wrap', gap: '1rem' }}>
                 <ToggleGroup
                   value={this.toggleVal}
                   items={[
@@ -1735,7 +1735,7 @@ export default class App extends Component {
                     this.toggleVal = d.value
                   }}
                 />
-                <p style="width: 100%; margin: 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: 0, fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.toggleVal.join(', ') || '(none)'}</code>
                 </p>
               </div>
@@ -1800,7 +1800,7 @@ export default class App extends Component {
             <h2>File Upload</h2>
             <p class="doc-desc">Drag-and-drop or click-to-browse file uploader.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%;">
+              <div class="demo-preview" style={{ width: '100%' }}>
                 <FileUpload maxFiles={3} multiple />
               </div>
               <div class="demo-code">{`<FileUpload maxFiles={3} multiple />`}</div>
@@ -1865,7 +1865,7 @@ export default class App extends Component {
             <h2>Clipboard</h2>
             <p class="doc-desc">Copy text to clipboard with visual confirmation.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%;">
+              <div class="demo-preview" style={{ width: '100%' }}>
                 <Clipboard value="npm install @geajs/ui" />
               </div>
               <div class="demo-code">{`<Clipboard value="npm install @geajs/ui" />`}</div>
@@ -1914,7 +1914,7 @@ export default class App extends Component {
             <h2>Tabs</h2>
             <p class="doc-desc">Organize content into switchable panels with keyboard arrow navigation.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%; flex-wrap: wrap;">
+              <div class="demo-preview" style={{ width: '100%', flexWrap: 'wrap' }}>
                 <Tabs
                   value={this.tabsVal}
                   items={[
@@ -1925,7 +1925,7 @@ export default class App extends Component {
                     this.tabsVal = d.value
                   }}
                 />
-                <p style="width: 100%; margin: 0.5rem 0 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#71717a' }}>
                   Value: <code>{this.tabsVal}</code>
                 </p>
               </div>
@@ -2005,7 +2005,7 @@ export default class App extends Component {
             <h2>Pagination</h2>
             <p class="doc-desc">Navigate through paged data.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="flex-wrap: wrap; gap: 1rem;">
+              <div class="demo-preview" style={{ flexWrap: 'wrap', gap: '1rem' }}>
                 <Pagination
                   count={100}
                   pageSize={10}
@@ -2014,7 +2014,7 @@ export default class App extends Component {
                     this.pageVal = d.page
                   }}
                 />
-                <p style="width: 100%; margin: 0; font-size: 0.875rem; color: #71717a;">
+                <p style={{ width: '100%', margin: 0, fontSize: '0.875rem', color: '#71717a' }}>
                   Page: <code>{this.pageVal}</code>
                 </p>
               </div>
@@ -2084,7 +2084,7 @@ export default class App extends Component {
             <div class="demo-block">
               <div class="demo-preview">
                 <Dialog title="Confirm Delete" description="This cannot be undone." triggerLabel="Open Dialog">
-                  <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
                     <button
                       class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 rounded-md px-3 text-xs"
                       type="button"
@@ -2103,7 +2103,7 @@ export default class App extends Component {
                     </button>
                   </div>
                 </Dialog>
-                <p style="font-size: 0.875rem; color: hsl(var(--muted-foreground)); margin-top: 0.75rem;">
+                <p style={{ fontSize: '0.875rem', color: 'hsl(var(--muted-foreground))', marginTop: '0.75rem' }}>
                   Last action: <strong>{this.dialogAction}</strong>
                 </p>
               </div>
@@ -2298,7 +2298,7 @@ export default class App extends Component {
             <div class="demo-block">
               <div class="demo-preview">
                 <Popover triggerLabel="Settings" title="Dimensions" description="Set layer dimensions.">
-                  <p style="font-size: 0.875rem;">Width: 100% / Height: auto</p>
+                  <p style={{ fontSize: '0.875rem' }}>Width: 100% / Height: auto</p>
                 </Popover>
               </div>
               <div class="demo-code">{`<Popover
@@ -2440,8 +2440,8 @@ export default class App extends Component {
             <div class="demo-block">
               <div class="demo-preview">
                 <HoverCard triggerLabel="@geajs">
-                  <p style="font-weight: 600; font-size: 0.875rem;">Gea Framework</p>
-                  <p style="font-size: 0.8rem; color: hsl(var(--muted-foreground));">
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem' }}>Gea Framework</p>
+                  <p style={{ fontSize: '0.8rem', color: 'hsl(var(--muted-foreground))' }}>
                     Lightweight, reactive UI framework.
                   </p>
                 </HoverCard>
@@ -2511,7 +2511,7 @@ export default class App extends Component {
             <h2>Accordion</h2>
             <p class="doc-desc">Expandable content sections. Supports single or multiple open panels.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%;">
+              <div class="demo-preview" style={{ width: '100%' }}>
                 <Accordion
                   collapsible
                   items={[
@@ -2596,9 +2596,9 @@ export default class App extends Component {
             <h2>Collapsible</h2>
             <p class="doc-desc">Single expandable/collapsible section.</p>
             <div class="demo-block">
-              <div class="demo-preview" style="width: 100%;">
+              <div class="demo-preview" style={{ width: '100%' }}>
                 <Collapsible label="Show Details">
-                  <p style="font-size: 0.875rem; padding: 0.5rem 0;">These are the hidden details.</p>
+                  <p style={{ fontSize: '0.875rem', padding: '0.5rem 0' }}>These are the hidden details.</p>
                 </Collapsible>
               </div>
               <div class="demo-code">{`<Collapsible label="Show Details">
@@ -2777,7 +2777,7 @@ ToastStore.loading({ title: 'Loading...', description: 'Wait.' })`}</div>
 
           <Separator class="my-8" />
 
-          <p style="text-align: center; font-size: 0.8rem; color: hsl(var(--muted-foreground)); padding: 2rem 0;">
+          <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'hsl(var(--muted-foreground))', padding: '2rem 0' }}>
             gea-ui v0.1.0 — 35 components, fully accessible, keyboard navigable, and screen reader friendly.
           </p>
         </main>

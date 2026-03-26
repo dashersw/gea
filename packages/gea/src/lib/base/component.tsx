@@ -3,15 +3,24 @@ import { applyListChanges } from './list'
 import { Store } from '../store'
 import type { StoreChange } from '../store'
 import type { ListConfig } from './list'
+type AnyComponent = Component<any>
 
-export default class Component extends Store {
+/**
+ * Declared React `Component` surface + `render(): ReactNode` overload so Gea classes are valid JSX class
+ * tags while `JSX.IntrinsicElements` is sourced from `@types/react`. Runtime is still Gea-only.
+ */
+export default class Component<P = Record<string, unknown>> extends Store {
+  declare context: unknown
+  declare state: unknown
+  declare setState: (...args: any[]) => void
+  declare forceUpdate: (...args: any[]) => void
   static __componentClasses: Map<string, Function> = new Map()
 
   id_: string
   element_: HTMLElement | null
   __bindings: any[]
   __selfListeners: Array<() => void>
-  __childComponents: Component[]
+  __childComponents: AnyComponent[]
   actions: any
   __geaDependencies: any[]
   __teleportedElements: HTMLElement[]
@@ -20,11 +29,17 @@ export default class Component extends Store {
   __geaAttrBindings: Map<string, any>
   __observer_removers__: Array<() => void>
   rendered_: boolean
-  props: any
-  declare parentComponent?: Component;
-  [key: string]: any
+  declare props: P
+  declare parentComponent?: AnyComponent
+  /** Set by the compiler for nested component instances */
+  declare __geaCompiledChild?: boolean
+  declare __geaItemKey?: string
+  /** Compiler-registered keyed list / map state */
+  declare __geaMaps?: Record<number, Record<string, any>>
+  /** Compiler-registered conditional slot state */
+  declare __geaConds?: Record<number, Record<string, any>>
 
-  constructor(props: any = {}) {
+  constructor(props: P = {} as P, _unusedReactContext?: unknown) {
     super()
     this.id_ = ComponentManager.getInstance().getUid()
     this.element_ = null
@@ -48,8 +63,8 @@ export default class Component extends Store {
     let _propsProxy = this.__createPropsProxy(props || {})
     Object.defineProperty(this, 'props', {
       get: () => _propsProxy,
-      set: (newProps: any) => {
-        _propsProxy = this.__createPropsProxy(newProps || {})
+      set: (newProps: unknown) => {
+        _propsProxy = this.__createPropsProxy((newProps || {}) as object)
       },
       configurable: true,
       enumerable: true,
@@ -65,9 +80,9 @@ export default class Component extends Store {
     }
   }
 
-  created(_props: any) {}
+  created(_props: P) {}
 
-  createdHooks(_props: any) {}
+  createdHooks(_props: P) {}
 
   get id() {
     return this.id_
@@ -116,7 +131,10 @@ export default class Component extends Store {
     }
   }
 
-  render(rootEl, opt_index = Infinity) {
+  /** Typing-only overload for React `Component` compatibility (Gea uses `render(parentEl?)` below). */
+  render(): import('react').ReactNode
+  render(rootEl: any, opt_index?: number): boolean
+  render(rootEl?: any, opt_index: number = Infinity): boolean | import('react').ReactNode {
     if (this.rendered_) return true
 
     this.element_ = this.el
@@ -241,7 +259,11 @@ export default class Component extends Store {
     return String(this.template(this.props)).trim()
   }
 
-  template(_props: any): any {
+  /**
+   * Prefer `template({ a, b } = this.props)` so TypeScript infers bindings from `declare props`
+   * without `: this['props']`. Runtime still receives props from `template(this.props)` call sites.
+   */
+  template(_props: this['props'] = this.props): any {
     return '<div></div>'
   }
 
@@ -364,7 +386,7 @@ export default class Component extends Store {
         if (!c.items) continue
         const arr = p.reduce((obj: any, key: string) => obj?.[key], s.__store) ?? []
         if (arr.length === c.items.length) continue
-        const oldByKey = new Map<string, Component>()
+        const oldByKey = new Map<string, AnyComponent>()
         for (const item of c.items) {
           if (item.__geaItemKey != null) oldByKey.set(item.__geaItemKey, item)
         }
@@ -608,8 +630,8 @@ export default class Component extends Store {
 
       const props = this.extractComponentProps_(el)
       const itemId = el.getAttribute('data-prop-item-id')
-      const child = new Ctor(props)
-      child.parentComponent = this
+      const child = new (Ctor as new (props: any) => AnyComponent)(props)
+      child.parentComponent = this as AnyComponent
       this.__childComponents.push(child)
 
       const parent = el.parentElement
@@ -631,7 +653,7 @@ export default class Component extends Store {
 
   mountCompiledChildComponents_() {
     const manager = ComponentManager.getInstance()
-    const seen = new Set<Component>()
+    const seen = new Set<AnyComponent>()
 
     const collect = (value: any) => {
       if (!value) return
@@ -674,9 +696,9 @@ export default class Component extends Store {
     })
   }
 
-  __child<T extends Component>(Ctor: new (props: any) => T, props: any, key?: any): T {
+  __child<T extends AnyComponent>(Ctor: new (props: any) => T, props: any, key?: any): T {
     const child = new Ctor(props)
-    child.parentComponent = this
+    child.parentComponent = this as AnyComponent
     child.__geaCompiledChild = true
     if (key !== undefined) {
       child.__geaItemKey = String(key)
@@ -792,7 +814,7 @@ export default class Component extends Store {
     this.__observer_removers__.push(remover)
   }
 
-  __reorderChildren(container: HTMLElement | null, items: Component[]): void {
+  __reorderChildren(container: HTMLElement | null, items: AnyComponent[]): void {
     if (!container || !this.rendered_) return
     for (const item of items) {
       if (!item.rendered_) {
@@ -827,14 +849,14 @@ export default class Component extends Store {
   }
 
   __reconcileList(
-    oldItems: Component[],
+    oldItems: AnyComponent[],
     newData: any[],
     container: HTMLElement | null,
-    Ctor: new (props: any) => Component,
-    propsFactory: (item: any) => any,
-    keyExtractor: (item: any) => any,
-  ): Component[] {
-    const oldByKey = new Map<string, Component>()
+    Ctor: new (props: any) => AnyComponent,
+    propsFactory: (item: any, index?: number) => any,
+    keyExtractor: (item: any, index?: number) => any,
+  ): AnyComponent[] {
+    const oldByKey = new Map<string, AnyComponent>()
     for (const item of oldItems) {
       if (item.__geaItemKey != null) oldByKey.set(item.__geaItemKey, item)
     }
@@ -866,13 +888,14 @@ export default class Component extends Store {
     store: any,
     path: string[],
     config: {
-      items: Component[]
+      items: AnyComponent[]
       itemsKey?: string
       container: () => HTMLElement | null
-      Ctor: new (props: any) => Component
-      props: (item: any) => any
-      key: (item: any) => any
+      Ctor: new (props: any) => AnyComponent
+      props: (item: any, index?: number) => any
+      key: (item: any, index?: number) => any
       onchange?: () => void
+      __refreshing?: boolean
     },
   ): void {
     // Track list configs for re-sync during __geaRequestRender
@@ -1407,7 +1430,7 @@ export default class Component extends Store {
 
     if (needsPatch) {
       if (!cond) {
-        const disposed = new Set<Component>()
+        const disposed = new Set<AnyComponent>()
         let node: ChildNode | null = marker.nextSibling
         while (node && node !== endMarker) {
           if (node.nodeType === 1) {

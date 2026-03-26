@@ -16,7 +16,7 @@ export default class BudgetCard extends Component {
     return (
       <div class="budget-card" data-budget-category={category}>
         <div class="budget-header">
-          <span class="budget-cat" style={`color: ${color}`}>
+          <span class="budget-cat" style={{ color }}>
             {category}
           </span>
           <span class={`budget-amount ${over ? 'over' : ''}`}>

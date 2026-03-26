@@ -13,6 +13,7 @@ import {
 } from './transform-jsx.ts'
 import { appendCompiledEventMethods } from './generate-events.ts'
 import { injectChildComponents, injectComponentRegistrations, getDirectPropMappings } from './generate-components.ts'
+import { getTemplateParamBinding } from './template-param-utils.ts'
 import { pruneUnusedSetupDestructuring } from './utils.ts'
 import type { DirectPropMapping } from './generate-components.ts'
 import { applyStaticReactivity } from './apply-reactivity.ts'
@@ -31,6 +32,7 @@ export function transformComponentFile(
   originalAST: t.File,
   compImportsUsedAsTags: Set<string>,
   knownComponentImports: Set<string> = new Set(),
+  ssr: boolean = false,
 ): boolean {
   let transformed = false
   const stateRefs = collectStateReferences(originalAST, storeImports)
@@ -195,7 +197,7 @@ export function transformComponentFile(
       }
       transformNestedReturns(body)
 
-      if (earlyReturnCtx.eventHandlers.length > 0) {
+      if (!ssr && earlyReturnCtx.eventHandlers.length > 0) {
         const earlyClassPath = path.findParent((p) =>
           t.isClassDeclaration(p.node),
         ) as NodePath<t.ClassDeclaration> | null
@@ -217,7 +219,7 @@ export function transformComponentFile(
         analysis.stateChildSlots = stateChildSlots
       }
 
-      if (eventHandlers.length > 0) {
+      if (!ssr && eventHandlers.length > 0) {
         const classPath = path.findParent((p) => t.isClassDeclaration(p.node)) as NodePath<t.ClassDeclaration> | null
         if (classPath) {
           const setupStatements = returnIndex >= 0 ? body.slice(0, returnIndex) : []
@@ -259,9 +261,9 @@ export function transformComponentFile(
 
       if (componentInstances.size > 0) {
         const templateParamNames = new Set<string>()
-        const firstParam = path.node.params[0]
-        if (firstParam && t.isObjectPattern(firstParam)) {
-          firstParam.properties.forEach((p) => {
+        const binding = getTemplateParamBinding(path.node.params[0])
+        if (binding && t.isObjectPattern(binding)) {
+          binding.properties.forEach((p) => {
             if (t.isObjectProperty(p) && t.isIdentifier(p.key)) templateParamNames.add(p.key.name)
           })
         }
@@ -357,19 +359,21 @@ export function transformComponentFile(
   transformRemainingJSX(ast, imports)
   addJoinToMapCallsInTemplates(ast)
 
-  transformed =
-    applyStaticReactivity(
-      ast,
-      originalAST,
-      className,
-      sourceFile,
-      imports,
-      stateRefs,
-      storeImports,
-      compiledChildren,
-      eventIdCounter,
-      preTransformAnalysis,
-    ) || transformed
+  if (!ssr) {
+    transformed =
+      applyStaticReactivity(
+        ast,
+        originalAST,
+        className,
+        sourceFile,
+        imports,
+        stateRefs,
+        storeImports,
+        compiledChildren,
+        eventIdCounter,
+        preTransformAnalysis,
+      ) || transformed
+  }
 
   transformRemainingJSX(ast, imports)
 

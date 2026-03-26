@@ -23,6 +23,7 @@ import {
 } from './generate-array-render.ts'
 import { generateCreateItemMethod, generatePatchItemMethod } from './generate-array-patch.ts'
 import { ITEM_IS_KEY } from './analyze-helpers.ts'
+import { getTemplateParamBinding } from './template-param-utils.ts'
 import { buildTrimmedClassJoinedExpression, buildTrimmedClassValueExpression } from './utils.ts'
 import {
   generateComponentArrayResult,
@@ -3637,8 +3638,9 @@ function getTemplatePropNames(classBody: t.ClassBody): Set<string> {
   const templateMethod = classBody.body.find(
     (m): m is t.ClassMethod => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === 'template',
   )
-  if (templateMethod?.params[0] && t.isObjectPattern(templateMethod.params[0])) {
-    templateMethod.params[0].properties.forEach((p) => {
+  const binding = templateMethod ? getTemplateParamBinding(templateMethod.params[0]) : undefined
+  if (binding && t.isObjectPattern(binding)) {
+    binding.properties.forEach((p) => {
       if (t.isObjectProperty(p) && t.isIdentifier(p.key)) names.add(p.key.name)
     })
   }
@@ -3649,11 +3651,8 @@ function getTemplateParamIdentifier(classBody: t.ClassBody): string | undefined 
   const templateMethod = classBody.body.find(
     (m): m is t.ClassMethod => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === 'template',
   )
-  if (!templateMethod?.params[0]) return undefined
-  const p = templateMethod.params[0]
-  if (t.isIdentifier(p)) return p.name
-  if (t.isTSParameterProperty(p) && t.isIdentifier(p.parameter)) return p.parameter.name
-  return undefined
+  const binding = templateMethod ? getTemplateParamBinding(templateMethod.params[0]) : undefined
+  return t.isIdentifier(binding) ? binding.name : undefined
 }
 
 /** Collect template prop names referenced in an array item template (for __onPropChange handledPropNames). */
@@ -3674,8 +3673,9 @@ function collectPropNamesFromItemTemplate(
 
 /** Get the variable name in scope for a prop (handles { options } vs { options: n }) */
 function getTemplatePropVarName(templateMethod: t.ClassMethod, propName: string): string {
-  if (!templateMethod.params[0] || !t.isObjectPattern(templateMethod.params[0])) return propName
-  for (const p of templateMethod.params[0].properties) {
+  const pattern = getTemplateParamBinding(templateMethod.params[0])
+  if (!pattern || !t.isObjectPattern(pattern)) return propName
+  for (const p of pattern.properties) {
     if (!t.isObjectProperty(p)) continue
     const key = t.isIdentifier(p.key) ? p.key.name : t.isStringLiteral(p.key) ? p.key.value : null
     if (key !== propName) continue

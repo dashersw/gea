@@ -37,7 +37,7 @@ export default class EmailRow extends Component {
           <p class="email-preview">{email.preview}</p>
           <div class="email-tags">
             {(email.labels || []).map((l) => (
-              <span key={l} class="email-label" style={`background: ${LABEL_COLORS[l]}22; color: ${LABEL_COLORS[l]}`}>
+              <span key={l} class="email-label" style={{ background: `${LABEL_COLORS[l]}22`, color: LABEL_COLORS[l] }}>
                 {l}
               </span>
             ))}

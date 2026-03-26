@@ -1,4 +1,5 @@
 import * as t from '@babel/types'
+import { getTemplateParamBinding } from './template-param-utils.ts'
 import type { NodePath } from '@babel/traverse'
 import type { EventHandler } from './ir.ts'
 import type { ChildComponent, ObserveDependency } from './ir.ts'
@@ -209,14 +210,15 @@ export function collectTemplateSetupStatements(
   const bindingMap = new Map<string, { statement: t.Statement; index: number }>()
 
   const firstParam = templateSetupContext.params[0]
-  if (firstParam && !t.isRestElement(firstParam)) {
+  const paramBinding = firstParam && !t.isRestElement(firstParam) ? getTemplateParamBinding(firstParam) : undefined
+  if (paramBinding) {
     const paramStatement = t.variableDeclaration('const', [
       t.variableDeclarator(
-        t.cloneNode(firstParam, true),
+        t.cloneNode(paramBinding, true),
         t.memberExpression(t.thisExpression(), t.identifier('props')),
       ),
     ])
-    collectPatternIdentifiers(firstParam as t.LVal).forEach((name) => {
+    collectPatternIdentifiers(paramBinding as t.LVal).forEach((name) => {
       bindingMap.set(name, { statement: paramStatement, index: -1 })
     })
   }

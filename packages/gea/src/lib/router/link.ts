@@ -4,23 +4,25 @@ function escapeAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
 }
 
-export default class Link extends Component {
+export interface LinkProps {
+  to: string
+  replace?: boolean
+  exact?: boolean
+  class?: string
+  label?: string
+  children?: string
+  target?: string
+  rel?: string
+  onNavigate?: (e: MouseEvent) => void
+}
+
+export default class Link extends Component<LinkProps> {
   static _router: any = null
 
   private _clickHandler: ((e: MouseEvent) => void) | null = null
   private _observerRemover: (() => void) | null = null
 
-  template(props: {
-    to: string
-    replace?: boolean
-    exact?: boolean
-    class?: string
-    label?: string
-    children?: string
-    target?: string
-    rel?: string
-    onNavigate?: (e: MouseEvent) => void
-  }) {
+  template(props: LinkProps) {
     const cls = props.class ? ` class="${escapeAttr(props.class)}"` : ''
     const target = props.target ? ` target="${escapeAttr(props.target)}"` : ''
     const rel = props.rel ? ` rel="${escapeAttr(props.rel)}"` : ''

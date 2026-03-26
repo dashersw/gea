@@ -117,13 +117,13 @@ export default class App extends Component {
                 <p>Visual divider between content sections.</p>
               </div>
               <div class="component-card-body">
-                <p style="font-size: 0.875rem;">Content above</p>
+                <p style={{ fontSize: '0.875rem' }}>Content above</p>
                 <Separator />
-                <p style="font-size: 0.875rem;">Content below</p>
-                <div style="display: flex; align-items: center; gap: 1rem; height: 24px;">
-                  <span style="font-size: 0.875rem;">Left</span>
+                <p style={{ fontSize: '0.875rem' }}>Content below</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', height: 24 }}>
+                  <span style={{ fontSize: '0.875rem' }}>Left</span>
                   <Separator orientation="vertical" />
-                  <span style="font-size: 0.875rem;">Right</span>
+                  <span style={{ fontSize: '0.875rem' }}>Right</span>
                 </div>
               </div>
             </div>
@@ -134,9 +134,9 @@ export default class App extends Component {
                 <p>Loading placeholder with pulse animation.</p>
               </div>
               <div class="component-card-body">
-                <div style="display: flex; gap: 0.75rem; align-items: center;">
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                   <Skeleton class="h-10 w-10 rounded-full" />
-                  <div style="flex: 1;">
+                  <div style={{ flex: 1 }}>
                     <Skeleton class="h-4 w-3/4 mb-1.5" />
                     <Skeleton class="h-3 w-1/2" />
                   </div>
@@ -164,7 +164,7 @@ export default class App extends Component {
                     <CardDescription>You have 3 unread messages.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <p style="font-size: 0.875rem;">Card body content goes here.</p>
+                    <p style={{ fontSize: '0.875rem' }}>Card body content goes here.</p>
                   </CardContent>
                   <CardFooter>
                     <Button size="sm" variant="outline">
@@ -232,7 +232,7 @@ export default class App extends Component {
                 <p>Text input field with label support.</p>
               </div>
               <div class="component-card-body">
-                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                   <Label htmlFor="sc-email">Email</Label>
                   <Input inputId="sc-email" type="email" placeholder="you@example.com" />
                 </div>
@@ -502,7 +502,7 @@ export default class App extends Component {
               </div>
               <div class="component-card-body centered">
                 <Dialog title="Confirm" description="Are you sure?" triggerLabel="Open Dialog">
-                  <p style="font-size: 0.875rem; margin-top: 0.5rem;">Dialog body here.</p>
+                  <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Dialog body here.</p>
                 </Dialog>
               </div>
             </div>
@@ -532,7 +532,7 @@ export default class App extends Component {
               </div>
               <div class="component-card-body centered">
                 <Popover triggerLabel="Open Popover" title="Settings" description="Panel settings.">
-                  <p style="font-size: 0.875rem;">Content here.</p>
+                  <p style={{ fontSize: '0.875rem' }}>Content here.</p>
                 </Popover>
               </div>
             </div>
@@ -556,8 +556,8 @@ export default class App extends Component {
               </div>
               <div class="component-card-body centered">
                 <HoverCard triggerLabel="@geajs">
-                  <p style="font-weight: 600; font-size: 0.875rem;">Gea Framework</p>
-                  <p style="font-size: 0.8rem; color: hsl(var(--muted-foreground));">Reactive UI framework.</p>
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem' }}>Gea Framework</p>
+                  <p style={{ fontSize: '0.8rem', color: 'hsl(var(--muted-foreground))' }}>Reactive UI framework.</p>
                 </HoverCard>
               </div>
             </div>
@@ -592,7 +592,7 @@ export default class App extends Component {
               </div>
               <div class="component-card-body">
                 <Collapsible label="Show Details">
-                  <p style="font-size: 0.875rem; padding: 0.5rem 0;">Hidden content revealed.</p>
+                  <p style={{ fontSize: '0.875rem', padding: '0.5rem 0' }}>Hidden content revealed.</p>
                 </Collapsible>
               </div>
             </div>

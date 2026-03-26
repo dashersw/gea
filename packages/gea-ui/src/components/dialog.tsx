@@ -1,15 +1,35 @@
 import * as dialog from '@zag-js/dialog'
+import type { OpenChangeDetails } from '@zag-js/dialog'
 import { normalizeProps } from '@zag-js/vanilla'
+import type { ReactNode } from 'react'
 import ZagComponent from '../primitives/zag-component'
 
-export default class Dialog extends ZagComponent {
+export interface DialogProps {
+  class?: string
+  children?: ReactNode
+  triggerLabel?: string
+  title?: string
+  description?: string
+  open?: boolean
+  defaultOpen?: boolean
+  modal?: boolean
+  closeOnInteractOutside?: boolean
+  closeOnEscape?: boolean
+  trapFocus?: boolean
+  preventScroll?: boolean
+  role?: string
+  'aria-label'?: string
+  onOpenChange?: (details: OpenChangeDetails) => void
+}
+
+export default class Dialog extends ZagComponent<DialogProps> {
   declare open: boolean
 
-  createMachine(_props: any): any {
+  createMachine(_props: DialogProps): any {
     return dialog.machine
   }
 
-  getMachineProps(props: any) {
+  getMachineProps(props: DialogProps) {
     return {
       id: this.id,
       open: props.open,
@@ -21,7 +41,7 @@ export default class Dialog extends ZagComponent {
       preventScroll: props.preventScroll ?? true,
       role: props.role ?? 'dialog',
       'aria-label': props['aria-label'],
-      onOpenChange: (details: dialog.OpenChangeDetails) => {
+      onOpenChange: (details: OpenChangeDetails) => {
         this.open = details.open
         props.onOpenChange?.(details)
       },
@@ -78,7 +98,7 @@ export default class Dialog extends ZagComponent {
     this.open = api.open
   }
 
-  template(props: any) {
+  template(props: DialogProps) {
     return (
       <div class={props.class || ''}>
         {props.triggerLabel && (

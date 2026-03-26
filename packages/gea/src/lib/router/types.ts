@@ -2,7 +2,7 @@ import type Component from '../base/component'
 
 // ── Route config types ──────────────────────────────────────────
 
-export type RouteComponent = typeof Component
+export type RouteComponent = new (props?: any, ...args: any[]) => Component<any>
 
 export type LazyComponent = () => Promise<{ default: RouteComponent } | RouteComponent>
 

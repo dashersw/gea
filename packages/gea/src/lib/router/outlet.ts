@@ -1,7 +1,7 @@
 import Component from '../base/component'
 import type { Router } from './router'
 
-export default class Outlet extends Component {
+export default class Outlet extends Component<{ router?: Router | null }> {
   static _router: Router | null = null
 
   __isRouterOutlet = true

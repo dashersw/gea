@@ -1,4 +1,5 @@
 export { default as Component } from './lib/base/component'
+export { resetUidCounter, setUidProvider, clearUidProvider } from './lib/base/uid'
 export { Store, isInternalProp } from './lib/store'
 export { h } from './lib/h'
 export type { DOMEvent, TeleportProps } from './lib/types'

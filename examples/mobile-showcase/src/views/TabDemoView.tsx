@@ -9,15 +9,15 @@ class PhotosView extends View {
         <div class="tab-content">
           <h2>Photos</h2>
           <div class="photo-grid">
-            <div class="photo-item" style="background-color: #4F46E5"></div>
-            <div class="photo-item" style="background-color: #059669"></div>
-            <div class="photo-item" style="background-color: #D97706"></div>
-            <div class="photo-item" style="background-color: #DC2626"></div>
-            <div class="photo-item" style="background-color: #7C3AED"></div>
-            <div class="photo-item" style="background-color: #0891B2"></div>
-            <div class="photo-item" style="background-color: #BE185D"></div>
-            <div class="photo-item" style="background-color: #65A30D"></div>
-            <div class="photo-item" style="background-color: #CA8A04"></div>
+            <div class="photo-item" style={{ backgroundColor: '#4F46E5' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#059669' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#D97706' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#DC2626' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#7C3AED' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#0891B2' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#BE185D' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#65A30D' }}></div>
+            <div class="photo-item" style={{ backgroundColor: '#CA8A04' }}></div>
           </div>
         </div>
       </view>
@@ -33,7 +33,7 @@ class MessagesView extends View {
           <h2>Messages</h2>
           <div class="message-list">
             <div class="message-item">
-              <div class="message-avatar" style="background-color: #4F46E5">
+              <div class="message-avatar" style={{ backgroundColor: '#4F46E5' }}>
                 A
               </div>
               <div class="message-body">
@@ -42,7 +42,7 @@ class MessagesView extends View {
               </div>
             </div>
             <div class="message-item">
-              <div class="message-avatar" style="background-color: #059669">
+              <div class="message-avatar" style={{ backgroundColor: '#059669' }}>
                 K
               </div>
               <div class="message-body">
@@ -51,7 +51,7 @@ class MessagesView extends View {
               </div>
             </div>
             <div class="message-item">
-              <div class="message-avatar" style="background-color: #D97706">
+              <div class="message-avatar" style={{ backgroundColor: '#D97706' }}>
                 S
               </div>
               <div class="message-body">
@@ -60,7 +60,7 @@ class MessagesView extends View {
               </div>
             </div>
             <div class="message-item">
-              <div class="message-avatar" style="background-color: #DC2626">
+              <div class="message-avatar" style={{ backgroundColor: '#DC2626' }}>
                 L
               </div>
               <div class="message-body">

@@ -137,10 +137,10 @@ export default class App extends Component {
                       const pct = Math.round((amount / store.totalExpenses) * 100)
                       return (
                         <div key={cat} class="breakdown-row">
-                          <span class="breakdown-dot" style={`background: ${color}`} />
+                          <span class="breakdown-dot" style={{ background: color }} />
                           <span class="breakdown-cat">{cat}</span>
                           <div class="breakdown-bar-wrap">
-                            <div class="breakdown-bar" style={`width: ${pct}%; background: ${color}`} />
+                            <div class="breakdown-bar" style={{ width: `${pct}%`, background: color }} />
                           </div>
                           <span class="breakdown-pct">{pct}%</span>
                           <span class="breakdown-amt">${amount.toFixed(0)}</span>
