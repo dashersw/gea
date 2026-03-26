@@ -1,19 +1,29 @@
+import * as fs from 'fs'
+import { pathToFileURL } from 'url'
 import {
+  CodeAction,
+  CodeActionKind,
+  CodeActionParams,
   CompletionItem,
   CompletionItemKind,
   createConnection,
   Diagnostic,
   DiagnosticSeverity,
+  Definition,
+  DefinitionParams,
   DidChangeConfigurationNotification,
   Hover,
   InitializeParams,
   InitializeResult,
+  Location,
   MarkupKind,
+  Position,
   ProposedFeatures,
   Range,
   TextDocumentPositionParams,
   TextDocumentSyncKind,
   TextDocuments,
+  WorkspaceEdit,
 } from 'vscode-languageserver/node'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import { ComponentDiscovery, type ComponentInfo } from './component-discovery'
@@ -30,6 +40,11 @@ interface OpenTagContext {
   source: string
   sourceBeforeCursor: string
   tagName: string
+}
+
+interface ComponentMatchContext {
+  component?: ComponentInfo
+  context: OpenTagContext
 }
 
 const connection = createConnection(ProposedFeatures.all)
@@ -72,6 +87,7 @@ const EVENT_TYPES = [
 ]
 
 const COMMON_COMPONENT_PROPS = ['key', 'class', 'className', 'style', 'id']
+const UNKNOWN_COMPONENT_CODE = 'gea.unknownComponent'
 
 const HTML_ELEMENTS = new Set([
   'a',
@@ -124,6 +140,12 @@ const HTML_ELEMENTS = new Set([
 connection.onInitialize((params: InitializeParams) => {
   const capabilities = params.capabilities
 
+  const workspaceRoots = [
+    ...(params.workspaceFolders?.map((folder) => folder.uri) ?? []),
+    ...(params.rootUri ? [params.rootUri] : []),
+  ]
+  componentDiscovery.setWorkspaceRoots(Array.from(new Set(workspaceRoots)))
+
   hasConfigurationCapability = !!capabilities.workspace?.configuration
   hasWorkspaceFolderCapability = !!capabilities.workspace?.workspaceFolders
 
@@ -134,6 +156,8 @@ connection.onInitialize((params: InitializeParams) => {
         resolveProvider: false,
         triggerCharacters: ['<', ' '],
       },
+      codeActionProvider: true,
+      definitionProvider: true,
       hoverProvider: true,
     },
   }
@@ -155,7 +179,9 @@ connection.onInitialized(() => {
   }
 
   if (hasWorkspaceFolderCapability) {
-    connection.workspace.onDidChangeWorkspaceFolders(() => {
+    connection.workspace.onDidChangeWorkspaceFolders(async () => {
+      const workspaceFolders = await connection.workspace.getWorkspaceFolders()
+      componentDiscovery.setWorkspaceRoots(workspaceFolders?.map((folder) => folder.uri) ?? [])
       componentDiscovery.scanWorkspace()
     })
   }
@@ -212,6 +238,7 @@ async function validateTextDocument(textDocument: TextDocument): Promise<void> {
     const component = findComponent(components, tag.name)
     if (!component) {
       diagnostics.push({
+        code: UNKNOWN_COMPONENT_CODE,
         severity: DiagnosticSeverity.Warning,
         range: Range.create(textDocument.positionAt(tag.start), textDocument.positionAt(tag.end)),
         message: `Unknown component: ${tag.name}`,
@@ -429,6 +456,167 @@ function buildEventCompletion(eventName: string): CompletionItem {
   }
 }
 
+function getDocumentFilePath(uri: string): string {
+  let filePath = decodeURIComponent(uri)
+  if (filePath.startsWith('file://')) {
+    filePath = filePath.slice('file://'.length)
+  }
+
+  if (filePath.match(/^\/[A-Z]:/i)) {
+    filePath = filePath.slice(1)
+  }
+
+  return filePath
+}
+
+function getComponentAtPosition(document: TextDocument, position: Position): ComponentMatchContext | null {
+  const text = document.getText()
+  const offset = document.offsetAt(position)
+  const context = getOpenTagContext(text, offset)
+  if (!context) {
+    return null
+  }
+
+  const components = getAllComponents(text, document.uri)
+  return {
+    component: findComponent(components, context.tagName),
+    context,
+  }
+}
+
+function isCursorOnTagName(context: OpenTagContext, offset: number): boolean {
+  const tagNameStart = context.start + 1
+  const tagNameEnd = tagNameStart + context.tagName.length
+  return offset >= tagNameStart && offset <= tagNameEnd
+}
+
+function createDefinitionLocation(document: TextDocument, component: ComponentInfo): Location | null {
+  if (!component.filePath) {
+    return null
+  }
+
+  const targetUri = pathToFileURL(component.filePath).toString()
+  const offset = component.declarationOffset ?? 0
+  const currentFilePath = getDocumentFilePath(document.uri)
+  const position =
+    component.filePath === currentFilePath
+      ? document.positionAt(offset)
+      : getPositionFromFile(component.filePath, offset)
+
+  return Location.create(targetUri, Range.create(position, position))
+}
+
+function getPositionFromFile(filePath: string, offset: number): Position {
+  try {
+    const text = fs.readFileSync(filePath, 'utf8')
+    const boundedOffset = Math.max(0, Math.min(offset, text.length))
+    const prefix = text.slice(0, boundedOffset)
+    const lines = prefix.split(/\r?\n/)
+    return Position.create(lines.length - 1, lines[lines.length - 1]?.length ?? 0)
+  } catch {
+    return Position.create(0, 0)
+  }
+}
+
+function extractUnknownComponentName(diagnostic: Diagnostic): string | null {
+  if (diagnostic.code !== UNKNOWN_COMPONENT_CODE) {
+    return null
+  }
+
+  const match = diagnostic.message.match(/^Unknown component: (.+)$/)
+  return match ? match[1] : null
+}
+
+function hasImportForComponent(text: string, component: ComponentInfo): boolean {
+  const importRegex = new RegExp(`import\\s+${component.name}\\b`)
+  return importRegex.test(text)
+}
+
+function findImportInsertionOffset(text: string): number {
+  const lines = text.split(/\r?\n/)
+  let offset = 0
+  let lastImportOffset = 0
+  let lastLeadingOffset = 0
+  let collectingImport = false
+
+  for (const line of lines) {
+    const lineLength = line.length + 1
+    const trimmed = line.trim()
+
+    if (!collectingImport) {
+      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) {
+        offset += lineLength
+        lastLeadingOffset = offset
+        continue
+      }
+
+      if (!trimmed.startsWith('import ')) {
+        break
+      }
+
+      collectingImport = true
+    }
+
+    offset += lineLength
+
+    if (trimmed.endsWith(';') || /from\s+['"][^'"]+['"]$/.test(trimmed) || /^import\s+['"][^'"]+['"]$/.test(trimmed)) {
+      collectingImport = false
+      lastImportOffset = offset
+    }
+  }
+
+  return lastImportOffset || lastLeadingOffset
+}
+
+function buildImportText(document: TextDocument, component: ComponentInfo): string | null {
+  if (!component.filePath) {
+    return null
+  }
+
+  const currentFilePath = getDocumentFilePath(document.uri)
+  const importPath = componentDiscovery.toRelativeImportPath(currentFilePath, component.filePath)
+  return `import ${component.name} from '${importPath}'\n`
+}
+
+function buildUnknownComponentCodeAction(document: TextDocument, diagnostic: Diagnostic): CodeAction | null {
+  const componentName = extractUnknownComponentName(diagnostic)
+  if (!componentName) {
+    return null
+  }
+
+  const text = document.getText()
+  const currentFilePath = getDocumentFilePath(document.uri)
+  const component = componentDiscovery.getBestComponentMatch(componentName, currentFilePath)
+  if (!component || hasImportForComponent(text, component)) {
+    return null
+  }
+
+  const importText = buildImportText(document, component)
+  if (!importText) {
+    return null
+  }
+
+  const insertionOffset = findImportInsertionOffset(text)
+  const insertionPosition = document.positionAt(insertionOffset)
+  const edit: WorkspaceEdit = {
+    changes: {
+      [document.uri]: [
+        {
+          newText: importText,
+          range: Range.create(insertionPosition, insertionPosition),
+        },
+      ],
+    },
+  }
+
+  return {
+    diagnostics: [diagnostic],
+    edit,
+    kind: CodeActionKind.QuickFix,
+    title: `Add import for ${component.name}`,
+  }
+}
+
 connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] => {
   const document = documents.get(params.textDocument.uri)
   if (!document) {
@@ -472,6 +660,45 @@ connection.onCompletion((params: TextDocumentPositionParams): CompletionItem[] =
   }
 
   return results
+})
+
+connection.onDefinition((params: DefinitionParams): Definition | null => {
+  const document = documents.get(params.textDocument.uri)
+  if (!document) {
+    return null
+  }
+
+  const componentContext = getComponentAtPosition(document, params.position)
+  if (!componentContext) {
+    return null
+  }
+
+  const offset = document.offsetAt(params.position)
+  if (!isCursorOnTagName(componentContext.context, offset)) {
+    return null
+  }
+
+  const currentFilePath = getDocumentFilePath(document.uri)
+  const component =
+    componentContext.component ??
+    componentDiscovery.getBestComponentMatch(componentContext.context.tagName, currentFilePath)
+
+  if (!component) {
+    return null
+  }
+
+  return createDefinitionLocation(document, component)
+})
+
+connection.onCodeAction((params: CodeActionParams): CodeAction[] => {
+  const document = documents.get(params.textDocument.uri)
+  if (!document) {
+    return []
+  }
+
+  return params.context.diagnostics
+    .map((diagnostic) => buildUnknownComponentCodeAction(document, diagnostic))
+    .filter((action): action is CodeAction => action !== null)
 })
 
 connection.onRequest('textDocument/diagnostic', () => {
