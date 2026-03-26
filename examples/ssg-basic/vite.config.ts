@@ -14,7 +14,6 @@ export default defineConfig({
       },
       robots: true,
       minify: true,
-      trailingSlash: false,
     }),
   ],
   resolve: {
