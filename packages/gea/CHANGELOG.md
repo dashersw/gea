@@ -1,5 +1,11 @@
 # @geajs/core
 
+## 1.0.9
+
+### Patch Changes
+
+- [`d855ef0`](https://github.com/dashersw/gea/commit/d855ef0f719814f9839ee8501d354f9edebe0b82) Thanks [@dashersw](https://github.com/dashersw)! - Use a lean root `Proxy` handler in the browser (fewer traps, no SSR branches) and reserve the full SSR overlay handler for server builds. `Store._ssrOverlayResolver` must be set before `new Store()` for SSR overlay behavior.
+
 ## 1.0.8
 
 ### Patch Changes
