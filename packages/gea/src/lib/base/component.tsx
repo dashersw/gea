@@ -303,7 +303,30 @@ export default class Component extends Store {
       this.__childComponents = []
     }
 
+    // Preserve teleported elements before rerender by temporarily detaching them
+    const preservedTeleports = new Map<
+      string,
+      { element: HTMLElement; target: Element; placeholder: Comment; wasFocused: boolean }
+    >()
+
+    // Find and temporarily detach all teleported elements for this component
+    document.querySelectorAll(`[data-gea-teleport-component="${this.id}"]`).forEach((element: HTMLElement) => {
+      const target = element.parentElement
+      if (target && element.id) {
+        // Check if this element or any of its children has focus
+        const wasFocused = element === document.activeElement || element.contains(document.activeElement)
+
+        // Create a placeholder to mark where this element should be restored
+        const placeholder = document.createComment(`preserved-${element.id}`)
+        target.insertBefore(placeholder, element)
+        target.removeChild(element)
+        preservedTeleports.set(element.id, { element, target, placeholder, wasFocused })
+      }
+    })
+
+    // Clean up any remaining teleport state
     this.__cleanupTeleports()
+
     this.__elCache.clear()
 
     // Remove old element BEFORE calling template() so that getElementById
@@ -392,13 +415,65 @@ export default class Component extends Store {
     this.onAfterRender()
     this.onAfterRenderHooks()
     this.__handleTeleportElements()
+
+    // Restore preserved teleported elements after teleportation
+    preservedTeleports.forEach(({ element, target, placeholder, wasFocused }, elementId) => {
+      // Find if there's a new element with the same ID that was just teleported
+      const newElement = document.querySelector(`#${elementId}[data-gea-teleport-component="${this.id}"]`)
+      if (newElement && newElement !== element) {
+        // Replace the new element with the preserved one
+        if (newElement.parentNode) {
+          newElement.parentNode.replaceChild(element, newElement)
+        }
+      } else if (!newElement) {
+        // If no new element was created, restore to original position
+        if (placeholder.parentNode) {
+          placeholder.parentNode.replaceChild(element, placeholder)
+        }
+      }
+
+      // Restore focus if this element was focused before
+      if (wasFocused && typeof element.focus === 'function') {
+        element.focus()
+      }
+
+      // Clean up placeholder if it still exists
+      if (placeholder.parentNode) {
+        placeholder.parentNode.removeChild(placeholder)
+      }
+    })
+
     setTimeout(() => requestAnimationFrame(() => this.onAfterRenderAsync()))
   }
 
   __handleTeleportElements() {
     if (!this.element_) return
 
-    const teleportElements = this.element_.querySelectorAll('[data-gea-teleport="true"]')
+    // Find teleport elements, including root element itself and scoped descendants
+    const teleportElements: HTMLElement[] = []
+
+    // Check if root element itself is a teleport
+    if (this.element_.getAttribute('data-gea-teleport') === 'true') {
+      teleportElements.push(this.element_)
+    }
+
+    // Find teleport descendants but skip those owned by child components
+    const descendants = this.element_.querySelectorAll('[data-gea-teleport="true"]')
+    descendants.forEach((el: HTMLElement) => {
+      // Check if this element belongs to a child component
+      let current = el
+      let belongsToChild = false
+      while (current && current !== this.element_) {
+        if ((current as any).__geaComponent && (current as any).__geaComponent !== this) {
+          belongsToChild = true
+          break
+        }
+        current = current.parentElement!
+      }
+      if (!belongsToChild) {
+        teleportElements.push(el)
+      }
+    })
 
     teleportElements.forEach((teleportEl: HTMLElement) => {
       const toSelector = teleportEl.getAttribute('data-gea-teleport-to')
@@ -406,7 +481,15 @@ export default class Component extends Store {
 
       if (!toSelector) return
 
-      const targetElement = document.querySelector(toSelector)
+      // Safe selector query with error handling
+      let targetElement: Element | null = null
+      try {
+        targetElement = document.querySelector(toSelector)
+      } catch (error) {
+        console.warn(`[Teleport] Invalid target selector: ${toSelector}`, error)
+        return
+      }
+
       if (!targetElement) {
         console.warn(`[Teleport] Target element not found: ${toSelector}`)
         return
@@ -433,7 +516,7 @@ export default class Component extends Store {
 
       children.forEach((child) => {
         if (child && child.nodeType !== Node.COMMENT_NODE) {
-          targetElement.appendChild(child)
+          targetElement!.appendChild(child)
           teleportedChildren.push(child)
         }
       })
@@ -442,6 +525,7 @@ export default class Component extends Store {
       ;(teleportEl as any).__geaTeleportTarget = targetElement
       ;(teleportEl as any).__geaTeleportPlaceholder = placeholder
       ;(teleportEl as any).__geaTeleportChildren = teleportedChildren
+
       // Track teleported elements for event delegation
       teleportedChildren.forEach((child) => {
         if (child && child.nodeType === Node.ELEMENT_NODE) {
@@ -585,6 +669,7 @@ export default class Component extends Store {
       child.onAfterRender()
       child.onAfterRenderHooks()
       child.__syncUnrenderedListItems()
+      child.__handleTeleportElements()
       requestAnimationFrame(() => child.onAfterRenderAsync())
     })
   }
@@ -654,7 +739,32 @@ export default class Component extends Store {
   __cleanupTeleports() {
     if (!this.element_) return
 
-    const teleportElements = this.element_.querySelectorAll('[data-gea-teleport="true"]')
+    // Find teleport elements using the same scoped logic as __handleTeleportElements
+    const teleportElements: HTMLElement[] = []
+
+    // Check if root element itself is a teleport
+    if (this.element_.getAttribute('data-gea-teleport') === 'true') {
+      teleportElements.push(this.element_)
+    }
+
+    // Find teleport descendants but skip those owned by child components
+    const descendants = this.element_.querySelectorAll('[data-gea-teleport="true"]')
+    descendants.forEach((el: HTMLElement) => {
+      // Check if this element belongs to a child component
+      let current = el
+      let belongsToChild = false
+      while (current && current !== this.element_) {
+        if ((current as any).__geaComponent && (current as any).__geaComponent !== this) {
+          belongsToChild = true
+          break
+        }
+        current = current.parentElement!
+      }
+      if (!belongsToChild) {
+        teleportElements.push(el)
+      }
+    })
+
     teleportElements.forEach((teleportEl: HTMLElement) => {
       this.__cleanupSingleTeleport(teleportEl)
     })
@@ -883,6 +993,7 @@ export default class Component extends Store {
     newChild.setupEventDirectives_()
     newChild.onAfterRender()
     newChild.onAfterRenderHooks()
+    newChild.__handleTeleportElements()
   }
 
   cleanupBindings_() {

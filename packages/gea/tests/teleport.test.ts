@@ -195,7 +195,10 @@ describe('Teleport', () => {
         return `
           <div>
             <div data-gea-teleport="true" data-gea-teleport-to="#modal-root" style="display: none;">
-              <div class="modal">${state.showContent ? 'Visible' : 'Hidden'}</div>
+              <div class="modal">
+                ${state.showContent ? 'Visible' : 'Hidden'}
+                <input id="tele-input" value="initial" />
+              </div>
             </div>
           </div>
         `
@@ -208,7 +211,16 @@ describe('Teleport', () => {
 
     // Initial state
     const modalRoot = document.getElementById('modal-root')!
-    assert.strictEqual(modalRoot.querySelector('.modal')?.textContent, 'Visible')
+    assert.strictEqual(modalRoot.querySelector('.modal')?.textContent?.trim(), 'Visible')
+
+    // Capture reference to the input element before re-render
+    const inputBefore = modalRoot.querySelector('#tele-input') as HTMLInputElement
+    assert.ok(inputBefore, 'Input element should exist before re-render')
+    assert.strictEqual(inputBefore.value, 'initial')
+
+    // Modify input state to test preservation
+    inputBefore.value = 'modified'
+    inputBefore.focus()
 
     // Update state and trigger re-render
     state.showContent = false
@@ -217,7 +229,15 @@ describe('Teleport', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     // Content should be updated and still teleported
-    assert.strictEqual(modalRoot.querySelector('.modal')?.textContent, 'Hidden')
+    assert.strictEqual(modalRoot.querySelector('.modal')?.textContent?.trim(), 'Hidden')
+
+    // Verify the same DOM node is preserved
+    const inputAfter = modalRoot.querySelector('#tele-input') as HTMLInputElement
+    assert.ok(inputAfter, 'Input element should exist after re-render')
+    assert.strictEqual(inputBefore, inputAfter, 'Should be the same DOM node instance')
+    assert.ok(inputBefore.isSameNode(inputAfter), 'Should be the same node via isSameNode()')
+    assert.strictEqual(inputAfter.value, 'modified', 'Input value should be preserved')
+    assert.strictEqual(document.activeElement, inputAfter, 'Input focus should be preserved')
   })
 
   it('should maintain event delegation for teleported elements', async () => {
