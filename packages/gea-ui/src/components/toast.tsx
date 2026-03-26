@@ -22,6 +22,20 @@ function getStore(props?: toast.StoreProps) {
   return _store
 }
 
+const escapeHTML = (str: string) => {
+  if (!str) return ''
+  return str.replace(/[&<>"']/g, (m) => {
+    switch (m) {
+      case '&': return '&amp;'
+      case '<': return '&lt;'
+      case '>': return '&gt;'
+      case '"': return '&quot;'
+      case "'": return '&#39;'
+      default: return m
+    }
+  })
+}
+
 export class ToastStore {
   static getStore = getStore
 
@@ -195,12 +209,12 @@ export class Toaster extends Component {
             <div class="grid gap-1">
               {t.title && (
                 <div data-part="title" class="toast-title text-sm font-semibold">
-                  {t.title}
+                  {escapeHTML(t.title)}
                 </div>
               )}
               {t.description && (
                 <div data-part="description" class="toast-description text-sm opacity-90">
-                  {t.description}
+                  {escapeHTML(t.description)}
                 </div>
               )}
             </div>

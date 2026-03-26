@@ -91,7 +91,7 @@ test('Toast: template prevents XSS via description (Native Refactor)', async () 
   const Toaster = await loadToaster()
   const toaster = new Toaster()
   
-  const maliciousPayload = "<img src=x onerror='window.xssDetected=true'>"
+  const maliciousPayload = "<img src=x onerror='alert(\"XSS_FAIL\")'>"
   const toastData = {
     id: 'test-toast',
     title: 'Safe Title',
@@ -104,17 +104,10 @@ test('Toast: template prevents XSS via description (Native Refactor)', async () 
   // Check template output
   const html = toaster.template({})
   
-  // In our mock 'h', it doesn't automatically escape (because it's a simple mock).
-  // BUT in real Gea, the compiler/runtime handles this.
-  // Wait, if I'm testing the COMPONENT, I should ideally use Gea's real 'h'.
-  // However, the goal of this refactor is that Gea handles it.
-  
-  // Since I can't easily import Gea's real 'h' without the same ERR_MODULE_NOT_FOUND,
-  // I will prove that we are now using JSX and passing the values to it,
-  // which is NATIVELY safe in any modern framework (including Gea).
-  
-  assert.ok(html.includes('data-part="description"'), 'Should render description container')
-  assert.ok(html.includes(maliciousPayload), 'Payload is passed to the template (Gea will escape it at runtime)')
+  // Verify that the malicious payload is ESCAPED
+  assert.ok(!html.includes(maliciousPayload), 'Malicious payload should NOT be present as raw HTML')
+  assert.ok(html.includes('&lt;img'), 'Malicious tag should be escaped to &lt;img')
+  assert.ok(html.includes('onerror=&#39;alert(&quot;XSS_FAIL&quot;)&#39;'), 'Attributes should also be escaped')
 
   // Cleanup
   dom.window.close()
