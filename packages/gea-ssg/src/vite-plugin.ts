@@ -104,18 +104,12 @@ export function geaSSG(options: SSGPluginOptions = {}): Plugin[] {
           } finally {
             await viteServer.close()
           }
-          // Vite's middlewareMode leaks internal handles (HTTP servers,
-          // file watchers) that prevent Node from exiting naturally after
-          // close().  We give other Vite/Rollup plugins a grace period to
-          // finish their own closeBundle hooks before forcing an exit.
-          // The timer is un-reffed so it never *prevents* a natural exit;
-          // it only forces one when stale handles are the sole remaining work.
-          // TODO: Remove once Vite fixes handle cleanup in middlewareMode.
-          const EXIT_GRACE_MS = 500
-          setTimeout(() => {
-            console.warn('[gea-ssg] Force-exiting — Vite leaked handles preventing natural shutdown.')
-            process.exit(0)
-          }, EXIT_GRACE_MS).unref()
+          // Note: Vite's middlewareMode may leak internal handles that
+          // prevent Node from exiting.  We intentionally do NOT call
+          // process.exit() here — doing so would kill other plugins'
+          // parallel closeBundle hooks.  The build CLI already handles
+          // exit; if the process hangs, the user can investigate with
+          // --why (Node 22+) or wtfnode.
         } catch (error) {
           console.error('[gea-ssg] SSG error:', error)
           throw error
