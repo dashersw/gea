@@ -131,8 +131,9 @@ export class ChatStore extends Store {
     this.draft = ''
   }
 
-  setDraft(e: { target: { value: string } }): void {
-    this.draft = e.target.value
+  setDraft(e: { target: EventTarget | null }): void {
+    const t = e.target as HTMLInputElement | null
+    if (t && 'value' in t) this.draft = t.value
   }
 
   sendMessage(): void {

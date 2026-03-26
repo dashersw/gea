@@ -5,7 +5,7 @@ import store from './store'
 export default class ConversationItem extends Component {
   declare props: { id: string; name: string; lastMessage: string; timestamp: number; unread: number; online: boolean }
 
-  template({ id, name, lastMessage, timestamp, unread, online }: any) {
+  template({ id, name, lastMessage, timestamp, unread, online }) {
     const isActive = store.activeConversationId === id
     const isTyping = store.typingConversationId === id && !isActive
 

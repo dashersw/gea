@@ -52,7 +52,7 @@ export default class MessageThread extends Component {
               placeholder={`Message ${conv.name}…`}
               value={store.draft}
               input={store.setDraft}
-              keydown={(e: KeyboardEvent) => {
+              keydown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
                   store.sendMessage()
