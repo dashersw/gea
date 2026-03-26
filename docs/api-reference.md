@@ -612,7 +612,7 @@ export default class App extends Component {
 
 - The target element must exist in the DOM when the component renders
 - If the target is not found, a warning is logged and content remains in its original location
-- Target elements can be anywhere in the document, including outside the React root
+- Target elements can be anywhere in the document, including outside the Gea root
 
 ### TypeScript
 

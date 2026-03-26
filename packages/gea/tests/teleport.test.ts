@@ -116,31 +116,33 @@ describe('Teleport', () => {
       warningMessage = msg
     }
 
-    class TestComponent extends Component {
-      template() {
-        return `
-          <div>
-            <div data-gea-teleport="true" data-gea-teleport-to="#missing-target" style="display: none;">
-              <div class="modal">Content</div>
+    try {
+      class TestComponent extends Component {
+        template() {
+          return `
+            <div>
+              <div data-gea-teleport="true" data-gea-teleport-to="#missing-target" style="display: none;">
+                <div class="modal">Content</div>
+              </div>
             </div>
-          </div>
-        `
+          `
+        }
       }
+
+      const component = new TestComponent()
+      const appRoot = document.getElementById('app')!
+      component.render(appRoot)
+
+      // Should emit warning and keep content in place
+      assert(warningMessage.includes('Target element not found: #missing-target'))
+
+      // Content should remain in original location
+      const teleportDiv = appRoot.querySelector('[data-gea-teleport="true"]')!
+      assert.strictEqual(teleportDiv.querySelector('.modal')?.textContent, 'Content')
+    } finally {
+      // Restore console.warn
+      console.warn = originalWarn
     }
-
-    const component = new TestComponent()
-    const appRoot = document.getElementById('app')!
-    component.render(appRoot)
-
-    // Should emit warning and keep content in place
-    assert(warningMessage.includes('Target element not found: #missing-target'))
-
-    // Content should remain in original location
-    const teleportDiv = appRoot.querySelector('[data-gea-teleport="true"]')!
-    assert.strictEqual(teleportDiv.querySelector('.modal')?.textContent, 'Content')
-
-    // Restore console.warn
-    console.warn = originalWarn
   })
 
   it('should cleanup teleported content on component disposal', () => {

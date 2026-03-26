@@ -421,23 +421,29 @@ export default class Component extends Store {
 
       // Create a placeholder comment to mark the original position
       const placeholder = document.createComment('teleport-placeholder')
-      teleportEl.parentNode?.insertBefore(placeholder, teleportEl)
+      if (!teleportEl.parentNode) {
+        console.warn('[Teleport] Cannot teleport element without parent node')
+        return
+      }
+      teleportEl.parentNode.insertBefore(placeholder, teleportEl)
 
       // Move all child nodes to the target element
       const children = Array.from(teleportEl.childNodes)
+      const teleportedChildren: Node[] = []
 
       children.forEach((child) => {
         if (child && child.nodeType !== Node.COMMENT_NODE) {
           targetElement.appendChild(child)
+          teleportedChildren.push(child)
         }
       })
 
       // Store teleport info for cleanup
       ;(teleportEl as any).__geaTeleportTarget = targetElement
       ;(teleportEl as any).__geaTeleportPlaceholder = placeholder
-      ;(teleportEl as any).__geaTeleportChildren = children
+      ;(teleportEl as any).__geaTeleportChildren = teleportedChildren
       // Track teleported elements for event delegation
-      children.forEach((child) => {
+      teleportedChildren.forEach((child) => {
         if (child && child.nodeType === Node.ELEMENT_NODE) {
           this.__teleportedElements.push(child as HTMLElement)
           // Mark element with original component ID for event delegation
@@ -619,15 +625,26 @@ export default class Component extends Store {
       delete (teleportEl as any).__geaTeleportPlaceholder
       delete (teleportEl as any).__geaTeleportChildren
 
-      // Remove from tracked elements
+      // Remove from tracked elements and clean up markers
       if (children) {
         children.forEach((child: Node) => {
           if (child && child.nodeType === Node.ELEMENT_NODE) {
-            const index = this.__teleportedElements.indexOf(child as HTMLElement)
+            const childEl = child as HTMLElement
+            const index = this.__teleportedElements.indexOf(childEl)
             if (index > -1) {
               this.__teleportedElements.splice(index, 1)
             }
-            delete (child as any).__geaOriginalComponent
+
+            // Clean up teleport markers
+            delete (childEl as any).__geaOriginalComponent
+            childEl.removeAttribute('data-gea-teleport-component')
+
+            // Clean up descendant markers
+            const descendants = childEl.querySelectorAll('*')
+            descendants.forEach((desc) => {
+              delete (desc as any).__geaOriginalComponent
+              desc.removeAttribute('data-gea-teleport-component')
+            })
           }
         })
       }
