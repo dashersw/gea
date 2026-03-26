@@ -74,76 +74,13 @@ export class Toaster extends Component {
       if (!this._machine) return
       this._api = toast.group.connect(this._machine.service, normalizeProps)
       const nextToasts = this._api.getToasts()
-      this._syncToastDOM(nextToasts)
       this._currentToasts = nextToasts
       this._syncToastMachines()
+      ;(this as any).__geaRequestRender()
       queueMicrotask(() => this._applyGroupSpreads())
     })
   }
 
-  _createToastElement(t: any): HTMLElement {
-    const div = document.createElement('div')
-    div.setAttribute('data-part', 'toast-root')
-    div.setAttribute('data-toast-id', t.id)
-    div.className =
-      'toast-root group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-md border p-4 shadow-lg transition-all bg-background text-foreground'
-
-    const content = document.createElement('div')
-    content.className = 'grid gap-1'
-
-    if (t.title) {
-      const title = document.createElement('div')
-      title.setAttribute('data-part', 'title')
-      title.className = 'toast-title text-sm font-semibold'
-      title.textContent = t.title
-      content.appendChild(title)
-    }
-
-    if (t.description) {
-      const description = document.createElement('div')
-      description.setAttribute('data-part', 'description')
-      description.className = 'toast-description text-sm opacity-90'
-      description.textContent = t.description
-      content.appendChild(description)
-    }
-
-    div.appendChild(content)
-
-    const closeBtn = document.createElement('button')
-    closeBtn.setAttribute('data-part', 'close-trigger')
-    closeBtn.className = 'toast-close-trigger text-foreground/50 hover:text-foreground'
-    closeBtn.innerHTML = '&#x2715;'
-    div.appendChild(closeBtn)
-
-    return div
-  }
-
-  _syncToastDOM(nextToasts: any[]) {
-    const container = this.el
-    if (!container) return
-
-    const currentIds = new Set(this._currentToasts.map((t: any) => t.id))
-    const nextIds = new Set(nextToasts.map((t: any) => t.id))
-
-    for (const id of currentIds) {
-      if (!nextIds.has(id)) {
-        const el = container.querySelector(`[data-toast-id="${id}"]`)
-        if (el) {
-          const cleanups = this._spreadCleanups.get(id)
-          if (cleanups) cleanups.forEach((fn) => fn())
-          this._spreadCleanups.delete(id)
-          el.remove()
-        }
-      }
-    }
-
-    for (const t of nextToasts) {
-      if (!currentIds.has((t as any).id)) {
-        const el = this._createToastElement(t as any)
-        container.appendChild(el)
-      }
-    }
-  }
 
   _syncToastMachines() {
     if (!this._machine) return
@@ -247,7 +184,32 @@ export class Toaster extends Component {
       <div
         data-part="group"
         class={`toaster fixed z-[100] flex max-h-screen flex-col-reverse gap-2 p-4 ${props.class || 'bottom-0 right-0'}`}
-      />
+      >
+        {this._currentToasts.map((t: any) => (
+          <div
+            key={t.id}
+            data-part="toast-root"
+            data-toast-id={t.id}
+            class="toast-root group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-md border p-4 shadow-lg transition-all bg-background text-foreground"
+          >
+            <div class="grid gap-1">
+              {t.title && (
+                <div data-part="title" class="toast-title text-sm font-semibold">
+                  {t.title}
+                </div>
+              )}
+              {t.description && (
+                <div data-part="description" class="toast-description text-sm opacity-90">
+                  {t.description}
+                </div>
+              )}
+            </div>
+            <button data-part="close-trigger" class="toast-close-trigger text-foreground/50 hover:text-foreground">
+              &#x2715;
+            </button>
+          </div>
+        ))}
+      </div>
     )
   }
 }
