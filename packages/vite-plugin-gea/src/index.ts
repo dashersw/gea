@@ -369,23 +369,19 @@ export function geaPlugin(): Plugin {
     },
     config(config) {
       if (!existsSync(envPath)) return
-      const cwd = process.cwd()
-      const roots = [cwd, config.root ? resolve(cwd, config.root, '..') : cwd].map((p) => resolve(p))
-      for (const projectRoot of [...new Set(roots)]) {
-        const tsconfigPath = resolve(projectRoot, 'tsconfig.json')
-        if (!existsSync(tsconfigPath)) continue
-        const envRelative = relative(resolve(projectRoot), envPath).replace(/\\/g, '/')
-        if (envRelative.startsWith('/') || !envRelative) continue
-        try {
-          const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'))
-          const include = (tsconfig.include as string[] | undefined) || []
-          if (include.some((p: string) => p.includes('gea-env.d.ts'))) break
-          tsconfig.include = [...include, envRelative]
-          writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 2))
-        } catch {
-          /* ignore */
-        }
-        break
+      const projectRoot = resolve(config.root || process.cwd())
+      const tsconfigPath = resolve(projectRoot, 'tsconfig.json')
+      if (!existsSync(tsconfigPath)) return
+      const envRelative = relative(projectRoot, envPath).replace(/\\/g, '/')
+      if (envRelative.startsWith('/') || !envRelative) return
+      try {
+        const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'))
+        const include = (tsconfig.include as string[] | undefined) || []
+        if (include.some((p: string) => p.includes('gea-env.d.ts'))) return
+        tsconfig.include = [...include, envRelative]
+        writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 2))
+      } catch {
+        /* ignore */
       }
     },
     resolveId(id) {
