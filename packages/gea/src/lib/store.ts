@@ -125,6 +125,105 @@ export function isInternalProp(prop: string): boolean {
   return INTERNAL_PROPS.has(prop)
 }
 
+export function rootGetValue(t: any, prop: string, receiver: any): any {
+  if (!Object.prototype.hasOwnProperty.call(t, prop)) {
+    return Reflect.get(t, prop, receiver)
+  }
+  const value = t[prop]
+  if (typeof value === 'function') return value
+  if (value !== null && value !== undefined && typeof value === 'object') {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && !Array.isArray(value)) return value
+    const entry = t._topLevelProxies.get(prop)
+    if (entry && entry[0] === value) return entry[1]
+    const p = t._createProxy(value, prop, [prop])
+    t._topLevelProxies.set(prop, [value, p])
+    return p
+  }
+  return value
+}
+
+export function rootSetValue(t: any, prop: string, value: any): boolean {
+  if (typeof value === 'function') {
+    t[prop] = value
+    return true
+  }
+  if (value && typeof value === 'object' && value.__isProxy) {
+    const raw = value.__getTarget
+    if (raw !== undefined) value = raw
+  }
+
+  const hadProp = Object.prototype.hasOwnProperty.call(t, prop)
+  const oldValue = hadProp ? t[prop] : undefined
+  if (hadProp && oldValue === value) return true
+
+  if (oldValue && typeof oldValue === 'object') {
+    t._proxyCache.delete(oldValue)
+    t._clearArrayIndexCache(oldValue)
+  }
+  t._topLevelProxies.delete(prop)
+  t[prop] = value
+
+  if (Array.isArray(oldValue) && Array.isArray(value) && value.length > oldValue.length) {
+    let isAppend = true
+    for (let i = 0; i < oldValue.length; i++) {
+      if (oldValue[i] !== value[i]) {
+        isAppend = false
+        break
+      }
+    }
+    if (isAppend) {
+      const start = oldValue.length
+      t._emitChanges([
+        {
+          type: 'append',
+          property: prop,
+          target: t,
+          pathParts: [prop],
+          start,
+          count: value.length - start,
+          newValue: value.slice(start),
+        },
+      ])
+      return true
+    }
+  }
+
+  t._emitChanges([
+    {
+      type: hadProp ? 'update' : 'add',
+      property: prop,
+      target: t,
+      pathParts: [prop],
+      newValue: value,
+      previousValue: oldValue,
+    },
+  ])
+  return true
+}
+
+export function rootDeleteProperty(t: any, prop: string): boolean {
+  const hadProp = Object.prototype.hasOwnProperty.call(t, prop)
+  if (!hadProp) return true
+  const oldValue = t[prop]
+  if (oldValue && typeof oldValue === 'object') {
+    t._proxyCache.delete(oldValue)
+    t._clearArrayIndexCache(oldValue)
+  }
+  t._topLevelProxies.delete(prop)
+  delete t[prop]
+  t._emitChanges([
+    {
+      type: 'delete',
+      property: prop,
+      target: t,
+      pathParts: [prop],
+      previousValue: oldValue,
+    },
+  ])
+  return true
+}
+
 /**
  * Reactive store: class fields become reactive properties automatically.
  * Methods and getters on the prototype are not reactive.
@@ -180,21 +279,7 @@ export class Store {
           if (prop === '__raw') return t
           if (prop === '__getRawTarget') return t
           if (isInternalProp(prop)) return Reflect.get(t, prop, receiver)
-          if (!Object.prototype.hasOwnProperty.call(t, prop)) {
-            return Reflect.get(t, prop, receiver)
-          }
-          const value = (t as any)[prop]
-          if (typeof value === 'function') return value
-          if (value !== null && value !== undefined && typeof value === 'object') {
-            const proto = Object.getPrototypeOf(value)
-            if (proto !== Object.prototype && !Array.isArray(value)) return value
-            const entry = t._topLevelProxies.get(prop)
-            if (entry && entry[0] === value) return entry[1]
-            const p = t._createProxy(value, prop, [prop])
-            t._topLevelProxies.set(prop, [value, p])
-            return p
-          }
-          return value
+          return rootGetValue(t, prop, receiver)
         },
         set(t, prop, value) {
           if (typeof prop === 'symbol') {
@@ -205,62 +290,7 @@ export class Store {
             ;(t as any)[prop] = value
             return true
           }
-          if (typeof value === 'function') {
-            ;(t as any)[prop] = value
-            return true
-          }
-          if (value && typeof value === 'object' && value.__isProxy) {
-            const raw = value.__getTarget
-            if (raw !== undefined) value = raw
-          }
-
-          const hadProp = Object.prototype.hasOwnProperty.call(t, prop)
-          const oldValue = hadProp ? (t as any)[prop] : undefined
-          if (hadProp && oldValue === value) return true
-
-          if (oldValue && typeof oldValue === 'object') {
-            t._proxyCache.delete(oldValue)
-            t._clearArrayIndexCache(oldValue)
-          }
-          t._topLevelProxies.delete(prop)
-          ;(t as any)[prop] = value
-
-          if (Array.isArray(oldValue) && Array.isArray(value) && value.length > oldValue.length) {
-            let isAppend = true
-            for (let i = 0; i < oldValue.length; i++) {
-              if (oldValue[i] !== value[i]) {
-                isAppend = false
-                break
-              }
-            }
-            if (isAppend) {
-              const start = oldValue.length
-              t._emitChanges([
-                {
-                  type: 'append',
-                  property: prop,
-                  target: t,
-                  pathParts: [prop],
-                  start,
-                  count: value.length - start,
-                  newValue: value.slice(start),
-                },
-              ])
-              return true
-            }
-          }
-
-          t._emitChanges([
-            {
-              type: hadProp ? 'update' : 'add',
-              property: prop,
-              target: t,
-              pathParts: [prop],
-              newValue: value,
-              previousValue: oldValue,
-            },
-          ])
-          return true
+          return rootSetValue(t, prop, value)
         },
         deleteProperty(t, prop) {
           if (typeof prop === 'symbol') {
@@ -271,25 +301,7 @@ export class Store {
             delete (t as any)[prop]
             return true
           }
-          const hadProp = Object.prototype.hasOwnProperty.call(t, prop)
-          if (!hadProp) return true
-          const oldValue = (t as any)[prop]
-          if (oldValue && typeof oldValue === 'object') {
-            t._proxyCache.delete(oldValue)
-            t._clearArrayIndexCache(oldValue)
-          }
-          t._topLevelProxies.delete(prop)
-          delete (t as any)[prop]
-          t._emitChanges([
-            {
-              type: 'delete',
-              property: prop,
-              target: t,
-              pathParts: [prop],
-              previousValue: oldValue,
-            },
-          ])
-          return true
+          return rootDeleteProperty(t, prop)
         },
         defineProperty(t, prop, descriptor) {
           return Reflect.defineProperty(t, prop, descriptor)
