@@ -1,6 +1,6 @@
 # Utilities
 
-Lower-level router primitives. Most apps use `createRouter` and `router.page` — these are available when you need more control.
+Lower-level router primitives. Most apps use `createRouter` with `RouterView` — these are available when you need more control.
 
 ## RouterView
 
@@ -142,7 +142,7 @@ The singleton is useful for simple apps or for reading the current URL reactivel
 
 ### Recommendations
 
-- Use `createRouter` for apps with route configs — it gives you `router.page`, layouts, guards, and type safety.
+- Use `createRouter` with `RouterView` for apps with route configs — it gives you layouts, guards, and type safety.
 - Use the singleton for quick prototypes, or when you only need reactive URL state without route matching.
 - Use `RouterView` with inline routes for a middle ground — declarative routes without a separate router file.
 - Use `matchRoute` for one-off pattern matching. For full routing, let the router handle matching.

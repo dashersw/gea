@@ -30,25 +30,21 @@ The `as const` assertion enables type inference for route params and layout prop
 
 ## Create the App Component
 
-The `App` component renders the current page from the router.
+The `App` component uses `RouterView` to render the current page.
 
 ```tsx
 // src/App.tsx
-import { Component } from '@geajs/core'
+import { Component, RouterView } from '@geajs/core'
 import { router } from './router'
 
 export default class App extends Component {
   template() {
-    const { error } = router
-    if (error) return <div class="error">{error}</div>
-    return router.page
+    return <RouterView router={router} />
   }
 }
 ```
 
-`router.page` is the resolved component for the current URL. It updates reactively when the user navigates.
-
-Check `router.error` before rendering. It catches lazy-load failures and guard exceptions.
+`RouterView` resolves the current URL against the router's route config and renders the matching component. It updates reactively when the user navigates, and displays `router.error` if a lazy-load or guard fails.
 
 ## Create a View
 

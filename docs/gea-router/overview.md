@@ -32,14 +32,12 @@ export const router = createRouter({
 
 ```tsx
 // App.tsx
-import { Component } from '@geajs/core'
+import { Component, RouterView } from '@geajs/core'
 import { router } from './router'
 
 export default class App extends Component {
   template() {
-    const { error } = router
-    if (error) return <div class="error">{error}</div>
-    return router.page
+    return <RouterView router={router} />
   }
 }
 ```
@@ -69,7 +67,7 @@ export default class Project extends Component {
 }
 ```
 
-Five routes, one Store, zero ceremony. The `App` component renders `router.page`. Route components receive params as props. Navigation uses `Link` or `router.push()`.
+Five routes, one Store, zero ceremony. The `App` component uses `RouterView` to render the matched route. Route components receive params as props. Navigation uses `Link` or `router.push()`.
 
 ## Router Properties
 
@@ -84,6 +82,6 @@ The router exposes these reactive properties:
 | `hash` | `string` | Hash without `#` |
 | `matches` | `string[]` | Full match chain from root to leaf |
 | `error` | `string \| null` | Runtime error (lazy load failure, guard error) |
-| `page` | `Component` | Resolved component for current route |
+| `page` | `Component` | Resolved component for current route (used internally by `RouterView`) |
 
-Read them anywhere — templates, methods, other stores. They update reactively like any store property.
+Read them anywhere — templates, methods, other stores. They update reactively like any store property. To render the current route, use `<RouterView router={router} />` rather than reading `router.page` directly.
