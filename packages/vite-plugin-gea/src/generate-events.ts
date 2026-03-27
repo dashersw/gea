@@ -445,6 +445,23 @@ function applyTemplateParamContext(statements: t.Statement[], paramContext: Temp
   return next
 }
 
+function referencesIdentifier(nodes: t.Node[], name: string): boolean {
+  function walk(node: t.Node | null | undefined): boolean {
+    if (!node) return false
+    if (t.isIdentifier(node) && node.name === name) return true
+    for (const key of t.VISITOR_KEYS[node.type] || []) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) {
+        for (const c of child) if (c && walk(c)) return true
+      } else if (child && typeof child === 'object' && child.type) {
+        if (walk(child)) return true
+      }
+    }
+    return false
+  }
+  return nodes.some(walk)
+}
+
 function buildMapEventBody(handler: EventHandler, paramContext: TemplateParamContext): t.Statement[] {
   const ctx = handler.mapContext!
   const itemVar = ctx.itemVariable || 'item'
@@ -457,7 +474,7 @@ function buildMapEventBody(handler: EventHandler, paramContext: TemplateParamCon
     const ${id(itemVar)} = this.${id(helperName)}(e);
     if (!${id(itemVar)}) { return; }
   `
-  if (ctx.indexVariable) {
+  if (ctx.indexVariable && referencesIdentifier(handlerBody, ctx.indexVariable)) {
     preamble.push(
       ...jsBlockBody`
         const __el = e.target.closest('[data-gea-item-id]');
