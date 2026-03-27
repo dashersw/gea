@@ -1,5 +1,15 @@
 # @geajs/vite-plugin
 
+## 1.0.10
+
+### Patch Changes
+
+- [`bbd3204`](https://github.com/dashersw/gea/commit/bbd3204b72ef8c3bf18c55ded8af825239a10641) Thanks [@dashersw](https://github.com/dashersw)! - **Store:** Fast-path delivery for top-level-only observer batches (`_deliverTopLevelBatch`), so simple `__observe(store, ['data'], …)` handlers get a single batched notification with the correct observed value and fewer redundant normalizations.
+
+  **Lists:** Bulk HTML list rebuild uses a pre-sized string array and `join`; root replacement patch compares keys before touching the DOM; assign `__geaItem` on rows after `innerHTML` so delegated map handlers match the create-item path.
+
+  **Compiler:** Safer map item key expressions via optional member chains (`??`) for keyed lists and template item ids.
+
 ## 1.0.9
 
 ### Patch Changes
