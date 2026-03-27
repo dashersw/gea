@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Link } from '@geajs/core/router'
 
 interface User {
   id: string

@@ -1,22 +1,36 @@
 import { defineConfig } from 'tsdown'
 import { geaPlugin } from '../vite-plugin-gea/src/index'
 
+const esmOpts = {
+  plugins: [geaPlugin() as any],
+  format: 'esm' as const,
+  outDir: 'dist',
+  sourcemap: true,
+  dts: { build: true },
+  target: 'es2022' as const,
+  platform: 'browser' as const,
+  define: {
+    'import.meta.hot': 'undefined',
+    'import.meta.url': '""',
+  },
+  hash: false,
+  fixedExtension: true,
+}
+
 export default defineConfig([
   {
-    entry: ['src/index.ts'],
-    plugins: [geaPlugin() as any],
-    format: 'esm',
-    outDir: 'dist',
-    sourcemap: true,
-    dts: { build: true },
-    target: 'es2022',
-    platform: 'browser',
-    define: {
-      'import.meta.hot': 'undefined',
-      'import.meta.url': '""',
+    entry: {
+      index: 'src/index.ts',
     },
-    hash: false,
-    fixedExtension: true,
+    ...esmOpts,
+    clean: true,
+  },
+  {
+    entry: {
+      router: 'src/lib/router/index.ts',
+    },
+    ...esmOpts,
+    clean: false,
   },
   {
     entry: {

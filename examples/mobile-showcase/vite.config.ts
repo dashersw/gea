@@ -1,6 +1,7 @@
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
+import { geaCoreAliases } from '../shared/vite-config-base'
 import { geaPlugin } from '../../packages/vite-plugin-gea/src/index.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -9,10 +10,10 @@ export default defineConfig({
   root: resolve(__dirname, 'src'),
   plugins: [geaPlugin()],
   resolve: {
-    alias: {
-      '@geajs/core': resolve(__dirname, '../../packages/gea/src'),
-      '@geajs/mobile': resolve(__dirname, '../../packages/gea-mobile/src'),
-    },
+    alias: [
+      ...geaCoreAliases(resolve(__dirname, '../../packages')),
+      { find: '@geajs/mobile', replacement: resolve(__dirname, '../../packages/gea-mobile/src') },
+    ],
   },
   server: {
     port: 5184,

@@ -1,4 +1,5 @@
-import { Component, Outlet } from '@geajs/core'
+import { Component } from '@geajs/core'
+import { Outlet } from '@geajs/core/router'
 import Dialog from '@geajs/ui/dialog'
 import { router } from '../router'
 import issueStore from '../stores/issue-store'

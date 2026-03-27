@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Link } from '@geajs/core/router'
 
 export default class NotFound extends Component {
   template() {

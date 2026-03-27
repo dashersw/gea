@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { router, RouterView } from '@geajs/core'
+import { router, RouterView } from '@geajs/core/router'
 import { AuthGuard } from './guards'
 import AppShell from './layouts/AppShell'
 import DashboardLayout from './layouts/DashboardLayout'

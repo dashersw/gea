@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { router, Link, RouterView } from '@geajs/core'
+import { router, Link, RouterView } from '@geajs/core/router'
 import Home from './views/Home'
 import About from './views/About'
 import UserProfile from './views/UserProfile'

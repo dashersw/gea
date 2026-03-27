@@ -1,4 +1,5 @@
-import { Component, router } from '@geajs/core'
+import { Component } from '@geajs/core'
+import { router } from '@geajs/core/router'
 import Button from '@geajs/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@geajs/ui/card'
 import Input from '@geajs/ui/input'

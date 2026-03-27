@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { router, Link, Outlet } from '@geajs/core'
+import { router, Link, Outlet } from '@geajs/core/router'
 import authStore from '../stores/auth-store'
 
 export default class AppShell extends Component {

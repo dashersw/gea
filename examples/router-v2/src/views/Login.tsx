@@ -1,6 +1,6 @@
 import { Component } from '@geajs/core'
 import authStore from '../stores/auth-store'
-import { router } from '@geajs/core'
+import { router } from '@geajs/core/router'
 
 export default class Login extends Component {
   template() {

@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { router, Link, Outlet } from '@geajs/core'
+import { router, Link, Outlet } from '@geajs/core/router'
 
 export default class DashboardLayout extends Component {
   template() {

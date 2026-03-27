@@ -20,6 +20,11 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     },
+    "./router": {
+      "source": "./src/lib/router/index.ts",
+      "types": "./dist/router.d.mts",
+      "import": "./dist/router.mjs"
+    },
     "./jsx-runtime": {
       "source": "./src/jsx-runtime.ts",
       "types": "./jsx-runtime.d.mts",

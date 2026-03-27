@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { Outlet } from '@geajs/core'
+import { Outlet } from '@geajs/core/router'
 
 export default class SettingsLayout extends Component {
   template({ activeKey, keys, navigate }) {

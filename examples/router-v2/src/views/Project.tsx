@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Link } from '@geajs/core/router'
 
 const projectData: Record<string, { name: string; description: string }> = {
   '1': { name: 'Website Redesign', description: 'Redesigning the company website with a modern look and feel.' },

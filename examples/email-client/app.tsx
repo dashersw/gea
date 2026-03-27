@@ -1,4 +1,5 @@
-import { Component, router } from '@geajs/core'
+import { Component } from '@geajs/core'
+import { router } from '@geajs/core/router'
 import Badge from '@geajs/ui/badge'
 import Button from '@geajs/ui/button'
 import Input from '@geajs/ui/input'

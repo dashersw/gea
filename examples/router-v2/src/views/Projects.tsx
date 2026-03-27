@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Link } from '@geajs/core/router'
 
 const projects = [
   { id: '1', name: 'Website Redesign', status: 'In Progress' },
