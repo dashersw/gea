@@ -1,4 +1,5 @@
 export { handleRequest } from './handle-request'
+export { createSSRRootProxyHandler, SSR_DELETED } from './ssr-proxy-handler'
 export type { SSROptions } from './handle-request'
 export type {
   GeaComponentConstructor,

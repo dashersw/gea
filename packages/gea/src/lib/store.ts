@@ -238,13 +238,11 @@ export function rootDeleteProperty(t: any, prop: string): boolean {
 export class Store {
   private static _noDirectTopLevelValue = Symbol('noDirectTopLevelValue')
   /**
-   * SSR overlay resolver — set by `@geajs/ssr` before rendering.
-   * Must be truthy **before** `new Store()` for overlay semantics; determines proxy shape at construction.
+   * Set by `@geajs/ssr` before rendering. When non-null, `new Store()` uses the returned
+   * proxy handler (7 traps, overlay semantics) instead of the lean browser handler (4 traps).
+   * Must be set **before** `new Store()` — proxy shape is fixed at construction.
    */
-  static _ssrOverlayResolver: ((target: object) => Record<string, unknown> | undefined) | null = null
-
-  /** Sentinel value used as a tombstone for SSR overlay deletes */
-  static _ssrDeleted: symbol = Symbol('ssrDeleted')
+  static _rootProxyHandlerFactory: (() => ProxyHandler<Store>) | null = null
 
   private _selfProxy?: this
   private _pendingChanges: StoreChange[] = []
@@ -261,14 +259,10 @@ export class Store {
   /**
    * Browser root proxy: **4 traps only** (get/set/deleteProperty/defineProperty).
    * No `has`/`ownKeys`/`getOwnPropertyDescriptor` — V8 optimizes this shape better for hot paths.
-   * No SSR overlay branches.
    *
-   * SSR root proxy: full overlay + 7 traps. Used only when `Store._ssrOverlayResolver` is truthy
-   * **at construction time** (`@geajs/ssr` sets it before rendering). Do not toggle resolver after
-   * constructing stores — experimental SSR only.
+   * SSR overlay handler lives in `@geajs/ssr` and is wired via `_rootProxyHandlerFactory`.
    */
   private static _browserRootProxyHandler?: ProxyHandler<Store>
-  private static _ssrRootProxyHandler?: ProxyHandler<Store>
 
   private static _getBrowserRootProxyHandler(): ProxyHandler<Store> {
     if (!Store._browserRootProxyHandler) {
@@ -311,213 +305,11 @@ export class Store {
     return Store._browserRootProxyHandler
   }
 
-  private static _getSsrRootProxyHandler(): ProxyHandler<Store> {
-    if (!Store._ssrRootProxyHandler) {
-      Store._ssrRootProxyHandler = {
-        get(t, prop, receiver) {
-          if (typeof prop === 'symbol') return Reflect.get(t, prop, receiver)
-          if (prop === '__isProxy') return true
-          if (prop === '__raw') return t
-          if (prop === '__getRawTarget') return t
-          if (isInternalProp(prop)) return Reflect.get(t, prop, receiver)
-          const resolver = Store._ssrOverlayResolver
-          if (resolver) {
-            const overlay = resolver(t)
-            if (overlay !== undefined) {
-              if (Object.prototype.hasOwnProperty.call(overlay, prop)) {
-                const val = overlay[prop]
-                return val === Store._ssrDeleted ? undefined : val
-              }
-              return Reflect.get(t, prop, receiver)
-            }
-          }
-          if (!Object.prototype.hasOwnProperty.call(t, prop)) {
-            return Reflect.get(t, prop, receiver)
-          }
-          const value = (t as any)[prop]
-          if (typeof value === 'function') return value
-          if (value !== null && value !== undefined && typeof value === 'object') {
-            const proto = Object.getPrototypeOf(value)
-            if (proto !== Object.prototype && !Array.isArray(value)) return value
-            const entry = t._topLevelProxies.get(prop)
-            if (entry && entry[0] === value) return entry[1]
-            const p = t._createProxy(value, prop, [prop])
-            t._topLevelProxies.set(prop, [value, p])
-            return p
-          }
-          return value
-        },
-        set(t, prop, value) {
-          if (typeof prop === 'symbol') {
-            ;(t as any)[prop] = value
-            return true
-          }
-          if (isInternalProp(prop)) {
-            ;(t as any)[prop] = value
-            return true
-          }
-          const resolver = Store._ssrOverlayResolver
-          if (resolver) {
-            const overlay = resolver(t)
-            if (overlay !== undefined) {
-              overlay[prop] = value
-              return true
-            }
-          }
-          if (typeof value === 'function') {
-            ;(t as any)[prop] = value
-            return true
-          }
-          if (value && typeof value === 'object' && value.__isProxy) {
-            const raw = value.__getTarget
-            if (raw !== undefined) value = raw
-          }
-
-          const hadProp = Object.prototype.hasOwnProperty.call(t, prop)
-          const oldValue = hadProp ? (t as any)[prop] : undefined
-          if (hadProp && oldValue === value) return true
-
-          if (oldValue && typeof oldValue === 'object') {
-            t._proxyCache.delete(oldValue)
-            t._clearArrayIndexCache(oldValue)
-          }
-          t._topLevelProxies.delete(prop)
-          ;(t as any)[prop] = value
-
-          if (Array.isArray(oldValue) && Array.isArray(value) && value.length > oldValue.length) {
-            let isAppend = true
-            for (let i = 0; i < oldValue.length; i++) {
-              if (oldValue[i] !== value[i]) {
-                isAppend = false
-                break
-              }
-            }
-            if (isAppend) {
-              const start = oldValue.length
-              t._emitChanges([
-                {
-                  type: 'append',
-                  property: prop,
-                  target: t,
-                  pathParts: [prop],
-                  start,
-                  count: value.length - start,
-                  newValue: value.slice(start),
-                },
-              ])
-              return true
-            }
-          }
-
-          t._emitChanges([
-            {
-              type: hadProp ? 'update' : 'add',
-              property: prop,
-              target: t,
-              pathParts: [prop],
-              newValue: value,
-              previousValue: oldValue,
-            },
-          ])
-          return true
-        },
-        deleteProperty(t, prop) {
-          if (typeof prop === 'symbol') {
-            delete (t as any)[prop]
-            return true
-          }
-          if (isInternalProp(prop)) {
-            delete (t as any)[prop]
-            return true
-          }
-          const resolver = Store._ssrOverlayResolver
-          if (resolver) {
-            const overlay = resolver(t)
-            if (overlay !== undefined) {
-              overlay[prop] = Store._ssrDeleted
-              return true
-            }
-          }
-          const hadProp = Object.prototype.hasOwnProperty.call(t, prop)
-          if (!hadProp) return true
-          const oldValue = (t as any)[prop]
-          if (oldValue && typeof oldValue === 'object') {
-            t._proxyCache.delete(oldValue)
-            t._clearArrayIndexCache(oldValue)
-          }
-          t._topLevelProxies.delete(prop)
-          delete (t as any)[prop]
-          t._emitChanges([
-            {
-              type: 'delete',
-              property: prop,
-              target: t,
-              pathParts: [prop],
-              previousValue: oldValue,
-            },
-          ])
-          return true
-        },
-        has(t, prop) {
-          if (typeof prop === 'symbol') return Reflect.has(t, prop)
-          if (isInternalProp(prop)) return Reflect.has(t, prop)
-          const resolver = Store._ssrOverlayResolver
-          if (resolver) {
-            const overlay = resolver(t)
-            if (overlay !== undefined) {
-              if (Object.prototype.hasOwnProperty.call(overlay, prop)) {
-                return overlay[prop] !== Store._ssrDeleted
-              }
-            }
-          }
-          return Reflect.has(t, prop)
-        },
-        ownKeys(t) {
-          const resolver = Store._ssrOverlayResolver
-          if (resolver) {
-            const overlay = resolver(t)
-            if (overlay !== undefined) {
-              const targetKeys = Reflect.ownKeys(t)
-              const overlayKeys = Object.keys(overlay)
-              const combined = new Set<string | symbol>([...targetKeys, ...overlayKeys])
-              for (const key of combined) {
-                if (typeof key === 'string' && !isInternalProp(key) && key !== 'constructor') {
-                  if (Object.prototype.hasOwnProperty.call(overlay, key) && overlay[key] === Store._ssrDeleted) {
-                    combined.delete(key)
-                  }
-                }
-              }
-              return [...combined]
-            }
-          }
-          return Reflect.ownKeys(t)
-        },
-        getOwnPropertyDescriptor(t, prop) {
-          const resolver = Store._ssrOverlayResolver
-          if (resolver && typeof prop === 'string' && !isInternalProp(prop)) {
-            const overlay = resolver(t)
-            if (overlay !== undefined) {
-              if (Object.prototype.hasOwnProperty.call(overlay, prop)) {
-                if (overlay[prop] === Store._ssrDeleted) return undefined
-                return { value: overlay[prop], writable: true, enumerable: true, configurable: true }
-              }
-            }
-          }
-          return Reflect.getOwnPropertyDescriptor(t, prop)
-        },
-        defineProperty(t, prop, descriptor) {
-          return Reflect.defineProperty(t, prop, descriptor)
-        },
-      }
-    }
-    return Store._ssrRootProxyHandler
-  }
-
   constructor(initialData?: Record<string, any>) {
-    const proxy = new Proxy(
-      this,
-      Store._ssrOverlayResolver ? Store._getSsrRootProxyHandler() : Store._getBrowserRootProxyHandler(),
-    ) as this
+    const handler = Store._rootProxyHandlerFactory
+      ? Store._rootProxyHandlerFactory()
+      : Store._getBrowserRootProxyHandler()
+    const proxy = new Proxy(this, handler) as this
     this._selfProxy = proxy
 
     if (initialData) {

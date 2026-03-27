@@ -1,6 +1,6 @@
 export { default as Component } from './lib/base/component'
 export { resetUidCounter, setUidProvider, clearUidProvider } from './lib/base/uid'
-export { Store, isInternalProp } from './lib/store'
+export { Store, isInternalProp, rootGetValue, rootSetValue, rootDeleteProperty } from './lib/store'
 export { h } from './lib/h'
 export type { DOMEvent } from './lib/types'
 export { default as ComponentManager } from './lib/base/component-manager'

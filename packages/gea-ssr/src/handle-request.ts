@@ -1,17 +1,18 @@
 import { createServerRouter } from './server-router'
 import { renderToString } from './render'
 import { serializeStores } from './serialize'
-import { runInSSRContext, resolveOverlay } from './ssr-context'
+import { runInSSRContext } from './ssr-context'
 import { parseShell } from './shell'
 import { createSSRStream } from './stream'
 import { serializeHead } from './head'
 import type { GeaComponentConstructor, StoreRegistry, SSRContext, RouteMap } from './types'
 import { Store, Router } from '@geajs/core'
+import { createSSRRootProxyHandler } from './ssr-proxy-handler'
 import { resolveSSRRouter, runWithSSRRouter, createSSRRouterState } from './ssr-router-context'
 
-// Wire the SSR overlay resolver into the Store Proxy
-if (!Store._ssrOverlayResolver) {
-  Store._ssrOverlayResolver = resolveOverlay
+// Wire the SSR root proxy handler into Store (7 traps, overlay semantics)
+if (!Store._rootProxyHandlerFactory) {
+  Store._rootProxyHandlerFactory = createSSRRootProxyHandler
 }
 
 // Wire the SSR router resolver into the Router singleton proxy
@@ -57,11 +58,8 @@ export function handleRequest(
         const fallbackQuery: Record<string, string | string[]> = {}
         for (const [key, value] of parsedUrl.searchParams) {
           const current = fallbackQuery[key]
-          fallbackQuery[key] = current === undefined
-            ? value
-            : Array.isArray(current)
-              ? [...current, value]
-              : [current, value]
+          fallbackQuery[key] =
+            current === undefined ? value : Array.isArray(current) ? [...current, value] : [current, value]
         }
         const emptyMatches: string[] = []
         const routeResult = options.routes
@@ -113,8 +111,7 @@ export function handleRequest(
           })
 
           // 5. Serialize state
-          const stateJson =
-            stores.length > 0 ? serializeStores(stores, options.storeRegistry!) : '{}'
+          const stateJson = stores.length > 0 ? serializeStores(stores, options.storeRegistry!) : '{}'
 
           // 6. Parse shell and stream
           const indexHtml =
@@ -136,7 +133,9 @@ export function handleRequest(
           if (options.afterResponse) {
             const afterFn = options.afterResponse
             const passthrough = new TransformStream<Uint8Array, Uint8Array>({
-              transform(chunk, controller) { controller.enqueue(chunk) },
+              transform(chunk, controller) {
+                controller.enqueue(chunk)
+              },
               flush() {
                 return Promise.resolve(afterFn(ssrCtx)).catch((e: unknown) => {
                   console.error('[gea-ssr] afterResponse error:', e)
