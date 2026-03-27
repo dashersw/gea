@@ -219,7 +219,7 @@ export default class AppShell extends Component {
 }
 ```
 
-For simple apps without layouts/guards (no circular dependency risk), you can use `createRouter` directly in `router.ts`:
+For simple apps without layouts/guards (no circular dependency risk), you can use `createRouter` directly in `router.ts` and render with `<RouterView router={router} />`:
 
 ```ts
 import { createRouter } from '@geajs/core'
@@ -230,6 +230,17 @@ export const router = createRouter({
   '/': Home,
   '/about': About,
 } as const)
+```
+
+```tsx
+import { Component, RouterView } from '@geajs/core'
+import { router } from './router'
+
+export default class App extends Component {
+  template() {
+    return <RouterView router={router} />
+  }
+}
 ```
 
 ### Guards
@@ -318,11 +329,15 @@ const result = matchRoute('/users/:id', '/users/42')
 // { path: '/users/42', pattern: '/users/:id', params: { id: '42' } }
 ```
 
-### Legacy: RouterView
+### RouterView
 
-`RouterView` is an older API that accepts a `routes` array prop. Prefer `createRouter` for new projects.
+`RouterView` renders the current route. Use it with a `router` prop for `createRouter` setups, or with an inline `routes` array for quick prototypes:
 
 ```jsx
+// With createRouter (recommended)
+<RouterView router={router} />
+
+// With inline routes (uses the singleton router)
 <RouterView routes={[
   { path: '/', component: Home },
   { path: '/about', component: About },

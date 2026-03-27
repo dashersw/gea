@@ -50,18 +50,40 @@ Complete side-by-side conversion reference with real examples from the Jira clon
 {
   "type": "module",
   "dependencies": {
-    "@geajs/core": "^2.0.0",
-    "@geajs/ui": "^2.0.0"
+    "@geajs/core": "^1.0.0",
+    "@geajs/ui": "^0.1.0"
   },
   "devDependencies": {
-    "@geajs/vite-plugin": "^2.0.0",
+    "@geajs/vite-plugin": "^1.0.0",
     "vite": "^8.0.0",
-    "typescript": "~5.8.0",
+    "typescript": "~5.8.0"
   }
 }
 ```
 
 Gea eliminates `react`, `react-dom`, `react-router-dom`, `styled-components`, `lodash`, and `prop-types` as dependencies. `@geajs/ui` replaces custom Dialog, Button, Select, Avatar, and Toast components.
+
+### tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "@geajs/core"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}
+```
+
+The `jsx` and `jsxImportSource` settings enable full JSX type-checking — prop autocompletion, type errors on invalid attributes, and hover types — in any TypeScript-aware editor without framework-specific plugins.
 
 ### vite.config.ts
 

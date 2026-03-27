@@ -217,13 +217,47 @@ export default class Counter extends Component {
 | `onAfterRenderAsync()` | Called in the next `requestAnimationFrame` after render.                        |
 | `dispose()`            | Removes the component from the DOM, cleans up observers and child components.   |
 
+### Typed Props
+
+Use `declare props` for TypeScript type-checking and prop autocompletion:
+
+```tsx
+export default class TodoItem extends Component {
+  declare props: {
+    todo: { id: string; text: string; done: boolean }
+    onToggle: () => void
+    onRemove: () => void
+  }
+
+  template({ todo, onToggle, onRemove }: this['props']) {
+    return (
+      <li>
+        <input type="checkbox" checked={todo.done} change={onToggle} />
+        <span>{todo.text}</span>
+        <button click={onRemove}>x</button>
+      </li>
+    )
+  }
+}
+```
+
+`declare props` defines the accepted JSX attributes — no JavaScript emitted. `: this['props']` on the `template()` parameter is optional but recommended — it types the destructured variables inside the method for full end-to-end type safety.
+
+Function components get the same type-checking through their parameter type:
+
+```tsx
+export default function Badge({ label, count }: { label: string; count: number }) {
+  return <span class="badge">{label}: {count}</span>
+}
+```
+
 ### Properties
 
 | Property   | Type          | Description                                             |
 | ---------- | ------------- | ------------------------------------------------------- |
 | `id`       | `string`      | Unique component identifier (auto-generated).           |
 | `el`       | `HTMLElement` | The root DOM element. Created lazily from `template()`. |
-| `props`    | `any`         | Properties passed to the component.                     |
+| `props`    | (typed via `declare props`) | Properties passed to the component.     |
 | (fields)   | `any`         | Reactive properties declared as class fields (inherited from `Store`). |
 | `rendered` | `boolean`     | Whether the component has been rendered to the DOM.     |
 
@@ -845,11 +879,22 @@ router.setRoutes({
 })
 ```
 
-For simple apps without layouts/guards (no circular dependency risk), use `createRouter` directly in `router.ts`:
+For simple apps without layouts/guards (no circular dependency risk), use `createRouter` directly in `router.ts` and render with `<RouterView router={router} />`:
 
 ```ts
 import { createRouter } from '@geajs/core'
 export const router = createRouter({ '/': Home, '/about': About } as const)
+```
+
+```tsx
+import { Component, RouterView } from '@geajs/core'
+import { router } from './router'
+
+export default class App extends Component {
+  template() {
+    return <RouterView router={router} />
+  }
+}
 ```
 
 Route entry types:
@@ -874,7 +919,7 @@ Options (for `createRouter` or `new Router(routes, options)`):
 | `route`   | `string`                         | Matched route pattern                             |
 | `matches` | `string[]`                       | Match chain patterns                              |
 | `error`   | `string \| null`                 | Error message (lazy load failure, etc.)           |
-| `page`    | `Component`                      | Resolved component (guard or leaf)                |
+| `page`    | `Component`                      | Resolved component (used internally by `RouterView`) |
 
 ### Router Methods
 
@@ -1015,11 +1060,15 @@ interface RouteMatch {
 
 Param values are URI-decoded automatically. Wildcards match zero or more path segments.
 
-### `RouterView` (legacy)
+### `RouterView`
 
-An older component that renders the first matching route from a `routes` array. Prefer `Router` + `setRoutes` with `Outlet` for new projects.
+Renders the current route. Use with a `router` prop for `createRouter` setups, or with an inline `routes` array for quick prototypes:
 
 ```jsx
+// With createRouter (recommended)
+<RouterView router={router} />
+
+// With inline routes (uses the singleton router)
 <RouterView routes={[
   { path: '/', component: Home },
   { path: '/about', component: About },
@@ -1369,6 +1418,21 @@ npm run dev
 - Entry point, HTML, styles, and TypeScript config
 
 It detects your package manager (npm, pnpm, yarn, bun) and prints the correct commands.
+
+### TypeScript Configuration
+
+Add these settings to your `tsconfig.json` for full JSX type-checking (prop autocompletion, type errors, hover types) in any TypeScript-aware editor:
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@geajs/core"
+  }
+}
+```
+
+Projects scaffolded with `create-gea` have this configured automatically.
 
 ### Manual Vite Configuration
 
