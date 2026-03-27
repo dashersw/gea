@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GEA Teleport Demo</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      .section {
+        background: white;
+        padding: 20px;
+        margin: 20px 0;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+
+      .modal {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        max-width: 500px;
+        width: 90%;
+      }
+
+      .sidebar {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 300px;
+        height: 100vh;
+        background: #333;
+        color: white;
+        padding: 20px;
+        box-shadow: -2px 0 8px rgba(0, 0, 0, 0.3);
+        z-index: 999;
+      }
+
+      .notification-area {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1001;
+        min-width: 300px;
+      }
+
+      .notification {
+        background: #4caf50;
+        color: white;
+        padding: 12px 16px;
+        border-radius: 4px;
+        margin-bottom: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      }
+
+      .notification.error {
+        background: #f44336;
+      }
+
+      .notification.warning {
+        background: #ff9800;
+      }
+
+      button {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin: 5px;
+      }
+
+      button:hover {
+        background: #0056b3;
+      }
+
+      .toggle-section {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .status {
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-weight: bold;
+      }
+
+      .status.enabled {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      .status.disabled {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      h1,
+      h2 {
+        color: #333;
+      }
+
+      .code-block {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        padding: 16px;
+        font-family: 'Courier New', monospace;
+        margin: 16px 0;
+      }
+
+      .controls {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 10px 0;
+      }
+
+      .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        align-items: flex-start;
+      }
+
+      .control-group label {
+        font-size: 14px;
+        color: #666;
+        font-weight: 500;
+      }
+
+      code {
+        background: #f1f3f4;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+      }
+
+      button.active {
+        background: #28a745;
+      }
+
+      button.active:hover {
+        background: #218838;
+      }
+
+      .modal-content {
+        margin: 20px 0;
+      }
+
+      .modal-actions {
+        margin-top: 20px;
+        text-align: right;
+      }
+
+      .sidebar-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #555;
+        padding-bottom: 10px;
+      }
+
+      .sidebar-content {
+        line-height: 1.6;
+      }
+
+      .sidebar-info {
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid #555;
+        font-size: 14px;
+      }
+
+      .notifications-container {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .notification {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px;
+        border-radius: 6px;
+        font-size: 14px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      }
+
+      .notification-success {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+
+      .notification-error {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+
+      .notification-info {
+        background: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+      }
+
+      .notification-close {
+        background: transparent;
+        border: 1px solid currentColor;
+        color: inherit;
+        padding: 2px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        border-radius: 3px;
+      }
+
+      .notification-close:hover {
+        background: rgba(0, 0, 0, 0.1);
+      }
+
+      .dynamic-content {
+        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+        border: 2px dashed #2196f3;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 10px;
+      }
+
+      .dynamic-content h4 {
+        margin-top: 0;
+        color: #1976d2;
+      }
+
+      .counter-display {
+        font-size: 1.2em;
+        color: #007bff;
+        background: #e3f2fd;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+
+      @media (max-width: 768px) {
+        .controls {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .sidebar {
+          width: 90%;
+          right: 0;
+        }
+
+        .modal {
+          width: 95%;
+          margin: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>GEA Teleport Demo</h1>
+      <p>
+        This demo shows how the Teleport component can move content to different DOM locations while maintaining
+        component state and reactivity.
+      </p>
+
+      <div class="section">
+        <h2>Features Demonstrated:</h2>
+        <ul>
+          <li>Modal dialogs teleported to document body</li>
+          <li>Notifications teleported to a fixed position</li>
+          <li>Sidebar content teleported outside main layout</li>
+          <li>Conditional teleporting (enabled/disabled)</li>
+          <li>Reactive selector changes</li>
+          <li>Zero-reset: Components maintain state when teleported</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Target containers for teleported content -->
+    <div id="modal-root"></div>
+    <div id="sidebar-root"></div>
+    <div id="notification-root" class="notification-area"></div>
+
+    <!-- Main app container -->
+    <div id="app"></div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

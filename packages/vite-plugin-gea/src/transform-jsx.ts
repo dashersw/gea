@@ -814,6 +814,12 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
   const tagName = getJSXTagName(node.openingElement.name)
   const isComp = tagName && isCompTag(tagName) && ctx.imports.has(tagName)
 
+  // Handle Teleport specially
+  if (tagName === 'Teleport') {
+    processTeleportElement(node, parts, ctx, elementPath)
+    return
+  }
+
   if (tagName && isCompTag(tagName) && !ctx.imports.has(tagName) && !ctx.inChildrenProp) {
     const err = new Error(
       `[gea] Component '${tagName}' is used as a JSX tag but is not imported. Dynamic component tags are not supported; import the component statically.`,
@@ -1349,4 +1355,74 @@ function partsToTemplateLiteral(parts: TemplatePart[]): t.TemplateLiteral {
   })
   strings.push(t.templateElement({ raw: current, cooked: current }, true))
   return t.templateLiteral(strings, expressions)
+}
+
+function processTeleportElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, elementPath: string[] = []): void {
+  // Extract to-selector prop
+  let toSelectorValue: t.Expression | null = null
+  let disabledValue: t.Expression | null = null
+
+  for (const attr of node.openingElement.attributes) {
+    if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
+      if (attr.name.name === 'to-selector') {
+        if (t.isStringLiteral(attr.value)) {
+          toSelectorValue = attr.value
+        } else if (t.isJSXExpressionContainer(attr.value) && !t.isJSXEmptyExpression(attr.value.expression)) {
+          toSelectorValue = attr.value.expression as t.Expression
+        }
+      } else if (attr.name.name === 'disabled') {
+        if (attr.value === null) {
+          disabledValue = t.booleanLiteral(true)
+        } else if (t.isStringLiteral(attr.value)) {
+          disabledValue = t.booleanLiteral(attr.value.value === 'true')
+        } else if (t.isJSXExpressionContainer(attr.value) && !t.isJSXEmptyExpression(attr.value.expression)) {
+          disabledValue = attr.value.expression as t.Expression
+        }
+      }
+    }
+  }
+
+  if (!toSelectorValue) {
+    const err = new Error('[gea] Teleport component requires a to-selector attribute')
+    ;(err as any).__geaCompileError = true
+    throw err
+  }
+
+  // Create a teleport wrapper element with data attributes
+  let html = '<div'
+
+  // Add teleport data attributes
+  html += ' data-gea-teleport="true"'
+
+  // Add to-selector as data attribute
+  if (t.isStringLiteral(toSelectorValue)) {
+    html += ` data-gea-teleport-to="${escapeHtml(toSelectorValue.value)}"`
+  } else {
+    html += ' data-gea-teleport-to="'
+    parts.push({ type: 'string', value: html })
+    parts.push({ type: 'expression', value: toSelectorValue })
+    html = '"'
+  }
+
+  // Add disabled attribute if present
+  if (disabledValue) {
+    if (t.isBooleanLiteral(disabledValue)) {
+      if (disabledValue.value) {
+        html += ' data-gea-teleport-disabled="true"'
+      }
+    } else {
+      html += ' data-gea-teleport-disabled="'
+      parts.push({ type: 'string', value: html })
+      parts.push({ type: 'expression', value: disabledValue })
+      html = '"'
+    }
+  }
+
+  html += ' style="display: none;">'
+  parts.push({ type: 'string', value: html })
+
+  // Process children normally
+  processChildren(node.children, parts, ctx, elementPath)
+
+  parts.push({ type: 'string', value: '</div>' })
 }

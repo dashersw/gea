@@ -288,6 +288,70 @@ app.render(document.getElementById('app'))
 
 Components render once. Subsequent state changes trigger surgical DOM patches — not full re-renders.
 
+## Teleport
+
+Teleport allows you to render content in a different part of the DOM tree while keeping it logically part of your component. This is useful for modals, tooltips, and other UI elements that need to escape their parent's styling or z-index context.
+
+```jsx
+import { Component } from '@geajs/core'
+
+export default class App extends Component {
+  showModal = false
+
+  template() {
+    return (
+      <div class="app">
+        <button onclick={() => this.showModal = true}>Open Modal</button>
+        
+        <Teleport to-selector="#modal-root">
+          <div class={`modal ${this.showModal ? 'visible' : 'hidden'}`}>
+            <h2>Modal Title</h2>
+            <p>This content is rendered in #modal-root, not here!</p>
+            <button onclick={() => this.showModal = false}>Close</button>
+          </div>
+        </Teleport>
+      </div>
+    )
+  }
+}
+```
+
+### Props
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| `to-selector` | `string` | CSS selector for target element (required) |
+| `disabled` | `boolean` | Prevents teleporting when `true` (optional) |
+
+### Features
+
+- **Zero-Reset**: Component state is preserved during teleporting
+- **Event Delegation**: Click handlers and other events work normally on teleported content
+- **Reactivity**: When `to-selector` changes, content is moved to the new target
+- **Conditional**: Use `disabled` prop to toggle teleporting on/off
+- **Cleanup**: Teleported content is automatically cleaned up when component is disposed
+
+### Examples
+
+```jsx
+// Basic teleport
+<Teleport to-selector="#modal-root">
+  <Modal />
+</Teleport>
+
+// Conditional teleport
+<Teleport to-selector="#sidebar" disabled={!this.showSidebar}>
+  <SidebarContent />
+</Teleport>
+
+// Dynamic target
+<Teleport to-selector={this.isMobile ? '#mobile-container' : '#desktop-container'}>
+  <ResponsiveContent />
+</Teleport>
+```
+
+The target element must exist in the DOM when the component renders. If the target is not found, a warning is logged and content remains in its original location.
+
 ## Router
 
 Gea includes a built-in client-side router for single-page applications.

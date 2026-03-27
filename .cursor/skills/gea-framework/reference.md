@@ -10,6 +10,7 @@
 - [Event Handling](#event-handling)
 - [Conditional Rendering](#conditional-rendering)
 - [List Rendering](#list-rendering)
+- [Teleport](#teleport)
 - [Multiple Stores](#multiple-stores)
 - [Store Composition](#store-composition)
 - [Computed Values](#computed-values)
@@ -666,6 +667,85 @@ When items are primitives, use the item itself:
 ```
 
 Callbacks inside `.map()` use event delegation — the framework resolves which array item was targeted using `data-gea-item-id` attributes.
+
+---
+
+## Teleport
+
+Teleport renders content in a different part of the DOM tree while keeping it logically part of your component. Useful for modals, tooltips, and overlays that need to escape parent styling or z-index context.
+
+### Import
+
+```ts
+import type { TeleportProps } from '@geajs/core'
+```
+
+### Basic Usage
+
+```jsx
+export default class App extends Component {
+  showModal = false
+
+  template() {
+    return (
+      <div class="app">
+        <button onclick={() => this.showModal = true}>Open Modal</button>
+        
+        <Teleport to-selector="#modal-root">
+          <div class={`modal ${this.showModal ? 'visible' : 'hidden'}`}>
+            <h2>Modal Title</h2>
+            <p>This content is rendered in #modal-root!</p>
+            <button onclick={() => this.showModal = false}>Close</button>
+          </div>
+        </Teleport>
+      </div>
+    )
+  }
+}
+```
+
+### Props
+
+| Prop | Type | Required | Description |
+| --- | --- | --- | --- |
+| `to-selector` | `string` | Yes | CSS selector for target element |
+| `disabled` | `boolean` | No | Prevents teleporting when `true` |
+
+### Features
+
+- **Zero-Reset**: Component state preserved during teleporting
+- **Event Delegation**: Event handlers work normally on teleported content  
+- **Reactivity**: Content moves when `to-selector` changes
+- **Conditional**: Use `disabled` prop to toggle teleporting
+- **Cleanup**: Automatic cleanup on component disposal
+
+### Examples
+
+```jsx
+// Conditional teleport
+<Teleport to-selector="#sidebar" disabled={!this.showSidebar}>
+  <SidebarContent />
+</Teleport>
+
+// Dynamic target
+<Teleport to-selector={this.isMobile ? '#mobile-root' : '#desktop-root'}>
+  <ResponsiveContent />
+</Teleport>
+
+// Multiple teleports
+<Teleport to-selector="#notifications">
+  <Toast message={this.message} />
+</Teleport>
+<Teleport to-selector="#modals">
+  <ConfirmDialog />
+</Teleport>
+```
+
+### Target Requirements
+
+- Target element must exist in DOM when component renders
+- If target not found, warning is logged and content stays in place
+- Targets can be anywhere in document, including outside app root
 
 ---
 
