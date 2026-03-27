@@ -67,7 +67,7 @@ test('ZagComponent: should cache element queries and handle invalidation', async
   const instance = new ZagComponent()
 
   // 1. Setup & Initial State
-  let queryCount = 0 // queryCount'u en başa alalım
+  let queryCount = 0
   instance.created({})
   instance._api = {}
   instance.getSpreadMap = () => ({
@@ -101,23 +101,28 @@ test('ZagComponent: should cache element queries and handle invalidation', async
   instance._applyAllSpreads()
   assert.strictEqual(queryCount, 3, 'Should re-query after onAfterRender clears cache')
 
-  // Run 5: Invalidation via _scheduleSpreadApplication (Machine Transition)
-  // Logic: Scheduling should clear cache immediately so that when the microtask runs,
-  // it has a fresh view of the DOM.
-  instance._spreadScheduled = false // Ensure we trigger the clear() logic
+  // Run 5: Transition Persistence (Machine Transition)
+  // Logic: Scheduling should NOT clear cache anymore. State-only transitions should be fast.
+  instance._spreadScheduled = false
   instance._scheduleSpreadApplication()
-  
-  // Simulate Slider mutating DOM after state change but before spread application
+  await Promise.resolve()
+  assert.strictEqual(queryCount, 3, 'Should HIT cache during machine transition (NO re-query)')
+
+  // Run 6: Structural Change Invalidation (Re-render)
+  // Simulate a re-render that might have added elements
   const newThumb = document.createElement('span')
   newThumb.setAttribute('data-part', 'item')
   instance.el.appendChild(newThumb)
   
-  instance._applyAllSpreads() 
-  assert.strictEqual(queryCount, 4, 'Should re-query after _scheduleSpreadApplication clears cache')
+  instance.onAfterRender()
+  instance._applyAllSpreads()
+  assert.strictEqual(queryCount, 4, 'Should re-query after onAfterRender clears cache')
   
   const cachedElements = instance._elementCache.get('[data-part="item"]')
-  assert.strictEqual(cachedElements.length, 2, 'Should find the newly added element')
+  assert.strictEqual(cachedElements.length, 2, 'Should find the newly added element after invalidation')
 
   // Run 6: Memory Leak Check (Dispose)
   instance.dispose()
+  assert.strictEqual(instance._elementCache.size, 0, 'Should clear element cache on dispose')
+  assert.strictEqual(instance._zagIdMap.size, 0, 'Should clear zag ID map on dispose')
 })
