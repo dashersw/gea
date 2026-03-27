@@ -65,6 +65,16 @@ export default class Link extends Component<LinkProps> {
     } else {
       el.removeAttribute('data-active')
     }
+    // Keep `class` in sync with router when `path` changes — the template only
+    // evaluated `class={...}` at first render; without this, `.active` stays stale.
+    const raw = el.getAttribute('class') ?? ''
+    const base = raw
+      .replace(/\bactive\b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const nextClass = active ? (base ? `${base} active` : 'active') : base
+    if (nextClass) el.setAttribute('class', nextClass)
+    else el.removeAttribute('class')
   }
 
   dispose() {
