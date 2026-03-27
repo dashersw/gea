@@ -3,7 +3,7 @@ import { geaPlugin } from '../vite-plugin-gea/src/index'
 
 export default defineConfig([
   {
-    entry: ['src/index.ts'],
+    entry: ['src/index.ts', 'src/jsx-runtime.ts'],
     plugins: [geaPlugin() as any],
     format: 'esm',
     outDir: 'dist',

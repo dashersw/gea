@@ -15,6 +15,16 @@
       "source": "./src/index.ts",
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
+    },
+    "./jsx-runtime": {
+      "source": "./src/jsx-runtime.ts",
+      "types": "./dist/jsx-runtime.d.mts",
+      "import": "./dist/jsx-runtime.mjs"
+    },
+    "./jsx-dev-runtime": {
+      "source": "./src/jsx-runtime.ts",
+      "types": "./dist/jsx-runtime.d.mts",
+      "import": "./dist/jsx-runtime.mjs"
     }
   },
   "repository": {
