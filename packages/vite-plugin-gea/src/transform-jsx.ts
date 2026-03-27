@@ -939,22 +939,7 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
         ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier(itemVar), itemIdProp), t.identifier(itemVar))
         : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
 
-    if (ctx.mapContainerBindingId) {
-      const idValueExpr = t.binaryExpression(
-        '+',
-        t.binaryExpression(
-          '+',
-          t.memberExpression(t.thisExpression(), t.identifier('id')),
-          t.stringLiteral('-' + ctx.mapContainerBindingId + '-'),
-        ),
-        t.callExpression(t.identifier('String'), [t.cloneNode(itemIdExpr, true)]),
-      )
-      parts.push({ type: 'string', value: html + ' id="' })
-      parts.push({ type: 'expression', value: idValueExpr })
-      parts.push({ type: 'string', value: '" data-gea-item-id="' })
-      parts.push({ type: 'expression', value: t.cloneNode(itemIdExpr, true) })
-      html = '"'
-    } else {
+    {
       parts.push({ type: 'string', value: html + ' data-gea-item-id="' })
       parts.push({ type: 'expression', value: itemIdExpr })
       html = '"'

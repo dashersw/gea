@@ -3784,27 +3784,7 @@ function injectMapItemAttrsIntoTemplate(
           : t.callExpression(t.identifier('String'), [t.identifier(info.itemVariable)])
       const eventAttr = info.eventToken ? ` data-gea-event="${info.eventToken}"` : ''
 
-      if (info.containerBindingId) {
-        const idExpr = t.binaryExpression(
-          '+',
-          t.binaryExpression(
-            '+',
-            t.memberExpression(t.thisExpression(), t.identifier('id')),
-            t.stringLiteral('-' + info.containerBindingId + '-'),
-          ),
-          t.callExpression(t.identifier('String'), [t.cloneNode(itemIdExpr)]),
-        )
-        rootTL.quasis = [
-          t.templateElement({ raw: `${tagPart} id="`, cooked: `${tagPart} id="` }),
-          t.templateElement({ raw: `" data-gea-item-id="`, cooked: `" data-gea-item-id="` }),
-          t.templateElement(
-            { raw: `"${eventAttr}${remainder}`, cooked: `"${eventAttr}${remainder}` },
-            rootTL.quasis[0].tail,
-          ),
-          ...rootTL.quasis.slice(1),
-        ]
-        rootTL.expressions = [idExpr, itemIdExpr, ...rootTL.expressions]
-      } else {
+      {
         rootTL.quasis = [
           t.templateElement({ raw: `${tagPart} data-gea-item-id="`, cooked: `${tagPart} data-gea-item-id="` }),
           t.templateElement(

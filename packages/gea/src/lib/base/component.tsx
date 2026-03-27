@@ -1056,7 +1056,6 @@ export default class Component<P = Record<string, any>> extends Store {
     const c = container as any
     const idProp = itemIdProp || 'id'
     if (!c.__geaTpl) {
-      if (bindingId) c.__geaIdPfx = this.id_ + '-' + bindingId + '-'
       try {
         const tw = container.cloneNode(false) as HTMLElement
         tw.innerHTML = renderFn({ [idProp]: 0, label: '' })
@@ -1076,7 +1075,6 @@ export default class Component<P = Record<string, any>> extends Store {
     const raw = item != null && typeof item === 'object' ? item[idProp] : undefined
     const itemKey = String(raw != null ? raw : item)
     el.setAttribute('data-gea-item-id', itemKey)
-    if (c.__geaIdPfx) el.id = c.__geaIdPfx + itemKey
     ;(el as any).__geaItem = item
     if (patches) {
       for (let i = 0; i < patches.length; i++) {

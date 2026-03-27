@@ -167,10 +167,6 @@ test.describe('mobile-showcase views and navigation', () => {
       .evaluateAll((els) => els.map((el) => el.getAttribute('data-gea-item-id')))
     const unique = new Set(itemIds)
     expect(unique.size).toBe(itemIds.length)
-
-    const domIds = await log.locator('.gesture-log-entry').evaluateAll((els) => els.map((el) => el.id))
-    const uniqueDomIds = new Set(domIds)
-    expect(uniqueDomIds.size).toBe(domIds.length)
   })
 
   test('sidebar hint text is shown on home', async ({ page }) => {

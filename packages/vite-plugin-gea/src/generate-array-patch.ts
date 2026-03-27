@@ -349,28 +349,6 @@ export function generatePatchItemMethod(
     ),
   )
 
-  if (arrayMap.containerBindingId) {
-    body.push(
-      t.variableDeclaration('var', [
-        t.variableDeclarator(t.identifier('__c'), t.memberExpression(t.thisExpression(), t.identifier(containerProp))),
-      ]),
-      t.ifStatement(
-        t.logicalExpression(
-          '&&',
-          t.identifier('__c'),
-          t.memberExpression(t.identifier('__c'), t.identifier('__geaIdPfx')),
-        ),
-        t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(elVar, t.identifier('id')),
-            t.binaryExpression('+', t.memberExpression(t.identifier('__c'), t.identifier('__geaIdPfx')), itemIdExpr),
-          ),
-        ),
-      ),
-    )
-  }
-
   body.push(
     t.expressionStatement(
       t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaItem')), t.identifier('item')),
@@ -793,25 +771,6 @@ export function generateCreateItemMethod(
     ),
   )
 
-  if (arrayMap.containerBindingId) {
-    body.push(
-      t.ifStatement(
-        t.unaryExpression('!', t.memberExpression(cVar, t.identifier('__geaIdPfx'))),
-        t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(cVar, t.identifier('__geaIdPfx')),
-            t.binaryExpression(
-              '+',
-              t.memberExpression(t.thisExpression(), t.identifier('id_')),
-              t.stringLiteral('-' + arrayMap.containerBindingId + '-'),
-            ),
-          ),
-        ),
-      ),
-    )
-  }
-
   body.push(
     t.ifStatement(
       t.memberExpression(cVar, t.identifier('__geaTpl')),
@@ -999,18 +958,6 @@ export function generateCreateItemMethod(
       ]),
     ),
   )
-
-  if (arrayMap.containerBindingId) {
-    body.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(elVar, t.identifier('id')),
-          t.binaryExpression('+', t.memberExpression(cVar, t.identifier('__geaIdPfx')), itemIdExpr),
-        ),
-      ),
-    )
-  }
 
   body.push(
     t.expressionStatement(

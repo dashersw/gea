@@ -945,14 +945,11 @@ function lazyInit(name: string, selector: string, bindingId?: string): t.Stateme
 }
 
 function buildQueryByItemId(
-  _containerExpr: t.Expression,
+  containerExpr: t.Expression,
   idExpr: t.Expression,
-  containerBindingId: string | undefined,
+  _containerBindingId: string | undefined,
 ): t.Expression {
-  if (!containerBindingId) {
-    throw new Error('containerBindingId required for getElementById lookup; ensure array map has containerElementPath')
-  }
-  return jsExpr`document.getElementById(this.id + '-' + ${containerBindingId} + '-' + String(${idExpr}))`
+  return jsExpr`${containerExpr}.querySelector('[data-gea-item-id="' + String(${idExpr}) + '"]')`
 }
 
 function buildPathPartsEquals(expr: t.Expression, parts: string[]): t.Expression {
