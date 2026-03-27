@@ -1,5 +1,11 @@
 # @geajs/core
 
+## 1.0.14
+
+### Patch Changes
+
+- [`fa5766b`](https://github.com/dashersw/gea/commit/fa5766bcc54c8ab4a0cfd029dd7d13c3ce033114) Thanks [@dashersw](https://github.com/dashersw)! - Improve Vite plugin codegen and component runtime: lazy element caching with reset on rerender, className fast paths, clone generation, and tighter reactivity and event handling. Updates playground compiler bundle.
+
 ## 1.0.12
 
 ### Patch Changes
