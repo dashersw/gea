@@ -96,6 +96,7 @@ export default class Slider extends ZagComponent {
 
   _applyAllSpreads() {
     this._syncThumbs()
+    this._elementCache?.clear()
     super._applyAllSpreads()
   }
 
