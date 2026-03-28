@@ -1,0 +1,18 @@
+{
+  "name": "router-file-based-gea",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@geajs/core": "file:../../packages/gea"
+  },
+  "devDependencies": {
+    "vite": "^8.0.0",
+    "@geajs/vite-plugin": "file:../../packages/vite-plugin-gea",
+    "typescript": "~5.8.0"
+  }
+}

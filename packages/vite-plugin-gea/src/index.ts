@@ -5,6 +5,7 @@ import { parseSource } from './parse.ts'
 import { injectHMR } from './hmr.ts'
 import { transformComponentFile, transformNonComponentJSX } from './transform-component.ts'
 import { convertFunctionalToClass } from './transform-functional.ts'
+import { transformFileRoutes } from './transform-file-routes.ts'
 import { isComponentTag } from './utils.ts'
 import { dirname, relative, resolve } from 'node:path'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -408,20 +409,29 @@ export function geaPlugin(): Plugin {
         }
       }
 
-      if (/\bclass\s+Component\s+extends\s+Store\b/.test(code)) return null
+      // File-based routing: transform .setPath('./dir') → .setRoutes(buildFileRoutes(...))
+      let fileRouteResult: { code: string; map: null } | null = null
+      if (code.includes('.setPath(')) {
+        fileRouteResult = transformFileRoutes(code)
+        if (fileRouteResult) code = fileRouteResult.code
+      }
+
+      if (/\bclass\s+Component\s+extends\s+Store\b/.test(code)) {
+        return fileRouteResult
+      }
 
       const hasAngleBrackets = code.includes('<') && code.includes('>')
 
-      if (!hasAngleBrackets) return null
+      if (!hasAngleBrackets) return fileRouteResult
 
       try {
         const parsed = parseSource(code)
-        if (!parsed) return null
+        if (!parsed) return fileRouteResult
         const { functionalComponentInfo, hasJSX } = parsed
         let { ast, componentClassName, imports } = parsed
         let { componentClassNames } = parsed
 
-        if (!hasJSX) return null
+        if (!hasJSX) return fileRouteResult
 
         if (functionalComponentInfo) {
           convertFunctionalToClass(ast, functionalComponentInfo, imports)
@@ -539,7 +549,7 @@ export function geaPlugin(): Plugin {
           if (hmrAdded) transformed = true
         }
 
-        if (!transformed) return null
+        if (!transformed) return fileRouteResult
         const output = generate(ast, { sourceMaps: true, sourceFileName: cleanId }, code)
         return { code: output.code, map: output.map }
       } catch (error: any) {
