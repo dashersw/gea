@@ -11,7 +11,7 @@ import {
   normalizePathParts,
   pathPartsToString,
 } from './utils.ts'
-import { collectPatchEntries, childPathRefName } from './generate-array-patch.ts'
+import { collectPatchEntries, childPathRefName, buildElementNavExpr } from './generate-array-patch.ts'
 import type { NodePath } from '@babel/traverse'
 import { createRequire } from 'module'
 
@@ -229,7 +229,19 @@ function buildPatchEntryPropPatcher(entry: {
   const item = t.identifier('item')
   const target = t.identifier('__target')
   const targetExpr =
-    entry.childPath.length > 0 ? t.memberExpression(row, t.identifier(childPathRefName(entry.childPath))) : row
+    entry.childPath.length > 0
+      ? t.logicalExpression(
+          '||',
+          t.memberExpression(row, t.identifier(childPathRefName(entry.childPath))),
+          t.parenthesizedExpression(
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(t.cloneNode(row, true), t.identifier(childPathRefName(entry.childPath))),
+              buildElementNavExpr(t.cloneNode(row, true), entry.childPath),
+            ),
+          ),
+        )
+      : row
 
   if (entry.type === 'className') {
     const isRoot = entry.childPath.length === 0
@@ -519,16 +531,19 @@ export function generateArrayRelationalObserver(
   arrayMap: ArrayMapBinding,
   bindings: RelationalMapBinding[],
   methodName: string,
-): t.ClassMethod {
+): { method: t.ClassMethod; privateFields: string[] } {
   const arrayPath = pathPartsToString(getArrayPathParts(arrayMap))
   const containerName = `__${arrayPath.replace(/\./g, '_')}_container`
   const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
   const previousValue = t.identifier('__previousValue')
   const previousRowName = `__prev_${pathPartsToString(path).replace(/\./g, '_')}_row`
-  const previousRowProp = t.memberExpression(t.thisExpression(), t.identifier(previousRowName))
+  const previousRowProp = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(previousRowName)))
+
+  const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
+  const elsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
 
   const body: t.Statement[] = [
-    lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId),
+    lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
     t.variableDeclaration('var', [
       t.variableDeclarator(
         previousValue,
@@ -553,7 +568,7 @@ export function generateArrayRelationalObserver(
             t.unaryExpression('!', t.memberExpression(t.identifier('__previousRow'), t.identifier('isConnected'))),
           ),
           t.blockStatement(
-            buildFindIndexLookup(containerRef, previousValue, '__previousRow', arrayMap.containerBindingId),
+            buildElsLookup(elsRef, containerRef, previousValue, '__previousRow', arrayMap.containerBindingId),
           ),
         ),
         t.ifStatement(
@@ -566,7 +581,7 @@ export function generateArrayRelationalObserver(
     t.ifStatement(
       t.binaryExpression('!=', t.identifier('value'), t.nullLiteral()),
       t.blockStatement([
-        ...buildFindIndexLookup(containerRef, t.identifier('value'), '__nextRow', arrayMap.containerBindingId),
+        ...buildElsLookup(elsRef, containerRef, t.identifier('value'), '__nextRow', arrayMap.containerBindingId),
         t.ifStatement(
           t.identifier('__nextRow'),
           t.blockStatement(buildRelationalClassStatements(t.identifier('__nextRow'), bindings, true, 'new')),
@@ -582,7 +597,10 @@ export function generateArrayRelationalObserver(
     ),
   ]
 
-  return appendToBody(jsMethod`${id(methodName)}(value, change) {}`, ...body)
+  return {
+    method: appendToBody(jsMethod`${id(methodName)}(value, change) {}`, ...body),
+    privateFields: [previousRowName, rowElsProp],
+  }
 }
 
 export function generateArrayConditionalPatchObserver(
@@ -632,7 +650,7 @@ export function generateArrayConditionalPatchObserver(
   return appendToBody(
     jsMethod`${id(methodName)}(value, change) {}`,
     t.blockStatement([
-      lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId),
+      lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
       t.ifStatement(t.unaryExpression('!', containerRef), t.returnStatement()),
       t.variableDeclaration('const', [
         t.variableDeclarator(
@@ -676,7 +694,7 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
   return appendToBody(
     jsMethod`${id(methodName)}(value, change) {}`,
     t.blockStatement([
-      lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId),
+      lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
       t.ifStatement(t.unaryExpression('!', containerRef), t.returnStatement()),
       t.variableDeclaration('const', [
         t.variableDeclarator(
@@ -835,8 +853,15 @@ function buildRelationalClassStatements(
     const enabled = binding.classWhenMatch ? isMatch : !isMatch
     if (binding.selector === ':scope') {
       const expr = t.cloneNode(rowExpr, true)
+      if (binding.scopeClassIsPure) {
+        return jsBlockBody`
+          ${expr}.className = ${enabled ? binding.classToggleName : ''};
+        `
+      }
+      const cnVar = `__cn_${phase}_${index}`
       return jsBlockBody`
-        if (${expr}.className === '' || ${expr}.className === ${binding.classToggleName}) {
+        var ${id(cnVar)} = ${expr}.className;
+        if (${id(cnVar)} === '' || ${id(cnVar)} === ${binding.classToggleName}) {
           ${expr}.className = ${enabled ? binding.classToggleName : ''};
         } else {
           ${expr}.classList.toggle(${binding.classToggleName}, ${enabled});
@@ -870,38 +895,140 @@ function buildFindIndexLookup(
   ]
 }
 
-export function generateArrayHandlers(arrayMap: ArrayMapBinding, methodName: string): t.ClassMethod[] {
+function buildElsLookup(
+  elsRef: t.MemberExpression,
+  containerRef: t.MemberExpression,
+  idExpr: t.Expression,
+  rowVar: string,
+  containerBindingId?: string,
+): t.Statement[] {
+  const elsFallback = buildQueryByItemId(t.cloneNode(containerRef), t.cloneNode(idExpr, true), containerBindingId)
+  const ctrLocal = t.identifier('__ctr')
+  const qsFallback = t.callExpression(
+    t.arrowFunctionExpression(
+      [],
+      t.blockStatement([
+        t.variableDeclaration('const', [t.variableDeclarator(ctrLocal, t.cloneNode(containerRef))]),
+        t.forStatement(
+          t.variableDeclaration('let', [t.variableDeclarator(t.identifier('__i'), t.numericLiteral(0))]),
+          t.binaryExpression(
+            '<',
+            t.identifier('__i'),
+            t.memberExpression(
+              t.memberExpression(ctrLocal, t.identifier('children')),
+              t.identifier('length'),
+            ),
+          ),
+          t.updateExpression('++', t.identifier('__i')),
+          t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier('__ch'),
+                t.memberExpression(
+                  t.memberExpression(t.cloneNode(ctrLocal), t.identifier('children')),
+                  t.identifier('__i'),
+                  true,
+                ),
+              ),
+            ]),
+            t.ifStatement(
+              t.logicalExpression(
+                '||',
+                t.binaryExpression(
+                  '==',
+                  t.memberExpression(t.identifier('__ch'), t.identifier('__geaKey')),
+                  t.cloneNode(idExpr, true),
+                ),
+                t.logicalExpression(
+                  '&&',
+                  t.binaryExpression(
+                    '==',
+                    t.memberExpression(t.identifier('__ch'), t.identifier('__geaKey')),
+                    t.nullLiteral(),
+                  ),
+                  t.binaryExpression(
+                    '==',
+                    t.optionalCallExpression(
+                      t.optionalMemberExpression(t.identifier('__ch'), t.identifier('getAttribute'), false, true),
+                      [t.stringLiteral('data-gea-item-id')],
+                      false,
+                    ),
+                    t.cloneNode(idExpr, true),
+                  ),
+                ),
+              ),
+              t.returnStatement(t.identifier('__ch')),
+            ),
+          ]),
+        ),
+        t.returnStatement(t.nullLiteral()),
+      ]),
+    ),
+    [],
+  )
+  const cachedVar = t.identifier('__cached')
+  return [
+    t.variableDeclaration('var', [
+      t.variableDeclarator(
+        cachedVar,
+        t.logicalExpression(
+          '&&',
+          t.cloneNode(elsRef),
+          t.memberExpression(t.cloneNode(elsRef), t.cloneNode(idExpr, true), true),
+        ),
+      ),
+    ]),
+    t.variableDeclaration('var', [
+      t.variableDeclarator(
+        t.identifier(rowVar),
+        t.logicalExpression(
+          '||',
+          t.logicalExpression(
+            '||',
+            t.logicalExpression(
+              '&&',
+              t.logicalExpression('&&', cachedVar, t.memberExpression(cachedVar, t.identifier('isConnected'))),
+              cachedVar,
+            ),
+            elsFallback,
+          ),
+          qsFallback,
+        ),
+      ),
+    ]),
+  ]
+}
+
+export function generateArrayHandlers(
+  arrayMap: ArrayMapBinding,
+  methodName: string,
+): { methods: t.ClassMethod[]; privateFields: string[] } {
   const arrayPathPartsValue = getArrayPathParts(arrayMap)
   const arrayPath = pathPartsToString(arrayPathPartsValue)
   const paramName = arrayPathPartsValue[arrayPathPartsValue.length - 1] || 'items'
   const containerName = `__${arrayPath.replace(/\./g, '_')}_container`
   const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
   const configRef = t.memberExpression(t.thisExpression(), t.identifier(getArrayConfigPropName(arrayMap)))
+  const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
+  const elsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
+
+  const clearElsStmt = t.expressionStatement(t.assignmentExpression('=', t.cloneNode(elsRef), t.nullLiteral()))
 
   const body: t.Statement[] = [
-    lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId),
+    lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
     t.ifStatement(t.unaryExpression('!', containerRef), t.returnStatement()),
     t.ifStatement(
       t.logicalExpression(
         '&&',
-        t.logicalExpression(
-          '&&',
-          t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [
-            t.identifier(paramName),
-          ]),
-          t.binaryExpression(
-            '===',
-            t.memberExpression(t.identifier(paramName), t.identifier('length')),
-            t.numericLiteral(0),
-          ),
-        ),
+        t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [t.identifier(paramName)]),
         t.binaryExpression(
-          '>',
-          t.memberExpression(t.memberExpression(containerRef, t.identifier('children')), t.identifier('length')),
+          '===',
+          t.memberExpression(t.identifier(paramName), t.identifier('length')),
           t.numericLiteral(0),
         ),
       ),
       t.blockStatement([
+        clearElsStmt,
         t.expressionStatement(
           t.assignmentExpression(
             '=',
@@ -926,10 +1053,18 @@ export function generateArrayHandlers(arrayMap: ArrayMapBinding, methodName: str
   ]
 
   const method = appendToBody(jsMethod`${id(methodName)}(${id(paramName)}, change) {}`, ...body)
-  return [method]
+  return { methods: [method], privateFields: [rowElsProp] }
 }
 
-function lazyInit(name: string, selector: string, bindingId?: string): t.Statement {
+function lazyInit(name: string, selector: string, bindingId?: string, userIdExpr?: t.Expression): t.Statement {
+  if (userIdExpr) {
+    const idArg = t.isStringLiteral(userIdExpr) ? userIdExpr : t.cloneNode(userIdExpr, true)
+    return js`
+      if (!this.${id(name)}) {
+        this.${id(name)} = document.getElementById(${idArg});
+      }
+    `
+  }
   if (bindingId) {
     return js`
       if (!this.${id(name)}) {
@@ -945,11 +1080,22 @@ function lazyInit(name: string, selector: string, bindingId?: string): t.Stateme
 }
 
 function buildQueryByItemId(
-  containerExpr: t.Expression,
+  _containerExpr: t.Expression,
   idExpr: t.Expression,
-  _containerBindingId: string | undefined,
+  containerBindingId: string | undefined,
 ): t.Expression {
-  return jsExpr`${containerExpr}.querySelector('[data-gea-item-id="' + String(${idExpr}) + '"]')`
+  const bind = containerBindingId ?? 'list'
+  return t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
+    t.binaryExpression(
+      '+',
+      t.binaryExpression(
+        '+',
+        t.memberExpression(t.thisExpression(), t.identifier('id')),
+        t.stringLiteral('-' + bind + '-gk-'),
+      ),
+      t.cloneNode(idExpr, true),
+    ),
+  ])
 }
 
 function buildPathPartsEquals(expr: t.Expression, parts: string[]): t.Expression {

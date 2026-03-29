@@ -55,8 +55,8 @@ test('conditional imported map state subscriptions include edit-mode flags', () 
     }
   `)
 
-  assert.match(output, /store\.editingId/)
-  assert.match(output, /store\.editingValue/)
+  assert.match(output, /(?:store|this\.__rawStore|__rs)\.editingId/)
+  assert.match(output, /(?:store|this\.__rawStore|__rs)\.editingValue/)
 })
 
 test('generated observer and buildProps methods include early-return guard from template', () => {

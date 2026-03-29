@@ -139,6 +139,7 @@ export function transformComponentFile(
         eventIdCounter,
         stateRefs,
         elementPathToBindingId: analysis.elementPathToBindingId,
+        elementPathToUserIdExpr: analysis.elementPathToUserIdExpr,
         templateSetupContext: {
           params: path.node.params,
           statements: returnIndex >= 0 ? body.slice(0, returnIndex) : [],
@@ -275,21 +276,20 @@ export function transformComponentFile(
       if (refBindings.length > 0) {
         const classPath = path.findParent((p) => t.isClassDeclaration(p.node)) as NodePath<t.ClassDeclaration> | null
         if (classPath) {
-          const refStatements: t.Statement[] = refBindings.map((ref) =>
-            t.expressionStatement(
-              t.assignmentExpression(
-                '=',
-                ref.targetExpr,
-                t.callExpression(
-                  t.memberExpression(
-                    t.memberExpression(t.thisExpression(), t.identifier('element_')),
-                    t.identifier('querySelector'),
-                  ),
-                  [t.stringLiteral(`[data-gea-ref="${ref.refId}"]`)],
-                ),
+          const refStatements: t.Statement[] = refBindings.flatMap((ref) => {
+            const target = ref.targetExpr as t.LVal
+            const q = t.callExpression(
+              t.memberExpression(
+                t.memberExpression(t.thisExpression(), t.identifier('element_')),
+                t.identifier('querySelector'),
               ),
-            ),
-          )
+              [t.stringLiteral(`[data-gea-ref="${ref.refId}"]`)],
+            )
+            return [
+              t.expressionStatement(t.assignmentExpression('=', target, t.nullLiteral())),
+              t.expressionStatement(t.assignmentExpression('=', target, q)),
+            ]
+          })
           const existingSetup = classPath.node.body.body.find(
             (m) => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === '__setupRefs',
           )

@@ -1157,10 +1157,13 @@ function isThisIdMember(node: t.Node): boolean {
 
 /**
  * Wrap the events getter body so it caches the result in `this.__evts`
- * on first access and returns the cached copy thereafter.
+ * only after `this.element_` is set (root DOM exists). That avoids caching
+ * handler refs while the subclass constructor is still running — e.g. class
+ * field arrow handlers are assigned only after `super()` returns, but
+ * `setComponent` may read `events` during `Component`'s constructor.
  *
  * Before: `get events() { ... return { click: {...} }; }`
- * After:  `get events() { if (this.__evts) return this.__evts; ... return this.__evts = { click: {...} }; }`
+ * After:  `get events() { if (this.__evts && this.element_) return this.__evts; ... const r = {...}; if (this.element_) this.__evts = r; return r; }`
  */
 export function wrapEventsGetterWithCache(getter: t.ClassMethod): void {
   const body = getter.body.body
@@ -1168,10 +1171,25 @@ export function wrapEventsGetterWithCache(getter: t.ClassMethod): void {
   if (!returnStmt?.argument) return
 
   const cachedProp = t.memberExpression(t.thisExpression(), t.identifier('__evts'))
+  const elementProp = t.memberExpression(t.thisExpression(), t.identifier('element_'))
+  const tmpId = t.identifier('__geaEvtsResult')
+  const objectExpr = returnStmt.argument as t.Expression
 
-  returnStmt.argument = t.assignmentExpression('=', cachedProp, returnStmt.argument)
+  const returnIndex = body.indexOf(returnStmt)
+  body.splice(
+    returnIndex,
+    1,
+    t.variableDeclaration('const', [t.variableDeclarator(tmpId, objectExpr)]),
+    t.ifStatement(
+      elementProp,
+      t.expressionStatement(t.assignmentExpression('=', cachedProp, t.cloneNode(tmpId, true))),
+    ),
+    t.returnStatement(t.cloneNode(tmpId, true)),
+  )
 
-  body.unshift(t.ifStatement(cachedProp, t.returnStatement(t.cloneNode(cachedProp, true))))
+  body.unshift(
+    t.ifStatement(t.logicalExpression('&&', cachedProp, elementProp), t.returnStatement(t.cloneNode(cachedProp, true))),
+  )
 }
 
 /** Same key-guard shape as `serializeKeyGuard` in apply-reactivity (single key or `||` of keys). */

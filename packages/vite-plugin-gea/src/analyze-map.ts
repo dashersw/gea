@@ -64,6 +64,7 @@ export function analyzeJSXInMap(
         childIndices,
       )
     } else if (t.isConditionalExpression(expr)) {
+      const isClassAttr = attrName === 'class' || attrName === 'className'
       analyzeItemConditional(
         expr,
         attrName,
@@ -79,6 +80,7 @@ export function analyzeJSXInMap(
         stateRefs,
         childIndices,
         storeVar,
+        isClassAttr,
       )
     } else if (t.isTemplateLiteral(expr)) {
       analyzeItemTemplateLiteral(
@@ -195,9 +197,11 @@ function analyzeItemConditional(
   stateRefs: Map<string, StateRefMeta>,
   childIndices: number[] = [],
   storeVar?: string,
+  isFullClassExpr?: boolean,
 ) {
   const relationalBinding = buildRelationalClassBinding(expr, elementPath, itemVar, itemIdProperty, stateRefs)
   if (relationalBinding) {
+    if (isFullClassExpr) relationalBinding.scopeClassIsPure = true
     relationalBindings.push(relationalBinding)
     return
   }

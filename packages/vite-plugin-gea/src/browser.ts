@@ -104,7 +104,7 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
 
             if (spec.type === 'ImportDefaultSpecifier') {
               if (resolvedPath && !storeModules.has(resolvedPath)) return
-              if (!source.startsWith('.') && source === '@geajs/core' && spec.local.name === 'router') {
+              if (!source.startsWith('.') && source.startsWith('@geajs/core') && spec.local.name === 'router') {
                 storeImports.set(spec.local.name, source)
               } else if (resolvedPath && storeModules.has(resolvedPath)) {
                 storeImports.set(spec.local.name, source)
@@ -113,7 +113,7 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
               namedImportSources.set(spec.local.name, source)
               if (resolvedPath && storeModules.has(resolvedPath)) {
                 storeImports.set(spec.local.name, source)
-              } else if (source === '@geajs/core' && spec.local.name === 'router') {
+              } else if (source.startsWith('@geajs/core') && spec.local.name === 'router') {
                 storeImports.set(spec.local.name, source)
               }
               const importedName = spec.imported?.name ?? spec.local.name

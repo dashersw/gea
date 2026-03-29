@@ -59,6 +59,7 @@ export interface ComponentArrayResult {
   componentTag: string
   /** The container binding ID for __el() lookup (e.g. 'list') */
   containerBindingId?: string
+  containerUserIdExpr?: t.Expression
   /** The item ID property name for keyed reconciliation (e.g. 'id') */
   itemIdProperty?: string
   /** The array access expression for the store path */
@@ -262,6 +263,7 @@ export function generateComponentArrayResult(
     constructorInit,
     componentTag: comp.componentTag,
     containerBindingId: um.containerBindingId,
+    containerUserIdExpr: um.containerUserIdExpr,
     itemIdProperty: itemIdProp,
     arrAccessExpr,
     arrSetupStatements,

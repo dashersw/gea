@@ -625,6 +625,339 @@ test('component getter displayLabel text updates when value prop changes (Select
   }
 })
 
+test('getter-backed store observers only re-read the addressed cell on unrelated root replacements', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-getter-address-count`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class SheetStore extends Store {
+      cells: Record<string, string> = {}
+      computed: Record<string, { kind: 'num'; value: number }> = {}
+
+      setCellRaw(address: string, raw: string) {
+        this.cells[address] = raw
+        this.computed = { ...this.computed }
+      }
+    }
+
+    const sheetStore = new SheetStore()
+    const getterCalls: Record<string, number> = {}
+
+    const SheetCell = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import sheetStore from './sheet-store.ts'
+
+        export default class SheetCell extends Component {
+          get displayValue() {
+            getterCalls[this.props.address] = (getterCalls[this.props.address] ?? 0) + 1
+            const computed = sheetStore.computed[this.props.address]
+            if (computed) return String(computed.value)
+            return sheetStore.cells[this.props.address] ?? ''
+          }
+
+          template() {
+            return <td>{this.displayValue}</td>
+          }
+        }
+      `,
+      '/virtual/SheetCellCount.jsx',
+      'SheetCell',
+      { Component, sheetStore, getterCalls },
+    )
+
+    const root = document.createElement('table')
+    const row = document.createElement('tr')
+    root.appendChild(row)
+    document.body.appendChild(root)
+
+    const a1 = new SheetCell({ address: 'A1' })
+    const b1 = new SheetCell({ address: 'B1' })
+    a1.render(row)
+    b1.render(row)
+    await flushMicrotasks()
+
+    getterCalls.A1 = 0
+    getterCalls.B1 = 0
+
+    sheetStore.setCellRaw('A1', '42')
+    await flushMicrotasks()
+
+    assert.equal(getterCalls.B1, 0, 'unrelated cell must not re-read on computed root replacement')
+    assert.ok(getterCalls.A1 > 0, 'changed cell should still re-read after its own update')
+
+    a1.dispose()
+    b1.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('sheet-cell style getter stays surgical with local editing conditional', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-sheet-cell-conditional`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class SheetStore extends Store {
+      cells: Record<string, string> = {}
+      computed: Record<string, { kind: 'num'; value: number }> = {}
+      activeAddress: string | null = null
+
+      setCellRaw(address: string, raw: string) {
+        this.cells[address] = raw
+        this.computed = { ...this.computed }
+      }
+    }
+
+    const sheetStore = new SheetStore()
+    const getterCalls: Record<string, number> = {}
+
+    const SheetCell = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import sheetStore from './sheet-store.ts'
+
+        export default class SheetCell extends Component {
+          editing = false
+          editBuffer = ''
+
+          get displayValue() {
+            getterCalls[this.props.address] = (getterCalls[this.props.address] ?? 0) + 1
+            const raw = sheetStore.cells[this.props.address] ?? ''
+            if (!raw.startsWith('=')) return raw
+            const computed = sheetStore.computed[this.props.address]
+            if (!computed) return ''
+            return String(computed.value)
+          }
+
+          template({ address }) {
+            const selected = sheetStore.activeAddress === this.props.address
+            const { editing, editBuffer } = this
+
+            return (
+              <td class={selected ? 'selected' : ''} data-address={address} tabIndex={selected ? 0 : -1}>
+                {editing ? <input value={editBuffer} /> : <span>{this.displayValue}</span>}
+              </td>
+            )
+          }
+        }
+      `,
+      '/virtual/SheetCellConditionalCount.jsx',
+      'SheetCell',
+      { Component, sheetStore, getterCalls },
+    )
+
+    const root = document.createElement('table')
+    const row = document.createElement('tr')
+    root.appendChild(row)
+    document.body.appendChild(root)
+
+    const a1 = new SheetCell({ address: 'A1' })
+    const b1 = new SheetCell({ address: 'B1' })
+    a1.render(row)
+    b1.render(row)
+    await flushMicrotasks()
+
+    getterCalls.A1 = 0
+    getterCalls.B1 = 0
+
+    sheetStore.setCellRaw('A1', '42')
+    await flushMicrotasks()
+
+    assert.equal(getterCalls.B1, 0, 'unrelated sheet cell must not re-read displayValue')
+    assert.ok(getterCalls.A1 > 0, 'changed sheet cell should re-read displayValue')
+
+    a1.dispose()
+    b1.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('sheet-cell selection changes do not re-read displayValue for every cell', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-sheet-cell-selection`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class SheetStore extends Store {
+      cells: Record<string, string> = {}
+      computed: Record<string, { kind: 'num'; value: number }> = {}
+      activeAddress: string | null = null
+
+      select(address: string) {
+        this.activeAddress = address
+      }
+    }
+
+    const sheetStore = new SheetStore()
+    const getterCalls: Record<string, number> = {}
+
+    const SheetCell = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import sheetStore from './sheet-store.ts'
+
+        export default class SheetCell extends Component {
+          editing = false
+          editBuffer = ''
+
+          get displayValue() {
+            getterCalls[this.props.address] = (getterCalls[this.props.address] ?? 0) + 1
+            const raw = sheetStore.cells[this.props.address] ?? ''
+            if (!raw.startsWith('=')) return raw
+            const computed = sheetStore.computed[this.props.address]
+            if (!computed) return ''
+            return String(computed.value)
+          }
+
+          template({ address }) {
+            const selected = sheetStore.activeAddress === this.props.address
+            const { editing, editBuffer } = this
+
+            return (
+              <td class={selected ? 'selected' : ''} data-address={address} tabIndex={selected ? 0 : -1}>
+                {editing ? <input value={editBuffer} /> : <span>{this.displayValue}</span>}
+              </td>
+            )
+          }
+        }
+      `,
+      '/virtual/SheetCellSelectionCount.jsx',
+      'SheetCell',
+      { Component, sheetStore, getterCalls },
+    )
+
+    const root = document.createElement('table')
+    const row = document.createElement('tr')
+    root.appendChild(row)
+    document.body.appendChild(root)
+
+    const a1 = new SheetCell({ address: 'A1' })
+    const b1 = new SheetCell({ address: 'B1' })
+    a1.render(row)
+    b1.render(row)
+    await flushMicrotasks()
+
+    getterCalls.A1 = 0
+    getterCalls.B1 = 0
+
+    sheetStore.select('A1')
+    await flushMicrotasks()
+
+    assert.equal(getterCalls.A1, 0, 'selection changes should not re-read A1 displayValue')
+    assert.equal(getterCalls.B1, 0, 'selection changes should not re-read B1 displayValue')
+
+    a1.dispose()
+    b1.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('sheet-cell commit flow re-evaluates displayValue only once when edit closes', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-sheet-cell-commit-count`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class SheetStore extends Store {
+      cells: Record<string, string> = {}
+      computed: Record<string, { kind: 'num'; value: number }> = {}
+      activeAddress: string | null = null
+
+      setCellRaw(address: string, raw: string) {
+        this.cells[address] = raw
+        this.computed = { ...this.computed }
+      }
+
+      moveSelection(_deltaCol: number, _deltaRow: number) {
+        this.activeAddress = 'A2'
+      }
+    }
+
+    const sheetStore = new SheetStore()
+    const getterCalls: Record<string, number> = {}
+
+    const SheetCell = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import sheetStore from './sheet-store.ts'
+
+        export default class SheetCell extends Component {
+          editing = false
+          editBuffer = ''
+
+          commitEdit() {
+            if (!this.editing) return
+            sheetStore.setCellRaw(this.props.address, this.editBuffer)
+            this.editing = false
+            sheetStore.moveSelection(0, 1)
+          }
+
+          get displayValue() {
+            getterCalls[this.props.address] = (getterCalls[this.props.address] ?? 0) + 1
+            const raw = sheetStore.cells[this.props.address] ?? ''
+            if (!raw.startsWith('=')) return raw
+            const computed = sheetStore.computed[this.props.address]
+            if (!computed) return ''
+            return String(computed.value)
+          }
+
+          template({ address }) {
+            const selected = sheetStore.activeAddress === this.props.address
+            const { editing, editBuffer } = this
+
+            return (
+              <td class={selected ? 'selected' : ''} data-address={address} tabIndex={selected ? 0 : -1}>
+                {editing ? <input value={editBuffer} /> : <span>{this.displayValue}</span>}
+              </td>
+            )
+          }
+        }
+      `,
+      '/virtual/SheetCellCommitCount.jsx',
+      'SheetCell',
+      { Component, sheetStore, getterCalls },
+    )
+
+    const root = document.createElement('table')
+    const row = document.createElement('tr')
+    root.appendChild(row)
+    document.body.appendChild(root)
+
+    const a1 = new SheetCell({ address: 'A1' })
+    a1.render(row)
+    await flushMicrotasks()
+
+    a1.editing = true
+    a1.editBuffer = '42'
+    await flushMicrotasks()
+
+    getterCalls.A1 = 0
+
+    a1.commitEdit()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    assert.equal(getterCalls.A1, 1, 'commit should compute the closed-cell display once')
+
+    a1.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
 test('children prop update must render as HTML, not textContent', async () => {
   const restoreDom = installDom()
 

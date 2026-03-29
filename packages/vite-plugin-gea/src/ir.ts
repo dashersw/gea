@@ -8,6 +8,8 @@ export interface ReactiveBinding {
   selector: string
   /** Unique id suffix for getElementById (this.id + '-' + bindingId). Empty for root. */
   bindingId?: string
+  /** When set, the user provided an explicit `id` attribute — use this for getElementById lookups instead of the framework-generated ID. */
+  userIdExpr?: t.Expression
   attributeName?: string
   elementPath: string[]
   isImportedState?: boolean
@@ -91,6 +93,7 @@ export interface ArrayMapBinding {
   /** Path for id injection; when set, containerBindingId is assigned and getElementById is used */
   containerElementPath?: string[]
   containerBindingId?: string
+  containerUserIdExpr?: t.Expression
   itemTemplate?: t.JSXElement | t.JSXFragment
   isImportedState?: boolean
   isKeyed?: boolean
@@ -124,6 +127,8 @@ export interface PropBinding {
   /** Path for id injection; when set, bindingId is assigned and getElementById is used */
   elementPath?: string[]
   bindingId?: string
+  /** When set, the user provided an explicit `id` attribute — use this for getElementById lookups instead of the framework-generated ID. */
+  userIdExpr?: t.Expression
   /** When true, the binding depends solely on local/imported state, not on props */
   stateOnly?: boolean
 }
@@ -165,6 +170,7 @@ export interface UnresolvedMapInfo {
   /** Path for id injection; when set, containerBindingId is assigned and getElementById is used */
   containerElementPath?: string[]
   containerBindingId?: string
+  containerUserIdExpr?: t.Expression
   dependencies?: ObserveDependency[]
   /** Statements from the map callback body that precede the JSX return (e.g. variable lookups, early-return guards) */
   callbackBodyStatements?: t.Statement[]

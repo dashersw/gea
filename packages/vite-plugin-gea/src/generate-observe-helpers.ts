@@ -112,7 +112,14 @@ function rewriteStateRefs(expr: t.Expression, stateRefs: Map<string, StateRefMet
   return (prog.body[0] as t.ExpressionStatement).expression
 }
 
-function buildElementLookup(binding: ReactiveBinding): t.Expression {
+function buildElementLookup(binding: ReactiveBinding, stateRefs?: Map<string, StateRefMeta>): t.Expression {
+  if (binding.userIdExpr) {
+    let idExpr = t.cloneNode(binding.userIdExpr, true) as t.Expression
+    if (stateRefs && !t.isStringLiteral(idExpr)) {
+      idExpr = rewriteStateRefs(idExpr, stateRefs)
+    }
+    return t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [idExpr])
+  }
   if (binding.bindingId === undefined) {
     return t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('$')), [
       t.stringLiteral(binding.selector),
@@ -134,7 +141,7 @@ export function buildSimpleUpdate(
   param: t.Expression,
   stateRefs: Map<string, StateRefMeta>,
 ): t.Statement {
-  const el = buildElementLookup(binding)
+  const el = buildElementLookup(binding, stateRefs)
   const target = buildTargetProp(binding)
   const valueExpr = binding.textTemplate ? buildTextTemplateExpression(binding, stateRefs) || param : param
 
@@ -149,7 +156,7 @@ export function buildSimpleUpdate(
     return js`if (${el}) { const __tn = ${jsExpr`${el}.childNodes[${idx}]`}; if (__tn && __tn.nodeValue !== ${valueExpr}) __tn.nodeValue = ${valueExpr}; }`
   }
 
-  if (target === 'textContent' && binding.bindingId && binding.bindingId !== '') {
+  if (target === 'textContent' && binding.bindingId && binding.bindingId !== '' && !binding.userIdExpr) {
     const suffix = t.stringLiteral(binding.bindingId)
     return js`${jsExpr`this.__updateText(${suffix}, ${valueExpr})`};`
   }

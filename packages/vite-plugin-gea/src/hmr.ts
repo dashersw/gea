@@ -10,7 +10,8 @@ const importMeta = () => t.metaProperty(t.identifier('import'), t.identifier('me
 const isRelative = (p: string) => p.startsWith('./') || p.startsWith('../')
 const normalize = (p: string) => p
 const invalidateCb = () => jsExpr`() => ${hot()}.invalidate()`
-const isComponentFile = (p: string) =>
+/** Fallback when the plugin does not pass `shouldProxyDep` (e.g. unit tests). */
+const legacyShouldProxyDep = (p: string) =>
   /\.(js|ts)$/.test(p) && !p.match(/(store|state|actions|utils|helpers?|config|constants?)/i)
 
 export function injectHMR(
@@ -20,6 +21,12 @@ export function injectHMR(
   componentImportsUsedAsTags: Set<string>,
   isDefaultExport: boolean,
   hmrImportSource = 'virtual:gea-hmr',
+  /**
+   * When set by the Vite plugin: resolve each relative import to disk and use
+   * `extends Store` vs `extends Component` (see `isStoreModule` / `isComponentModule`
+   * in `index.ts`) instead of filename heuristics.
+   */
+  shouldProxyDep?: (importSource: string) => boolean,
 ): boolean {
   if (
     ast.program.body.some((n) => {
@@ -37,7 +44,8 @@ export function injectHMR(
     ensureImport(ast, hmrImportSource, 'registerComponentInstance')
     ensureImport(ast, hmrImportSource, 'unregisterComponentInstance')
 
-    const proxiedComponentDeps = rewriteComponentDeps(ast, componentImports)
+    const proxyDep = shouldProxyDep ?? legacyShouldProxyDep
+    const proxiedComponentDeps = rewriteComponentDeps(ast, componentImports, proxyDep)
     if (proxiedComponentDeps.length > 0) {
       ensureImport(ast, hmrImportSource, 'createHotComponentProxy')
     }
@@ -57,7 +65,7 @@ export function injectHMR(
         handleComponentUpdate(${jsExpr`${importMeta()}.url`}, __updatedModule);
       });
     `)
-    hmrStmts.push(...createAccepts(componentImports))
+    hmrStmts.push(...createAccepts(componentImports, proxyDep))
 
     hmrStmts.push(js`const __origCreated = ${id(componentClassName)}.prototype.created;`)
     hmrStmts.push(
@@ -82,11 +90,15 @@ export function injectHMR(
 
 type MutableDep = { source: string; localName: string }
 
-function rewriteComponentDeps(ast: t.File, imports: string[]): MutableDep[] {
+function rewriteComponentDeps(
+  ast: t.File,
+  imports: string[],
+  proxyDep: (importSource: string) => boolean,
+): MutableDep[] {
   const deps: MutableDep[] = []
   for (const p of imports) {
     const np = normalize(p)
-    if (!isComponentFile(np)) continue
+    if (!proxyDep(np)) continue
 
     for (const node of ast.program.body) {
       if (!t.isImportDeclaration(node)) continue
@@ -118,13 +130,13 @@ function rewriteComponentDeps(ast: t.File, imports: string[]): MutableDep[] {
   return deps
 }
 
-function createAccepts(imports: string[]): t.Statement[] {
+function createAccepts(imports: string[], proxyDep: (importSource: string) => boolean): t.Statement[] {
   const stmts: t.Statement[] = []
 
   for (const p of imports) {
     if (!isRelative(p)) continue
     const np = normalize(p)
-    if (!isComponentFile(np)) {
+    if (!proxyDep(np)) {
       stmts.push(js`${hot()}.accept(${np}, ${invalidateCb()});`)
     }
   }

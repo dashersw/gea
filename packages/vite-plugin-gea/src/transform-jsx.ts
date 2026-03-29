@@ -485,6 +485,8 @@ export interface Ctx {
   isRoot?: boolean
   /** elementPath.join(' > ') -> bindingId for injecting id attributes on binding targets */
   elementPathToBindingId?: Map<string, string>
+  /** elementPath.join(' > ') -> user-provided id expression */
+  elementPathToUserIdExpr?: Map<string, t.Expression>
   /** True when processing JSX inside a .map() callback */
   inMapCallback?: boolean
   /** Collect function props to convert to handler registry (itemId + __itemHandlers_) */
@@ -906,10 +908,29 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
   )
   let html = `<${effectiveTag}`
   let hasBindingId = false
+  let userIdExprForEvents: t.Expression | undefined
+  let hasDynamicUserId = false
   if (ctx.isRoot) {
-    parts.push({ type: 'string', value: html + ' id="' })
-    parts.push({ type: 'expression', value: t.memberExpression(t.thisExpression(), t.identifier('id')) })
-    html = '"'
+    const rootPathKey = ''
+    const rootUserIdExpr = ctx.elementPathToUserIdExpr?.get(rootPathKey)
+    if (rootUserIdExpr) {
+      if (t.isStringLiteral(rootUserIdExpr)) {
+        html += ` id="${rootUserIdExpr.value}"`
+        userIdExprForEvents = rootUserIdExpr
+      } else {
+        parts.push({ type: 'string', value: html + ' id="' })
+        parts.push({ type: 'expression', value: t.cloneNode(rootUserIdExpr, true) })
+        html = '"'
+        hasDynamicUserId = true
+      }
+      parts.push({ type: 'string', value: html + ' data-gea-cid="' })
+      parts.push({ type: 'expression', value: t.memberExpression(t.thisExpression(), t.identifier('id')) })
+      html = '"'
+    } else {
+      parts.push({ type: 'string', value: html + ' id="' })
+      parts.push({ type: 'expression', value: t.memberExpression(t.thisExpression(), t.identifier('id')) })
+      html = '"'
+    }
     hasBindingId = true
   } else {
     const rawPathKey = elementPath.join(' > ')
@@ -918,16 +939,30 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
       ctx.elementPathToBindingId?.get(pathKey) ??
       (ctx.elementPathPrefix ? undefined : ctx.elementPathToBindingId?.get(rawPathKey))
     if (bindingId !== undefined && bindingId !== '') {
-      parts.push({ type: 'string', value: html + ' id="' })
-      parts.push({
-        type: 'expression',
-        value: t.binaryExpression(
-          '+',
-          t.memberExpression(t.thisExpression(), t.identifier('id')),
-          t.stringLiteral('-' + bindingId),
-        ),
-      })
-      html = '"'
+      const userIdExpr =
+        ctx.elementPathToUserIdExpr?.get(pathKey) ??
+        (ctx.elementPathPrefix ? undefined : ctx.elementPathToUserIdExpr?.get(rawPathKey))
+      if (userIdExpr) {
+        if (t.isStringLiteral(userIdExpr)) {
+          html += ` id="${userIdExpr.value}"`
+          userIdExprForEvents = userIdExpr
+        } else {
+          parts.push({ type: 'string', value: html + ' id="' })
+          parts.push({ type: 'expression', value: t.cloneNode(userIdExpr, true) })
+          html = '"'
+        }
+      } else {
+        parts.push({ type: 'string', value: html + ' id="' })
+        parts.push({
+          type: 'expression',
+          value: t.binaryExpression(
+            '+',
+            t.memberExpression(t.thisExpression(), t.identifier('id')),
+            t.stringLiteral('-' + bindingId),
+          ),
+        })
+        html = '"'
+      }
       hasBindingId = true
     }
   }
@@ -1005,16 +1040,20 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
         let selectorExpression: t.Expression | undefined
         let selector: string | undefined
 
-        if (!ctx.inMapCallback && ctx.isRoot) {
-          selectorExpression = buildEventSelectorExpression()
+        if (!ctx.inMapCallback && ctx.isRoot && !hasDynamicUserId) {
+          selectorExpression = userIdExprForEvents
+            ? buildUserIdSelectorExpression(userIdExprForEvents)
+            : buildEventSelectorExpression()
         } else {
           const rawPathKey2 = elementPath.join(' > ')
           const pathKey2 = ctx.elementPathPrefix ? ctx.elementPathPrefix + ' > ' + rawPathKey2 : rawPathKey2
           const bindingId =
             ctx.elementPathToBindingId?.get(pathKey2) ??
             (ctx.elementPathPrefix ? undefined : ctx.elementPathToBindingId?.get(rawPathKey2))
-          if (!ctx.inMapCallback && bindingId !== undefined) {
-            selectorExpression = buildEventSelectorExpression(bindingId)
+          if (!ctx.inMapCallback && bindingId !== undefined && !hasDynamicUserId) {
+            selectorExpression = userIdExprForEvents
+              ? buildUserIdSelectorExpression(userIdExprForEvents)
+              : buildEventSelectorExpression(bindingId)
           } else if (!ctx.inMapCallback && !ctx.inChildrenProp && !explicitIdAttr) {
             if (!generatedEventSuffix) {
               generatedEventSuffix = `ev${ctx.eventIdCounter?.value ?? 0}`
@@ -1031,6 +1070,16 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
               html = '"'
             }
             selectorExpression = buildEventSelectorExpression(generatedEventSuffix)
+          } else if (explicitIdAttr) {
+            const idExpr = getExplicitIdValueExpression(explicitIdAttr as t.JSXAttribute)
+            if (!idExpr) {
+              const err = new Error(
+                `[gea] Event delegation requires id="..." or id={expr} when an id attribute is present on this element.`,
+              )
+              ;(err as any).__geaCompileError = true
+              throw err
+            }
+            selectorExpression = buildUserIdSelectorExpression(idExpr)
           } else {
             if (!generatedEventToken) {
               generatedEventToken = `ev${ctx.eventIdCounter?.value ?? 0}`
@@ -1322,6 +1371,25 @@ function appendString(parts: TemplatePart[], value: string) {
   } else {
     parts.push({ type: 'string', value })
   }
+}
+
+function buildUserIdSelectorExpression(userIdExpr: t.Expression): t.Expression {
+  if (t.isStringLiteral(userIdExpr)) {
+    return t.stringLiteral(`#${userIdExpr.value}`)
+  }
+  return t.templateLiteral(
+    [t.templateElement({ raw: '#', cooked: '#' }, false), t.templateElement({ raw: '', cooked: '' }, true)],
+    [t.cloneNode(userIdExpr, true)],
+  )
+}
+
+/** User-authored `id={...}` / `id="..."` — use #id delegation only; never emit data-gea-event for this element. */
+function getExplicitIdValueExpression(attr: t.JSXAttribute | undefined): t.Expression | undefined {
+  if (!attr || !t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name) || attr.name.name !== 'id') return undefined
+  const v = attr.value
+  if (t.isStringLiteral(v)) return t.stringLiteral(v.value)
+  if (t.isJSXExpressionContainer(v) && !t.isJSXEmptyExpression(v.expression)) return v.expression as t.Expression
+  return undefined
 }
 
 function buildEventSelectorExpression(suffix?: string): t.Expression {

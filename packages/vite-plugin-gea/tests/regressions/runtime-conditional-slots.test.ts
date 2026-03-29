@@ -724,3 +724,101 @@ test('conditional slot updates attributes from non-condition props (alt attribut
     restoreDom()
   }
 })
+
+test('ecommerce sibling pattern: single action flips cart drawer off and checkout dialog on', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-cart-checkout-sibling`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class CartStore extends Store {
+      cartOpen = false
+      checkoutOpen = false
+      openCheckout() {
+        this.cartOpen = false
+        this.checkoutOpen = true
+      }
+    }
+    const store = new CartStore()
+
+    const CartDrawer = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class CartDrawer extends Component {
+          template() {
+            return <div class="cart-drawer">Cart</div>
+          }
+        }
+      `,
+      '/virtual/CartDrawer.jsx',
+      'CartDrawer',
+      { Component },
+    )
+
+    const CheckoutDialog = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class CheckoutDialog extends Component {
+          template() {
+            return <div class="modal-box checkout">Checkout</div>
+          }
+        }
+      `,
+      '/virtual/CheckoutDialog.jsx',
+      'CheckoutDialog',
+      { Component },
+    )
+
+    const App = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import store from './store'
+        import CartDrawer from './CartDrawer.jsx'
+        import CheckoutDialog from './CheckoutDialog.jsx'
+
+        export default class App extends Component {
+          template() {
+            return (
+              <div class="store-layout">
+                {store.cartOpen && <CartDrawer />}
+                {store.checkoutOpen && <CheckoutDialog />}
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/CartCheckoutApp.jsx',
+      'App',
+      { Component, store, CartDrawer, CheckoutDialog },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const app = new App()
+    app.render(root)
+    await flushMicrotasks()
+
+    assert.equal(root.querySelector('.cart-drawer'), null)
+    assert.equal(root.querySelector('.modal-box'), null)
+
+    store.cartOpen = true
+    await flushMicrotasks()
+    assert.ok(root.querySelector('.cart-drawer'), 'cart should mount when cartOpen')
+    assert.equal(root.querySelector('.modal-box'), null)
+
+    store.openCheckout()
+    await flushMicrotasks()
+
+    assert.equal(root.querySelector('.cart-drawer'), null, 'cart should unmount when opening checkout')
+    assert.ok(root.querySelector('.modal-box'), 'checkout dialog should mount after openCheckout')
+
+    app.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})

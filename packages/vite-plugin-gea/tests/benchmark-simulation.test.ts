@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { after, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 import { JSDOM } from 'jsdom'
 
-import { geaPlugin } from '../src/index'
+import { createBenchmarkHistoryEntry } from '../../../scripts/benchmark-history.mjs'
+import { compileJsxComponent, loadRuntimeModules } from './helpers/compile'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -56,32 +57,6 @@ async function flush() {
 
 async function cleanupDelay() {
   await new Promise((resolve) => setTimeout(resolve, 50))
-}
-
-async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-  const result = await transform?.call({} as never, source, id)
-  assert.ok(result)
-
-  const code = typeof result === 'string' ? result : result.code
-  const compiledSource = `${code
-    .replace(/^import .*;$/gm, '')
-    .replaceAll('import.meta.hot', 'undefined')
-    .replaceAll('import.meta.url', '""')
-    .replace(/export default class\s+/, 'class ')}
-return ${className};`
-
-  return new Function(...Object.keys(bindings), compiledSource)(...Object.values(bindings))
-}
-
-async function loadRuntimeModules(seed: string) {
-  const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager')
-  ComponentManager.instance = undefined
-  return Promise.all([
-    import(`../../gea/src/lib/base/component.tsx?${seed}`),
-    import(`../../gea/src/lib/store.ts?${seed}`),
-  ])
 }
 
 function buildRows(count: number, startId = 1) {
@@ -203,6 +178,89 @@ class VanillaBench {
   }
 }
 
+class VanillaClassToggleBench {
+  tbody: HTMLElement
+  rows: HTMLElement[] = []
+  activeRow: HTMLElement | null = null
+
+  constructor(tbody: HTMLElement) {
+    this.tbody = tbody
+  }
+
+  populate(items: string[]) {
+    this.tbody.textContent = ''
+    this.rows = []
+    this.activeRow = null
+    const fragment = document.createDocumentFragment()
+    for (let i = 0; i < items.length; i++) {
+      const row = document.createElement('div')
+      row.className = 'card'
+      row.textContent = items[i]
+      this.rows.push(row)
+      fragment.appendChild(row)
+    }
+    this.tbody.appendChild(fragment)
+  }
+
+  setActive(index: number) {
+    if (this.activeRow) this.activeRow.className = 'card'
+    this.activeRow = this.rows[index] || null
+    if (this.activeRow) this.activeRow.className = 'card active'
+  }
+}
+
+class VanillaDerivedFilterBench {
+  tbody: HTMLElement
+  data: Array<{ id: number; label: string; active: boolean }> = []
+  rows = new Map<number, HTMLElement>()
+
+  constructor(tbody: HTMLElement) {
+    this.tbody = tbody
+  }
+
+  populate(items: Array<{ id: number; label: string; active: boolean }>) {
+    this.data = items.map((item) => ({ ...item }))
+    this.rows.clear()
+    this.tbody.textContent = ''
+    const fragment = document.createDocumentFragment()
+    for (const item of this.data) {
+      if (!item.active) continue
+      const row = document.createElement('tr')
+      row.innerHTML = `<td>${item.label}</td>`
+      this.rows.set(item.id, row)
+      fragment.appendChild(row)
+    }
+    this.tbody.appendChild(fragment)
+  }
+
+  setActive(index: number, active: boolean) {
+    const item = this.data[index]
+    item.active = active
+    const existing = this.rows.get(item.id) || null
+
+    if (active) {
+      if (existing) return
+      const row = document.createElement('tr')
+      row.innerHTML = `<td>${item.label}</td>`
+      this.rows.set(item.id, row)
+
+      let nextVisible: HTMLElement | null = null
+      for (let i = index + 1; i < this.data.length; i++) {
+        if (!this.data[i].active) continue
+        nextVisible = this.rows.get(this.data[i].id) || null
+        if (nextVisible) break
+      }
+      this.tbody.insertBefore(row, nextVisible)
+      return
+    }
+
+    if (existing) {
+      existing.remove()
+      this.rows.delete(item.id)
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Gea setup
 // ---------------------------------------------------------------------------
@@ -238,12 +296,96 @@ async function setupGea(seed: string) {
   return { store, view, root }
 }
 
+async function setupUnresolvedPropMapGea(seed: string, items: string[]) {
+  const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+  const store = new Store({ activeId: null as string | null })
+
+  const fixturePath = join(__dirname, 'fixtures/benchmark-unresolved-props.jsx')
+  const Cls = await compileJsxComponent(
+    `import { Component } from '@geajs/core'
+     import store from './benchmark-store.ts'
+     export default class T extends Component {
+       template({ items }) {
+         return (
+           <div class="body">
+             {items.map(item => (
+               <div key={item} class={\`card \${store.activeId === item ? 'active' : ''}\`}>
+                 {item}
+               </div>
+             ))}
+           </div>
+         )
+       }
+     }`,
+    fixturePath,
+    'T',
+    { Component, store },
+  )
+
+  const root = document.createElement('div')
+  document.body.appendChild(root)
+  const view = new Cls({ items })
+  view.render(root)
+  return { store, view, root }
+}
+
+function buildFilterToggleRows(count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: i + 1,
+    label: `row ${i + 1}`,
+    active: i % 2 === 0,
+  }))
+}
+
+async function setupHelperDerivedFilterMapGea(
+  seed: string,
+  items: Array<{ id: number; label: string; active: boolean }>,
+) {
+  const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+  const store = new Store({ items: items.map((item) => ({ ...item })) })
+
+  const fixturePath = join(__dirname, 'fixtures/benchmark-derived-filter.jsx')
+  const Cls = await compileJsxComponent(
+    `import { Component } from '@geajs/core'
+     import store from './benchmark-store.ts'
+     export default class T extends Component {
+       getDisplayData() {
+         return store.items.filter(item => item.active)
+       }
+       template() {
+         const displayData = this.getDisplayData()
+         return (
+           <table><tbody>
+             {displayData.map(item => (
+               <tr key={item.id}><td>{item.label}</td></tr>
+             ))}
+           </tbody></table>
+         )
+       }
+     }`,
+    fixturePath,
+    'T',
+    { Component, store },
+  )
+
+  const root = document.createElement('div')
+  document.body.appendChild(root)
+  const view = new Cls()
+  view.render(root)
+  await flush()
+  return { store, view, root }
+}
+
 // ---------------------------------------------------------------------------
 // Measurement
 // ---------------------------------------------------------------------------
 
 const WARMUP = 3
 const RUNS = 7
+
+function buildStringItems(count: number, startId = 1) {
+  return Array.from({ length: count }, (_, i) => String(startId + i))
+}
 
 function median(arr: number[]) {
   const s = [...arr].sort((a, b) => a - b)
@@ -257,13 +399,35 @@ interface SimResult {
   slowdown: number
 }
 
+const recordedResults: Record<string, SimResult> = {}
+
 function report(name: string, r: SimResult) {
+  recordedResults[name] = r
   const color = r.slowdown <= 1.5 ? '🟢' : r.slowdown <= 3 ? '🟡' : '🔴'
   console.log(
     `    ${color} ${name.padEnd(24)} vanilla ${r.vanilla.toFixed(2).padStart(8)}ms   ` +
       `gea ${r.gea.toFixed(2).padStart(8)}ms   slowdown ${r.slowdown.toFixed(2)}x`,
   )
 }
+
+after(() => {
+  if (process.env.BENCHMARK_HISTORY_WRITE !== '1') return
+  if (Object.keys(recordedResults).length === 0) return
+
+  const repoRoot = join(__dirname, '../../..')
+  createBenchmarkHistoryEntry({
+    suite: 'benchmark-simulation',
+    source: 'simulation',
+    changeSummary: process.env.BENCHMARK_CHANGE_SUMMARY || 'manual benchmark simulation run',
+    config: {
+      warmup: WARMUP,
+      runs: RUNS,
+    },
+    results: recordedResults,
+    historyPath: join(repoRoot, 'benchmark-history', 'benchmark-simulation.jsonl'),
+    latestPath: join(repoRoot, 'benchmark-history', 'benchmark-simulation.latest.json'),
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Benchmark simulations
@@ -458,7 +622,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
         const e0 = performance.now()
         store.selected = selectId
-        await flush()
+        ;(store as any).flushSync()
         const e1 = performance.now()
 
         if (run >= WARMUP) {
@@ -469,6 +633,399 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
       const r: SimResult = { vanilla: median(vTimes), gea: median(eTimes), slowdown: median(eTimes) / median(vTimes) }
       report('select row', r)
+    } finally {
+      await cleanupDelay()
+      restoreDom()
+    }
+  })
+
+  test('04b comprehensive call profile — all benchmark ops', async () => {
+    const restoreDom = installDom()
+    try {
+      const seed = `sim-callcount-all-${Date.now()}`
+      const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+      const store = new Store({ data: [] as Array<{ id: number; label: string }>, selected: 0 })
+      const fixturePath = join(__dirname, 'fixtures/benchmark-select-row.jsx')
+
+      const Cls = await compileJsxComponent(
+        `import { Component } from '@geajs/core'
+         import store from './benchmark-store.ts'
+         export default class T extends Component {
+           template() {
+             return (
+               <table><tbody id="tbody">
+                 {store.data.map(item => (
+                   <tr key={item.id} class={store.selected === item.id ? 'danger' : ''}>
+                     <td>{item.id}</td><td>{item.label}</td>
+                   </tr>
+                 ))}
+               </tbody></table>
+             )
+           }
+         }`,
+        fixturePath,
+        'T',
+        { Component, store },
+      )
+
+      const root = document.createElement('div')
+      document.body.appendChild(root)
+      const view = new Cls()
+      view.render(root)
+      store.data = buildRows(1000)
+      await flush()
+      store.selected = 1
+      await flush()
+
+      const rawStore = (store as any).__raw
+      const storeProto = Object.getPrototypeOf(rawStore)
+
+      const ALL_STORE_METHODS = [
+        '_flushChanges',
+        '_emitChanges',
+        '_queueChange',
+        '_scheduleFlush',
+        '_trackPendingChange',
+        '_deliverTopLevelBatch',
+        '_deliverKnownArrayItemPropBatch',
+        '_deliverArrayItemPropBatch',
+        '_normalizeBatch',
+        '_collectMatchingObserverNodes',
+        '_collectMatchingObserverNodesFromNode',
+        '_addDescendantsForObjectReplacement',
+        '_notifyHandlers',
+        '_notifyHandlersWithValue',
+        '_getDirectTopLevelObservedValue',
+        '_getTopLevelObservedValue',
+        '_getObserverNode',
+        '_collectDescendantObserverNodes',
+        '_clearArrayIndexCache',
+        '_createProxy',
+        '_queueDirectArrayItemPrimitiveChange',
+        '_interceptArrayMethod',
+      ]
+
+      const calls: Record<string, number> = {}
+      const originals: Record<string, Function> = {}
+
+      for (const name of ALL_STORE_METHODS) {
+        const orig = rawStore[name] ?? storeProto[name]
+        if (typeof orig === 'function') {
+          originals[name] = orig
+          rawStore[name] = function (this: any, ...args: any[]) {
+            calls[`store.${name}`] = (calls[`store.${name}`] || 0) + 1
+            return orig.apply(this, args)
+          }
+        }
+      }
+
+      let proxyGetCalls = 0,
+        proxySetCalls = 0
+      const handler = (Store as any)._browserRootProxyHandler
+      const origHandlerGet = handler.get
+      const origHandlerSet = handler.set
+      handler.get = function (...args: any[]) {
+        proxyGetCalls++
+        return origHandlerGet.apply(this, args)
+      }
+      handler.set = function (...args: any[]) {
+        proxySetCalls++
+        return origHandlerSet.apply(this, args)
+      }
+
+      let getByIdCalls = 0
+      const origGetById = document.getElementById.bind(document)
+      document.getElementById = (id: string) => {
+        getByIdCalls++
+        return origGetById(id)
+      }
+
+      const elProto = (window as any).Element.prototype
+      const nodeProto = (window as any).Node.prototype
+
+      let cnGet = 0,
+        cnSet = 0
+      const cnDesc = Object.getOwnPropertyDescriptor(elProto, 'className')!
+      Object.defineProperty(elProto, 'className', {
+        get() {
+          cnGet++
+          return cnDesc.get!.call(this)
+        },
+        set(v: string) {
+          cnSet++
+          cnDesc.set!.call(this, v)
+        },
+        configurable: true,
+      })
+
+      let tcSet = 0
+      const tcDesc =
+        Object.getOwnPropertyDescriptor(nodeProto, 'textContent') ||
+        Object.getOwnPropertyDescriptor(elProto, 'textContent')
+      if (tcDesc) {
+        Object.defineProperty(nodeProto, 'textContent', {
+          get() {
+            return tcDesc.get!.call(this)
+          },
+          set(v: string) {
+            tcSet++
+            tcDesc.set!.call(this, v)
+          },
+          configurable: true,
+        })
+      }
+
+      let insertBeforeCalls = 0
+      const origInsertBefore = nodeProto.insertBefore
+      nodeProto.insertBefore = function (...args: any[]) {
+        insertBeforeCalls++
+        return origInsertBefore.apply(this, args)
+      }
+
+      let childrenGet = 0
+      const childrenDesc =
+        Object.getOwnPropertyDescriptor((window as any).HTMLElement.prototype, 'children') ||
+        Object.getOwnPropertyDescriptor(elProto, 'children')
+      if (childrenDesc) {
+        Object.defineProperty(elProto, 'children', {
+          get() {
+            childrenGet++
+            return childrenDesc.get!.call(this)
+          },
+          configurable: true,
+        })
+      }
+
+      let appendChildCalls = 0
+      const origAppendChild = nodeProto.appendChild
+      nodeProto.appendChild = function (...args: any[]) {
+        appendChildCalls++
+        return origAppendChild.apply(this, args)
+      }
+
+      let removeCalls = 0
+      const origRemove = elProto.remove
+      if (origRemove) {
+        elProto.remove = function () {
+          removeCalls++
+          return origRemove.call(this)
+        }
+      }
+
+      let cloneNodeCalls = 0
+      const origCloneNode = nodeProto.cloneNode
+      nodeProto.cloneNode = function (...args: any[]) {
+        cloneNodeCalls++
+        return origCloneNode.apply(this, args)
+      }
+
+      let idSet = 0
+      const idDesc = Object.getOwnPropertyDescriptor(elProto, 'id')
+      if (idDesc && idDesc.set) {
+        Object.defineProperty(elProto, 'id', {
+          get() {
+            return idDesc.get!.call(this)
+          },
+          set(v: string) {
+            idSet++
+            idDesc.set!.call(this, v)
+          },
+          configurable: true,
+        })
+      }
+
+      let innerHTMLSet = 0
+      const innerHTMLDesc = Object.getOwnPropertyDescriptor(elProto, 'innerHTML')
+      if (innerHTMLDesc && innerHTMLDesc.set) {
+        Object.defineProperty(elProto, 'innerHTML', {
+          get() {
+            return innerHTMLDesc.get!.call(this)
+          },
+          set(v: string) {
+            innerHTMLSet++
+            innerHTMLDesc.set!.call(this, v)
+          },
+          configurable: true,
+        })
+      }
+
+      let nodeValueSet = 0
+      const nvDesc = Object.getOwnPropertyDescriptor(nodeProto, 'nodeValue')
+      if (nvDesc && nvDesc.set) {
+        Object.defineProperty(nodeProto, 'nodeValue', {
+          get() {
+            return nvDesc.get!.call(this)
+          },
+          set(v: string) {
+            nodeValueSet++
+            nvDesc.set!.call(this, v)
+          },
+          configurable: true,
+        })
+      }
+
+      interface ProfileResult {
+        proxyGet: number
+        proxySet: number
+        storeMethods: number
+        storeDetail: [string, number][]
+        dom: number
+        domDetail: Record<string, number>
+        total: number
+      }
+
+      const results: Record<string, ProfileResult> = {}
+
+      function reset() {
+        for (const k of Object.keys(calls)) delete calls[k]
+        proxyGetCalls = proxySetCalls = 0
+        getByIdCalls = cnGet = cnSet = tcSet = 0
+        insertBeforeCalls = childrenGet = 0
+        appendChildCalls = removeCalls = cloneNodeCalls = 0
+        idSet = innerHTMLSet = nodeValueSet = 0
+      }
+
+      function capture(label: string): ProfileResult {
+        const storeDetail = Object.entries(calls)
+          .filter(([, v]) => v > 0)
+          .sort((a, b) => b[1] - a[1])
+        const storeTotal = storeDetail.reduce((s, [, v]) => s + v, 0)
+        const domDetail: Record<string, number> = {}
+        if (getByIdCalls) domDetail.getElementById = getByIdCalls
+        if (cnGet) domDetail['className.get'] = cnGet
+        if (cnSet) domDetail['className.set'] = cnSet
+        if (tcSet) domDetail['textContent.set'] = tcSet
+        if (nodeValueSet) domDetail['nodeValue.set'] = nodeValueSet
+        if (insertBeforeCalls) domDetail.insertBefore = insertBeforeCalls
+        if (childrenGet) domDetail['children.get'] = childrenGet
+        if (appendChildCalls) domDetail.appendChild = appendChildCalls
+        if (removeCalls) domDetail['remove()'] = removeCalls
+        if (cloneNodeCalls) domDetail.cloneNode = cloneNodeCalls
+        if (idSet) domDetail['id.set'] = idSet
+        if (innerHTMLSet) domDetail['innerHTML.set'] = innerHTMLSet
+        const domTotal = Object.values(domDetail).reduce((s, v) => s + v, 0)
+        const total = proxyGetCalls + proxySetCalls + storeTotal + domTotal
+        const r: ProfileResult = {
+          proxyGet: proxyGetCalls,
+          proxySet: proxySetCalls,
+          storeMethods: storeTotal,
+          storeDetail,
+          dom: domTotal,
+          domDetail,
+          total,
+        }
+        results[label] = r
+        return r
+      }
+
+      function reportAll() {
+        console.log('\n╔═══════════════════════╤════════╤════════╤═════════╤════════╤════════╗')
+        console.log('║ Operation             │ proxy  │ proxy  │ store   │  DOM   │ TOTAL  ║')
+        console.log('║                       │  .get  │  .set  │ methods │        │        ║')
+        console.log('╠═══════════════════════╪════════╪════════╪═════════╪════════╪════════╣')
+        for (const [label, r] of Object.entries(results)) {
+          console.log(
+            `║ ${label.padEnd(21)} │ ${String(r.proxyGet).padStart(6)} │ ${String(r.proxySet).padStart(6)} │ ${String(r.storeMethods).padStart(7)} │ ${String(r.dom).padStart(6)} │ ${String(r.total).padStart(6)} ║`,
+          )
+        }
+        console.log('╚═══════════════════════╧════════╧════════╧═════════╧════════╧════════╝')
+        for (const [label, r] of Object.entries(results)) {
+          console.log(`\n--- ${label} ---`)
+          if (r.storeDetail.length) {
+            console.log('  Store:', r.storeDetail.map(([n, c]) => `${n.replace('store.', '')}:${c}`).join(', '))
+          }
+          if (Object.keys(r.domDetail).length) {
+            console.log(
+              '  DOM:',
+              Object.entries(r.domDetail)
+                .map(([n, c]) => `${n}:${c}`)
+                .join(', '),
+            )
+          }
+        }
+      }
+
+      // === 1. SELECT ROW ===
+      reset()
+      store.selected = 5
+      await flush()
+      capture('SELECT')
+
+      // === 2. SWAP ROWS ===
+      reset()
+      const d = store.data
+      const tmp = d[1]
+      d[1] = d[998]
+      d[998] = tmp
+      await flush()
+      capture('SWAP')
+
+      // === 3. PARTIAL UPDATE (every 10th of 1000) ===
+      reset()
+      for (let i = 0; i < store.data.length; i += 10) {
+        store.data[i].label += ' !!!'
+      }
+      await flush()
+      capture('PARTIAL UPDATE')
+
+      // === 4. REMOVE ROW ===
+      reset()
+      store.data.splice(500, 1)
+      await flush()
+      capture('REMOVE')
+
+      // === 5. CLEAR ===
+      store.data = buildRows(1000)
+      await flush()
+      store.selected = 1
+      await flush()
+      reset()
+      store.data = []
+      await flush()
+      capture('CLEAR')
+
+      // === 6. CREATE 1000 (from empty) ===
+      reset()
+      store.data = buildRows(1000)
+      await flush()
+      capture('CREATE 1000')
+
+      // === 7. REPLACE 1000 ===
+      reset()
+      store.data = buildRows(1000, 2000)
+      await flush()
+      capture('REPLACE 1000')
+
+      // === 8. APPEND 1000 ===
+      store.data = buildRows(1000)
+      await flush()
+      reset()
+      store.data.push(...buildRows(1000, 2000))
+      await flush()
+      capture('APPEND 1000')
+
+      reportAll()
+
+      // Restore all interceptors
+      for (const [name, orig] of Object.entries(originals)) rawStore[name] = orig
+      handler.get = origHandlerGet
+      handler.set = origHandlerSet
+      document.getElementById = origGetById
+      Object.defineProperty(elProto, 'className', cnDesc)
+      if (tcDesc) Object.defineProperty(nodeProto, 'textContent', tcDesc)
+      nodeProto.insertBefore = origInsertBefore
+      if (childrenDesc) {
+        const target = Object.getOwnPropertyDescriptor((window as any).HTMLElement.prototype, 'children')
+          ? (window as any).HTMLElement.prototype
+          : elProto
+        Object.defineProperty(target, 'children', childrenDesc)
+      }
+      nodeProto.appendChild = origAppendChild
+      if (origRemove) elProto.remove = origRemove
+      nodeProto.cloneNode = origCloneNode
+      if (idDesc) Object.defineProperty(elProto, 'id', idDesc)
+      if (innerHTMLDesc) Object.defineProperty(elProto, 'innerHTML', innerHTMLDesc)
+      if (nvDesc) Object.defineProperty(nodeProto, 'nodeValue', nvDesc)
     } finally {
       await cleanupDelay()
       restoreDom()
@@ -629,6 +1186,88 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
       const r: SimResult = { vanilla: median(vTimes), gea: median(eTimes), slowdown: median(eTimes) / median(vTimes) }
       report('clear rows', r)
+    } finally {
+      await cleanupDelay()
+      restoreDom()
+    }
+  })
+
+  test('10 unresolved prop map active-class toggle', async () => {
+    const restoreDom = installDom()
+    try {
+      const vanilla = new VanillaClassToggleBench(document.createElement('div'))
+      document.body.appendChild(vanilla.tbody)
+      const items = buildStringItems(1000)
+      const { store, view } = await setupUnresolvedPropMapGea(`sim-unresolved-props-${Date.now()}`, items)
+      vanilla.populate(items)
+
+      await flush()
+
+      const vTimes: number[] = []
+      const eTimes: number[] = []
+
+      for (let run = 0; run < WARMUP + RUNS; run++) {
+        const activeIndex = run % items.length
+
+        const v0 = performance.now()
+        vanilla.setActive(activeIndex)
+        const v1 = performance.now()
+
+        const e0 = performance.now()
+        store.activeId = items[activeIndex]
+        ;(store as any).flushSync()
+        const e1 = performance.now()
+
+        if (run >= WARMUP) {
+          vTimes.push(v1 - v0)
+          eTimes.push(e1 - e0)
+        }
+      }
+
+      const r: SimResult = { vanilla: median(vTimes), gea: median(eTimes), slowdown: median(eTimes) / median(vTimes) }
+      report('unresolved prop toggle', r)
+      assert.equal(view.el.querySelectorAll('.body > .card').length, 1000)
+      assert.match((view.el.querySelector('.body > .card.active') as HTMLElement | null)?.textContent || '', /^\d+$/)
+    } finally {
+      await cleanupDelay()
+      restoreDom()
+    }
+  })
+
+  test('11 helper-derived filter toggle', async () => {
+    const restoreDom = installDom()
+    try {
+      const rows = buildFilterToggleRows(1000)
+      const vanilla = new VanillaDerivedFilterBench(document.createElement('tbody'))
+      document.body.appendChild(vanilla.tbody)
+      const { store, root } = await setupHelperDerivedFilterMapGea(`sim-derived-filter-${Date.now()}`, rows)
+      vanilla.populate(rows)
+
+      const vTimes: number[] = []
+      const eTimes: number[] = []
+
+      for (let run = 0; run < WARMUP + RUNS; run++) {
+        const v0 = performance.now()
+        vanilla.setActive(1, true)
+        const v1 = performance.now()
+        vanilla.setActive(1, false)
+
+        const e0 = performance.now()
+        store.items[1].active = true
+        await flush()
+        const e1 = performance.now()
+        store.items[1].active = false
+        await flush()
+
+        if (run >= WARMUP) {
+          vTimes.push(v1 - v0)
+          eTimes.push(e1 - e0)
+        }
+      }
+
+      const r: SimResult = { vanilla: median(vTimes), gea: median(eTimes), slowdown: median(eTimes) / median(vTimes) }
+      report('helper-derived filter', r)
+      assert.equal(root.querySelectorAll('tbody > tr').length, 500)
     } finally {
       await cleanupDelay()
       restoreDom()

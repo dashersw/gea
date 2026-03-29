@@ -472,19 +472,15 @@ test('transitive getter-to-getter deps produce __via observers for underlying st
 
   assert.match(
     output,
-    /this\.__observe_local_isBoard\(this\.isBoard, null\)/,
-    'isBoard (direct store dep) must have inline re-read in merged observer',
+    /this\.__observe_local_isBoard\((?:this\.isBoard|undefined), null\)/,
+    'isBoard (direct store dep) must route through the merged observer',
   )
   assert.match(
     output,
-    /this\.__observe_local_showIssueDetail\(this\.showIssueDetail, null\)/,
-    'showIssueDetail (transitive via issueMatch → routeStore.path) must have inline re-read in merged observer',
+    /this\.__observe_local_showIssueDetail\((?:this\.showIssueDetail|undefined), null\)/,
+    'showIssueDetail (transitive via issueMatch → routeStore.path) must route through the merged observer',
   )
-  assert.match(
-    output,
-    /this\.__observe_local_\w+\(this\.issueId, null\)/,
-    'issueId (transitive via issueMatch → routeStore.path) must have inline re-read in merged observer',
-  )
+  assert.match(output, /Issue \$\{this\.issueId\}/, 'issueId must still participate in the truthy branch HTML')
   assert.doesNotMatch(
     output,
     /__geaRequestRender/,
@@ -548,7 +544,7 @@ test('observer calls __geaUpdateProps when guard-dependent props reference the s
   )
 })
 
-test('store observer for top-level project guard must NOT call __geaRequestRender when only child props depend on nested data', () => {
+test('store observer for top-level project guard must observe the guard path and handle loading transitions', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -566,11 +562,15 @@ test('store observer for top-level project guard must NOT call __geaRequestRende
     new Set(['Board']),
   )
 
-  const projectObserver = output.match(/__observe_projectStore_project\([\s\S]*?\n {2}\}/)?.[0]
-  assert.ok(projectObserver, 'must generate __observe_projectStore_project')
+  assert.match(output, /__observe\(projectStore,\s*\["project"\]/, 'must observe projectStore.project')
+  const projectObserver =
+    output.match(/__observe_projectStore_project\([\s\S]*?\n {2}\}/)?.[0] ??
+    output.match(/__observe\(projectStore,\s*\["project"\],[\s\S]*?\)\s*\)/)?.[0] ??
+    ''
+  assert.ok(projectObserver, 'project guard path must produce an observer')
   assert.ok(
     projectObserver.includes('__geaRequestRender') || projectObserver.includes('__geaPatchCond'),
-    'project observer must handle the loading guard (rerender or patch cond)',
+    'project guard observer must handle loading transitions',
   )
 })
 

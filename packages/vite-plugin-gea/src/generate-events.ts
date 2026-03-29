@@ -7,6 +7,7 @@ import {
   buildOptionalMemberChain,
   cacheThisIdInMethod,
   extractHandlerBody,
+  replacePropRefsInExpression,
   replacePropRefsInStatements,
 } from './utils.ts'
 import { ITEM_IS_KEY } from './analyze-helpers.ts'
@@ -114,10 +115,11 @@ function ensureMapItemHelper(
             ),
           )
   const method = jsMethod`${id(helperName)}(e) {
-    const __el = e.target.closest('[data-gea-item-id]');
+    var __el = e.target;
+    while (__el && __el.__geaKey == null && (!__el.getAttribute || !__el.getAttribute('data-gea-item-id'))) __el = __el.parentElement;
     if (!__el) return null;
     if (__el.__geaItem) return __el.__geaItem;
-    const __itemId = __el.getAttribute('data-gea-item-id');
+    const __itemId = __el.__geaKey ?? (__el.getAttribute && __el.getAttribute('data-gea-item-id'));
     if (__itemId == null) return null;
     const __items = ${itemsExpr};
     const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
@@ -206,9 +208,15 @@ function appendEventsGetterHandlers(
       handlerRef = t.memberExpression(t.thisExpression(), t.identifier(methodName))
     }
 
-    const selectorExpr =
-      handler.selectorExpression ||
-      (handler.selector ? t.stringLiteral(handler.selector) : t.stringLiteral(`.__missing_selector_${index}`))
+    const selectorExpr = handler.selectorExpression
+      ? replacePropRefsInExpression(
+          t.cloneNode(handler.selectorExpression, true),
+          paramContext.propNames,
+          paramContext.propsObjectName,
+        )
+      : handler.selector
+        ? t.stringLiteral(handler.selector)
+        : t.stringLiteral(`.__missing_selector_${index}`)
 
     let eventTypeProp = eventsObject.properties.find(
       (prop) =>
@@ -478,7 +486,8 @@ function buildMapEventBody(handler: EventHandler, paramContext: TemplateParamCon
   if (ctx.indexVariable && referencesIdentifier(handlerBody, ctx.indexVariable)) {
     preamble.push(
       ...jsBlockBody`
-        const __el = e.target.closest('[data-gea-item-id]');
+        var __el = e.target;
+        while (__el && __el.__geaKey == null && (!__el.getAttribute || !__el.getAttribute('data-gea-item-id'))) __el = __el.parentElement;
         const ${id(ctx.indexVariable)} = __el ? Array.prototype.indexOf.call(__el.parentNode.children, __el) : -1;
       `,
     )

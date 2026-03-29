@@ -463,7 +463,7 @@ test('unkeyed mapped tables do not emit key attributes', async () => {
 
     const row = view.el.querySelector('tbody > tr')
     assert.equal(row?.hasAttribute('key'), false)
-    assert.equal(row?.hasAttribute('data-gea-item-id'), true)
+    assert.equal((row as any)?.__geaKey != null || row?.hasAttribute('data-gea-item-id'), true)
 
     view.dispose()
     await flushMicrotasks()
@@ -688,19 +688,21 @@ for (const keyed of [true]) {
 
       const selectLink = view.el.querySelector('tbody > tr:nth-of-type(5) .select-link') as HTMLElement
       const selectedRowBefore = view.el.querySelector('tbody > tr:nth-of-type(5)')
-      assert.equal(selectedRowBefore?.getAttribute('data-gea-item-id'), '5')
+      assert.equal((selectedRowBefore as any)?.__geaKey ?? selectedRowBefore?.getAttribute('data-gea-item-id'), '5')
       selectLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
       await flushMicrotasks()
 
       assert.equal(view.el.querySelector('tbody > tr:nth-of-type(5)')?.className, 'danger')
-      assert.equal(view.el.querySelector('tbody > tr:nth-of-type(5)')?.getAttribute('data-gea-item-id'), '5')
+      const row5 = view.el.querySelector('tbody > tr:nth-of-type(5)')
+      assert.equal((row5 as any)?.__geaKey ?? row5?.getAttribute('data-gea-item-id'), '5')
 
       const removeLink = view.el.querySelector('tbody > tr:nth-of-type(9) .remove-link') as HTMLElement
       removeLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
       await flushMicrotasks()
 
       assert.equal(view.el.querySelector('tbody > tr:nth-of-type(9) > td:nth-of-type(1)')?.textContent?.trim(), '10')
-      assert.equal(view.el.querySelector('tbody > tr:nth-of-type(9)')?.getAttribute('data-gea-item-id'), '10')
+      const row9 = view.el.querySelector('tbody > tr:nth-of-type(9)')
+      assert.equal((row9 as any)?.__geaKey ?? row9?.getAttribute('data-gea-item-id'), '10')
 
       view.dispose()
       await flushMicrotasks()

@@ -96,7 +96,14 @@ function generateCreatedHooks(
   stores: Array<{
     storeVar: string
     captureExpression: t.Expression
-    observeHandlers: Array<{ pathParts: PathParts; methodName: string; isVia?: boolean; rereadExpr?: t.Expression }>
+    observeHandlers: Array<{
+      pathParts: PathParts
+      methodName: string
+      isVia?: boolean
+      rereadExpr?: t.Expression
+      dynamicKeyExpr?: t.Expression
+      passValue?: boolean
+    }>
   }>,
   hasArrayConfigs: boolean,
   observeListConfigs: Array<{
@@ -105,6 +112,7 @@ function generateCreatedHooks(
     arrayPropName: string
     componentTag: string
     containerBindingId?: string
+    containerUserIdExpr?: t.Expression
     itemIdProperty?: string
   }> = [],
 ): t.ClassMethod {
@@ -123,7 +131,17 @@ function generateCreatedHooks(
 
   for (const store of stores) {
     // Group handlers by path to merge duplicate observers
-    const byPath = new Map<string, Array<{ methodName: string; isVia?: boolean; rereadExpr?: t.Expression }>>()
+    const byPath = new Map<
+      string,
+      Array<{
+        pathParts: PathParts
+        methodName: string
+        isVia?: boolean
+        rereadExpr?: t.Expression
+        dynamicKeyExpr?: t.Expression
+        passValue?: boolean
+      }>
+    >()
     for (const handler of store.observeHandlers) {
       const pathKey = JSON.stringify(handler.pathParts)
       // Skip handlers whose path is covered by __observeList — they'll be
@@ -131,9 +149,14 @@ function generateCreatedHooks(
       const listKey = `${store.storeVar}:${pathKey}`
       if (observeListPathKeys.has(listKey)) continue
       if (!byPath.has(pathKey)) byPath.set(pathKey, [])
-      byPath
-        .get(pathKey)!
-        .push({ methodName: handler.methodName, isVia: handler.isVia, rereadExpr: handler.rereadExpr })
+      byPath.get(pathKey)!.push({
+        pathParts: handler.pathParts,
+        methodName: handler.methodName,
+        isVia: handler.isVia,
+        rereadExpr: handler.rereadExpr,
+        dynamicKeyExpr: handler.dynamicKeyExpr,
+        passValue: handler.passValue,
+      })
     }
 
     // The store variable expression (e.g. `storeVar` identifier)
@@ -159,17 +182,100 @@ function generateCreatedHooks(
         const vParam = t.identifier('__v')
         const cParam = t.identifier('__c')
         const callStmts: t.Statement[] = []
-        for (const h of handlers) {
+        const seenCallKeys = new Set<string>()
+        for (let hi = 0; hi < handlers.length; hi++) {
+          const h = handlers[hi]
+          const callKey = [
+            h.methodName,
+            h.isVia ? 'via' : 'direct',
+            h.passValue === false ? 'novalue' : 'value',
+            serializeAstNode(h.dynamicKeyExpr),
+            h.passValue === false ? '' : serializeAstNode(h.rereadExpr as t.Node | undefined),
+          ].join('|')
+          if (seenCallKeys.has(callKey)) continue
+          seenCallKeys.add(callKey)
           if (h.isVia && h.rereadExpr) {
-            // Inline re-read: call target method with re-read value
-            callStmts.push(
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(h.methodName)), [
-                  t.cloneNode(h.rereadExpr, true),
-                  t.nullLiteral(),
-                ]),
-              ),
+            const callStmt = t.expressionStatement(
+              t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(h.methodName)), [
+                h.passValue === false ? t.identifier('undefined') : t.cloneNode(h.rereadExpr, true),
+                t.nullLiteral(),
+              ]),
             )
+            if (h.dynamicKeyExpr) {
+              const keyId = t.identifier(`__geaKey${hi}`)
+              const changeId = t.identifier(`__geaChange${hi}`)
+              const partsId = t.identifier(`__geaParts${hi}`)
+              const prevRootId = t.identifier(`__geaPrevRoot${hi}`)
+              const prefixChecks = h.pathParts.map((part, idx) =>
+                t.binaryExpression(
+                  '===',
+                  t.memberExpression(partsId, t.numericLiteral(idx), true),
+                  t.stringLiteral(part),
+                ),
+              )
+              const prevEntryExpr = t.conditionalExpression(
+                t.binaryExpression('==', prevRootId, t.nullLiteral()),
+                t.identifier('undefined'),
+                t.memberExpression(prevRootId, keyId, true),
+              )
+              const nextEntryExpr = t.conditionalExpression(
+                t.binaryExpression('==', vParam, t.nullLiteral()),
+                t.identifier('undefined'),
+                t.memberExpression(vParam, keyId, true),
+              )
+              const sameRootAffectsKey = t.logicalExpression(
+                '&&',
+                t.binaryExpression(
+                  '===',
+                  t.memberExpression(partsId, t.identifier('length')),
+                  t.numericLiteral(h.pathParts.length),
+                ),
+                t.binaryExpression('!==', prevEntryExpr, nextEntryExpr),
+              )
+              const matchingNestedKey = t.binaryExpression(
+                '===',
+                t.memberExpression(partsId, t.numericLiteral(h.pathParts.length), true),
+                keyId,
+              )
+              const sameRootOrMatchingKey = t.logicalExpression('||', sameRootAffectsKey, matchingNestedKey)
+              const relevantChangeExpr = prefixChecks
+                .concat([sameRootOrMatchingKey])
+                .reduce<t.Expression>((left, right) => t.logicalExpression('&&', left, right))
+              const someCall = t.callExpression(t.memberExpression(cParam, t.identifier('some')), [
+                t.arrowFunctionExpression(
+                  [changeId],
+                  t.blockStatement([
+                    t.variableDeclaration('const', [
+                      t.variableDeclarator(partsId, t.memberExpression(changeId, t.identifier('pathParts'))),
+                      t.variableDeclarator(prevRootId, t.memberExpression(changeId, t.identifier('previousValue'))),
+                    ]),
+                    t.returnStatement(
+                      t.logicalExpression(
+                        '&&',
+                        t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [partsId]),
+                        relevantChangeExpr,
+                      ),
+                    ),
+                  ]),
+                ),
+              ])
+              callStmts.push(
+                t.blockStatement([
+                  t.variableDeclaration('const', [t.variableDeclarator(keyId, t.cloneNode(h.dynamicKeyExpr, true))]),
+                  t.ifStatement(
+                    t.logicalExpression(
+                      '&&',
+                      t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [cParam]),
+                      someCall,
+                    ),
+                    t.blockStatement([callStmt]),
+                  ),
+                ]),
+              )
+            } else {
+              // Inline re-read: call target method with re-read value
+              callStmts.push(callStmt)
+            }
           } else {
             callStmts.push(
               t.expressionStatement(
@@ -207,11 +313,15 @@ function generateCreatedHooks(
           t.identifier('container'),
           t.arrowFunctionExpression(
             [],
-            config.containerBindingId
-              ? t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__el')), [
-                  t.stringLiteral(config.containerBindingId),
+            config.containerUserIdExpr
+              ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
+                  t.cloneNode(config.containerUserIdExpr, true) as t.Expression,
                 ])
-              : (jsExpr`this.$(":scope")` as t.Expression),
+              : config.containerBindingId
+                ? t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__el')), [
+                    t.stringLiteral(config.containerBindingId),
+                  ])
+                : (jsExpr`this.$(":scope")` as t.Expression),
           ),
         ),
         t.objectProperty(t.identifier('Ctor'), t.identifier(config.componentTag)),
@@ -289,6 +399,57 @@ function generateCreatedHooks(
   return method
 }
 
+function canInlineDynamicObserverKey(expr: t.Expression): boolean {
+  let safe = true
+  const program = t.program([t.expressionStatement(t.cloneNode(expr, true))])
+  traverse(program, {
+    noScope: true,
+    Identifier(path: NodePath<t.Identifier>) {
+      if (!path.isReferencedIdentifier()) return
+      safe = false
+      path.stop()
+    },
+  })
+  return safe
+}
+
+function classMethodUsesParam(method: t.ClassMethod, index: number): boolean {
+  const param = method.params[index]
+  if (!t.isIdentifier(param) || !t.isBlockStatement(method.body)) return true
+
+  let used = false
+  const program = t.program(method.body.body.map((stmt) => t.cloneNode(stmt, true) as t.Statement))
+  traverse(program, {
+    noScope: true,
+    Identifier(path: NodePath<t.Identifier>) {
+      if (!path.isReferencedIdentifier()) return
+      if (path.node.name !== param.name) return
+      used = true
+      path.stop()
+    },
+  })
+  return used
+}
+
+function serializeAstNode(node: t.Node | null | undefined): string {
+  return node ? JSON.stringify(node) : ''
+}
+
+function expressionReferencesIdentifier(expr: t.Expression, name: string): boolean {
+  let found = false
+  const program = t.program([t.expressionStatement(t.cloneNode(expr, true))])
+  traverse(program, {
+    noScope: true,
+    Identifier(path: NodePath<t.Identifier>) {
+      if (!path.isReferencedIdentifier()) return
+      if (path.node.name !== name) return
+      found = true
+      path.stop()
+    },
+  })
+  return found
+}
+
 function generateLocalStateObserverSetup(
   observeHandlers: Array<{ pathParts: PathParts; methodName: string }>,
   hasArrayConfigs: boolean,
@@ -339,6 +500,8 @@ export function applyStaticReactivity(
 ): boolean {
   let applied = false
   let needsModuleLevelUnwrapHelper = false
+  let needsClassLevelRawStoreField = false
+  const classLevelPrivateFields = new Set<string>()
 
   const astToTraverse = preTransformAnalysis?.has(className) ? ast : originalAST
   const getAnalysis = (clsName: string, origPath: NodePath<ClassMethod>): AnalysisResult | null => {
@@ -360,7 +523,8 @@ export function applyStaticReactivity(
         analysis.arrayMaps.length === 0 &&
         analysis.stateProps.size === 0 &&
         analysis.unresolvedMaps.length === 0 &&
-        !hasCompiledChildStoreDeps
+        !hasCompiledChildStoreDeps &&
+        analysis.earlyReturnGuard === undefined
       )
         return
 
@@ -462,8 +626,9 @@ export function applyStaticReactivity(
 
           const patchStatementsByBinding = new Map<(typeof analysis.propBindings)[0], t.Statement[]>()
           for (const pb of analysis.propBindings) {
-            const elExpr =
-              pb.bindingId !== undefined
+            const elExpr = pb.userIdExpr
+              ? buildCachedGetElementById(t.cloneNode(pb.userIdExpr, true) as t.Expression)
+              : pb.bindingId !== undefined
                 ? buildCachedGetElementById(
                     t.binaryExpression(
                       '+',
@@ -964,6 +1129,7 @@ export function applyStaticReactivity(
             arrayPropName: string
             componentTag: string
             containerBindingId?: string
+            containerUserIdExpr?: t.Expression
             itemIdProperty?: string
           }> = []
           // Static array maps whose .map() wasn't found in the template method
@@ -1048,6 +1214,7 @@ export function applyStaticReactivity(
                     arrayPropName,
                     componentTag: arrayResult.componentTag,
                     containerBindingId: arrayResult.containerBindingId,
+                    containerUserIdExpr: arrayResult.containerUserIdExpr,
                     itemIdProperty: arrayResult.itemIdProperty,
                   })
                 } else {
@@ -1060,11 +1227,15 @@ export function applyStaticReactivity(
                   const itemsName = getComponentArrayItemsName(arrayPropName)
                   const itemPropsMethodNameRef = `__itemProps_${arrayPropName}`
                   const containerSuffix = arrayResult.containerBindingId
-                  const containerExpr = containerSuffix
-                    ? t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__el')), [
-                        t.stringLiteral(containerSuffix),
+                  const containerExpr = arrayResult.containerUserIdExpr
+                    ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
+                        t.cloneNode(arrayResult.containerUserIdExpr, true) as t.Expression,
                       ])
-                    : (jsExpr`this.$(":scope")` as t.Expression)
+                    : containerSuffix
+                      ? t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__el')), [
+                          t.stringLiteral(containerSuffix),
+                        ])
+                      : (jsExpr`this.$(":scope")` as t.Expression)
 
                   // Build key function expression
                   const itemIdProp = arrayResult.itemIdProperty
@@ -1240,7 +1411,7 @@ export function applyStaticReactivity(
             }
             unresolvedBindings.push({ info: um, binding: syntheticBinding })
             const prevEventLen = unresolvedEventHandlers.length
-            const { method, handlerPropsInMap, needsUnwrapHelper } = generateRenderItemMethod(
+            const { method, handlerPropsInMap, needsUnwrapHelper, needsRawStoreCache } = generateRenderItemMethod(
               syntheticBinding,
               imports,
               unresolvedEventHandlers,
@@ -1249,6 +1420,7 @@ export function applyStaticReactivity(
               tmplSetupCtx,
             )
             if (needsUnwrapHelper) needsModuleLevelUnwrapHelper = true
+            if (needsRawStoreCache) needsClassLevelRawStoreField = true
             const newHandlers = unresolvedEventHandlers.slice(prevEventLen)
             const tokenMatch = newHandlers[0]?.selector?.match(/data-gea-event="([^"]+)"/)
             mapItemAttrInfos.push({
@@ -1261,20 +1433,23 @@ export function applyStaticReactivity(
               classPath.node.body.body.push(method)
               applied = true
             }
-            const createMethod = generateCreateItemMethod(
+            const createResult = generateCreateItemMethod(
               syntheticBinding,
               getTemplatePropNames(classPath.node.body),
               getTemplateParamIdentifier(classPath.node.body),
               tmplSetupCtx,
             )
-            if (createMethod) classPath.node.body.body.push(createMethod)
-            const patchMethod = generatePatchItemMethod(
+            if (createResult.method) classPath.node.body.body.push(createResult.method)
+            if (createResult.needsRawStoreCache) needsClassLevelRawStoreField = true
+            for (const f of createResult.privateFields) classLevelPrivateFields.add(f)
+            const patchResult = generatePatchItemMethod(
               syntheticBinding,
               getTemplatePropNames(classPath.node.body),
               getTemplateParamIdentifier(classPath.node.body),
               tmplSetupCtx,
             )
-            if (patchMethod) classPath.node.body.body.push(patchMethod)
+            if (patchResult.method) classPath.node.body.body.push(patchResult.method)
+            for (const f of patchResult.privateFields) classLevelPrivateFields.add(f)
             if (handlerPropsInMap.length > 0 && um.computationExpr) {
               if (arrayPropName) {
                 const propNames = getTemplatePropNames(classPath.node.body)
@@ -1497,7 +1672,10 @@ export function applyStaticReactivity(
               .map((m) => (m.key as t.Identifier).name),
           )
 
-          const componentGetterStoreDeps = new Map<string, Array<{ storeVar: string; pathParts: PathParts }>>()
+          const componentGetterStoreDeps = new Map<
+            string,
+            Array<{ storeVar: string; pathParts: PathParts; dynamicKeyExpr?: t.Expression }>
+          >()
           const getterLocalRefs = new Map<string, Set<string>>()
           const getterNames = new Set<string>()
           for (const member of classPath.node.body.body) {
@@ -1507,25 +1685,64 @@ export function applyStaticReactivity(
           for (const member of classPath.node.body.body) {
             if (!t.isClassMethod(member) || member.kind !== 'get' || !t.isIdentifier(member.key)) continue
             const getterName = member.key.name
-            const deps: Array<{ storeVar: string; pathParts: PathParts }> = []
+            const depMap = new Map<string, { storeVar: string; pathParts: PathParts; dynamicKeyExpr?: t.Expression }>()
             const localRefs = new Set<string>()
             const program = t.program(member.body.body.map((s) => t.cloneNode(s, true) as t.Statement))
             traverse(program, {
               noScope: true,
+              OptionalMemberExpression(mePath: NodePath<t.OptionalMemberExpression>) {
+                const objectNode = mePath.node.object
+                if (!t.isMemberExpression(objectNode)) return
+                if (!t.isIdentifier(objectNode.object) || !t.isIdentifier(objectNode.property)) return
+                const objName = objectNode.object.name
+                const ref = stateRefs.get(objName)
+                if (!ref || ref.kind !== 'imported') return
+                if (!mePath.node.computed || !t.isExpression(mePath.node.property)) return
+                if (!canInlineDynamicObserverKey(mePath.node.property)) return
+                depMap.set(`${objName}.${objectNode.property.name}`, {
+                  storeVar: objName,
+                  pathParts: [objectNode.property.name],
+                  dynamicKeyExpr: t.cloneNode(mePath.node.property, true),
+                })
+              },
               MemberExpression(mePath: NodePath<t.MemberExpression>) {
                 if (t.isThisExpression(mePath.node.object) && t.isIdentifier(mePath.node.property)) {
                   const propName = mePath.node.property.name
                   if (getterNames.has(propName) && propName !== getterName) localRefs.add(propName)
                   return
                 }
+                if (
+                  t.isMemberExpression(mePath.node.object) &&
+                  t.isIdentifier(mePath.node.object.object) &&
+                  t.isIdentifier(mePath.node.object.property) &&
+                  mePath.node.computed &&
+                  t.isExpression(mePath.node.property)
+                ) {
+                  const objName = mePath.node.object.object.name
+                  const ref = stateRefs.get(objName)
+                  if (ref && ref.kind === 'imported' && canInlineDynamicObserverKey(mePath.node.property)) {
+                    depMap.set(`${objName}.${mePath.node.object.property.name}`, {
+                      storeVar: objName,
+                      pathParts: [mePath.node.object.property.name],
+                      dynamicKeyExpr: t.cloneNode(mePath.node.property, true),
+                    })
+                    return
+                  }
+                }
                 if (!t.isIdentifier(mePath.node.object)) return
                 const objName = mePath.node.object.name
                 const ref = stateRefs.get(objName)
                 if (!ref || ref.kind !== 'imported') return
                 if (!t.isIdentifier(mePath.node.property)) return
-                deps.push({ storeVar: objName, pathParts: [mePath.node.property.name] })
+                if (!depMap.has(`${objName}.${mePath.node.property.name}`)) {
+                  depMap.set(`${objName}.${mePath.node.property.name}`, {
+                    storeVar: objName,
+                    pathParts: [mePath.node.property.name],
+                  })
+                }
               },
             })
+            const deps = Array.from(depMap.values())
             if (deps.length > 0) componentGetterStoreDeps.set(member.key.name, deps)
             if (localRefs.size > 0) getterLocalRefs.set(member.key.name, localRefs)
           }
@@ -1539,8 +1756,12 @@ export function applyStaticReactivity(
                 if (!refDeps) continue
                 const existing = componentGetterStoreDeps.get(getterName) || []
                 for (const dep of refDeps) {
-                  const key = `${dep.storeVar}.${dep.pathParts.join('.')}`
-                  if (!existing.some((e) => `${e.storeVar}.${e.pathParts.join('.')}` === key)) {
+                  const key = `${dep.storeVar}.${dep.pathParts.join('.')}:${dep.dynamicKeyExpr ? 'dyn' : 'plain'}`
+                  if (
+                    !existing.some(
+                      (e) => `${e.storeVar}.${e.pathParts.join('.')}:${e.dynamicKeyExpr ? 'dyn' : 'plain'}` === key,
+                    )
+                  ) {
                     existing.push(dep)
                     changed = true
                   }
@@ -1565,6 +1786,61 @@ export function applyStaticReactivity(
                   )
                 )
                   continue
+                const guardAliasInits = new Map<string, t.Expression>()
+                for (let si = 0; si < gi; si++) {
+                  const setupStmt = tmplBody[si]
+                  if (!t.isVariableDeclaration(setupStmt)) continue
+                  for (const decl of setupStmt.declarations) {
+                    if (!t.isIdentifier(decl.id) || !decl.init || !t.isExpression(decl.init)) continue
+                    guardAliasInits.set(decl.id.name, decl.init)
+                  }
+                }
+                const addGuardObserveKey = (resolved: {
+                  parts: PathParts | null
+                  isImportedState?: boolean
+                  storeVar?: string
+                }) => {
+                  if (!resolved?.parts?.length) return
+                  if (!resolved.isImportedState) return
+                  const observeKey = buildObserveKey(resolved.parts, resolved.storeVar)
+                  guardStateKeys.add(observeKey)
+                  if (!stateProps.has(observeKey)) stateProps.set(observeKey, [...resolved.parts])
+                }
+                for (const [aliasName, init] of guardAliasInits) {
+                  if (!expressionReferencesIdentifier(stmt.test, aliasName)) continue
+                  if (
+                    !(
+                      t.isIdentifier(init) ||
+                      t.isMemberExpression(init) ||
+                      t.isThisExpression(init) ||
+                      t.isCallExpression(init)
+                    )
+                  )
+                    continue
+                  const resolvedAlias = resolvePath(init, stateRefs)
+                  if (resolvedAlias) addGuardObserveKey(resolvedAlias)
+                }
+                const resolveGuardStateExpr = (
+                  expr: t.Identifier | t.MemberExpression | t.ThisExpression | t.CallExpression,
+                  seen = new Set<string>(),
+                ) => {
+                  const resolved = resolvePath(expr, stateRefs)
+                  if (resolved?.parts?.length && resolved.isImportedState) return resolved
+                  if (t.isIdentifier(expr) && !seen.has(expr.name)) {
+                    const init = guardAliasInits.get(expr.name)
+                    if (
+                      init &&
+                      (t.isIdentifier(init) ||
+                        t.isMemberExpression(init) ||
+                        t.isThisExpression(init) ||
+                        t.isCallExpression(init))
+                    ) {
+                      seen.add(expr.name)
+                      return resolveGuardStateExpr(init, seen)
+                    }
+                  }
+                  return null
+                }
                 const guardProg = t.program([t.expressionStatement(t.cloneNode(stmt.test, true) as t.Expression)])
                 traverse(guardProg, {
                   noScope: true,
@@ -1575,12 +1851,9 @@ export function applyStaticReactivity(
                       !idPath.parent.computed
                     )
                       return
-                    const resolved = resolvePath(idPath.node, stateRefs)
-                    if (!resolved?.parts?.length) return
-                    if (!resolved.isImportedState) return
-                    const observeKey = buildObserveKey(resolved.parts, resolved.storeVar)
-                    guardStateKeys.add(observeKey)
-                    if (!stateProps.has(observeKey)) stateProps.set(observeKey, [...resolved.parts])
+                    const resolved = resolveGuardStateExpr(idPath.node)
+                    if (!resolved) return
+                    addGuardObserveKey(resolved)
                   },
                 })
               }
@@ -1619,6 +1892,8 @@ export function applyStaticReactivity(
                   observeKey,
                   generateConditionalSlotObserveMethod(propPath, storeVar, conditionalSlotIndices, false),
                 )
+              } else if (guardStateKeys.has(observeKey)) {
+                mergeObserveMethod(observeKey, generateRerenderObserver(propPath, storeVar, true))
               }
               continue
             }
@@ -1644,15 +1919,14 @@ export function applyStaticReactivity(
 
             if (relationalArrayMaps.length > 0) {
               relationalArrayMaps.forEach(({ arrayMap, bindings }) => {
-                mergeObserveMethod(
-                  observeKey,
-                  generateArrayRelationalObserver(
-                    propPath,
-                    arrayMap,
-                    bindings,
-                    getObserveMethodName(propPath, storeVar),
-                  ),
+                const relResult = generateArrayRelationalObserver(
+                  propPath,
+                  arrayMap,
+                  bindings,
+                  getObserveMethodName(propPath, storeVar),
                 )
+                mergeObserveMethod(observeKey, relResult.method)
+                for (const f of relResult.privateFields) classLevelPrivateFields.add(f)
               })
             }
 
@@ -1757,6 +2031,12 @@ export function applyStaticReactivity(
               // so that null<->non-null transitions trigger a full DOM rebuild.
               mergeObserveMethod(observeKey, generateRerenderObserver(propPath, storeVar, true))
             }
+          }
+
+          for (const guardKey of guardStateKeys) {
+            if (addedMethods.has(guardKey)) continue
+            const { parts, storeVar } = parseObserveKey(guardKey)
+            mergeObserveMethod(guardKey, generateRerenderObserver(parts, storeVar, true))
           }
 
           // Identify compiled children whose `children` prop contains a resolved
@@ -2008,17 +2288,16 @@ export function applyStaticReactivity(
             deps.forEach((dep) => {
               const relBinding = (info.relationalClassBindings || []).find((rb) => rb.observeKey === dep.observeKey)
               if (relBinding) {
-                mergeObserveMethod(
-                  dep.observeKey,
-                  generateUnresolvedRelationalObserver(
-                    binding,
-                    info,
-                    relBinding,
-                    getObserveMethodName(dep.pathParts, dep.storeVar),
-                    getTemplatePropNames(classPath.node.body),
-                    getTemplateParamIdentifier(classPath.node.body),
-                  ),
+                const unresolvedRelResult = generateUnresolvedRelationalObserver(
+                  binding,
+                  info,
+                  relBinding,
+                  getObserveMethodName(dep.pathParts, dep.storeVar),
+                  getTemplatePropNames(classPath.node.body),
+                  getTemplateParamIdentifier(classPath.node.body),
                 )
+                mergeObserveMethod(dep.observeKey, unresolvedRelResult.method)
+                for (const f of unresolvedRelResult.privateFields) classLevelPrivateFields.add(f)
               } else if (dep.storeVar) {
                 if (!delegateEmitted) {
                   classPath.node.body.body.push(
@@ -2166,6 +2445,7 @@ export function applyStaticReactivity(
                   arrayPropName,
                   componentTag: arrayResult.componentTag,
                   containerBindingId: arrayResult.containerBindingId,
+                  containerUserIdExpr: arrayResult.containerUserIdExpr,
                   itemIdProperty: arrayResult.itemIdProperty,
                 })
               }
@@ -2311,7 +2591,7 @@ export function applyStaticReactivity(
           htmlArrayMaps.forEach((arrayMap) => {
             const observeKey = buildObserveKey(arrayMap.arrayPathParts, arrayMap.storeVar)
             const arrayHandlerMethodName = getObserveMethodName(arrayMap.arrayPathParts, arrayMap.storeVar)
-            const { method, needsUnwrapHelper } = generateRenderItemMethod(
+            const { method, needsUnwrapHelper, needsRawStoreCache } = generateRenderItemMethod(
               arrayMap,
               imports,
               renderEventHandlers,
@@ -2320,6 +2600,7 @@ export function applyStaticReactivity(
               tmplSetupCtx,
             )
             if (needsUnwrapHelper) needsModuleLevelUnwrapHelper = true
+            if (needsRawStoreCache) needsClassLevelRawStoreField = true
             if (method) {
               classPath.node.body.body.push(method)
               applied = true
@@ -2360,27 +2641,32 @@ export function applyStaticReactivity(
               }
             }
 
-            const createMethod = generateCreateItemMethod(
+            const createResult = generateCreateItemMethod(
               arrayMap,
               getTemplatePropNames(classPath.node.body),
               getTemplateParamIdentifier(classPath.node.body),
               tmplSetupCtx,
             )
-            if (createMethod) {
-              classPath.node.body.body.push(createMethod)
+            if (createResult.method) {
+              classPath.node.body.body.push(createResult.method)
             }
-            const patchMethod = generatePatchItemMethod(
+            if (createResult.needsRawStoreCache) needsClassLevelRawStoreField = true
+            for (const f of createResult.privateFields) classLevelPrivateFields.add(f)
+            const patchResult = generatePatchItemMethod(
               arrayMap,
               getTemplatePropNames(classPath.node.body),
               getTemplateParamIdentifier(classPath.node.body),
               tmplSetupCtx,
             )
-            if (patchMethod) {
-              classPath.node.body.body.push(patchMethod)
+            if (patchResult.method) {
+              classPath.node.body.body.push(patchResult.method)
             }
-            generateArrayHandlers(arrayMap, arrayHandlerMethodName).forEach((h) => {
+            for (const f of patchResult.privateFields) classLevelPrivateFields.add(f)
+            const handlersResult = generateArrayHandlers(arrayMap, arrayHandlerMethodName)
+            handlersResult.methods.forEach((h) => {
               mergeObserveMethod(observeKey, h)
             })
+            for (const f of handlersResult.privateFields) classLevelPrivateFields.add(f)
 
             // Getter-backed array maps are handled by the via-handler mechanism
             // in the addedMethods loop below — no explicit delegate needed here.
@@ -2471,6 +2757,8 @@ export function applyStaticReactivity(
               methodName: string
               isVia?: boolean
               rereadExpr?: t.Expression
+              dynamicKeyExpr?: t.Expression
+              passValue?: boolean
             }
             const importedStores = new Map<
               string,
@@ -2500,6 +2788,7 @@ export function applyStaticReactivity(
                   const compGetterDeps = componentGetterStoreDeps.get(parts[0])
                   if (compGetterDeps && compGetterDeps.length > 0) {
                     const originalMethodName = getObserveMethodName(parts)
+                    const originalMethod = addedMethodsByName.get(originalMethodName)
                     // Inline via: register observer entries with re-read expression
                     for (const dep of compGetterDeps) {
                       const depKey = buildObserveKey(dep.pathParts, dep.storeVar) + `__getter_${parts[0]}`
@@ -2508,6 +2797,8 @@ export function applyStaticReactivity(
                         methodName: originalMethodName,
                         isVia: true,
                         rereadExpr: t.memberExpression(t.thisExpression(), t.identifier(parts[0])),
+                        passValue: originalMethod ? classMethodUsesParam(originalMethod, 0) : true,
+                        ...(dep.dynamicKeyExpr ? { dynamicKeyExpr: dep.dynamicKeyExpr } : {}),
                       })
                     }
                   }
@@ -2521,6 +2812,7 @@ export function applyStaticReactivity(
                 const getterDepPaths = storeRef?.getterDeps?.get(parts[0])
                 if (getterDepPaths && getterDepPaths.length > 0) {
                   const originalMethodName = getObserveMethodName(parts, storeVar)
+                  const originalMethod = addedMethodsByName.get(originalMethodName)
                   // Build rereadExpr for the full path: store.getter?.sub1?.sub2...
                   // Use optional chaining after the getter so that null/undefined
                   // getter results don't throw when sub-properties are accessed.
@@ -2536,6 +2828,7 @@ export function applyStaticReactivity(
                       methodName: originalMethodName,
                       isVia: true,
                       rereadExpr,
+                      passValue: originalMethod ? classMethodUsesParam(originalMethod, 0) : true,
                     })
                   }
                   return
@@ -2733,11 +3026,13 @@ export function applyStaticReactivity(
                 storeVar,
                 captureExpression: config.captureExpression,
                 observeHandlers: Array.from(config.observeHandlers.values()).map(
-                  ({ pathParts, methodName, isVia, rereadExpr }) => ({
+                  ({ pathParts, methodName, isVia, rereadExpr, dynamicKeyExpr, passValue }) => ({
                     pathParts,
                     methodName,
                     isVia,
                     rereadExpr,
+                    dynamicKeyExpr,
+                    passValue,
                   }),
                 ),
               }))
@@ -2797,6 +3092,16 @@ export function applyStaticReactivity(
               }
               // Observer cleanup is handled by the parent Component.dispose(),
               // so we no longer generate a redundant ensureObserverDispose here.
+            }
+          }
+
+          if (needsClassLevelRawStoreField) classLevelPrivateFields.add('__rs')
+          for (const fieldName of classLevelPrivateFields) {
+            const alreadyHas = classPath.node.body.body.some(
+              (n) => t.isClassPrivateProperty(n) && t.isIdentifier(n.key.id) && n.key.id.name === fieldName,
+            )
+            if (!alreadyHas) {
+              classPath.node.body.body.unshift(t.classPrivateProperty(t.privateName(t.identifier(fieldName))))
             }
           }
         },
@@ -2956,19 +3261,23 @@ function generateUnresolvedRelationalObserver(
     arrayPathParts: PathParts
     containerSelector: string
     containerBindingId?: string
+    containerUserIdExpr?: t.Expression
   },
   unresolvedMap: UnresolvedMapInfo,
   relBinding: import('./ir').UnresolvedRelationalClassBinding,
   methodName: string,
   templatePropNames: Set<string>,
   wholeParamName?: string,
-): t.ClassMethod {
+): { method: t.ClassMethod; privateFields: string[] } {
   const arrayPathString = pathPartsToString(arrayMap.arrayPathParts)
   const containerName = `__${arrayPathString.replace(/\./g, '_')}_container`
   const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
 
-  const containerLookup =
-    arrayMap.containerBindingId !== undefined
+  const containerLookup = arrayMap.containerUserIdExpr
+    ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
+        t.cloneNode(arrayMap.containerUserIdExpr, true) as t.Expression,
+      ])
+    : arrayMap.containerBindingId !== undefined
       ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
           t.binaryExpression(
             '+',
@@ -3000,35 +3309,85 @@ function generateUnresolvedRelationalObserver(
       )
     : t.memberExpression(t.identifier('__arr'), t.identifier('__i'), true)
 
-  const method = jsMethod`${id(methodName)}(value, change) {}`
-  return appendToBody(
-    method,
-    js`if (!this.rendered_) return;`,
+  const classNameLiteral = t.stringLiteral(relBinding.classToggleName)
+
+  const arrDecl = t.variableDeclaration('var', [
+    t.variableDeclarator(
+      t.identifier('__arr'),
+      t.conditionalExpression(
+        t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [arrExpr]),
+        t.cloneNode(arrExpr, true),
+        t.arrayExpression([]),
+      ),
+    ),
+  ])
+
+  const commonPreamble: t.Statement[] = [
+    js`if (!this.rendered_) return;` as t.Statement,
     lazyInit(containerName, containerLookup),
     ...jsBlockBody`if (!${containerRef}) return;`,
     ...setupStatements,
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        t.identifier('__arr'),
-        t.conditionalExpression(
-          t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [arrExpr]),
-          t.cloneNode(arrExpr, true),
-          t.arrayExpression([]),
+    arrDecl,
+  ]
+
+  if (relBinding.matchWhenEqual) {
+    const cacheFieldName = methodName.replace('__observe_', '__prel_')
+    const cacheRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(cacheFieldName)))
+
+    const method = jsMethod`${id(methodName)}(value, change) {}`
+    return {
+      method: appendToBody(
+        method,
+        ...commonPreamble,
+        t.ifStatement(
+          t.cloneNode(cacheRef, true),
+          t.blockStatement([
+            t.expressionStatement(
+              t.callExpression(
+                t.memberExpression(
+                  t.memberExpression(t.cloneNode(cacheRef, true), t.identifier('classList')),
+                  t.identifier('remove'),
+                ),
+                [t.cloneNode(classNameLiteral, true)],
+              ),
+            ),
+            t.expressionStatement(t.assignmentExpression('=', t.cloneNode(cacheRef, true), t.nullLiteral())),
+          ]),
         ),
+        ...jsBlockBody`
+          var __items = ${containerRef}.querySelectorAll('[data-gea-item-id]');
+          for (var __i = 0; __i < __items.length && __i < __arr.length; __i++) {
+            if (${itemComparison} === value) {
+              __items[__i].classList.add(${classNameLiteral});
+              ${cacheRef} = __items[__i];
+              break;
+            }
+          }
+        `,
       ),
-    ]),
-    ...jsBlockBody`
-      var __items = ${containerRef}.querySelectorAll('[data-gea-item-id]');
-      for (var __i = 0; __i < __items.length && __i < __arr.length; __i++) {
-        var __child = __items[__i];
-        if (${itemComparison} === value) {
-          __child.classList.${id(relBinding.matchWhenEqual ? 'add' : 'remove')}(${t.stringLiteral(relBinding.classToggleName)});
-        } else {
-          __child.classList.${id(relBinding.matchWhenEqual ? 'remove' : 'add')}(${t.stringLiteral(relBinding.classToggleName)});
+      privateFields: [cacheFieldName],
+    }
+  }
+
+  const method = jsMethod`${id(methodName)}(value, change) {}`
+  return {
+    method: appendToBody(
+      method,
+      ...commonPreamble,
+      ...jsBlockBody`
+        var __items = ${containerRef}.querySelectorAll('[data-gea-item-id]');
+        for (var __i = 0; __i < __items.length && __i < __arr.length; __i++) {
+          var __child = __items[__i];
+          if (${itemComparison} === value) {
+            __child.classList.${id('remove')}(${t.stringLiteral(relBinding.classToggleName)});
+          } else {
+            __child.classList.${id('add')}(${t.stringLiteral(relBinding.classToggleName)});
+          }
         }
-      }
-    `,
-  )
+      `,
+    ),
+    privateFields: [],
+  }
 }
 
 function getMapIndex(arrayPathParts: PathParts): number {
@@ -3042,6 +3401,7 @@ function generateMapRegistration(
     arrayPathParts: PathParts
     containerSelector: string
     containerBindingId?: string
+    containerUserIdExpr?: t.Expression
     itemIdProperty?: string
   },
   unresolvedMap: UnresolvedMapInfo,
@@ -3055,8 +3415,11 @@ function generateMapRegistration(
   const createMethodName = `create${capName}Item`
   const mapIdx = getMapIndex(arrayMap.arrayPathParts)
 
-  const containerLookup =
-    arrayMap.containerBindingId !== undefined
+  const containerLookup = arrayMap.containerUserIdExpr
+    ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
+        t.cloneNode(arrayMap.containerUserIdExpr, true) as t.Expression,
+      ])
+    : arrayMap.containerBindingId !== undefined
       ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
           t.binaryExpression(
             '+',
@@ -3802,8 +4165,10 @@ function findRootTemplateLiteral(node: t.Expression | t.BlockStatement): t.Templ
   return null
 }
 
-/** Inject data-gea-event and data-gea-item-id into template inline .map() items
- *  so event delegation works from the very first render without a rebuild. */
+/** Inject data-gea-event into template inline .map() roots.
+ *  data-gea-item-id is no longer a DOM attribute; it's set as __geaKey JS property in createDataItem.
+ *  Never inject data-gea-event on Gea component tags (e.g. <sheet-cell>): handlers live on the
+ *  child's root (#id). Injecting a token on the placeholder desynced from the `events` map. */
 function injectMapItemAttrsIntoTemplate(
   templateMethod: t.ClassMethod,
   mapInfos: Array<{
@@ -3837,16 +4202,12 @@ function injectMapItemAttrsIntoTemplate(
       const rootTL = findRootTemplateLiteral(t.isBlockStatement(fn.body) ? fn.body : fn.body)
       if (!rootTL) return
 
-      // Strip any existing data-gea-item-id from the template literal (the JSX
-      // transform may have added one with a different item-id expression).
-      // Pattern in quasis: `... data-gea-item-id="` ${expr} `"...`
+      // Strip any leftover data-gea-item-id from the template literal (defensive)
       for (let qi = 0; qi < rootTL.quasis.length; qi++) {
         const raw = rootTL.quasis[qi].value.raw
         const attrIdx = raw.indexOf(' data-gea-item-id="')
         if (attrIdx === -1) continue
-        // Strip the attribute suffix from this quasi
         const before = raw.substring(0, attrIdx)
-        // The next quasi starts with `"` — strip that prefix
         const nextRaw = rootTL.quasis[qi + 1]?.value.raw
         if (nextRaw !== undefined && nextRaw.startsWith('"')) {
           const after = nextRaw.substring(1)
@@ -3865,6 +4226,9 @@ function injectMapItemAttrsIntoTemplate(
       if (!tagMatch) return
       const tagPart = tagMatch[1]
       const remainder = first.substring(tagPart.length)
+      const tagName = tagPart.slice(1).toLowerCase()
+      const isIntrinsicRoot = !tagName.includes('-')
+      const eventAttr = info.eventToken && isIntrinsicRoot ? ` data-gea-event="${info.eventToken}"` : ''
 
       const itemIdExpr =
         info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
@@ -3874,7 +4238,6 @@ function injectMapItemAttrsIntoTemplate(
               t.identifier(info.itemVariable),
             )
           : t.callExpression(t.identifier('String'), [t.identifier(info.itemVariable)])
-      const eventAttr = info.eventToken ? ` data-gea-event="${info.eventToken}"` : ''
 
       {
         rootTL.quasis = [
@@ -4155,7 +4518,14 @@ function generateConditionalSlotObserveMethod(
 ): t.ClassMethod {
   const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
 
+  const anyPatchedExpr = slotIndices
+    .map((i) => t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${i}`)) as t.Expression)
+    .reduce((acc, expr) => t.logicalExpression('||', acc, expr))
+
   const patchStatements: t.Statement[] = []
+  if (slotIndices.length === 1) {
+    patchStatements.push(t.ifStatement(anyPatchedExpr, t.returnStatement()))
+  }
   slotIndices.forEach((slotIndex) => {
     patchStatements.push(
       t.expressionStatement(
@@ -4168,13 +4538,28 @@ function generateConditionalSlotObserveMethod(
         ),
       ),
     )
+    patchStatements.push(
+      t.ifStatement(
+        t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${slotIndex}`)),
+        t.blockStatement([
+          t.expressionStatement(
+            t.callExpression(t.identifier('queueMicrotask'), [
+              t.arrowFunctionExpression(
+                [],
+                t.assignmentExpression(
+                  '=',
+                  t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${slotIndex}`)),
+                  t.booleanLiteral(false),
+                ),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    )
   })
 
   if (emitEarlyReturn) {
-    const anyPatchedExpr = slotIndices
-      .map((i) => t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${i}`)) as t.Expression)
-      .reduce((acc, expr) => t.logicalExpression('||', acc, expr))
-
     patchStatements.push(t.ifStatement(anyPatchedExpr, t.returnStatement()))
   }
 

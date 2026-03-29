@@ -152,3 +152,56 @@ test('conditional slot empty branch remains visible when initial list is empty',
     await mounted.dispose()
   }
 })
+
+test('gesture-log pattern: empty branch to keyed list with unshift keeps unique data-gea-item-id', async () => {
+  const { Store } = await import('../../../gea/src/lib/store.ts')
+
+  let counter = 0
+  class LogStore extends Store {
+    entries: Array<{ id: string; label: string }> = []
+
+    addEntry() {
+      this.entries.unshift({ id: String(++counter), label: 'tap' })
+      if (this.entries.length > 20) this.entries.pop()
+    }
+  }
+
+  const store = new LogStore()
+  const source = `
+    import { Component } from '@geajs/core'
+    import store from './store'
+
+    export default class App extends Component {
+      template() {
+        return (
+          <div class="gesture-log">
+            {store.entries.length === 0 ? (
+              <div class="gesture-log-empty">No gestures detected yet</div>
+            ) : (
+              store.entries.map((entry) => (
+                <div key={entry.id} class="gesture-log-entry">
+                  <span>{entry.label}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )
+      }
+    }
+  `
+
+  const mounted = await mountCompiledComponent(source, { store }, '/virtual/gesture-log-unique-ids.tsx')
+  try {
+    for (let i = 0; i < 4; i++) {
+      store.addEntry()
+      await flushMicrotasks()
+    }
+
+    const rows = mounted.root.querySelectorAll('.gesture-log-entry')
+    const ids = [...rows].map((el) => (el as any).__geaKey ?? el.getAttribute('data-gea-item-id'))
+    const unique = new Set(ids)
+    assert.equal(unique.size, ids.length, `duplicate keys: ${JSON.stringify(ids)}`)
+  } finally {
+    await mounted.dispose()
+  }
+})

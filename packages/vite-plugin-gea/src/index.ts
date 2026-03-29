@@ -6,6 +6,8 @@ import { injectHMR } from './hmr.ts'
 import { transformComponentFile, transformNonComponentJSX } from './transform-component.ts'
 import { convertFunctionalToClass } from './transform-functional.ts'
 import { isComponentTag } from './utils.ts'
+import { pascalToKebabCase } from './transform-jsx.ts'
+import * as t from '@babel/types'
 import { dirname, relative, resolve } from 'node:path'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -269,7 +271,7 @@ function isComponentImportSource(source: string): boolean {
 export function geaPlugin(): Plugin {
   const storeModules = new Set<string>()
   const componentModules = new Set<string>()
-  let isServeCommand = true
+  let isServeCommand = false
   // Maps absolute file path → { className, hasDefaultExport }
   const storeRegistry = new Map<string, { className: string; hasDefaultExport: boolean }>()
 
@@ -314,7 +316,7 @@ export function geaPlugin(): Plugin {
         return true
       }
       if (
-        /from\s+['"]@geajs\/core['"]/.test(source) &&
+        /from\s+['"]@geajs\/core(?:\/[^'"]*)?['"]/.test(source) &&
         (/createRouter\b/.test(source) || /new\s+Router\b/.test(source))
       ) {
         storeModules.add(filePath)
@@ -472,7 +474,7 @@ export function geaPlugin(): Plugin {
                   namedImportSources.set(spec.local.name, source)
                   if (resolvedImport && isStoreModule(resolvedImport)) {
                     storeImports.set(spec.local.name, source)
-                  } else if (!resolvedImport && source === '@geajs/core' && spec.local.name === 'router') {
+                  } else if (!resolvedImport && source.startsWith('@geajs/core') && spec.local.name === 'router') {
                     storeImports.set(spec.local.name, source)
                   }
                   // Recognize PascalCase exports from @geajs/core as components
@@ -522,12 +524,37 @@ export function geaPlugin(): Plugin {
               )
               if (result) transformed = true
             }
+            // Inject __geaTagName on each component class so the tag name
+            // survives minification (the constructor registers via ctor.name
+            // which gets mangled; __geaTagName is a string literal).
+            for (const cn of componentClassNames) {
+              const kebab = pascalToKebabCase(cn)
+              traverse(ast, {
+                noScope: true,
+                ClassDeclaration(path: any) {
+                  if (!path.node.id || path.node.id.name !== cn) return
+                  const prop = t.classProperty(t.identifier('__geaTagName'), t.stringLiteral(kebab))
+                  prop.static = true
+                  path.node.body.body.unshift(prop)
+                  path.stop()
+                },
+              })
+              transformed = true
+            }
           } else {
             transformed = transformNonComponentJSX(ast, imports)
           }
         }
 
         if (isServeCommand) {
+          const shouldProxyDep = (source: string): boolean => {
+            if (!source.startsWith('.')) return false
+            const resolved = resolveImportPath(cleanId, source)
+            if (!resolved) return false
+            if (isStoreModule(resolved)) return false
+            if (isComponentModule(resolved)) return true
+            return false
+          }
           const hmrAdded = injectHMR(
             ast,
             componentClassName,
@@ -535,6 +562,7 @@ export function geaPlugin(): Plugin {
             componentImportsUsedAsTags,
             isDefaultExport,
             HMR_RUNTIME_ID,
+            shouldProxyDep,
           )
           if (hmrAdded) transformed = true
         }

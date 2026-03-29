@@ -56,14 +56,17 @@ export function createArrayObserverHarness(arrayMap: ArrayMapBinding) {
   const arrayPath = arrayMap.arrayPathParts.join('.')
   const methodName = `render${arrayPath.charAt(0).toUpperCase() + arrayPath.slice(1)}Item`
   const observeMethodName = getObserveMethodName(arrayMap.arrayPathParts, arrayMap.storeVar)
-  const methods = generateArrayHandlers(arrayMap, observeMethodName)
+  const handlersResult = generateArrayHandlers(arrayMap, observeMethodName)
+  const { methods } = handlersResult
   const capName = arrayPath.charAt(0).toUpperCase() + arrayPath.slice(1).replace(/\./g, '')
   const patchName = `patch${capName}Item`
   const createName = `create${capName}Item`
   const extraMethods: t.ClassMethod[] = []
-  const patchMethod = generatePatchItemMethod(arrayMap)
-  if (patchMethod) {
-    extraMethods.push(patchMethod)
+  const allPrivateFields = new Set<string>(handlersResult.privateFields)
+  const patchResult = generatePatchItemMethod(arrayMap)
+  for (const f of patchResult.privateFields) allPrivateFields.add(f)
+  if (patchResult.method) {
+    extraMethods.push(patchResult.method)
   } else {
     extraMethods.push(
       t.classMethod(
@@ -89,9 +92,10 @@ export function createArrayObserverHarness(arrayMap: ArrayMapBinding) {
       ),
     )
   }
-  const createMethod = generateCreateItemMethod(arrayMap)
-  if (createMethod) {
-    extraMethods.push(createMethod)
+  const createResult = generateCreateItemMethod(arrayMap)
+  for (const f of createResult.privateFields) allPrivateFields.add(f)
+  if (createResult.method) {
+    extraMethods.push(createResult.method)
   } else {
     extraMethods.push(
       t.classMethod(
@@ -131,11 +135,15 @@ export function createArrayObserverHarness(arrayMap: ArrayMapBinding) {
       ),
     )
   }
+  const privateFieldDecls = [...allPrivateFields].map((name) =>
+    t.classPrivateProperty(t.privateName(t.identifier(name))),
+  )
   const classAst = t.program([
     t.classDeclaration(
       t.identifier('Harness'),
       null,
       t.classBody([
+        ...privateFieldDecls,
         t.classMethod(
           'method',
           t.identifier('__applyListChanges'),

@@ -123,7 +123,7 @@ function buildDummyFromTree(tree: DummyPropTree, keyPathParts: string[] | null):
         t.objectProperty(t.identifier(key), buildDummyFromTree(value === true ? {} : value, keyPathParts!.slice(1))),
       )
     } else if (value === true) {
-      props.push(t.objectProperty(t.identifier(key), t.stringLiteral('')))
+      props.push(t.objectProperty(t.identifier(key), t.stringLiteral(' ')))
     } else {
       props.push(t.objectProperty(t.identifier(key), buildDummyFromTree(value, null)))
     }
@@ -136,8 +136,8 @@ export function generatePatchItemMethod(
   templatePropNames?: Set<string>,
   wholeParamName?: string,
   templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
-): t.ClassMethod | null {
-  if (!arrayMap.itemTemplate) return null
+): { method: t.ClassMethod | null; privateFields: string[] } {
+  if (!arrayMap.itemTemplate) return { method: null, privateFields: [] }
   const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''))
   const arrayName = arrayPath.replace(/\./g, '')
   const capName = arrayName.charAt(0).toUpperCase() + arrayName.slice(1)
@@ -147,7 +147,7 @@ export function generatePatchItemMethod(
 
   const itemTemplateRootIsComponent =
     t.isJSXElement(arrayMap.itemTemplate) && isComponentTag(getJSXTagName(arrayMap.itemTemplate.openingElement.name))
-  if (itemTemplateRootIsComponent) return null
+  if (itemTemplateRootIsComponent) return { method: null, privateFields: [] }
 
   let { entries, requiresRerender } = collectPatchEntries(arrayMap)
   if (arrayMap.callbackBodyStatements?.length) requiresRerender = true
@@ -186,7 +186,7 @@ export function generatePatchItemMethod(
     }
   }
 
-  if (requiresRerender || entries.length === 0) return null
+  if (requiresRerender || entries.length === 0) return { method: null, privateFields: [] }
 
   const propNames = templatePropNames ?? new Set<string>()
   if (propNames.size > 0 || wholeParamName) {
@@ -231,21 +231,36 @@ export function generatePatchItemMethod(
         ? refMap.get(entry.childPath.join('_')) || buildElementNavExpr(elVar, entry.childPath)
         : elVar
     switch (entry.type) {
-      case 'className':
+      case 'className': {
+        const classVal = t.identifier('__cn')
         body.push(
-          t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(navExpr, t.identifier('className')),
+          t.variableDeclaration('var', [
+            t.variableDeclarator(
+              classVal,
               buildTrimmedClassValueExpression(t.cloneNode(entry.expression, true) as t.Expression),
+            ),
+          ]),
+          t.ifStatement(
+            t.binaryExpression('!==', t.memberExpression(navExpr, t.identifier('className')), classVal),
+            t.expressionStatement(
+              t.assignmentExpression(
+                '=',
+                t.memberExpression(t.cloneNode(navExpr, true), t.identifier('className')),
+                classVal,
+              ),
             ),
           ),
         )
         break
+      }
       case 'text':
         body.push(
           t.expressionStatement(
-            t.assignmentExpression('=', t.memberExpression(navExpr, t.identifier('textContent')), entry.expression),
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(t.memberExpression(navExpr, t.identifier('firstChild')), t.identifier('nodeValue')),
+              entry.expression,
+            ),
           ),
         )
         break
@@ -336,18 +351,66 @@ export function generatePatchItemMethod(
     }
   }
 
-  const itemIdExpr =
+  const rawItemIdExpr =
     itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
-      : t.callExpression(t.identifier('String'), [t.identifier('item')])
+      : t.identifier('item')
+  const itemIdExpr = t.callExpression(t.identifier('String'), [rawItemIdExpr])
+  body.push(
+    t.expressionStatement(t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaKey')), itemIdExpr)),
+  )
+
+  const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
+  const privateElsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
   body.push(
     t.expressionStatement(
-      t.callExpression(t.memberExpression(elVar, t.identifier('setAttribute')), [
-        t.stringLiteral('data-gea-item-id'),
-        itemIdExpr,
-      ]),
+      t.assignmentExpression(
+        '=',
+        t.memberExpression(
+          t.logicalExpression(
+            '||',
+            t.cloneNode(privateElsRef),
+            t.assignmentExpression('=', t.cloneNode(privateElsRef), t.objectExpression([])),
+          ),
+          t.cloneNode(itemIdExpr, true),
+          true,
+        ),
+        elVar,
+      ),
     ),
   )
+
+  const patchPrivateFields: string[] = [rowElsProp]
+  if (false && arrayMap.containerBindingId) {
+    const bindId = arrayMap.containerBindingId
+    const privateIdField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__id')))
+    patchPrivateFields.push('__id')
+    body.push(
+      t.expressionStatement(
+        t.assignmentExpression(
+          '=',
+          t.memberExpression(elVar, t.identifier('id')),
+          t.binaryExpression(
+            '+',
+            t.binaryExpression(
+              '+',
+              t.logicalExpression(
+                '||',
+                t.cloneNode(privateIdField),
+                t.assignmentExpression(
+                  '=',
+                  t.cloneNode(privateIdField),
+                  t.memberExpression(t.thisExpression(), t.identifier('id_')),
+                ),
+              ),
+              t.stringLiteral('-' + bindId + '-gk-'),
+            ),
+            t.cloneNode(itemIdExpr, true),
+          ),
+        ),
+      ),
+    )
+  }
 
   body.push(
     t.expressionStatement(
@@ -357,7 +420,10 @@ export function generatePatchItemMethod(
 
   const params: t.Identifier[] = [t.identifier('row'), t.identifier('item'), t.identifier('__prevItem')]
   if (arrayMap.indexVariable) params.push(t.identifier('__idx'))
-  return t.classMethod('method', t.identifier(methodName), params, t.blockStatement(body))
+  return {
+    method: t.classMethod('method', t.identifier(methodName), params, t.blockStatement(body)),
+    privateFields: patchPrivateFields,
+  }
 }
 
 export function collectPatchEntries(arrayMap: ArrayMapBinding): PatchPlan {
@@ -542,8 +608,8 @@ export function generateCreateItemMethod(
   templatePropNames?: Set<string>,
   wholeParamName?: string,
   templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
-): t.ClassMethod | null {
-  if (!arrayMap.itemTemplate) return null
+): { method: t.ClassMethod | null; needsRawStoreCache: boolean; privateFields: string[] } {
+  if (!arrayMap.itemTemplate) return { method: null, needsRawStoreCache: false, privateFields: [] }
   const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''))
   const arrayName = arrayPath.replace(/\./g, '')
   const capName = arrayName.charAt(0).toUpperCase() + arrayName.slice(1)
@@ -709,22 +775,69 @@ export function generateCreateItemMethod(
     }
 
     rerenderBody.push(t.returnStatement(t.identifier('el')))
-    return appendToBody(createMethod, ...rerenderBody)
+    return { method: appendToBody(createMethod, ...rerenderBody), needsRawStoreCache: false, privateFields: [] }
   }
 
-  if (entries.length === 0) return null
+  if (entries.length === 0) return { method: null, needsRawStoreCache: false, privateFields: [] }
 
   const { hoists, patchedEntries } = hoistStoreReads(entries, arrayMap.storeVar)
+
+  const useRawStoreCache = hoists.length > 0 && !!arrayMap.storeVar
+
+  if (useRawStoreCache) {
+    for (const hoist of hoists) {
+      if (
+        t.isMemberExpression(hoist.expression) &&
+        t.isIdentifier(hoist.expression.object) &&
+        hoist.expression.object.name === arrayMap.storeVar
+      ) {
+        hoist.expression.object = t.identifier('__rs')
+      }
+    }
+  }
 
   const propTree = collectItemTemplatePropTree(arrayMap.itemTemplate!, arrayMap.itemVariable)
 
   const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerProp))
+  const privateDcField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__dc')))
   const cVar = t.identifier('__c')
   const elVar = t.identifier('el')
+  const privateFields: string[] = ['__dc']
 
   const body: t.Statement[] = []
 
-  body.push(t.variableDeclaration('var', [t.variableDeclarator(cVar, containerRef)]))
+  if (useRawStoreCache) {
+    const privateRsField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__rs')))
+    body.push(
+      t.variableDeclaration('var', [
+        t.variableDeclarator(
+          t.identifier('__rs'),
+          t.logicalExpression(
+            '||',
+            t.cloneNode(privateRsField),
+            t.assignmentExpression(
+              '=',
+              t.cloneNode(privateRsField),
+              t.memberExpression(t.identifier(arrayMap.storeVar!), t.identifier('__raw')),
+            ),
+          ),
+        ),
+      ]),
+    )
+  }
+
+  body.push(
+    t.variableDeclaration('var', [
+      t.variableDeclarator(
+        cVar,
+        t.logicalExpression(
+          '||',
+          t.cloneNode(privateDcField),
+          t.assignmentExpression('=', t.cloneNode(privateDcField), containerRef),
+        ),
+      ),
+    ]),
+  )
 
   const isPrimitiveKey = !itemIdProperty || itemIdProperty === ITEM_IS_KEY
   const dummyItem: t.Expression = isPrimitiveKey
@@ -733,6 +846,8 @@ export function generateCreateItemMethod(
         if (itemIdProperty) ensureDummyTreePath(propTree, itemIdProperty)
         return buildDummyFromTree(propTree, itemIdProperty ? normalizePathParts(itemIdProperty) : null)
       })()
+
+  const hasRootClassNamePatch = patchedEntries.some((e) => e.type === 'className' && e.childPath.length === 0)
 
   const tplInit: t.Statement[] = [
     t.variableDeclaration('var', [
@@ -763,7 +878,38 @@ export function generateCreateItemMethod(
         ),
       ),
     ),
+    t.expressionStatement(
+      t.optionalCallExpression(
+        t.optionalMemberExpression(
+          t.memberExpression(cVar, t.identifier('__geaTpl')),
+          t.identifier('removeAttribute'),
+          false,
+          true,
+        ),
+        [t.stringLiteral('data-gea-item-id')],
+        false,
+      ),
+    ),
   ]
+
+  if (hasRootClassNamePatch) {
+    tplInit.push(
+      t.ifStatement(
+        t.logicalExpression(
+          '&&',
+          t.memberExpression(cVar, t.identifier('__geaTpl')),
+          t.memberExpression(t.memberExpression(cVar, t.identifier('__geaTpl')), t.identifier('className')),
+        ),
+        t.expressionStatement(
+          t.assignmentExpression(
+            '=',
+            t.memberExpression(t.memberExpression(cVar, t.identifier('__geaTpl')), t.identifier('className')),
+            t.stringLiteral(''),
+          ),
+        ),
+      ),
+    )
+  }
   body.push(
     t.ifStatement(
       t.unaryExpression('!', t.memberExpression(cVar, t.identifier('__geaTpl'))),
@@ -841,21 +987,46 @@ export function generateCreateItemMethod(
         ? refMap.get(entry.childPath.join('_')) || buildElementNavExpr(elVar, entry.childPath)
         : elVar
     switch (entry.type) {
-      case 'className':
+      case 'className': {
+        const classExpr = t.cloneNode(entry.expression, true) as t.Expression
+        if (
+          t.isConditionalExpression(classExpr) &&
+          t.isStringLiteral(classExpr.alternate) &&
+          classExpr.alternate.value === ''
+        ) {
+          body.push(
+            t.ifStatement(
+              classExpr.test,
+              t.expressionStatement(
+                t.assignmentExpression(
+                  '=',
+                  t.memberExpression(navExpr, t.identifier('className')),
+                  buildTrimmedClassValueExpression(classExpr.consequent),
+                ),
+              ),
+            ),
+          )
+        } else {
+          body.push(
+            t.expressionStatement(
+              t.assignmentExpression(
+                '=',
+                t.memberExpression(navExpr, t.identifier('className')),
+                buildTrimmedClassValueExpression(classExpr),
+              ),
+            ),
+          )
+        }
+        break
+      }
+      case 'text':
         body.push(
           t.expressionStatement(
             t.assignmentExpression(
               '=',
-              t.memberExpression(navExpr, t.identifier('className')),
-              buildTrimmedClassValueExpression(t.cloneNode(entry.expression, true) as t.Expression),
+              t.memberExpression(t.memberExpression(navExpr, t.identifier('firstChild')), t.identifier('nodeValue')),
+              entry.expression,
             ),
-          ),
-        )
-        break
-      case 'text':
-        body.push(
-          t.expressionStatement(
-            t.assignmentExpression('=', t.memberExpression(navExpr, t.identifier('textContent')), entry.expression),
           ),
         )
         break
@@ -946,18 +1117,47 @@ export function generateCreateItemMethod(
     }
   }
 
-  const itemIdExpr =
+  const rawPatchItemIdExpr =
     itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
-      : t.callExpression(t.identifier('String'), [t.identifier('item')])
+      : t.identifier('item')
+  const patchItemIdExpr = t.callExpression(t.identifier('String'), [rawPatchItemIdExpr])
   body.push(
     t.expressionStatement(
-      t.callExpression(t.memberExpression(elVar, t.identifier('setAttribute')), [
-        t.stringLiteral('data-gea-item-id'),
-        itemIdExpr,
-      ]),
+      t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaKey')), patchItemIdExpr),
     ),
   )
+
+  if (false) {
+    const bindId = arrayMap.containerBindingId!
+    const privateIdField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__id')))
+    privateFields.push('__id')
+    body.push(
+      t.expressionStatement(
+        t.assignmentExpression(
+          '=',
+          t.memberExpression(elVar, t.identifier('id')),
+          t.binaryExpression(
+            '+',
+            t.binaryExpression(
+              '+',
+              t.logicalExpression(
+                '||',
+                t.cloneNode(privateIdField),
+                t.assignmentExpression(
+                  '=',
+                  t.cloneNode(privateIdField),
+                  t.memberExpression(t.thisExpression(), t.identifier('id_')),
+                ),
+              ),
+              t.stringLiteral('-' + bindId + '-gk-'),
+            ),
+            t.cloneNode(itemIdExpr, true),
+          ),
+        ),
+      ),
+    )
+  }
 
   body.push(
     t.expressionStatement(
@@ -1011,7 +1211,11 @@ export function generateCreateItemMethod(
 
   const createParams: t.Identifier[] = [t.identifier('item')]
   if (arrayMap.indexVariable) createParams.push(t.identifier('__idx'))
-  return t.classMethod('method', t.identifier(methodName), createParams, t.blockStatement(body))
+  return {
+    method: t.classMethod('method', t.identifier(methodName), createParams, t.blockStatement(body)),
+    needsRawStoreCache: useRawStoreCache,
+    privateFields,
+  }
 }
 
 export function templateRequiresRerender(file: t.File): boolean {

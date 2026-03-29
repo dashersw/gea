@@ -48,8 +48,8 @@ test('component used only in render prop is registered when in knownComponentImp
 
   assert.match(
     output,
-    /Component\._register\(Avatar\)/,
-    'Avatar must be registered via Component._register even though it only appears in a render prop',
+    /Component\._register\(Avatar,\s*"avatar"\)/,
+    'Avatar must be registered via Component._register with its tag name even though it only appears in a render prop',
   )
 })
 
@@ -144,6 +144,263 @@ test('IIFE with multiple return branches containing JSX is transformed', () => {
   assert.match(output, /Ready/, 'Ready branch should appear in output')
 })
 
+test('unused template IIFE over store state does not emit coarse rerender observers', () => {
+  const baseOutput = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class SheetCell extends Component {
+      template() {
+        return <span>{this.props.address}</span>
+      }
+    }
+  `)
+
+  const unusedIifeOutput = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import sheetStore, { formatDisplayNumber } from './sheet-store'
+
+    export default class SheetCell extends Component {
+      template() {
+        const displayValue = (() => {
+          const raw = sheetStore.cells[this.props.address] ?? ''
+          if (!raw.startsWith('=')) return raw
+          const c = sheetStore.computed[this.props.address]
+          if (!c) return ''
+          if (c.kind === 'err') return c.message
+          return formatDisplayNumber(c.value)
+        })()
+
+        return <span>{this.props.address}</span>
+      }
+    }
+  `)
+
+  assert.doesNotMatch(
+    baseOutput,
+    /__observe_sheetStore_(cells|computed)|__geaRequestRender\(\)/,
+    'baseline should not include coarse store rerender observers',
+  )
+  assert.doesNotMatch(
+    unusedIifeOutput,
+    /__observe_sheetStore_cells/,
+    'unused inline IIFE should not register a top-level cells observer',
+  )
+  assert.doesNotMatch(
+    unusedIifeOutput,
+    /__observe_sheetStore_computed/,
+    'unused inline IIFE should not register a top-level computed observer',
+  )
+  assert.doesNotMatch(
+    unusedIifeOutput,
+    /__observe_sheetStore_cells[\s\S]*__geaRequestRender\(\)/,
+    'unused inline IIFE should not force full rerender from cells observer',
+  )
+  assert.doesNotMatch(
+    unusedIifeOutput,
+    /__observe_sheetStore_computed[\s\S]*__geaRequestRender\(\)/,
+    'unused inline IIFE should not force full rerender from computed observer',
+  )
+})
+
+test('used template IIFE over store state does not emit coarse rerender observers', () => {
+  const usedIifeOutput = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import sheetStore, { formatDisplayNumber } from './sheet-store'
+
+    export default class SheetCell extends Component {
+      template() {
+        const displayValue = (() => {
+          const raw = sheetStore.cells[this.props.address] ?? ''
+          if (!raw.startsWith('=')) return raw
+          const c = sheetStore.computed[this.props.address]
+          if (!c) return ''
+          if (c.kind === 'err') return c.message
+          return formatDisplayNumber(c.value)
+        })()
+
+        return <span>{displayValue}</span>
+      }
+    }
+  `)
+
+  assert.doesNotMatch(
+    usedIifeOutput,
+    /__observe_sheetStore_(cells|computed)[\s\S]*__geaRequestRender\(\)/,
+    'used inline IIFE should not force full rerender from store observers',
+  )
+  assert.match(
+    usedIifeOutput,
+    /__observe\(sheetStore,\s*\["cells"\]/,
+    'used inline IIFE should still observe cells updates',
+  )
+  assert.match(
+    usedIifeOutput,
+    /__observe\(sheetStore,\s*\["computed"\]/,
+    'used inline IIFE should still observe computed updates',
+  )
+})
+
+test('unused template-local store reads do not create observers', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import sheetStore from './sheet-store'
+
+    export default class StaticLabel extends Component {
+      template() {
+        const unusedSelection = sheetStore.activeAddress
+        const unusedDraft = sheetStore.barDraft
+        return <span>Static</span>
+      }
+    }
+  `)
+
+  assert.doesNotMatch(
+    output,
+    /__observe_sheetStore_activeAddress|__observe\(sheetStore,\s*\["activeAddress"\]/,
+    'unused activeAddress local should not create observers',
+  )
+  assert.doesNotMatch(
+    output,
+    /__observe_sheetStore_barDraft|__observe\(sheetStore,\s*\["barDraft"\]/,
+    'unused barDraft local should not create observers',
+  )
+})
+
+test('unused template local does not add subscriptions when getter already drives rendering', () => {
+  const getterOnlyOutput = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import sheetStore, { formatDisplayNumber } from './sheet-store'
+
+    interface SheetCellProps {
+      address: string
+    }
+
+    export default class SheetCell extends Component {
+      declare props: SheetCellProps
+      editing = false
+      editBuffer = ''
+
+      get displayValue(): string {
+        const raw = sheetStore.cells[this.props.address] ?? ''
+        if (!raw.startsWith('=')) return raw
+        const c = sheetStore.computed[this.props.address]
+        if (!c) return ''
+        if (c.kind === 'err') return c.message
+        return formatDisplayNumber(c.value)
+      }
+
+      template({ address }: SheetCellProps) {
+        const selected = sheetStore.activeAddress === this.props.address
+        const { editing, editBuffer } = this
+        return (
+          <td class={\`sheet-cell \${selected ? 'sheet-cell-selected' : ''}\`} data-address={address} tabIndex={selected ? 0 : -1}>
+            {editing ? <input value={editBuffer} /> : <span>{this.displayValue}</span>}
+          </td>
+        )
+      }
+    }
+  `)
+
+  const getterPlusUnusedLocalOutput = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import sheetStore, { formatDisplayNumber } from './sheet-store'
+
+    interface SheetCellProps {
+      address: string
+    }
+
+    export default class SheetCell extends Component {
+      declare props: SheetCellProps
+      editing = false
+      editBuffer = ''
+
+      get displayValue(): string {
+        const raw = sheetStore.cells[this.props.address] ?? ''
+        if (!raw.startsWith('=')) return raw
+        const c = sheetStore.computed[this.props.address]
+        if (!c) return ''
+        if (c.kind === 'err') return c.message
+        return formatDisplayNumber(c.value)
+      }
+
+      template({ address }: SheetCellProps) {
+        const selected = sheetStore.activeAddress === this.props.address
+        const { editing, editBuffer } = this
+        const unusedDisplayValue = (() => {
+          const raw = sheetStore.cells[this.props.address] ?? ''
+          if (!raw.startsWith('=')) return raw
+          const c = sheetStore.computed[this.props.address]
+          if (!c) return ''
+          if (c.kind === 'err') return c.message
+          return formatDisplayNumber(c.value)
+        })()
+        return (
+          <td class={\`sheet-cell \${selected ? 'sheet-cell-selected' : ''}\`} data-address={address} tabIndex={selected ? 0 : -1}>
+            {editing ? <input value={editBuffer} /> : <span>{this.displayValue}</span>}
+          </td>
+        )
+      }
+    }
+  `)
+
+  const getterOnlyObserveCalls = getterOnlyOutput.match(/this\.__observe\(sheetStore,[^)]+\)/g) ?? []
+  const getterPlusUnusedLocalObserveCalls =
+    getterPlusUnusedLocalOutput.match(/this\.__observe\(sheetStore,[^)]+\)/g) ?? []
+
+  assert.deepEqual(
+    getterPlusUnusedLocalObserveCalls,
+    getterOnlyObserveCalls,
+    'unused template local should not add any extra sheetStore subscriptions when getter already covers the same state',
+  )
+})
+
+test('getter-backed cell display observers guard by current address', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import sheetStore, { formatDisplayNumber } from './sheet-store'
+
+    interface SheetCellProps {
+      address: string
+    }
+
+    export default class SheetCell extends Component {
+      declare props: SheetCellProps
+      editing = false
+      editBuffer = ''
+
+      get displayValue(): string {
+        const raw = sheetStore.cells[this.props.address] ?? ''
+        if (!raw.startsWith('=')) return raw
+        const c = sheetStore.computed[this.props.address]
+        if (!c) return ''
+        if (c.kind === 'err') return c.message
+        return formatDisplayNumber(c.value)
+      }
+
+      template({ address }: SheetCellProps) {
+        const selected = sheetStore.activeAddress === this.props.address
+        const { editing, editBuffer } = this
+        return (
+          <td class={\`sheet-cell \${selected ? 'sheet-cell-selected' : ''}\`} data-address={address} tabIndex={selected ? 0 : -1}>
+            {editing ? <input value={editBuffer} /> : <span>{this.displayValue}</span>}
+          </td>
+        )
+      }
+    }
+  `)
+
+  assert.match(
+    output,
+    /__observe\(sheetStore,\s*\["cells"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
+    'cells observer should guard by this.props.address before routing to the conditional patch path',
+  )
+  assert.match(
+    output,
+    /__observe\(sheetStore,\s*\["computed"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
+    'computed observer should guard by this.props.address before routing to the conditional patch path',
+  )
+})
+
 test('ref attribute generates data-gea-ref marker and __setupRefs method', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
@@ -157,6 +414,7 @@ test('ref attribute generates data-gea-ref marker and __setupRefs method', () =>
   assert.match(output, /data-gea-ref="ref0"/, 'Should emit data-gea-ref marker attribute')
   assert.match(output, /__setupRefs/, 'Should generate __setupRefs method')
   assert.match(output, /querySelector.*data-gea-ref/, 'Should query for data-gea-ref elements in __setupRefs')
+  assert.match(output, /= null;\s*\n.*querySelector/s, 'Should clear ref target before querySelector')
   assert.ok(
     !/ ref="[^"]*"/.test(output.replace(/data-gea-ref="[^"]*"/g, '')),
     'ref should not be emitted as a bare HTML attribute',

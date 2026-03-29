@@ -141,6 +141,21 @@ describe('injectHMR', () => {
       const code = codegen(ast)
       assert.ok(code.includes('createHotComponentProxy'), 'should proxy component deps')
     })
+
+    it('shouldProxyDep overrides legacy: no proxy when callback returns false', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        import ChildComp from './child-comp.ts'
+        export default class App extends Component {
+          template() { return '<div></div>' }
+        }
+      `)
+
+      injectHMR(ast, 'App', ['./child-comp.ts'], new Set(['ChildComp']), true, 'virtual:gea-hmr', () => false)
+      const code = codegen(ast)
+      assert.ok(!code.includes('createHotComponentProxy'), 'explicit classifier can disable proxy')
+      assert.ok(code.includes('invalidate'), 'falls back to invalidate-only accept')
+    })
   })
 
   describe('prototype patching', () => {

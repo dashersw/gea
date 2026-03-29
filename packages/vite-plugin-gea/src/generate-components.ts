@@ -3,6 +3,7 @@ import { appendToBody, id, jsMethod } from 'eszter'
 import type { NodePath } from '@babel/traverse'
 import type { ChildComponent } from './ir.ts'
 import { pruneUnusedSetupDestructuring, loggingCatchClause } from './utils.ts'
+import { pascalToKebabCase } from './transform-jsx.ts'
 
 export function childHasNoProps(child: ChildComponent): boolean {
   return t.isObjectExpression(child.propsExpression) && child.propsExpression.properties.length === 0
@@ -143,6 +144,7 @@ export function injectComponentRegistrations(ast: t.File, componentInstances: Ma
         t.expressionStatement(
           t.callExpression(t.memberExpression(t.identifier('Component'), t.identifier('_register')), [
             t.identifier(tagName),
+            t.stringLiteral(pascalToKebabCase(tagName)),
           ]),
         ),
       )

@@ -204,7 +204,7 @@ test('jsx map conditionals rerender rows instead of emitting raw jsx in observer
   `)
 
   assert.match(output, /render(?:__unresolved_0|Todos)Item/)
-  assert.match(output, /store\.editingId/)
+  assert.match(output, /(?:store|this\.__rawStore|__rs)\.editingId/)
   assert.doesNotMatch(output, /render(?:__unresolved_0|Todos)Item[\s\S]*<>/)
 })
 
@@ -723,7 +723,7 @@ test('generateCreateItemMethod uses data-prop-* for component-root map items', a
     key: 'conversations',
   }
 
-  const method = generateCreateItemMethod(arrayMap)
+  const { method } = generateCreateItemMethod(arrayMap)
   assert.ok(method, 'should generate createItem method')
 
   const code = generate(method!).code
@@ -756,7 +756,7 @@ test('generateCreateItemMethod sets __geaProps with object props for component-r
     key: 'messages',
   }
 
-  const method = generateCreateItemMethod(arrayMap)
+  const { method } = generateCreateItemMethod(arrayMap)
   assert.ok(method, 'should generate createItem method')
 
   const code = generate(method!).code
@@ -780,7 +780,7 @@ test('generateCreateItemMethod does NOT set __geaProps for non-component map ite
     key: 'items',
   }
 
-  const method = generateCreateItemMethod(arrayMap)
+  const { method } = generateCreateItemMethod(arrayMap)
   assert.ok(method, 'should generate createItem method')
 
   const code = generate(method!).code

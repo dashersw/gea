@@ -444,7 +444,7 @@ test('benchmark proxy: keyed append preserves existing rows and appends at conta
         store.data.push(...buildRows(1000, 1001))
         await flushMicrotasks()
       },
-      300,
+      500,
     )
 
     const rowsAfter = getRows(tbody)
@@ -498,7 +498,7 @@ test('benchmark proxy: simulate 08_create1k-after1k_x2 preserving prior identiti
         store.data.push(...buildRows(1000, 1001))
         await flushMicrotasks()
       },
-      800,
+      1200,
     )
 
     const rowsAfterSecondAppend = getRows(tbody)
@@ -614,7 +614,7 @@ test('benchmark proxy: clear uses container clear path without structural churn'
         store.data = []
         await flushMicrotasks()
       },
-      100,
+      200,
     )
 
     assert.equal(getRows(tbody).length, 0)

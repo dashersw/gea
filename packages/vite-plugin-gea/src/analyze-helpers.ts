@@ -356,6 +356,13 @@ export function hasExplicitItemKey(template: t.JSXElement | t.JSXFragment | unde
   )
 }
 
+export function hasRootUserIdAttribute(template: t.JSXElement | t.JSXFragment | undefined): boolean {
+  if (!template || !t.isJSXElement(template)) return false
+  return template.openingElement.attributes.some(
+    (attr) => t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name) && attr.name.name === 'id',
+  )
+}
+
 export function detectContainerSelector(node: t.JSXElement, tagName: string): string {
   for (const attr of node.openingElement.attributes) {
     if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue

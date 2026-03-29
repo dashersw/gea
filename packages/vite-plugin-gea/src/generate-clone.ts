@@ -14,6 +14,7 @@ import {
   getDirectChildElements,
   getJSXTagName,
   isComponentTag,
+  replacePropRefsInExpression,
 } from './utils.ts'
 
 const EVENT_NAMES = new Set([
@@ -139,6 +140,7 @@ export type CloneContentPatch = {
 export type CloneIdentityPatch =
   | { kind: 'id'; childPath: number[]; expr: t.Expression }
   | { kind: 'dataGeaEvent'; childPath: number[]; token: string }
+  | { kind: 'attr'; childPath: number[]; expr: t.Expression; attrName: string }
 
 function buildEventIdExpr(suffix?: string): t.Expression {
   if (!suffix) return t.memberExpression(t.thisExpression(), t.identifier('id'))
@@ -261,7 +263,7 @@ export function collectClonePatchEntries(
     if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
     const name = attr.name.name
 
-    if (name === 'key' || EVENT_NAMES.has(name)) continue
+    if (name === 'key' || name === 'id' || EVENT_NAMES.has(name)) continue
 
     if (!t.isJSXExpressionContainer(attr.value) || t.isJSXEmptyExpression(attr.value.expression)) continue
 
@@ -342,12 +344,32 @@ export function collectClonePatchEntries(
   })
 }
 
+function rewritePropsForClone(
+  expr: t.Expression,
+  propContext: import('./component-event-helpers.ts').PropContext,
+): t.Expression {
+  const paramName = propContext.propsParamName
+  if (!paramName) return expr
+  if (t.isMemberExpression(expr) && t.isIdentifier(expr.object) && expr.object.name === paramName) {
+    return t.memberExpression(
+      t.memberExpression(t.thisExpression(), t.identifier('props')),
+      expr.property,
+      expr.computed,
+    )
+  }
+  if (t.isIdentifier(expr) && expr.name === paramName) {
+    return t.memberExpression(t.thisExpression(), t.identifier('props'))
+  }
+  return expr
+}
+
 function collectIdentityPatchesForElement(
   node: t.JSXElement,
   elementPath: string[],
   childPath: number[],
   ctx: {
     elementPathToBindingId: Map<string, string>
+    elementPathToUserIdExpr?: Map<string, t.Expression>
     elementPathPrefix?: string
     templateParams: Array<t.Identifier | t.Pattern | t.RestElement>
     sourceFile: string
@@ -368,8 +390,34 @@ function collectIdentityPatchesForElement(
   )
 
   let hasBindingId = false
+  const resolveUserIdExpr = (): t.Expression | undefined => {
+    const rawPathKey = elementPath.join(' > ')
+    const pathKey = ctx.elementPathPrefix ? ctx.elementPathPrefix + ' > ' + rawPathKey : rawPathKey
+    return (
+      ctx.elementPathToUserIdExpr?.get(pathKey) ??
+      (ctx.elementPathPrefix ? undefined : ctx.elementPathToUserIdExpr?.get(rawPathKey))
+    )
+  }
+
   if (ctx.isRoot) {
-    patches.push({ kind: 'id', childPath: [...childPath], expr: buildEventIdExpr() })
+    const userIdExpr = resolveUserIdExpr()
+    if (userIdExpr) {
+      if (!t.isStringLiteral(userIdExpr)) {
+        patches.push({
+          kind: 'id',
+          childPath: [...childPath],
+          expr: rewritePropsForClone(t.cloneNode(userIdExpr, true), propContext),
+        })
+      }
+      patches.push({
+        kind: 'attr',
+        childPath: [...childPath],
+        expr: t.memberExpression(t.thisExpression(), t.identifier('id')),
+        attrName: 'data-gea-cid',
+      })
+    } else {
+      patches.push({ kind: 'id', childPath: [...childPath], expr: buildEventIdExpr() })
+    }
     hasBindingId = true
   } else {
     const rawPathKey = elementPath.join(' > ')
@@ -378,7 +426,18 @@ function collectIdentityPatchesForElement(
       ctx.elementPathToBindingId.get(pathKey) ??
       (ctx.elementPathPrefix ? undefined : ctx.elementPathToBindingId.get(rawPathKey))
     if (bindingId !== undefined && bindingId !== '') {
-      patches.push({ kind: 'id', childPath: [...childPath], expr: buildEventIdExpr(bindingId) })
+      const userIdExpr = resolveUserIdExpr()
+      if (userIdExpr) {
+        if (!t.isStringLiteral(userIdExpr)) {
+          patches.push({
+            kind: 'id',
+            childPath: [...childPath],
+            expr: rewritePropsForClone(t.cloneNode(userIdExpr, true), propContext),
+          })
+        }
+      } else {
+        patches.push({ kind: 'id', childPath: [...childPath], expr: buildEventIdExpr(bindingId) })
+      }
       hasBindingId = true
     }
   }
@@ -412,10 +471,23 @@ function collectIdentityPatchesForElement(
         let selector: string | undefined
 
         if (ctx.isRoot) {
-          selectorExpression = t.templateLiteral(
-            [t.templateElement({ raw: '#', cooked: '#' }, false), t.templateElement({ raw: '', cooked: '' }, true)],
-            [t.memberExpression(t.thisExpression(), t.identifier('id'))],
-          )
+          const userIdExpr = resolveUserIdExpr()
+          if (userIdExpr) {
+            selectorExpression = t.isStringLiteral(userIdExpr)
+              ? t.stringLiteral(`#${userIdExpr.value}`)
+              : t.templateLiteral(
+                  [
+                    t.templateElement({ raw: '#', cooked: '#' }, false),
+                    t.templateElement({ raw: '', cooked: '' }, true),
+                  ],
+                  [t.cloneNode(userIdExpr, true)],
+                )
+          } else {
+            selectorExpression = t.templateLiteral(
+              [t.templateElement({ raw: '#', cooked: '#' }, false), t.templateElement({ raw: '', cooked: '' }, true)],
+              [t.memberExpression(t.thisExpression(), t.identifier('id'))],
+            )
+          }
         } else {
           const rawPathKey2 = elementPath.join(' > ')
           const pathKey2 = ctx.elementPathPrefix ? ctx.elementPathPrefix + ' > ' + rawPathKey2 : rawPathKey2
@@ -423,13 +495,26 @@ function collectIdentityPatchesForElement(
             ctx.elementPathToBindingId.get(pathKey2) ??
             (ctx.elementPathPrefix ? undefined : ctx.elementPathToBindingId.get(rawPathKey2))
           if (bindingId !== undefined && bindingId !== '') {
-            selectorExpression = t.templateLiteral(
-              [
-                t.templateElement({ raw: '#', cooked: '#' }, false),
-                t.templateElement({ raw: `-${bindingId}`, cooked: `-${bindingId}` }, true),
-              ],
-              [t.memberExpression(t.thisExpression(), t.identifier('id'))],
-            )
+            const userIdExpr2 = resolveUserIdExpr()
+            if (userIdExpr2) {
+              selectorExpression = t.isStringLiteral(userIdExpr2)
+                ? t.stringLiteral(`#${userIdExpr2.value}`)
+                : t.templateLiteral(
+                    [
+                      t.templateElement({ raw: '#', cooked: '#' }, false),
+                      t.templateElement({ raw: '', cooked: '' }, true),
+                    ],
+                    [t.cloneNode(userIdExpr2, true)],
+                  )
+            } else {
+              selectorExpression = t.templateLiteral(
+                [
+                  t.templateElement({ raw: '#', cooked: '#' }, false),
+                  t.templateElement({ raw: `-${bindingId}`, cooked: `-${bindingId}` }, true),
+                ],
+                [t.memberExpression(t.thisExpression(), t.identifier('id'))],
+              )
+            }
           } else if (!explicitIdAttr) {
             if (!generatedEventSuffix) {
               generatedEventSuffix = `ev${ctx.eventIdCounter.value ?? 0}`
@@ -447,6 +532,43 @@ function collectIdentityPatchesForElement(
               ],
               [t.memberExpression(t.thisExpression(), t.identifier('id'))],
             )
+          } else if (explicitIdAttr && t.isJSXAttribute(explicitIdAttr)) {
+            const idVal = explicitIdAttr.value
+            let userExpr: t.Expression | undefined
+            if (t.isStringLiteral(idVal)) {
+              userExpr = t.stringLiteral(idVal.value)
+            } else if (t.isJSXExpressionContainer(idVal) && !t.isJSXEmptyExpression(idVal.expression)) {
+              userExpr = idVal.expression as t.Expression
+            }
+            if (!userExpr) {
+              const err = new Error(
+                `[gea] Event delegation requires id="..." or id={expr} when an id attribute is present on this element.`,
+              )
+              ;(err as any).__geaCompileError = true
+              throw err
+            }
+            if (!t.isStringLiteral(userExpr)) {
+              patches.push({
+                kind: 'id',
+                childPath: [...childPath],
+                expr: rewritePropsForClone(t.cloneNode(userExpr, true), propContext),
+              })
+            }
+            selectorExpression = t.isStringLiteral(userExpr)
+              ? t.stringLiteral(`#${userExpr.value}`)
+              : t.templateLiteral(
+                  [
+                    t.templateElement({ raw: '#', cooked: '#' }, false),
+                    t.templateElement({ raw: '', cooked: '' }, true),
+                  ],
+                  [
+                    replacePropRefsInExpression(
+                      t.cloneNode(userExpr, true),
+                      propContext.destructuredPropNames,
+                      propContext.propsParamName,
+                    ),
+                  ],
+                )
           } else {
             if (!generatedEventToken) {
               generatedEventToken = `ev${ctx.eventIdCounter.value ?? 0}`
@@ -511,6 +633,7 @@ export function generateCloneMembers(
     [],
     {
       elementPathToBindingId: analysis.elementPathToBindingId,
+      elementPathToUserIdExpr: analysis.elementPathToUserIdExpr,
       templateParams,
       sourceFile,
       imports,
@@ -628,6 +751,15 @@ function buildCloneTemplateBody(
     if (patch.kind === 'id') {
       stmts.push(
         t.expressionStatement(t.assignmentExpression('=', t.memberExpression(nav, t.identifier('id')), patch.expr)),
+      )
+    } else if (patch.kind === 'attr') {
+      stmts.push(
+        t.expressionStatement(
+          t.callExpression(t.memberExpression(nav, t.identifier('setAttribute')), [
+            t.stringLiteral(patch.attrName),
+            patch.expr,
+          ]),
+        ),
       )
     } else {
       stmts.push(
