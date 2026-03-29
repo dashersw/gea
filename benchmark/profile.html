@@ -151,6 +151,7 @@
       <div id="main"></div>
     </div>
 
+    <textarea id="json-output" style="position: absolute; left: -9999px" aria-label="json"></textarea>
     <script src="dist-profile/main.js"></script>
     <script src="profiler.js"></script>
     <script>
@@ -195,6 +196,7 @@
           // Also store JSON for programmatic access
           window.__profileResults = window.__geaProfiler.exportJSON(results)
           console.log('Profile results (JSON):', window.__profileResults)
+          document.getElementById('json-output').value = JSON.stringify(window.__profileResults)
 
           setStatus('Complete — results shown below. JSON in console and window.__profileResults')
         } catch (err) {

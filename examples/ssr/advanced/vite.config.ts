@@ -39,7 +39,10 @@ function devMiddleware(): Plugin {
           const reader = response.body!.getReader()
           const pump = async (): Promise<void> => {
             const { done, value } = await reader.read()
-            if (done) { res.end(); return }
+            if (done) {
+              res.end()
+              return
+            }
             res.write(value)
             await pump()
           }

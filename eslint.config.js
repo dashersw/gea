@@ -19,6 +19,8 @@ export default [
       'website/playground/codemirror-bundle.js',
       'website/playground/gea-compiler-browser.js',
       'website/playground/gea-core.js',
+      'website/playground/index.mjs.map',
+      'tests/e2e/vendor/babel.min.js',
     ],
   },
 

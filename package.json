@@ -3,13 +3,16 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "website"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "build:gea": "npm run build -w @geajs/core",
+    "sync:playground-gea-core": "node scripts/sync-playground-gea-core.mjs",
     "build:gea-mobile": "npm run build -w @geajs/mobile",
     "build:vite-plugin": "npm run build -w @geajs/vite-plugin",
+    "benchmark:record:simulation": "BENCHMARK_HISTORY_WRITE=1 npx tsx --test packages/vite-plugin-gea/tests/benchmark-simulation.test.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -38,6 +41,9 @@
     "example:router-v2": "vite dev examples/router-v2",
     "example:tic-tac-toe": "vite dev --config examples/tic-tac-toe/vite.config.ts",
     "example:todo": "vite dev examples/todo",
+    "example:sheet-editor": "vite dev examples/sheet-editor",
+    "example:website": "npm run dev -w gea-website",
+    "vendor:e2e-babel": "node scripts/fetch-e2e-babel-vendor.mjs",
     "test:e2e": "npx playwright test --config=tests/e2e/playwright.config.ts"
   },
   "devDependencies": {

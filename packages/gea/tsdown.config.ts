@@ -1,3 +1,5 @@
+import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { defineConfig } from 'tsdown'
 import { geaPlugin } from '../vite-plugin-gea/src/index'
 
@@ -27,10 +29,27 @@ export default defineConfig([
   },
   {
     entry: {
-      router: 'src/lib/router/index.ts',
+      router: 'src/router-subpath.ts',
     },
     ...esmOpts,
     clean: false,
+    deps: {
+      neverBundle: (id) => /[/\\]src[/\\]index\.ts$/.test(id),
+    },
+    hooks: {
+      async 'build:done'({ chunks }) {
+        for (const chunk of chunks) {
+          if (chunk.fileName === 'router.mjs' && 'outDir' in chunk && typeof chunk.outDir === 'string') {
+            const file = path.join(chunk.outDir, chunk.fileName)
+            let code = await readFile(file, 'utf8')
+            if (code.includes('./index.ts')) {
+              code = code.replace(/\.\/index\.ts/g, './index.mjs')
+              await writeFile(file, code)
+            }
+          }
+        }
+      },
+    },
   },
   {
     entry: {

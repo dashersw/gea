@@ -19,8 +19,13 @@
 
   const timings = {}
 
+  let _rootGetByProp = null
+
   function resetTimings() {
     for (const key in timings) delete timings[key]
+    if (_rootGetByProp) {
+      for (const key in _rootGetByProp) delete _rootGetByProp[key]
+    }
   }
 
   function startTiming(category) {
@@ -88,10 +93,142 @@
       return false
     }
 
+    // ── Root proxy get/set traps ──
+
+    const StoreClass = Object.getPrototypeOf(Object.getPrototypeOf(realStore)).constructor
+    const rootHandler = StoreClass._browserRootProxyHandler
+
+    const rawStore = store.__raw || realStore
+    const rootGetByProp = {}
+    _rootGetByProp = rootGetByProp
+
+    if (rootHandler) {
+      const origGet = rootHandler.get
+      rootHandler.get = function (t, prop, receiver) {
+        if (typeof prop !== 'symbol') {
+          const isStore = t === rawStore
+          const key = isStore ? 'proxy.storeGet' : 'proxy.componentGet'
+          startTiming(key)
+          if (!rootGetByProp[prop]) rootGetByProp[prop] = { store: 0, component: 0 }
+          if (isStore) rootGetByProp[prop].store++
+          else rootGetByProp[prop].component++
+          try {
+            return origGet.call(this, t, prop, receiver)
+          } finally {
+            endTiming(key)
+          }
+        }
+        return origGet.call(this, t, prop, receiver)
+      }
+
+      const origSet = rootHandler.set
+      rootHandler.set = function (t, prop, value) {
+        if (typeof prop !== 'symbol') {
+          const key = t === rawStore ? 'proxy.storeSet' : 'proxy.componentSet'
+          startTiming(key)
+          try {
+            return origSet.call(this, t, prop, value)
+          } finally {
+            endTiming(key)
+          }
+        }
+        return origSet.call(this, t, prop, value)
+      }
+    }
+
+    // ── DOM write instrumentation ──
+
+    const textContentDesc = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')
+    if (textContentDesc && textContentDesc.set) {
+      const origSet = textContentDesc.set
+      Object.defineProperty(Node.prototype, 'textContent', {
+        ...textContentDesc,
+        set(val) {
+          startTiming('dom.textContent')
+          try {
+            return origSet.call(this, val)
+          } finally {
+            endTiming('dom.textContent')
+          }
+        },
+      })
+    }
+
+    const classNameDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'className')
+    if (classNameDesc && classNameDesc.set) {
+      const origSet = classNameDesc.set
+      Object.defineProperty(Element.prototype, 'className', {
+        ...classNameDesc,
+        set(val) {
+          startTiming('dom.className')
+          try {
+            return origSet.call(this, val)
+          } finally {
+            endTiming('dom.className')
+          }
+        },
+      })
+    }
+
+    const origSetAttr = Element.prototype.setAttribute
+    Element.prototype.setAttribute = function (name, value) {
+      startTiming('dom.setAttribute')
+      try {
+        return origSetAttr.call(this, name, value)
+      } finally {
+        endTiming('dom.setAttribute')
+      }
+    }
+
+    const origRemoveAttr = Element.prototype.removeAttribute
+    Element.prototype.removeAttribute = function (name) {
+      startTiming('dom.removeAttribute')
+      try {
+        return origRemoveAttr.call(this, name)
+      } finally {
+        endTiming('dom.removeAttribute')
+      }
+    }
+
+    const nodeValueDesc = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeValue')
+    if (nodeValueDesc && nodeValueDesc.set) {
+      const origSet = nodeValueDesc.set
+      Object.defineProperty(Node.prototype, 'nodeValue', {
+        ...nodeValueDesc,
+        set(val) {
+          startTiming('dom.nodeValue')
+          try {
+            return origSet.call(this, val)
+          } finally {
+            endTiming('dom.nodeValue')
+          }
+        },
+      })
+    }
+
+    const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML')
+    if (innerHTMLDesc && innerHTMLDesc.set) {
+      const origSet = innerHTMLDesc.set
+      Object.defineProperty(Element.prototype, 'innerHTML', {
+        ...innerHTMLDesc,
+        set(val) {
+          startTiming('dom.innerHTML')
+          try {
+            return origSet.call(this, val)
+          } finally {
+            endTiming('dom.innerHTML')
+          }
+        },
+      })
+    }
+
     // ── Store internals (on realStore instance and prototype chain) ──
 
     // _flushChanges is a bound arrow fn on the instance
     wrapBoundFn(realStore, '_flushChanges', 'store._flushChanges')
+
+    // Static methods
+    wrapMethod(StoreClass, 'flushAll', 'Store.flushAll')
 
     // Prototype methods (Store.prototype)
     const storeProto = Object.getPrototypeOf(Object.getPrototypeOf(realStore))
@@ -103,6 +240,7 @@
     wrapMethod(storeProto, '_emitChanges', 'store._emitChanges')
     wrapMethod(storeProto, '_createProxy', 'store._createProxy')
     wrapMethod(storeProto, '_interceptArrayMethod', 'store._interceptArrayMethod')
+    wrapMethod(storeProto, '_queueDirectArrayItemPrimitiveChange', 'store._queueDirectArrayItemPrimitiveChange')
 
     // BenchmarkStore methods
     const bsProto = Object.getPrototypeOf(realStore)
@@ -122,6 +260,7 @@
     wrapMethod(compInstanceProto, '__observe_store_selected', 'component.__observe_store_selected')
     wrapMethod(compInstanceProto, '__applyListChanges', 'component.__applyListChanges')
     wrapMethod(compInstanceProto, 'createDataItem', 'component.createDataItem')
+    wrapMethod(compInstanceProto, 'patchDataItem', 'component.patchDataItem')
     wrapMethod(compInstanceProto, 'renderDataItem', 'component.renderDataItem')
     wrapMethod(compInstanceProto, '__ensureArrayConfigs', 'component.__ensureArrayConfigs')
     wrapMethod(compInstanceProto, '__getMapItemFromEvent_store_data', 'component.__getMapItemFromEvent')
@@ -176,12 +315,14 @@
       await waitForFlush()
       const tEnd = performance.now()
 
+      const rootGetSnapshot = _rootGetByProp ? { ..._rootGetByProp } : {}
       results.push({
         totalTime: +(tEnd - t0).toFixed(3),
         syncTime: +(tSync - t0).toFixed(3),
         flushTime: +(_postFlushTime - tSync).toFixed(3),
         layoutTime: +(tEnd - _postFlushTime).toFixed(3),
         breakdown: getTimings(),
+        rootGetByProp: rootGetSnapshot,
       })
     }
 
@@ -401,19 +542,23 @@
       lines.push(`  ${'Category'.padEnd(50)} ${'Avg ms'.padStart(10)} ${'Calls'.padStart(8)} ${'%total'.padStart(8)}`)
       lines.push(`  ${'─'.repeat(50)} ${'─'.repeat(10)} ${'─'.repeat(8)} ${'─'.repeat(8)}`)
 
+      let totalCalls = 0
       for (const [cat, info] of sorted) {
         const avgTime = info.total / info.count
         const avgCalls = Math.round(info.calls / info.count)
         const pct = avgTotal > 0 ? (avgTime / avgTotal) * 100 : 0
         const isLeaf = leafCats.has(cat)
+        totalCalls += avgCalls
 
-        if (avgTime >= 0.005) {
+        if (avgTime >= 0.005 || avgCalls > 0) {
           const marker = isLeaf ? '  ' : '▸ '
           lines.push(
             `  ${marker}${cat.padEnd(48)} ${avgTime.toFixed(3).padStart(10)} ${String(avgCalls).padStart(8)} ${(pct.toFixed(1) + '%').padStart(8)}`,
           )
         }
       }
+      lines.push(`  ${'─'.repeat(50)} ${'─'.repeat(10)} ${'─'.repeat(8)} ${'─'.repeat(8)}`)
+      lines.push(`  ${'TOTAL INSTRUMENTED CALLS'.padEnd(50)} ${''.padStart(10)} ${String(totalCalls).padStart(8)}`)
 
       // Break down unaccounted time using phase measurements
       const storeMethodKeys = ['run', 'runLots', 'add', 'update', 'clear', 'swapRows', 'select', 'remove']
@@ -497,6 +642,24 @@
       const avgFlush = data.results.reduce((s, r) => s + r.flushTime, 0) / n
       const avgLayout = data.results.reduce((s, r) => s + r.layoutTime, 0) / n
 
+      const rootGetAgg = {}
+      for (const run of data.results) {
+        if (run.rootGetByProp) {
+          for (const [prop, counts] of Object.entries(run.rootGetByProp)) {
+            if (!rootGetAgg[prop]) rootGetAgg[prop] = { store: 0, component: 0 }
+            rootGetAgg[prop].store += counts.store || 0
+            rootGetAgg[prop].component += counts.component || 0
+          }
+        }
+      }
+      const rootGetByProp = {}
+      for (const [prop, totals] of Object.entries(rootGetAgg)) {
+        rootGetByProp[prop] = {
+          store: Math.round(totals.store / n),
+          component: Math.round(totals.component / n),
+        }
+      }
+
       exported[key] = {
         name: data.name,
         avgTotalMs: +avgTotal.toFixed(3),
@@ -505,6 +668,7 @@
         avgLayoutMs: +avgLayout.toFixed(3),
         runs: n,
         breakdown,
+        rootGetByProp,
       }
     }
     return exported
