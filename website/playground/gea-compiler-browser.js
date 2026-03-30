@@ -47849,6 +47849,27 @@ function analyzeAttributes(node, tagName, elementPath, bindings, propBindings, s
       "drop"
     ].includes(name))
       return;
+    if (name === "dangerouslySetInnerHTML") {
+      const expr2 = attr.value.expression;
+      if (templateSetupContext && !libExports.isJSXEmptyExpression(expr2)) {
+        const setupStatements = collectTemplateSetupStatements(expr2, templateSetupContext);
+        const dependencies = collectExpressionDependencies(expr2, stateRefs, setupStatements);
+        const stateDeps = dependencies.filter((d) => d.storeVar || d.pathParts.length > 0 && d.pathParts[0] !== "props");
+        if (stateDeps.length > 0) {
+          const selector = generateSelector(elementPath);
+          propBindings.push({
+            propName: "__state__",
+            selector,
+            type: "attribute",
+            attributeName: "dangerouslySetInnerHTML",
+            elementPath: [...elementPath],
+            expression: libExports.cloneNode(expr2, true),
+            setupStatements: setupStatements.length > 0 ? setupStatements : void 0
+          });
+        }
+      }
+      return;
+    }
     const expr = attr.value.expression;
     const propName = resolvePropRef(expr, propsParamName, destructuredPropNames);
     if (propName) {
@@ -49276,10 +49297,43 @@ function extractChildInstanceRef(expr) {
   const instanceVar = memberExpr.property.name;
   return { instanceVar, guardExpr: expr.left };
 }
+function expressionContainsJSX(expr) {
+  let found = false;
+  const check = (node) => {
+    if (found) return;
+    if (libExports.isJSXElement(node) || libExports.isJSXFragment(node)) {
+      found = true;
+      return;
+    }
+    for (const key of libExports.VISITOR_KEYS[node.type] || []) {
+      const child = node[key];
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === "object" && "type" in c) check(c);
+          if (found) return;
+        }
+      } else if (child && typeof child === "object" && "type" in child) {
+        check(child);
+      }
+      if (found) return;
+    }
+  };
+  check(expr);
+  return found;
+}
+function isChildrenPropAccess(expr) {
+  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && expr.property.name === "children" && libExports.isIdentifier(expr.object) && expr.object.name === "props")
+    return true;
+  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && expr.property.name === "children" && libExports.isMemberExpression(expr.object) && libExports.isThisExpression(expr.object.object) && libExports.isIdentifier(expr.object.property) && expr.object.property.name === "props")
+    return true;
+  return false;
+}
 function expressionMayBeFalsy(expr) {
   if (libExports.isLogicalExpression(expr) && expr.operator === "&&") return true;
   if (libExports.isConditionalExpression(expr)) return true;
   if (libExports.isBooleanLiteral(expr) && !expr.value) return true;
+  if (libExports.isOptionalMemberExpression(expr)) return true;
+  if (libExports.isOptionalCallExpression(expr)) return true;
   return false;
 }
 function canBeBoolean(expr) {
@@ -49314,6 +49368,14 @@ function buildAttrSkipCondition(expr, rawExpr) {
 }
 function escapeHtml$1(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+const URL_ATTRS$2 = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "data", "cite", "poster", "background"]);
+function wrapWithSanitizeAttr(attrName, expr) {
+  if (!URL_ATTRS$2.has(attrName)) return expr;
+  return libExports.callExpression(libExports.identifier("__sanitizeAttr"), [
+    libExports.stringLiteral(attrName),
+    libExports.callExpression(libExports.identifier("String"), [expr])
+  ]);
 }
 function getStaticStringValue(expr) {
   if (libExports.isStringLiteral(expr)) return expr.value;
@@ -49766,6 +49828,7 @@ function processElement(node, parts, ctx, elementPath = []) {
   }
   let generatedEventSuffix;
   let generatedEventToken;
+  let dangerouslySetInnerHTMLExpr;
   node.openingElement.attributes.forEach((attr) => {
     if (libExports.isJSXSpreadAttribute(attr)) {
       const err = new Error(
@@ -49778,6 +49841,13 @@ function processElement(node, parts, ctx, elementPath = []) {
     const attrName = attr.name.name;
     if (attrName === "key") return;
     if (attrName === "id" && hasBindingId) return;
+    if (attrName === "dangerouslySetInnerHTML") {
+      const dsiValue = attr.value;
+      if (libExports.isJSXExpressionContainer(dsiValue) && !libExports.isJSXEmptyExpression(dsiValue.expression)) {
+        dangerouslySetInnerHTMLExpr = dsiValue.expression;
+      }
+      return;
+    }
     if (attrName === "ref") {
       const attrValue2 = attr.value;
       if (libExports.isJSXExpressionContainer(attrValue2) && !libExports.isJSXEmptyExpression(attrValue2.expression) && ctx.refBindings && ctx.refCounter) {
@@ -49974,7 +50044,8 @@ function processElement(node, parts, ctx, elementPath = []) {
         parts.push({ type: "string", value: html });
         const expr = transformJSXExpression(rawExpr, ctx);
         const skipCondition = buildAttrSkipCondition(expr, rawExpr);
-        const templateExpr = propAttrName === "class" ? buildTrimmedClassValueExpression(expr) : expr;
+        const sanitizedExpr = wrapWithSanitizeAttr(propAttrName, expr);
+        const templateExpr = propAttrName === "class" ? buildTrimmedClassValueExpression(expr) : sanitizedExpr;
         if (libExports.isBooleanLiteral(skipCondition) && !skipCondition.value) {
           parts.push({ type: "string", value: ` ${propAttrName}="` });
           parts.push({ type: "expression", value: templateExpr });
@@ -50003,7 +50074,12 @@ function processElement(node, parts, ctx, elementPath = []) {
       html += ` ${propAttrName}`;
     }
   });
-  if (node.openingElement.selfClosing) {
+  if (dangerouslySetInnerHTMLExpr) {
+    html += ">";
+    parts.push({ type: "string", value: html });
+    parts.push({ type: "expression", value: dangerouslySetInnerHTMLExpr });
+    appendString(parts, `</${effectiveTag}>`);
+  } else if (node.openingElement.selfClosing) {
     if (isComp) {
       parts.push({ type: "string", value: html + `></${effectiveTag}>` });
     } else if (VOID_ELEMENTS$1.has(effectiveTag)) {
@@ -50108,7 +50184,11 @@ function processChildren(children, parts, ctx, elementPath, dcCursor, directChil
         if (expressionMayBeFalsy(rawExpr)) {
           expr = libExports.logicalExpression("||", expr, libExports.stringLiteral(""));
         }
-        parts.push({ type: "expression", value: expr });
+        const skipEscape = childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback;
+        const safeExpr = skipEscape ? expr : libExports.callExpression(libExports.identifier("__escapeHtml"), [
+          libExports.callExpression(libExports.identifier("String"), [expr])
+        ]);
+        parts.push({ type: "expression", value: safeExpr });
       }
     }
   });
@@ -52862,6 +52942,7 @@ function mergeObserveHandlers(bindings, stateRefs) {
   return byPath;
 }
 
+const URL_ATTRS$1 = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "data", "cite", "poster", "background"]);
 const traverse$7 = babelTraverse.default || babelTraverse;
 function getArrayPathParts(arrayMap) {
   return arrayMap.arrayPathParts || normalizePathParts(arrayMap.arrayPath || "");
@@ -52976,7 +53057,10 @@ function buildPropPatcherFunction(binding, propName) {
     ) : libExports.expressionStatement(
       libExports.callExpression(libExports.memberExpression(target, libExports.identifier("setAttribute")), [
         libExports.stringLiteral(attrName),
-        libExports.callExpression(libExports.identifier("String"), [libExports.identifier("__attrValue")])
+        URL_ATTRS$1.has(attrName) ? libExports.callExpression(libExports.identifier("__sanitizeAttr"), [
+          libExports.stringLiteral(attrName),
+          libExports.callExpression(libExports.identifier("String"), [libExports.identifier("__attrValue")])
+        ]) : libExports.callExpression(libExports.identifier("String"), [libExports.identifier("__attrValue")])
       ])
     );
     return libExports.arrowFunctionExpression(
@@ -54300,6 +54384,7 @@ function generateComponentArrayResult(um, arrayPropName, imports, propNames, _cl
 }
 
 const generate$1 = "default" in babelGenerator ? babelGenerator.default : babelGenerator;
+const URL_ATTRS = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "data", "cite", "poster", "background"]);
 const traverse$4 = babelTraverse.default || babelTraverse;
 const BOOLEAN_HTML_ATTRS = /* @__PURE__ */ new Set([
   "disabled",
@@ -54985,6 +55070,14 @@ function applyStaticReactivity(ast, originalAST, className, sourceFile, imports,
                     )
                   )
                 );
+              } else if (attrName === "dangerouslySetInnerHTML") {
+                updateStmt = libExports.expressionStatement(
+                  libExports.assignmentExpression(
+                    "=",
+                    libExports.memberExpression(libExports.identifier("__el"), libExports.identifier("innerHTML")),
+                    libExports.callExpression(libExports.identifier("String"), [valueExpr])
+                  )
+                );
               } else {
                 const isBooleanAttr = BOOLEAN_HTML_ATTRS.has(attrName);
                 const removeCondition = isBooleanAttr ? libExports.unaryExpression("!", valueExpr) : libExports.logicalExpression(
@@ -55002,7 +55095,10 @@ function applyStaticReactivity(ast, originalAST, className, sourceFile, imports,
                   libExports.expressionStatement(
                     libExports.callExpression(libExports.memberExpression(libExports.identifier("__el"), libExports.identifier("setAttribute")), [
                       libExports.stringLiteral(attrName),
-                      isBooleanAttr ? libExports.stringLiteral("") : libExports.callExpression(libExports.identifier("String"), [valueExpr])
+                      isBooleanAttr ? libExports.stringLiteral("") : URL_ATTRS.has(attrName) ? libExports.callExpression(libExports.identifier("__sanitizeAttr"), [
+                        libExports.stringLiteral(attrName),
+                        libExports.callExpression(libExports.identifier("String"), [valueExpr])
+                      ]) : libExports.callExpression(libExports.identifier("String"), [valueExpr])
                     ])
                   )
                 );

@@ -1792,6 +1792,30 @@ function applyListChanges(container, array, changes, config) {
 }
 //#endregion
 //#region src/lib/base/component.tsx
+const _URL_ATTRS = new Set([
+	"href",
+	"src",
+	"action",
+	"formaction",
+	"data",
+	"cite",
+	"poster",
+	"background"
+]);
+function __escapeHtml(str) {
+	return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function __sanitizeAttr(name, value) {
+	if (_URL_ATTRS.has(name)) {
+		const stripped = value.replace(/[\s\u0000-\u001F]+/g, "").toLowerCase();
+		if (/^(javascript|vbscript|data):/.test(stripped) && !stripped.startsWith("data:image/")) return "";
+	}
+	return value;
+}
+if (typeof globalThis !== "undefined") {
+	globalThis.__escapeHtml ??= __escapeHtml;
+	globalThis.__sanitizeAttr ??= __sanitizeAttr;
+}
 /**
 * Declared React `Component` surface + `render(): ReactNode` overload so Gea classes are valid JSX class
 * tags while `JSX.IntrinsicElements` is sourced from `@types/react`. Runtime is still Gea-only.
@@ -2205,6 +2229,12 @@ var Component = class Component extends Store {
 	__updateText(suffix, text) {
 		const el = this.__el(suffix);
 		if (el) el.textContent = text;
+	}
+	static __escapeHtml(str) {
+		return __escapeHtml(str);
+	}
+	static __sanitizeAttr(name, value) {
+		return __sanitizeAttr(name, value);
 	}
 	__observe(store, path, handler) {
 		const remover = store.__store.observe(path, handler.bind(this));
@@ -3636,6 +3666,6 @@ const gea = {
 	h
 };
 //#endregion
-export { Component, ComponentManager, Link, Outlet, Router, RouterView, Store, applyListChanges, clearUidProvider, createRouter, gea as default, h, isInternalProp, matchRoute, resetUidCounter, rootDeleteProperty, rootGetValue, rootSetValue, router, setUidProvider };
+export { Component, ComponentManager, Link, Outlet, Router, RouterView, Store, __escapeHtml, __sanitizeAttr, applyListChanges, clearUidProvider, createRouter, gea as default, h, isInternalProp, matchRoute, resetUidCounter, rootDeleteProperty, rootGetValue, rootSetValue, router, setUidProvider };
 
 //# sourceMappingURL=index.mjs.map
