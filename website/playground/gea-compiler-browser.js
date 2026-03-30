@@ -46472,6 +46472,271 @@ function getTemplateParamBinding(param) {
   return void 0;
 }
 
+function existsSync(filePath) {
+              const resolver = globalThis.__geaResolveFile;
+              if (!resolver) return false
+              return resolver(filePath) !== null
+            }
+            function readFileSync(filePath, encoding) {
+              const resolver = globalThis.__geaResolveFile;
+              if (!resolver) throw new Error('No file resolver available')
+              const content = resolver(filePath);
+              if (content === null) throw new Error('File not found: ' + filePath)
+              return content
+            }
+
+function resolve(...parts) {
+              return parts.filter(Boolean).join('/')
+                .replace(/\/\.\//g, '/')
+                .replace(/\/+/g, '/')
+            }
+            function dirname(p) {
+              const parts = p.split('/');
+              parts.pop();
+              return parts.join('/') || '/'
+            }
+
+const EVENT_NAMES$1 = /* @__PURE__ */ new Set([
+  "click",
+  "dblclick",
+  "mousedown",
+  "mouseup",
+  "mouseover",
+  "mouseout",
+  "mousemove",
+  "keydown",
+  "keyup",
+  "keypress",
+  "focus",
+  "blur",
+  "input",
+  "change",
+  "submit",
+  "scroll",
+  "touchstart",
+  "touchmove",
+  "touchend",
+  "tap",
+  "longTap",
+  "swipeRight",
+  "swipeUp",
+  "swipeLeft",
+  "swipeDown",
+  "dragstart",
+  "dragend",
+  "dragover",
+  "dragleave",
+  "drop"
+]);
+function toGeaEventType(attrName) {
+  if (attrName.startsWith("on") && attrName.length > 2) {
+    const rest = attrName.slice(2);
+    return rest.charAt(0).toLowerCase() + rest.slice(1);
+  }
+  return attrName;
+}
+function getPropContext(params) {
+  const context = {
+    destructuredPropNames: /* @__PURE__ */ new Set()
+  };
+  const firstParam = params?.[0];
+  if (!firstParam || libExports.isRestElement(firstParam)) return context;
+  const binding = getTemplateParamBinding(firstParam);
+  if (!binding) return context;
+  if (libExports.isIdentifier(binding)) {
+    context.propsParamName = binding.name;
+    return context;
+  }
+  context.propsParamName = "props";
+  binding.properties.forEach((prop) => {
+    if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.key)) {
+      context.destructuredPropNames.add(prop.key.name);
+    }
+  });
+  return context;
+}
+function getRootClassSelector(node) {
+  for (const attr of node.openingElement.attributes) {
+    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
+    if (attr.name.name !== "class" && attr.name.name !== "className") continue;
+    let firstClass = "";
+    if (libExports.isStringLiteral(attr.value)) {
+      firstClass = attr.value.value.trim().split(/\s+/)[0] || "";
+    } else if (libExports.isJSXExpressionContainer(attr.value) && !libExports.isJSXEmptyExpression(attr.value.expression)) {
+      const expr = attr.value.expression;
+      if (libExports.isStringLiteral(expr)) {
+        firstClass = expr.value.trim().split(/\s+/)[0] || "";
+      } else if (libExports.isTemplateLiteral(expr)) {
+        firstClass = expr.quasis[0]?.value.raw.trim().split(/\s+/)[0] || "";
+      }
+    }
+    if (firstClass) return `.${firstClass}`;
+  }
+  return null;
+}
+function resolvePropCallbackName(expr, context) {
+  if (libExports.isIdentifier(expr) && context.destructuredPropNames.has(expr.name)) {
+    return expr.name;
+  }
+  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && libExports.isIdentifier(expr.object) && expr.object.name === (context.propsParamName || "props")) {
+    return expr.property.name;
+  }
+  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && libExports.isMemberExpression(expr.object) && libExports.isIdentifier(expr.object.property) && expr.object.property.name === "props" && (libExports.isThisExpression(expr.object.object) || libExports.isIdentifier(expr.object.object) && expr.object.object.name === (context.propsParamName || "props"))) {
+    return expr.property.name;
+  }
+  return null;
+}
+function extractSingleCallExpression(expr) {
+  if (libExports.isCallExpression(expr)) return expr;
+  if (libExports.isArrowFunctionExpression(expr) || libExports.isFunctionExpression(expr)) {
+    if (libExports.isCallExpression(expr.body)) return expr.body;
+    if (!libExports.isBlockStatement(expr.body) || expr.body.body.length !== 1) return null;
+    const stmt = expr.body.body[0];
+    if (libExports.isExpressionStatement(stmt) && libExports.isCallExpression(stmt.expression)) return stmt.expression;
+    if (libExports.isReturnStatement(stmt) && stmt.argument && libExports.isCallExpression(stmt.argument)) return stmt.argument;
+  }
+  return null;
+}
+function getHoistableRootEvent(attrName, expr, elementPath, context, selector) {
+  if (elementPath.length !== 0 || !selector) return null;
+  if (attrName.startsWith("data-") || attrName === "class" || attrName === "className" || attrName === "style" || attrName === "id")
+    return null;
+  const eventType = toGeaEventType(attrName);
+  const directProp = resolvePropCallbackName(expr, context);
+  if (directProp) return { eventType, propName: directProp, selector };
+  const callExpr = extractSingleCallExpression(expr);
+  if (!callExpr) return null;
+  const propName = resolvePropCallbackName(callExpr.callee, context);
+  if (!propName) return null;
+  return { eventType, propName, selector };
+}
+function resolveImportPath$1(importer, source) {
+  const base = resolve(dirname(importer), source);
+  const candidates = [
+    base,
+    `${base}.js`,
+    `${base}.jsx`,
+    `${base}.ts`,
+    `${base}.tsx`,
+    resolve(base, "index.js"),
+    resolve(base, "index.jsx"),
+    resolve(base, "index.ts"),
+    resolve(base, "index.tsx")
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+function getReturnedRootJSX(ast, componentClassName) {
+  let found = null;
+  for (const stmt of ast.program.body) {
+    if (libExports.isExportDefaultDeclaration(stmt)) {
+      const decl = stmt.declaration;
+      if (libExports.isFunctionDeclaration(decl) && decl.body) {
+        const ret = decl.body.body.find(
+          (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
+        );
+        if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
+          return { jsx: ret.argument, context: getPropContext(decl.params) };
+        }
+      }
+      if (libExports.isIdentifier(decl)) {
+        for (const bodyStmt of ast.program.body) {
+          if (!libExports.isVariableDeclaration(bodyStmt)) continue;
+          for (const dec of bodyStmt.declarations) {
+            if (!libExports.isIdentifier(dec.id, { name: decl.name })) continue;
+            if (!dec.init || !libExports.isArrowFunctionExpression(dec.init) && !libExports.isFunctionExpression(dec.init)) continue;
+            const fn = dec.init;
+            if (libExports.isJSXElement(fn.body)) return { jsx: fn.body, context: getPropContext(fn.params) };
+            if (libExports.isBlockStatement(fn.body)) {
+              const ret = fn.body.body.find(
+                (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
+              );
+              if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
+                return { jsx: ret.argument, context: getPropContext(fn.params) };
+              }
+            }
+          }
+        }
+      }
+    }
+    if (componentClassName && libExports.isExportDefaultDeclaration(stmt) && libExports.isClassDeclaration(stmt.declaration) && libExports.isIdentifier(stmt.declaration.id, { name: componentClassName })) {
+      const templateMethod = stmt.declaration.body.body.find(
+        (member) => libExports.isClassMethod(member) && libExports.isIdentifier(member.key) && member.key.name === "template"
+      );
+      if (!templateMethod || !libExports.isBlockStatement(templateMethod.body)) return null;
+      const ret = templateMethod.body.body.find(
+        (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
+      );
+      if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
+        return {
+          jsx: ret.argument,
+          context: getPropContext(templateMethod.params)
+        };
+      }
+    }
+  }
+  for (const stmt of ast.program.body) {
+    if (!componentClassName || !libExports.isClassDeclaration(stmt) || !libExports.isIdentifier(stmt.id, { name: componentClassName }))
+      continue;
+    const templateMethod = stmt.body.body.find(
+      (member) => libExports.isClassMethod(member) && libExports.isIdentifier(member.key) && member.key.name === "template"
+    );
+    if (!templateMethod || !libExports.isBlockStatement(templateMethod.body)) continue;
+    const ret = templateMethod.body.body.find(
+      (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
+    );
+    if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
+      found = {
+        jsx: ret.argument,
+        context: getPropContext(templateMethod.params)
+      };
+      break;
+    }
+  }
+  return found;
+}
+const hoistableRootEventCache = /* @__PURE__ */ new Map();
+function getHoistableRootEventsForImport(importer, source) {
+  const resolved = resolveImportPath$1(importer, source);
+  if (!resolved) return [];
+  const cached = hoistableRootEventCache.get(resolved);
+  if (cached) return cached;
+  let result;
+  try {
+    const code = readFileSync(resolved, "utf8");
+    const parsed = parseSource$1(code);
+    if (!parsed) return [];
+    const root = getReturnedRootJSX(parsed.ast, parsed.componentClassName);
+    if (!root) return [];
+    const selector = getRootClassSelector(root.jsx);
+    if (!selector) return [];
+    result = root.jsx.openingElement.attributes.flatMap((attr) => {
+      if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) return [];
+      if (!attr.value || !libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) {
+        return [];
+      }
+      const meta = getHoistableRootEvent(
+        attr.name.name,
+        attr.value.expression,
+        [],
+        root.context,
+        selector
+      );
+      return meta ? [meta] : [];
+    });
+  } catch (err) {
+    console.warn(`[gea] Failed to analyze root events for ${resolved}:`, err instanceof Error ? err.message : err);
+    result = [];
+  }
+  hoistableRootEventCache.set(resolved, result);
+  return result;
+}
+function clearCaches$1() {
+  hoistableRootEventCache.clear();
+}
+
 function resolvePropRef(expr, propsParamName, destructuredPropNames) {
   if (libExports.isIdentifier(expr) && destructuredPropNames?.has(expr.name)) return expr.name;
   if (!libExports.isMemberExpression(expr) || !libExports.isIdentifier(expr.property)) return null;
@@ -47824,37 +48089,16 @@ function analyzeAttributes(node, tagName, elementPath, bindings, propBindings, s
     if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) return;
     if (!attr.value || !libExports.isJSXExpressionContainer(attr.value)) return;
     const name = attr.name.name;
-    if ([
-      "click",
-      "dblclick",
-      "change",
-      "input",
-      "keydown",
-      "keyup",
-      "blur",
-      "focus",
-      "mousedown",
-      "mouseup",
-      "submit",
-      "tap",
-      "longTap",
-      "swipeRight",
-      "swipeUp",
-      "swipeLeft",
-      "swipeDown",
-      "dragstart",
-      "dragend",
-      "dragover",
-      "dragleave",
-      "drop"
-    ].includes(name))
-      return;
+    if (name === "ref") return;
+    if (EVENT_NAMES$1.has(name) || EVENT_NAMES$1.has(toGeaEventType(name))) return;
     if (name === "dangerouslySetInnerHTML") {
       const expr2 = attr.value.expression;
       if (templateSetupContext && !libExports.isJSXEmptyExpression(expr2)) {
         const setupStatements = collectTemplateSetupStatements(expr2, templateSetupContext);
         const dependencies = collectExpressionDependencies(expr2, stateRefs, setupStatements);
-        const stateDeps = dependencies.filter((d) => d.storeVar || d.pathParts.length > 0 && d.pathParts[0] !== "props");
+        const stateDeps = dependencies.filter(
+          (d) => d.storeVar || d.pathParts.length > 0 && d.pathParts[0] !== "props"
+        );
         if (stateDeps.length > 0) {
           const selector = generateSelector(elementPath);
           propBindings.push({
@@ -48661,6 +48905,15 @@ function collectDependentPropNames(expr, setupStatements, propsParamName, destru
   }
   return Array.from(names);
 }
+function isInsideRefAttribute(path) {
+  let current = path;
+  while (current) {
+    if (libExports.isJSXAttribute(current.node) && libExports.isJSXIdentifier(current.node.name) && current.node.name.name === "ref")
+      return true;
+    current = current.parentPath;
+  }
+  return false;
+}
 function collectAllStateAccesses(templateMethod, stateRefs, stateProps, templateSetupContext, rootExpr) {
   const params = templateMethod.params.filter((param) => !libExports.isTSParameterProperty(param));
   const expr = rootExpr && !libExports.isJSXEmptyExpression(rootExpr) ? libExports.cloneNode(rootExpr, true) : libExports.arrowFunctionExpression(params, templateMethod.body);
@@ -48675,6 +48928,7 @@ function collectAllStateAccesses(templateMethod, stateRefs, stateProps, template
     noScope: true,
     Identifier(path) {
       if (!stateRefs.has(path.node.name)) return;
+      if (isInsideRefAttribute(path)) return;
       const ref = stateRefs.get(path.node.name);
       if (path.parentPath && libExports.isMemberExpression(path.parentPath.node) && path.parentPath.node.object === path.node && libExports.isIdentifier(path.parentPath.node.property) && !path.parentPath.node.computed) {
         const grandParent = path.parentPath.parentPath;
@@ -48703,6 +48957,7 @@ function collectAllStateAccesses(templateMethod, stateRefs, stateProps, template
     },
     MemberExpression(path) {
       if (!libExports.isIdentifier(path.node.property)) return;
+      if (isInsideRefAttribute(path)) return;
       const parent = path.parentPath;
       if (parent && libExports.isCallExpression(parent.node) && parent.node.callee === path.node) return;
       const resolved = resolvePath(path.node, stateRefs);
@@ -48811,239 +49066,6 @@ function detectUnresolvedRelationalClassBindings(itemTemplate, itemVar, stateRef
     });
   }
   return results;
-}
-
-function existsSync(filePath) {
-              const resolver = globalThis.__geaResolveFile;
-              if (!resolver) return false
-              return resolver(filePath) !== null
-            }
-            function readFileSync(filePath, encoding) {
-              const resolver = globalThis.__geaResolveFile;
-              if (!resolver) throw new Error('No file resolver available')
-              const content = resolver(filePath);
-              if (content === null) throw new Error('File not found: ' + filePath)
-              return content
-            }
-
-function resolve(...parts) {
-              return parts.filter(Boolean).join('/')
-                .replace(/\/\.\//g, '/')
-                .replace(/\/+/g, '/')
-            }
-            function dirname(p) {
-              const parts = p.split('/');
-              parts.pop();
-              return parts.join('/') || '/'
-            }
-
-function toGeaEventType(attrName) {
-  if (attrName.startsWith("on") && attrName.length > 2) {
-    const rest = attrName.slice(2);
-    return rest.charAt(0).toLowerCase() + rest.slice(1);
-  }
-  return attrName;
-}
-function getPropContext(params) {
-  const context = {
-    destructuredPropNames: /* @__PURE__ */ new Set()
-  };
-  const firstParam = params?.[0];
-  if (!firstParam || libExports.isRestElement(firstParam)) return context;
-  const binding = getTemplateParamBinding(firstParam);
-  if (!binding) return context;
-  if (libExports.isIdentifier(binding)) {
-    context.propsParamName = binding.name;
-    return context;
-  }
-  context.propsParamName = "props";
-  binding.properties.forEach((prop) => {
-    if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.key)) {
-      context.destructuredPropNames.add(prop.key.name);
-    }
-  });
-  return context;
-}
-function getRootClassSelector(node) {
-  for (const attr of node.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    if (attr.name.name !== "class" && attr.name.name !== "className") continue;
-    let firstClass = "";
-    if (libExports.isStringLiteral(attr.value)) {
-      firstClass = attr.value.value.trim().split(/\s+/)[0] || "";
-    } else if (libExports.isJSXExpressionContainer(attr.value) && !libExports.isJSXEmptyExpression(attr.value.expression)) {
-      const expr = attr.value.expression;
-      if (libExports.isStringLiteral(expr)) {
-        firstClass = expr.value.trim().split(/\s+/)[0] || "";
-      } else if (libExports.isTemplateLiteral(expr)) {
-        firstClass = expr.quasis[0]?.value.raw.trim().split(/\s+/)[0] || "";
-      }
-    }
-    if (firstClass) return `.${firstClass}`;
-  }
-  return null;
-}
-function resolvePropCallbackName(expr, context) {
-  if (libExports.isIdentifier(expr) && context.destructuredPropNames.has(expr.name)) {
-    return expr.name;
-  }
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && libExports.isIdentifier(expr.object) && expr.object.name === (context.propsParamName || "props")) {
-    return expr.property.name;
-  }
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && libExports.isMemberExpression(expr.object) && libExports.isIdentifier(expr.object.property) && expr.object.property.name === "props" && (libExports.isThisExpression(expr.object.object) || libExports.isIdentifier(expr.object.object) && expr.object.object.name === (context.propsParamName || "props"))) {
-    return expr.property.name;
-  }
-  return null;
-}
-function extractSingleCallExpression(expr) {
-  if (libExports.isCallExpression(expr)) return expr;
-  if (libExports.isArrowFunctionExpression(expr) || libExports.isFunctionExpression(expr)) {
-    if (libExports.isCallExpression(expr.body)) return expr.body;
-    if (!libExports.isBlockStatement(expr.body) || expr.body.body.length !== 1) return null;
-    const stmt = expr.body.body[0];
-    if (libExports.isExpressionStatement(stmt) && libExports.isCallExpression(stmt.expression)) return stmt.expression;
-    if (libExports.isReturnStatement(stmt) && stmt.argument && libExports.isCallExpression(stmt.argument)) return stmt.argument;
-  }
-  return null;
-}
-function getHoistableRootEvent(attrName, expr, elementPath, context, selector) {
-  if (elementPath.length !== 0 || !selector) return null;
-  if (attrName.startsWith("data-") || attrName === "class" || attrName === "className" || attrName === "style" || attrName === "id")
-    return null;
-  const eventType = toGeaEventType(attrName);
-  const directProp = resolvePropCallbackName(expr, context);
-  if (directProp) return { eventType, propName: directProp, selector };
-  const callExpr = extractSingleCallExpression(expr);
-  if (!callExpr) return null;
-  const propName = resolvePropCallbackName(callExpr.callee, context);
-  if (!propName) return null;
-  return { eventType, propName, selector };
-}
-function resolveImportPath$1(importer, source) {
-  const base = resolve(dirname(importer), source);
-  const candidates = [
-    base,
-    `${base}.js`,
-    `${base}.jsx`,
-    `${base}.ts`,
-    `${base}.tsx`,
-    resolve(base, "index.js"),
-    resolve(base, "index.jsx"),
-    resolve(base, "index.ts"),
-    resolve(base, "index.tsx")
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-function getReturnedRootJSX(ast, componentClassName) {
-  let found = null;
-  for (const stmt of ast.program.body) {
-    if (libExports.isExportDefaultDeclaration(stmt)) {
-      const decl = stmt.declaration;
-      if (libExports.isFunctionDeclaration(decl) && decl.body) {
-        const ret = decl.body.body.find(
-          (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
-        );
-        if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
-          return { jsx: ret.argument, context: getPropContext(decl.params) };
-        }
-      }
-      if (libExports.isIdentifier(decl)) {
-        for (const bodyStmt of ast.program.body) {
-          if (!libExports.isVariableDeclaration(bodyStmt)) continue;
-          for (const dec of bodyStmt.declarations) {
-            if (!libExports.isIdentifier(dec.id, { name: decl.name })) continue;
-            if (!dec.init || !libExports.isArrowFunctionExpression(dec.init) && !libExports.isFunctionExpression(dec.init)) continue;
-            const fn = dec.init;
-            if (libExports.isJSXElement(fn.body)) return { jsx: fn.body, context: getPropContext(fn.params) };
-            if (libExports.isBlockStatement(fn.body)) {
-              const ret = fn.body.body.find(
-                (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
-              );
-              if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
-                return { jsx: ret.argument, context: getPropContext(fn.params) };
-              }
-            }
-          }
-        }
-      }
-    }
-    if (componentClassName && libExports.isExportDefaultDeclaration(stmt) && libExports.isClassDeclaration(stmt.declaration) && libExports.isIdentifier(stmt.declaration.id, { name: componentClassName })) {
-      const templateMethod = stmt.declaration.body.body.find(
-        (member) => libExports.isClassMethod(member) && libExports.isIdentifier(member.key) && member.key.name === "template"
-      );
-      if (!templateMethod || !libExports.isBlockStatement(templateMethod.body)) return null;
-      const ret = templateMethod.body.body.find(
-        (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
-      );
-      if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
-        return {
-          jsx: ret.argument,
-          context: getPropContext(templateMethod.params)
-        };
-      }
-    }
-  }
-  for (const stmt of ast.program.body) {
-    if (!componentClassName || !libExports.isClassDeclaration(stmt) || !libExports.isIdentifier(stmt.id, { name: componentClassName }))
-      continue;
-    const templateMethod = stmt.body.body.find(
-      (member) => libExports.isClassMethod(member) && libExports.isIdentifier(member.key) && member.key.name === "template"
-    );
-    if (!templateMethod || !libExports.isBlockStatement(templateMethod.body)) continue;
-    const ret = templateMethod.body.body.find(
-      (node) => libExports.isReturnStatement(node) && node.argument && libExports.isJSXElement(node.argument)
-    );
-    if (ret && libExports.isReturnStatement(ret) && ret.argument && libExports.isJSXElement(ret.argument)) {
-      found = {
-        jsx: ret.argument,
-        context: getPropContext(templateMethod.params)
-      };
-      break;
-    }
-  }
-  return found;
-}
-const hoistableRootEventCache = /* @__PURE__ */ new Map();
-function getHoistableRootEventsForImport(importer, source) {
-  const resolved = resolveImportPath$1(importer, source);
-  if (!resolved) return [];
-  const cached = hoistableRootEventCache.get(resolved);
-  if (cached) return cached;
-  let result;
-  try {
-    const code = readFileSync(resolved, "utf8");
-    const parsed = parseSource$1(code);
-    if (!parsed) return [];
-    const root = getReturnedRootJSX(parsed.ast, parsed.componentClassName);
-    if (!root) return [];
-    const selector = getRootClassSelector(root.jsx);
-    if (!selector) return [];
-    result = root.jsx.openingElement.attributes.flatMap((attr) => {
-      if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) return [];
-      if (!attr.value || !libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) {
-        return [];
-      }
-      const meta = getHoistableRootEvent(
-        attr.name.name,
-        attr.value.expression,
-        [],
-        root.context,
-        selector
-      );
-      return meta ? [meta] : [];
-    });
-  } catch (err) {
-    console.warn(`[gea] Failed to analyze root events for ${resolved}:`, err instanceof Error ? err.message : err);
-    result = [];
-  }
-  hoistableRootEventCache.set(resolved, result);
-  return result;
-}
-function clearCaches$1() {
-  hoistableRootEventCache.clear();
 }
 
 const RESERVED_HTML_TAG_NAMES = /* @__PURE__ */ new Set([
@@ -50246,7 +50268,7 @@ function partsToTemplateLiteral(parts) {
 }
 
 const traverse$a = babelTraverse.default || babelTraverse;
-const EVENT_NAMES$1 = /* @__PURE__ */ new Set([
+const EVENT_NAMES = /* @__PURE__ */ new Set([
   "click",
   "dblclick",
   "mousedown",
@@ -50602,7 +50624,7 @@ function walkJSXForPatch(node, path, entries, rootIsComponent = false) {
   for (const attr of node.openingElement.attributes) {
     if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
     const name = attr.name.name;
-    if (name === "key" || EVENT_NAMES$1.has(name)) continue;
+    if (name === "key" || EVENT_NAMES.has(name)) continue;
     if (!libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) continue;
     if (name === "class" || name === "className") {
       entries.push({
@@ -50794,7 +50816,7 @@ function generateCreateItemMethod(arrayMap, templatePropNames, wholeParamName, t
       for (const attr of cloned.openingElement.attributes) {
         if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
         const propName = attr.name.name;
-        if (propName === "key" || EVENT_NAMES$1.has(propName)) continue;
+        if (propName === "key" || EVENT_NAMES.has(propName)) continue;
         if (!libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) continue;
         const exprClone = libExports.cloneNode(attr.value.expression, true);
         const tempProg = libExports.file(libExports.program([libExports.expressionStatement(exprClone)]));
@@ -51196,7 +51218,7 @@ function generateCreateItemMethod(arrayMap, templatePropNames, wholeParamName, t
     for (const attr of cloned.openingElement.attributes) {
       if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
       const name = attr.name.name;
-      if (name === "key" || EVENT_NAMES$1.has(name)) continue;
+      if (name === "key" || EVENT_NAMES.has(name)) continue;
       if (!libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) continue;
       const exprClone = libExports.cloneNode(attr.value.expression, true);
       const tempProg = libExports.file(libExports.program([libExports.expressionStatement(exprClone)]));
@@ -51273,38 +51295,6 @@ function branchContainsJSX(expr) {
   return containsJSX;
 }
 
-const EVENT_NAMES = /* @__PURE__ */ new Set([
-  "click",
-  "dblclick",
-  "mousedown",
-  "mouseup",
-  "mouseover",
-  "mouseout",
-  "mousemove",
-  "keydown",
-  "keyup",
-  "keypress",
-  "focus",
-  "blur",
-  "input",
-  "change",
-  "submit",
-  "scroll",
-  "touchstart",
-  "touchmove",
-  "touchend",
-  "tap",
-  "longTap",
-  "swipeRight",
-  "swipeUp",
-  "swipeLeft",
-  "swipeDown",
-  "dragstart",
-  "dragend",
-  "dragover",
-  "dragleave",
-  "drop"
-]);
 const EVENT_TYPES = /* @__PURE__ */ new Set([
   "click",
   "dblclick",
@@ -51464,7 +51454,8 @@ function collectClonePatchEntries(node, path, entries, rootIsComponent = false) 
   for (const attr of node.openingElement.attributes) {
     if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
     const name = attr.name.name;
-    if (name === "key" || name === "id" || EVENT_NAMES.has(name)) continue;
+    if (name === "key" || name === "id" || name === "ref" || EVENT_NAMES$1.has(name) || EVENT_NAMES$1.has(toGeaEventType(name)))
+      continue;
     if (!libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) continue;
     if (name === "class" || name === "className") {
       entries.push({
