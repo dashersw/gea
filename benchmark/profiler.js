@@ -11,6 +11,9 @@
  *   - Observer routing (_collectMatchingObserverNodes, _notifyHandlers)
  *   - DOM operations (createDataItem, rebuildList, applyPropChanges, etc.)
  *   - Component observer handlers (__observe_store_data, __observe_store_selected)
+ *
+ * Each benchmark op is profiled twice: direct store.* (minimal JS path) and DOM
+ * .click() on the same control (toolbar or row link) so totals can be compared.
  */
 ;(function () {
   'use strict'
@@ -296,6 +299,35 @@
     })
   }
 
+  /** IDs match benchmark/src/benchmark.js toolbar buttons */
+  function getToolbarButtons() {
+    return {
+      run: document.getElementById('run'),
+      runlots: document.getElementById('runlots'),
+      add: document.getElementById('add'),
+      update: document.getElementById('update'),
+      clear: document.getElementById('clear'),
+      swaprows: document.getElementById('swaprows'),
+    }
+  }
+
+  function clickEl(el) {
+    if (el && typeof el.click === 'function') el.click()
+  }
+
+  // Keys: [directResultKey, clickResultKey] — used by formatResults / exportComparisonPairs
+  const DIRECT_VS_CLICK_PAIRS = [
+    ['create1k', 'create1kClick'],
+    ['replaceAll', 'replaceAllClick'],
+    ['partialUpdate', 'partialUpdateClick'],
+    ['selectRow', 'selectRowClick'],
+    ['swapRows', 'swapRowsClick'],
+    ['removeRow', 'removeRowClick'],
+    ['create10k', 'create10kClick'],
+    ['append1k', 'append1kClick'],
+    ['clearRows', 'clearRowsClick'],
+  ]
+
   // ── Benchmark operations ───────────────────────────────────────────
 
   async function profileOperation(name, setup, action, iterations = 5) {
@@ -332,6 +364,8 @@
   async function runAllProfiles() {
     const store = window.__geaStore
     const results = {}
+    const toolbar = getToolbarButtons()
+    const tbody = document.getElementById('tbody')
 
     // 1. Create 1,000 rows
     // Warmup
@@ -340,12 +374,22 @@
       await waitForFlush()
     }
     results.create1k = await profileOperation(
-      'create 1,000 rows',
+      'create 1,000 rows (direct)',
       (s) => {
         s.clear()
       },
       (s) => {
         s.run()
+      },
+      10,
+    )
+    results.create1kClick = await profileOperation(
+      'create 1,000 rows (click)',
+      (s) => {
+        s.clear()
+      },
+      () => {
+        clickEl(toolbar.run)
       },
       10,
     )
@@ -356,12 +400,22 @@
       await waitForFlush()
     }
     results.replaceAll = await profileOperation(
-      'replace all 1,000 rows',
+      'replace all 1,000 rows (direct)',
       (s) => {
         s.run()
       },
       (s) => {
         s.run()
+      },
+      10,
+    )
+    results.replaceAllClick = await profileOperation(
+      'replace all 1,000 rows (click)',
+      (s) => {
+        s.run()
+      },
+      () => {
+        clickEl(toolbar.run)
       },
       10,
     )
@@ -373,12 +427,22 @@
       await waitForFlush()
     }
     results.partialUpdate = await profileOperation(
-      'partial update (every 10th row)',
+      'partial update (every 10th row) (direct)',
       (s) => {
         s.run()
       },
       (s) => {
         s.update()
+      },
+      10,
+    )
+    results.partialUpdateClick = await profileOperation(
+      'partial update (every 10th row) (click)',
+      (s) => {
+        s.run()
+      },
+      () => {
+        clickEl(toolbar.update)
       },
       10,
     )
@@ -391,7 +455,7 @@
     }
     let selectCounter = 1
     results.selectRow = await profileOperation(
-      'select row',
+      'select row (direct)',
       (s) => {
         if (selectCounter === 1) {
           s.run()
@@ -403,6 +467,23 @@
       20,
     )
 
+    let selectClickCounter = 0
+    results.selectRowClick = await profileOperation(
+      'select row (click)',
+      (s) => {
+        if (selectClickCounter === 0) {
+          s.run()
+        }
+      },
+      () => {
+        const row = tbody.children[selectClickCounter++]
+        if (!row) return
+        const link = row.children[1]?.querySelector('a')
+        if (link) link.click()
+      },
+      20,
+    )
+
     // 5. Swap rows
     for (let i = 0; i < 5; i++) {
       store.run()
@@ -410,7 +491,7 @@
       await waitForFlush()
     }
     results.swapRows = await profileOperation(
-      'swap rows',
+      'swap rows (direct)',
       (s) => {
         s.run()
       },
@@ -419,15 +500,38 @@
       },
       10,
     )
+    results.swapRowsClick = await profileOperation(
+      'swap rows (click)',
+      (s) => {
+        s.run()
+      },
+      () => {
+        clickEl(toolbar.swaprows)
+      },
+      10,
+    )
 
     // 6. Remove row
     results.removeRow = await profileOperation(
-      'remove row',
+      'remove row (direct)',
       (s) => {
         s.run()
       },
       (s) => {
         s.remove(500)
+      },
+      10,
+    )
+    results.removeRowClick = await profileOperation(
+      'remove row (click)',
+      (s) => {
+        s.run()
+      },
+      () => {
+        const row = tbody.children[500]
+        if (!row) return
+        const removeLink = row.children[2]?.querySelector('a')
+        if (removeLink) removeLink.click()
       },
       10,
     )
@@ -438,7 +542,7 @@
       await waitForFlush()
     }
     results.create10k = await profileOperation(
-      'create 10,000 rows',
+      'create 10,000 rows (direct)',
       (s) => {
         s.clear()
       },
@@ -447,10 +551,20 @@
       },
       5,
     )
+    results.create10kClick = await profileOperation(
+      'create 10,000 rows (click)',
+      (s) => {
+        s.clear()
+      },
+      () => {
+        clickEl(toolbar.runlots)
+      },
+      5,
+    )
 
     // 8. Append 1,000 rows
     results.append1k = await profileOperation(
-      'append 1,000 rows',
+      'append 1,000 rows (direct)',
       (s) => {
         s.run()
       },
@@ -459,15 +573,35 @@
       },
       10,
     )
+    results.append1kClick = await profileOperation(
+      'append 1,000 rows (click)',
+      (s) => {
+        s.run()
+      },
+      () => {
+        clickEl(toolbar.add)
+      },
+      10,
+    )
 
     // 9. Clear rows
     results.clearRows = await profileOperation(
-      'clear rows',
+      'clear rows (direct)',
       (s) => {
         s.run()
       },
       (s) => {
         s.clear()
+      },
+      10,
+    )
+    results.clearRowsClick = await profileOperation(
+      'clear rows (click)',
+      (s) => {
+        s.run()
+      },
+      () => {
+        clickEl(toolbar.clear)
       },
       10,
     )
@@ -502,13 +636,67 @@
     return allCats.filter((c) => !parents.has(c))
   }
 
+  /** Stable order: each pair is direct then click; any extra keys last */
+  function orderedResultKeys(allResults) {
+    const seen = new Set()
+    const keys = []
+    for (const [a, b] of DIRECT_VS_CLICK_PAIRS) {
+      if (allResults[a] && !seen.has(a)) {
+        keys.push(a)
+        seen.add(a)
+      }
+      if (allResults[b] && !seen.has(b)) {
+        keys.push(b)
+        seen.add(b)
+      }
+    }
+    for (const k of Object.keys(allResults)) {
+      if (!seen.has(k)) keys.push(k)
+    }
+    return keys
+  }
+
+  function avgPhase(data, field) {
+    const n = data.results.length
+    return data.results.reduce((s, r) => s + r[field], 0) / n
+  }
+
+  function exportComparisonPairs(allResults) {
+    const pairs = []
+    for (const [directKey, clickKey] of DIRECT_VS_CLICK_PAIRS) {
+      const d = allResults[directKey]
+      const c = allResults[clickKey]
+      if (!d || !c) continue
+      const label = d.name.replace(/\s*\(direct\)\s*$/i, '').trim()
+      pairs.push({
+        name: label,
+        directKey,
+        clickKey,
+        avgTotalMsDirect: +avgPhase(d, 'totalTime').toFixed(3),
+        avgTotalMsClick: +avgPhase(c, 'totalTime').toFixed(3),
+        deltaTotalMs: +(avgPhase(c, 'totalTime') - avgPhase(d, 'totalTime')).toFixed(3),
+        avgSyncMsDirect: +avgPhase(d, 'syncTime').toFixed(3),
+        avgSyncMsClick: +avgPhase(c, 'syncTime').toFixed(3),
+        deltaSyncMs: +(avgPhase(c, 'syncTime') - avgPhase(d, 'syncTime')).toFixed(3),
+        avgFlushMsDirect: +avgPhase(d, 'flushTime').toFixed(3),
+        avgFlushMsClick: +avgPhase(c, 'flushTime').toFixed(3),
+        deltaFlushMs: +(avgPhase(c, 'flushTime') - avgPhase(d, 'flushTime')).toFixed(3),
+        avgLayoutMsDirect: +avgPhase(d, 'layoutTime').toFixed(3),
+        avgLayoutMsClick: +avgPhase(c, 'layoutTime').toFixed(3),
+        deltaLayoutMs: +(avgPhase(c, 'layoutTime') - avgPhase(d, 'layoutTime')).toFixed(3),
+      })
+    }
+    return pairs
+  }
+
   function formatResults(allResults) {
     const lines = []
     lines.push('═'.repeat(100))
     lines.push('  GEA BENCHMARK PROFILING RESULTS')
     lines.push('═'.repeat(100))
 
-    for (const [, data] of Object.entries(allResults)) {
+    for (const key of orderedResultKeys(allResults)) {
+      const data = allResults[key]
       lines.push('')
       lines.push(`  ── ${data.name} ${'─'.repeat(Math.max(0, 85 - data.name.length))}`)
 
@@ -597,6 +785,23 @@
 
     lines.push('')
     lines.push('═'.repeat(100))
+    lines.push('  DIRECT vs CLICK — same work; click adds native DOM dispatch + Gea handler path')
+    lines.push('═'.repeat(100))
+    lines.push(
+      `  ${'Operation'.padEnd(44)} ${'direct ms'.padStart(10)} ${'click ms'.padStart(10)} ${'Δ total'.padStart(10)} ${'Δ sync'.padStart(10)}`,
+    )
+    lines.push(`  ${'─'.repeat(44)} ${'─'.repeat(10)} ${'─'.repeat(10)} ${'─'.repeat(10)} ${'─'.repeat(10)}`)
+    for (const row of exportComparisonPairs(allResults)) {
+      const name = row.name.length > 44 ? row.name.slice(0, 41) + '…' : row.name
+      lines.push(
+        `  ${name.padEnd(44)} ${String(row.avgTotalMsDirect).padStart(10)} ${String(row.avgTotalMsClick).padStart(10)} ${String(row.deltaTotalMs).padStart(10)} ${String(row.deltaSyncMs).padStart(10)}`,
+      )
+    }
+    lines.push(`  ${'─'.repeat(44)} ${'─'.repeat(10)} ${'─'.repeat(10)} ${'─'.repeat(10)} ${'─'.repeat(10)}`)
+    lines.push('  Δ total = click − direct (overall). Δ sync ≈ extra before microtask flush (event path + store work).')
+    lines.push('')
+
+    lines.push('═'.repeat(100))
     lines.push('')
     lines.push('Legend:')
     lines.push('  ▸  = parent category (time includes child categories)')
@@ -607,6 +812,7 @@
     lines.push('       layout/paint    = browser reflow + rAF/setTimeout scheduling after flush')
     lines.push('')
     lines.push('  Phases: sync = action() call │ flush = microtask drain │ layout/paint = post-flush')
+    lines.push('  Direct runs call store methods only; click runs use .click() on the same UI as the benchmark app.')
     lines.push('')
     return lines.join('\n')
   }
@@ -681,6 +887,7 @@
     runAllProfiles,
     formatResults,
     exportJSON,
+    exportComparisonPairs,
     resetTimings,
     getTimings,
     profileOperation,

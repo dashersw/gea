@@ -25,6 +25,11 @@
         display: flex;
         gap: 10px;
         align-items: center;
+        flex-wrap: wrap;
+      }
+      #single-op {
+        min-width: min(22rem, 100%);
+        max-width: 36rem;
       }
       button {
         background: #21262d;
@@ -120,16 +125,25 @@
     <div class="controls">
       <button id="btn-run" class="primary" onclick="runProfile()">Run Full Profile</button>
       <button id="btn-run-single" onclick="runSingle()">Run Single Operation</button>
-      <select id="single-op">
-        <option value="create1k">create 1,000 rows</option>
-        <option value="replaceAll">replace all rows</option>
-        <option value="partialUpdate">partial update</option>
-        <option value="selectRow">select row</option>
-        <option value="swapRows">swap rows</option>
-        <option value="removeRow">remove row</option>
-        <option value="create10k">create 10,000 rows</option>
-        <option value="append1k">append 1,000 rows</option>
-        <option value="clearRows">clear rows</option>
+      <select id="single-op" aria-label="Benchmark operation and profile path">
+        <option value="create1k">create 1,000 rows — direct</option>
+        <option value="create1kClick">create 1,000 rows — click</option>
+        <option value="replaceAll">replace all rows — direct</option>
+        <option value="replaceAllClick">replace all rows — click</option>
+        <option value="partialUpdate">partial update — direct</option>
+        <option value="partialUpdateClick">partial update — click</option>
+        <option value="selectRow">select row — direct</option>
+        <option value="selectRowClick">select row — click</option>
+        <option value="swapRows">swap rows — direct</option>
+        <option value="swapRowsClick">swap rows — click</option>
+        <option value="removeRow">remove row — direct</option>
+        <option value="removeRowClick">remove row — click</option>
+        <option value="create10k">create 10,000 rows — direct</option>
+        <option value="create10kClick">create 10,000 rows — click</option>
+        <option value="append1k">append 1,000 rows — direct</option>
+        <option value="append1kClick">append 1,000 rows — click</option>
+        <option value="clearRows">clear rows — direct</option>
+        <option value="clearRowsClick">clear rows — click</option>
       </select>
       <span id="status">Ready</span>
     </div>
@@ -195,10 +209,15 @@
 
           // Also store JSON for programmatic access
           window.__profileResults = window.__geaProfiler.exportJSON(results)
+          window.__profileComparison = window.__geaProfiler.exportComparisonPairs(results)
           console.log('Profile results (JSON):', window.__profileResults)
-          document.getElementById('json-output').value = JSON.stringify(window.__profileResults)
+          console.log('Direct vs click:', window.__profileComparison)
+          document.getElementById('json-output').value = JSON.stringify({
+            operations: window.__profileResults,
+            comparison: window.__profileComparison,
+          })
 
-          setStatus('Complete — results shown below. JSON in console and window.__profileResults')
+          setStatus('Complete — results below; JSON + comparison in console')
         } catch (err) {
           setOutput('Error: ' + err.message + '\n' + err.stack)
           setStatus('Error')
@@ -215,53 +234,124 @@
 
         setStatus(`Running ${op}...`)
 
+        function tb() {
+          return {
+            run: document.getElementById('run'),
+            runlots: document.getElementById('runlots'),
+            add: document.getElementById('add'),
+            update: document.getElementById('update'),
+            clear: document.getElementById('clear'),
+            swaprows: document.getElementById('swaprows'),
+          }
+        }
+        function clickEl(el) {
+          if (el && typeof el.click === 'function') el.click()
+        }
+
         const operations = {
           create1k: {
-            name: 'create 1,000 rows',
+            name: 'create 1,000 rows (direct)',
             setup: (s) => s.clear(),
             action: (s) => s.run(),
           },
+          create1kClick: {
+            name: 'create 1,000 rows (click)',
+            setup: (s) => s.clear(),
+            action: () => clickEl(tb().run),
+          },
           replaceAll: {
-            name: 'replace all rows',
+            name: 'replace all rows (direct)',
             setup: (s) => s.run(),
             action: (s) => s.run(),
           },
+          replaceAllClick: {
+            name: 'replace all rows (click)',
+            setup: (s) => s.run(),
+            action: () => clickEl(tb().run),
+          },
           partialUpdate: {
-            name: 'partial update (every 10th row)',
+            name: 'partial update (every 10th row) (direct)',
             setup: (s) => s.run(),
             action: (s) => s.update(),
           },
+          partialUpdateClick: {
+            name: 'partial update (every 10th row) (click)',
+            setup: (s) => s.run(),
+            action: () => clickEl(tb().update),
+          },
           selectRow: {
-            name: 'select row',
+            name: 'select row (direct)',
             setup: (s) => s.run(),
             action: (s, i) => s.select(i + 1),
           },
+          selectRowClick: {
+            name: 'select row (click)',
+            setup: (s) => s.run(),
+            action: (s, i) => {
+              const tbody = document.getElementById('tbody')
+              const row = tbody.children[i]
+              if (!row) return
+              const link = row.children[1]?.querySelector('a')
+              if (link) link.click()
+            },
+          },
           swapRows: {
-            name: 'swap rows',
+            name: 'swap rows (direct)',
             setup: (s) => s.run(),
             action: (s) => s.swapRows(),
           },
+          swapRowsClick: {
+            name: 'swap rows (click)',
+            setup: (s) => s.run(),
+            action: () => clickEl(tb().swaprows),
+          },
           removeRow: {
-            name: 'remove row',
+            name: 'remove row (direct)',
             setup: (s) => s.run(),
             action: (s) => {
               s.remove(500)
             },
           },
+          removeRowClick: {
+            name: 'remove row (click)',
+            setup: (s) => s.run(),
+            action: () => {
+              const tbody = document.getElementById('tbody')
+              const row = tbody.children[500]
+              if (!row) return
+              const removeLink = row.children[2]?.querySelector('a')
+              if (removeLink) removeLink.click()
+            },
+          },
           create10k: {
-            name: 'create 10,000 rows',
+            name: 'create 10,000 rows (direct)',
             setup: (s) => s.clear(),
             action: (s) => s.runLots(),
           },
+          create10kClick: {
+            name: 'create 10,000 rows (click)',
+            setup: (s) => s.clear(),
+            action: () => clickEl(tb().runlots),
+          },
           append1k: {
-            name: 'append 1,000 rows',
+            name: 'append 1,000 rows (direct)',
             setup: (s) => s.run(),
             action: (s) => s.add(),
           },
+          append1kClick: {
+            name: 'append 1,000 rows (click)',
+            setup: (s) => s.run(),
+            action: () => clickEl(tb().add),
+          },
           clearRows: {
-            name: 'clear rows',
+            name: 'clear rows (direct)',
             setup: (s) => s.run(),
             action: (s) => s.clear(),
+          },
+          clearRowsClick: {
+            name: 'clear rows (click)',
+            setup: (s) => s.run(),
+            action: () => clickEl(tb().clear),
           },
         }
 
