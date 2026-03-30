@@ -1,4 +1,4 @@
-export { default as Component } from './lib/base/component'
+export { default as Component, __escapeHtml, __sanitizeAttr } from './lib/base/component'
 export { resetUidCounter, setUidProvider, clearUidProvider } from './lib/base/uid'
 export { Store, isInternalProp, rootGetValue, rootSetValue, rootDeleteProperty } from './lib/store'
 export { h } from './lib/h'

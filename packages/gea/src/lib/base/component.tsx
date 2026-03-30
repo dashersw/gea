@@ -5,6 +5,36 @@ import type { StoreChange } from '../store'
 import type { ListConfig } from './list'
 type AnyComponent = Component<any>
 
+const _URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'data', 'cite', 'poster', 'background'])
+
+export function __escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+export function __sanitizeAttr(name: string, value: string): string {
+  if (_URL_ATTRS.has(name)) {
+    const stripped = value.replace(/[\s\u0000-\u001F]+/g, '').toLowerCase()
+    if (/^(javascript|vbscript|data):/.test(stripped) && !stripped.startsWith('data:image/')) {
+      return ''
+    }
+  }
+  return value
+}
+
+// Make XSS helpers globally available for compiled template code.
+// The compiler generates calls to __escapeHtml() and __sanitizeAttr() in template
+// methods. These must be accessible regardless of how the compiled code is executed
+// (direct imports, new Function eval, dynamic import with different module resolution).
+if (typeof globalThis !== 'undefined') {
+  ;(globalThis as any).__escapeHtml ??= __escapeHtml
+  ;(globalThis as any).__sanitizeAttr ??= __sanitizeAttr
+}
+
 /**
  * Declared React `Component` surface + `render(): ReactNode` overload so Gea classes are valid JSX class
  * tags while `JSX.IntrinsicElements` is sourced from `@types/react`. Runtime is still Gea-only.
@@ -604,6 +634,14 @@ export default class Component<P = Record<string, any>> extends Store {
   __updateText(suffix: string, text: string): void {
     const el = this.__el(suffix)
     if (el) el.textContent = text
+  }
+
+  static __escapeHtml(str: string): string {
+    return __escapeHtml(str)
+  }
+
+  static __sanitizeAttr(name: string, value: string): string {
+    return __sanitizeAttr(name, value)
   }
 
   __observe(store: any, path: string[], handler: (value: any, changes: any[]) => void): void {
