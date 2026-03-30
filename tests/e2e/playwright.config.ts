@@ -47,6 +47,7 @@ const examples: ExampleDef[] = [
   { name: 'runtime-only' },
   { name: 'runtime-only-jsx' },
   { name: 'ssr-router-simple', dir: 'ssr/router-simple' },
+  { name: 'ssr-todo', dir: 'ssr/todo' },
   { name: 'sheet-editor' },
 ]
 
