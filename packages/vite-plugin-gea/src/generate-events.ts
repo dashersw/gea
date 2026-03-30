@@ -54,32 +54,7 @@ function ensureMapItemHelper(
 ): void {
   if (classBody.body.some((m) => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === helperName)) return
 
-  const itemsExpr = (() => {
-    const [first] = ctx.arrayPathParts
-    const unresolvedMatch = first?.match(/^__unresolved_(\d+)$/)
-    if (unresolvedMatch) {
-      const mapIdx = Number(unresolvedMatch[1])
-      return t.callExpression(
-        t.memberExpression(
-          t.memberExpression(
-            t.memberExpression(t.thisExpression(), t.identifier('__geaMaps')),
-            t.numericLiteral(mapIdx),
-            true,
-          ),
-          t.identifier('getItems'),
-        ),
-        [],
-      )
-    }
-    const base = ctx.isImportedState ? t.identifier(ctx.storeVar || 'store') : t.thisExpression()
-    if (ctx.arrayPathParts.length === 0) return base
-    const [, ...rest] = ctx.arrayPathParts
-    const isIndex = /^\d+$/.test(first)
-    const optionalFirst = ctx.isImportedState
-      ? t.memberExpression(base, isIndex ? t.numericLiteral(Number(first)) : t.identifier(first), isIndex)
-      : t.optionalMemberExpression(base, isIndex ? t.numericLiteral(Number(first)) : t.identifier(first), isIndex, true)
-    return rest.length > 0 ? buildMemberChainFromParts(optionalFirst, rest) : optionalFirst
-  })()
+  const itemsExpr = buildArrayItemsExpr(ctx)
 
   const findPredicate =
     ctx.itemIdProperty && ctx.itemIdProperty !== ITEM_IS_KEY
@@ -114,17 +89,19 @@ function ensureMapItemHelper(
               t.identifier('__itemId'),
             ),
           )
-  const method = jsMethod`${id(helperName)}(e) {
-    var __el = e.target;
-    while (__el && __el.__geaKey == null && (!__el.getAttribute || !__el.getAttribute('data-gea-item-id'))) __el = __el.parentElement;
-    if (!__el) return null;
-    if (__el.__geaItem) return __el.__geaItem;
-    const __itemId = __el.__geaKey ?? (__el.getAttribute && __el.getAttribute('data-gea-item-id'));
-    if (__itemId == null) return null;
-    const __items = ${itemsExpr};
-    const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
-    return __arr.find(${findPredicate}) || __itemId;
-  }`
+  const method = jsMethod`${id(helperName)}(e) {}`
+  method.body.body.push(
+    ...buildGeaItemDomWalk(),
+    ...jsBlockBody`
+      if (!__el) return null;
+      if (__el.__geaItem) return __el.__geaItem;
+      const __itemId = __el.__geaKey ?? (__el.getAttribute && __el.getAttribute('data-gea-item-id'));
+      if (__itemId == null) return null;
+      const __items = ${itemsExpr};
+      const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
+      return __arr.find(${findPredicate}) || __itemId;
+    `,
+  )
   classBody.body.unshift(method)
 }
 
@@ -471,6 +448,44 @@ function referencesIdentifier(nodes: t.Node[], name: string): boolean {
   return nodes.some(walk)
 }
 
+function buildArrayItemsExpr(ctx: NonNullable<EventHandler['mapContext']>, opts: { raw?: boolean } = {}): t.Expression {
+  const [first] = ctx.arrayPathParts
+  const unresolvedMatch = first?.match(/^__unresolved_(\d+)$/)
+  if (unresolvedMatch) {
+    const mapIdx = Number(unresolvedMatch[1])
+    return t.callExpression(
+      t.memberExpression(
+        t.memberExpression(
+          t.memberExpression(t.thisExpression(), t.identifier('__geaMaps')),
+          t.numericLiteral(mapIdx),
+          true,
+        ),
+        t.identifier('getItems'),
+      ),
+      [],
+    )
+  }
+  const base = ctx.isImportedState
+    ? opts.raw
+      ? t.memberExpression(t.identifier(ctx.storeVar || 'store'), t.identifier('__raw'))
+      : t.identifier(ctx.storeVar || 'store')
+    : t.thisExpression()
+  if (ctx.arrayPathParts.length === 0) return base
+  const [, ...rest] = ctx.arrayPathParts
+  const isIndex = /^\d+$/.test(first)
+  const firstAccess = ctx.isImportedState
+    ? t.memberExpression(base, isIndex ? t.numericLiteral(Number(first)) : t.identifier(first), isIndex)
+    : t.optionalMemberExpression(base, isIndex ? t.numericLiteral(Number(first)) : t.identifier(first), isIndex, true)
+  return rest.length > 0 ? buildMemberChainFromParts(firstAccess, rest) : firstAccess
+}
+
+function buildGeaItemDomWalk(): t.Statement[] {
+  return jsBlockBody`
+    var __el = e.target;
+    while (__el && __el.__geaKey == null && (!__el.getAttribute || !__el.getAttribute('data-gea-item-id'))) __el = __el.parentElement;
+  `
+}
+
 function buildMapEventBody(handler: EventHandler, paramContext: TemplateParamContext): t.Statement[] {
   const ctx = handler.mapContext!
   const itemVar = ctx.itemVariable || 'item'
@@ -479,16 +494,31 @@ function buildMapEventBody(handler: EventHandler, paramContext: TemplateParamCon
     extractHandlerBody(handler.handlerExpression, paramContext.propNames),
     paramContext,
   )
+  const needsItem = referencesIdentifier(handlerBody, itemVar)
+  const needsIndex = !!(ctx.indexVariable && referencesIdentifier(handlerBody, ctx.indexVariable))
+
+  if (needsIndex && !needsItem) {
+    const rawArrayExpr = buildArrayItemsExpr(ctx, { raw: true })
+    const preamble = [
+      ...buildGeaItemDomWalk(),
+      ...jsBlockBody`
+        if (!__el || !__el.__geaItem) return;
+        const ${id(ctx.indexVariable!)} = ${rawArrayExpr}.indexOf(__el.__geaItem);
+      `,
+    ]
+    return [...preamble, ...handlerBody]
+  }
+
   const preamble = jsBlockBody`
     const ${id(itemVar)} = this.${id(helperName)}(e);
     if (!${id(itemVar)}) { return; }
   `
-  if (ctx.indexVariable && referencesIdentifier(handlerBody, ctx.indexVariable)) {
+  if (needsIndex) {
+    const rawArrayExpr = buildArrayItemsExpr(ctx, { raw: true })
     preamble.push(
+      ...buildGeaItemDomWalk(),
       ...jsBlockBody`
-        var __el = e.target;
-        while (__el && __el.__geaKey == null && (!__el.getAttribute || !__el.getAttribute('data-gea-item-id'))) __el = __el.parentElement;
-        const ${id(ctx.indexVariable)} = __el ? Array.prototype.indexOf.call(__el.parentNode.children, __el) : -1;
+        const ${id(ctx.indexVariable!)} = __el ? ${rawArrayExpr}.indexOf(__el.__geaItem) : -1;
       `,
     )
   }
