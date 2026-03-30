@@ -48,6 +48,7 @@ const examples: ExampleDef[] = [
   { name: 'runtime-only-jsx' },
   { name: 'ssr-router-simple', dir: 'ssr/router-simple' },
   { name: 'sheet-editor' },
+  { name: 'ref-reactivity' },
 ]
 
 /**

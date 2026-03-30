@@ -483,6 +483,201 @@ test('multiple ref attributes each point to their respective DOM elements', asyn
   }
 })
 
+test('issue #34: ref={this.myTextarea} is not null after render and trySubmit can access it', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-issue-34`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    // Exact code from issue #34
+    const InputSection = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class InputSection extends Component {
+          myTextarea = null
+
+          template() {
+            return (
+              <section>
+                <textarea ref={this.myTextarea} />
+
+                <div>
+                  <button onclick={this.trySubmit}>
+                    Send
+                  </button>
+                </div>
+              </section>
+            )
+          }
+
+          trySubmit() {
+            if (!this.myTextarea) return 'ref-is-null'
+            return 'ref-is-set'
+          }
+        }
+      `,
+      '/virtual/InputSection.jsx',
+      'InputSection',
+      { Component },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const component = new InputSection()
+    component.render(root)
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    assert.ok(component.myTextarea, 'this.myTextarea must not be null after render (issue #34)')
+    assert.equal(
+      component.myTextarea.tagName?.toLowerCase(),
+      'textarea',
+      'this.myTextarea must point to the textarea DOM element',
+    )
+    assert.equal(
+      component.trySubmit(),
+      'ref-is-set',
+      'trySubmit must be able to access the ref — not return early due to null',
+    )
+
+    component.dispose()
+    root.remove()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('ref binding does not trigger re-render loop after initial render', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-ref-no-rerender`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const ChatInput = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class ChatInput extends Component {
+          myTextarea = null
+
+          template() {
+            return (
+              <div>
+                <textarea ref={this.myTextarea}></textarea>
+                <button onclick={this.trySubmit}>Send</button>
+              </div>
+            )
+          }
+
+          trySubmit() {
+            console.log(this.myTextarea)
+          }
+        }
+      `,
+      '/virtual/ChatInput.jsx',
+      'ChatInput',
+      { Component },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const component = new ChatInput()
+    let renderCount = 0
+    const origRender = component.__geaRequestRender?.bind(component)
+    if (origRender) {
+      component.__geaRequestRender = function () {
+        renderCount++
+        return origRender()
+      }
+    }
+
+    component.render(root)
+    await flushMicrotasks()
+    // Drain any additional microtasks that a re-render loop would queue
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    assert.ok(component.myTextarea, 'ref should be assigned after render')
+    assert.equal(
+      component.myTextarea.tagName?.toLowerCase(),
+      'textarea',
+      'ref should point to the textarea element',
+    )
+    assert.equal(renderCount, 0, 'ref assignment must not trigger __geaRequestRender (re-render loop)')
+
+    component.dispose()
+    root.remove()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('ref remains stable after multiple microtask flushes (no infinite loop)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-ref-stable`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Viewer = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Viewer extends Component {
+          canvasEl = null
+          status = 'ready'
+
+          template() {
+            return (
+              <div>
+                <canvas ref={this.canvasEl} width="640" height="480" />
+                <span>{this.status}</span>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/Viewer.jsx',
+      'Viewer',
+      { Component },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const component = new Viewer()
+    component.render(root)
+    await flushMicrotasks()
+
+    const firstRef = component.canvasEl
+    assert.ok(firstRef, 'canvasEl ref should be assigned')
+
+    // Flush several times — if there's a re-render loop the ref would change
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+
+    assert.equal(
+      component.canvasEl,
+      firstRef,
+      'canvasEl ref must remain the same element — no re-render loop',
+    )
+
+    component.dispose()
+    root.remove()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
 test('spread attributes in JSX cause a compile-time rejection via plugin', async () => {
   const { geaPlugin } = await import('../../src/index')
   const plugin = geaPlugin()

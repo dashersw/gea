@@ -263,7 +263,7 @@ export function collectClonePatchEntries(
     if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
     const name = attr.name.name
 
-    if (name === 'key' || name === 'id' || EVENT_NAMES.has(name)) continue
+    if (name === 'key' || name === 'id' || name === 'ref' || EVENT_NAMES.has(name) || EVENT_NAMES.has(toGeaEventType(name))) continue
 
     if (!t.isJSXExpressionContainer(attr.value) || t.isJSXEmptyExpression(attr.value.expression)) continue
 

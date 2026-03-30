@@ -674,33 +674,37 @@ function analyzeAttributes(
     if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) return
     if (!attr.value || !t.isJSXExpressionContainer(attr.value)) return
     const name = attr.name.name
-    if (
-      [
-        'click',
-        'dblclick',
-        'change',
-        'input',
-        'keydown',
-        'keyup',
-        'blur',
-        'focus',
-        'mousedown',
-        'mouseup',
-        'submit',
-        'tap',
-        'longTap',
-        'swipeRight',
-        'swipeUp',
-        'swipeLeft',
-        'swipeDown',
-        'dragstart',
-        'dragend',
-        'dragover',
-        'dragleave',
-        'drop',
-      ].includes(name)
-    )
-      return
+    if (name === 'ref') return
+    const eventNames = [
+      'click',
+      'dblclick',
+      'change',
+      'input',
+      'keydown',
+      'keyup',
+      'blur',
+      'focus',
+      'mousedown',
+      'mouseup',
+      'submit',
+      'tap',
+      'longTap',
+      'swipeRight',
+      'swipeUp',
+      'swipeLeft',
+      'swipeDown',
+      'dragstart',
+      'dragend',
+      'dragover',
+      'dragleave',
+      'drop',
+    ]
+    if (eventNames.includes(name)) return
+    // Handle on* prefixed event names (e.g. onclick, oninput)
+    if (name.startsWith('on') && name.length > 2) {
+      const normalized = name.charAt(2).toLowerCase() + name.slice(3)
+      if (eventNames.includes(normalized)) return
+    }
     if (name === 'dangerouslySetInnerHTML') {
       // Track as a state-dependent binding for reactive innerHTML updates
       const expr = attr.value.expression
@@ -1742,10 +1746,21 @@ function collectAllStateAccesses(
       : []
   const prog = t.program([...setupStatements, t.expressionStatement(expr)])
 
+  function isInsideRefAttribute(path: NodePath): boolean {
+    let current: NodePath | null = path
+    while (current) {
+      if (t.isJSXAttribute(current.node) && t.isJSXIdentifier(current.node.name) && current.node.name.name === 'ref')
+        return true
+      current = current.parentPath
+    }
+    return false
+  }
+
   traverse(prog, {
     noScope: true,
     Identifier(path: NodePath<t.Identifier>) {
       if (!stateRefs.has(path.node.name)) return
+      if (isInsideRefAttribute(path)) return
       const ref = stateRefs.get(path.node.name)!
       // Skip identifiers that are objects of property access — the MemberExpression
       // handler will register the deeper path (e.g. currentCategory.name → ["currentCategory", "name"]).
@@ -1789,6 +1804,7 @@ function collectAllStateAccesses(
     },
     MemberExpression(path: NodePath<t.MemberExpression>) {
       if (!t.isIdentifier(path.node.property)) return
+      if (isInsideRefAttribute(path)) return
 
       const parent = path.parentPath
       if (parent && t.isCallExpression(parent.node) && parent.node.callee === path.node) return
