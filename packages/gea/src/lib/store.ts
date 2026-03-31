@@ -142,6 +142,20 @@ export function rootGetValue(t: any, prop: string, receiver: any): any {
   const value = t[prop]
   if (typeof value === 'function') return value
   if (value !== null && value !== undefined && typeof value === 'object') {
+    if (value instanceof Map) {
+      const entry = t._topLevelProxies.get(prop)
+      if (entry && entry[0] === value) return entry[1]
+      const p = t._createMapProxy(value, prop, [prop])
+      t._topLevelProxies.set(prop, [value, p])
+      return p
+    }
+    if (value instanceof Set) {
+      const entry = t._topLevelProxies.get(prop)
+      if (entry && entry[0] === value) return entry[1]
+      const p = t._createSetProxy(value, prop, [prop])
+      t._topLevelProxies.set(prop, [value, p])
+      return p
+    }
     const proto = Object.getPrototypeOf(value)
     if (proto !== Object.prototype && !Array.isArray(value)) return value
     if (shouldSkipReactiveWrapForPath(prop)) return value
@@ -1183,6 +1197,119 @@ export class Store {
     return null
   }
 
+  private _createMapProxy(map: Map<any, any>, basePath: string, baseParts: string[]): any {
+    const store = this // eslint-disable-line @typescript-eslint/no-this-alias
+    const proxy = new Proxy(map, {
+      get(target, prop) {
+        if (prop === 'set') {
+          return (key: any, value: any) => {
+            const oldValue = target.get(key)
+            target.set(key, value)
+            if (oldValue !== value) {
+              store._emitChanges([{
+                type: 'set',
+                property: String(key),
+                target,
+                pathParts: appendPathParts(baseParts, String(key)),
+                newValue: value,
+                previousValue: oldValue,
+              }])
+            }
+            return proxy
+          }
+        }
+        if (prop === 'delete') {
+          return (key: any) => {
+            const existed = target.has(key)
+            const oldValue = target.get(key)
+            target.delete(key)
+            if (existed) {
+              store._emitChanges([{
+                type: 'delete',
+                property: String(key),
+                target,
+                pathParts: appendPathParts(baseParts, String(key)),
+                previousValue: oldValue,
+              }])
+            }
+            return existed
+          }
+        }
+        if (prop === 'clear') {
+          return () => {
+            if (target.size > 0) {
+              target.clear()
+              store._emitChanges([{
+                type: 'set',
+                property: '',
+                target,
+                pathParts: baseParts,
+              }])
+            }
+          }
+        }
+        const value = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    return proxy
+  }
+
+  private _createSetProxy(set: Set<any>, basePath: string, baseParts: string[]): any {
+    const store = this // eslint-disable-line @typescript-eslint/no-this-alias
+    const proxy = new Proxy(set, {
+      get(target, prop) {
+        if (prop === 'add') {
+          return (value: any) => {
+            if (!target.has(value)) {
+              target.add(value)
+              store._emitChanges([{
+                type: 'set',
+                property: String(value),
+                target,
+                pathParts: appendPathParts(baseParts, String(value)),
+                newValue: value,
+              }])
+            }
+            return proxy
+          }
+        }
+        if (prop === 'delete') {
+          return (value: any) => {
+            const existed = target.has(value)
+            target.delete(value)
+            if (existed) {
+              store._emitChanges([{
+                type: 'delete',
+                property: String(value),
+                target,
+                pathParts: appendPathParts(baseParts, String(value)),
+                previousValue: value,
+              }])
+            }
+            return existed
+          }
+        }
+        if (prop === 'clear') {
+          return () => {
+            if (target.size > 0) {
+              target.clear()
+              store._emitChanges([{
+                type: 'set',
+                property: '',
+                target,
+                pathParts: baseParts,
+              }])
+            }
+          }
+        }
+        const v = Reflect.get(target, prop, target)
+        return typeof v === 'function' ? v.bind(target) : v
+      },
+    })
+    return proxy
+  }
+
   private _createProxy(target: any, basePath: string, baseParts: string[] = [], arrayMeta?: ArrayProxyMeta): any {
     if (!target || typeof target !== 'object') return target
 
@@ -1293,6 +1420,18 @@ export class Store {
           } else {
             const cached = store._proxyCache.get(value)
             if (cached) return cached
+          }
+          if (value instanceof Map) {
+            const currentPath = basePath ? `${basePath}.${prop}` : (prop as string)
+            const proxy = store._createMapProxy(value, currentPath, getCachedPathParts(prop as string))
+            store._proxyCache.set(value, proxy)
+            return proxy
+          }
+          if (value instanceof Set) {
+            const currentPath = basePath ? `${basePath}.${prop}` : (prop as string)
+            const proxy = store._createSetProxy(value, currentPath, getCachedPathParts(prop as string))
+            store._proxyCache.set(value, proxy)
+            return proxy
           }
           const proto = Object.getPrototypeOf(value)
           if (proto !== Object.prototype && !Array.isArray(value)) return value
