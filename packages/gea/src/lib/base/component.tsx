@@ -925,7 +925,7 @@ export default class Component<P = Record<string, any>> extends Store {
     getContainer: () => HTMLElement | null,
     getItems: () => any[],
     createItem: (item: any) => HTMLElement,
-    keyProp?: string,
+    keyProp?: string | ((item: any) => string),
   ): void {
     if (!this.__geaMaps) this.__geaMaps = {}
     this.__geaMaps[idx] = {
@@ -1007,15 +1007,17 @@ export default class Component<P = Record<string, any>> extends Store {
     container: HTMLElement,
     items: any[],
     createItemFn: (item: any, index?: number) => HTMLElement,
-    keyProp?: string,
+    keyProp?: string | ((item: any) => string),
   ): void {
-    const itemKey = (item: any): string => {
-      if (item != null && typeof item === 'object') {
-        if (keyProp && keyProp in item) return String(item[keyProp])
-        if ('id' in item) return String(item.id)
-      }
-      return String(item)
-    }
+    const itemKey = typeof keyProp === 'function'
+      ? keyProp
+      : (item: any): string => {
+          if (item != null && typeof item === 'object') {
+            if (keyProp && keyProp in item) return String(item[keyProp])
+            if ('id' in item) return String(item.id)
+          }
+          return String(item)
+        }
 
     const c = container as any
     let prev: any[] | undefined = c.__geaPrev

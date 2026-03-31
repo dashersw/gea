@@ -237,6 +237,7 @@ export function generateRenderItemMethod(
     mapItemIdProperty: arrayMap.itemIdProperty || 'id',
     mapItemVariable: arrayMap.itemVariable,
     mapContainerBindingId: arrayMap.containerBindingId,
+    ...(arrayMap.keyExpression ? { mapKeyExpression: arrayMap.keyExpression } : {}),
   }
   if (t.isJSXFragment(modified)) {
     const err = new Error(

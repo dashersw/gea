@@ -1501,6 +1501,7 @@ export function applyStaticReactivity(
               itemTemplate: um.itemTemplate,
               isImportedState: false,
               itemIdProperty: um.itemIdProperty,
+              ...(um.keyExpression ? { keyExpression: um.keyExpression } : {}),
               ...(um.callbackBodyStatements?.length ? { callbackBodyStatements: um.callbackBodyStatements } : {}),
             }
             unresolvedBindings.push({ info: um, binding: syntheticBinding })
@@ -1520,6 +1521,7 @@ export function applyStaticReactivity(
             mapItemAttrInfos.push({
               itemVariable: um.itemVariable,
               itemIdProperty: um.itemIdProperty,
+              ...(um.keyExpression ? { keyExpression: um.keyExpression } : {}),
               containerBindingId: um.containerBindingId,
               eventToken: tokenMatch ? tokenMatch[1] : undefined,
             })
@@ -2513,6 +2515,7 @@ export function applyStaticReactivity(
               itemVariable: arrayMap.itemVariable,
               ...(arrayMap.indexVariable ? { indexVariable: arrayMap.indexVariable } : {}),
               itemIdProperty: arrayMap.itemIdProperty,
+              ...(arrayMap.keyExpression ? { keyExpression: arrayMap.keyExpression } : {}),
               containerElementPath: arrayMap.containerElementPath,
               containerBindingId: arrayMap.containerBindingId,
               computationExpr: computationExprSafe ?? computationExpr,
@@ -3568,7 +3571,21 @@ function generateMapRegistration(
     ),
   ]
 
-  if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
+  if (unresolvedMap.keyExpression) {
+    // Complex key expression (e.g. template literal) — pass a key function
+    const keyExpr = t.cloneNode(unresolvedMap.keyExpression, true)
+    // Rewrite item variable to __k for the key function parameter
+    const itemVar = unresolvedMap.itemVariable
+    traverse(t.program([t.expressionStatement(keyExpr)]), {
+      noScope: true,
+      Identifier(path: NodePath<t.Identifier>) {
+        if (path.node.name === itemVar) path.node.name = '__k'
+      },
+    })
+    registerArgs.push(
+      t.arrowFunctionExpression([t.identifier('__k')], t.callExpression(t.identifier('String'), [keyExpr])),
+    )
+  } else if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
     registerArgs.push(t.stringLiteral(arrayMap.itemIdProperty))
   }
 
@@ -4284,6 +4301,7 @@ function injectMapItemAttrsIntoTemplate(
   mapInfos: Array<{
     itemVariable: string
     itemIdProperty?: string
+    keyExpression?: t.Expression
     containerBindingId?: string
     eventToken?: string
   }>,
@@ -4340,8 +4358,9 @@ function injectMapItemAttrsIntoTemplate(
       const isIntrinsicRoot = !tagName.includes('-')
       const eventAttr = info.eventToken && isIntrinsicRoot ? ` data-gea-event="${info.eventToken}"` : ''
 
-      const itemIdExpr =
-        info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
+      const itemIdExpr = info.keyExpression
+        ? t.callExpression(t.identifier('String'), [t.cloneNode(info.keyExpression, true)])
+        : info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
           ? t.logicalExpression(
               '??',
               buildOptionalMemberChain(t.identifier(info.itemVariable), info.itemIdProperty),

@@ -958,3 +958,39 @@ test('store-only component array map generates __observeList and createdHooks', 
   assert.match(output, /createdHooks/, 'must generate createdHooks method')
   assert.match(output, /_recordingsItems/, 'must generate _recordingsItems array')
 })
+
+test('template literal key expression is preserved in data-gea-item-id', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class TabBar extends Component {
+      template({ tabs, activeTabIndex, onTabChange }) {
+        return (
+          <div class="tab-titles">
+            {tabs.map((tab) => (
+              <button
+                key={\`\${tab.title}-button\`}
+                class="ghost"
+              >
+                {tab.title}
+              </button>
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // The key expression should use tab.title (not String(tab) which gives [object Object])
+  assert.doesNotMatch(
+    output,
+    /data-gea-item-id="\$\{String\(tab\)\}"/,
+    'must not stringify the whole item object as key — causes [object Object]',
+  )
+  // The template literal key should evaluate to something that includes tab.title
+  assert.match(
+    output,
+    /data-gea-item-id="[^"]*tab\.title|data-gea-item-id="[^"]*tab\?\.title/,
+    'data-gea-item-id must reference tab.title from the template literal key',
+  )
+})

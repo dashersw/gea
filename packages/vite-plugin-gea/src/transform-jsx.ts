@@ -26,6 +26,8 @@ import {
   ITEM_IS_KEY,
   detectItemIdProperty,
   extractItemTemplate,
+  extractKeyExpression,
+  hasExplicitItemKey,
   normalizeDestructuredMapCallback,
 } from './analyze-helpers.ts'
 
@@ -564,6 +566,8 @@ export interface Ctx {
   handlerPropsInMap?: HandlerPropInMap[]
   /** itemIdProperty for the current map (e.g. 'id') */
   mapItemIdProperty?: string
+  /** Full key expression AST when key is not a simple item.prop */
+  mapKeyExpression?: t.Expression
   /** Map callback param name (e.g. 'opt', 'item') for itemId expression */
   mapItemVariable?: string
   /** Container binding ID for map items (when set, use `id` instead of `data-gea-item-id`) */
@@ -719,13 +723,18 @@ function replaceJSXInExpression(
     normalizeDestructuredMapCallback(fn)
     const handlerPropsInMap: HandlerPropInMap[] = []
     const mapItemVariable = t.isIdentifier(fn.params[0]) ? fn.params[0].name : 'item'
-    const mapItemIdProperty = detectItemIdProperty(extractItemTemplate(fn), mapItemVariable) || 'id'
+    const itemTemplate = extractItemTemplate(fn)
+    const mapItemIdProperty = detectItemIdProperty(itemTemplate, mapItemVariable) || 'id'
+    const mapKeyExpr = !detectItemIdProperty(itemTemplate, mapItemVariable) && hasExplicitItemKey(itemTemplate)
+      ? extractKeyExpression(itemTemplate)
+      : undefined
     const mapCtx = {
       ...ctx,
       inMapCallback: true,
       handlerPropsInMap,
       mapItemIdProperty,
       mapItemVariable,
+      ...(mapKeyExpr ? { mapKeyExpression: mapKeyExpr } : {}),
       conditionalSlots: undefined,
       conditionalSlotCursor: undefined,
       conditionalSlotNodeMap: undefined,
@@ -1040,8 +1049,9 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
   if (ctx.inMapCallback && elementPath.length === 0 && ctx.mapItemVariable) {
     const itemVar = ctx.mapItemVariable
     const itemIdProp = ctx.mapItemIdProperty
-    const itemIdExpr: t.Expression =
-      itemIdProp && itemIdProp !== ITEM_IS_KEY
+    const itemIdExpr: t.Expression = ctx.mapKeyExpression
+      ? t.callExpression(t.identifier('String'), [t.cloneNode(ctx.mapKeyExpression, true)])
+      : itemIdProp && itemIdProp !== ITEM_IS_KEY
         ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier(itemVar), itemIdProp), t.identifier(itemVar))
         : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
 

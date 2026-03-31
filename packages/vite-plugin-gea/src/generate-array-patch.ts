@@ -20,6 +20,19 @@ import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const traverse = require('@babel/traverse').default
 
+/** Rewrite occurrences of `fromVar` to `toVar` in a cloned expression (for key expressions). */
+function rewriteItemVarInExpression(expr: t.Expression, fromVar: string, toVar: string): t.Expression {
+  if (fromVar === toVar) return expr
+  const cloned = t.cloneNode(expr, true)
+  traverse(t.program([t.expressionStatement(cloned)]), {
+    noScope: true,
+    Identifier(path: NodePath<t.Identifier>) {
+      if (path.node.name === fromVar) path.node.name = toVar
+    },
+  })
+  return cloned
+}
+
 interface PatchEntry {
   childPath: number[]
   type: 'text' | 'className' | 'attribute'
@@ -365,8 +378,9 @@ export function generatePatchItemMethod(
     }
   }
 
-  const rawItemIdExpr =
-    itemIdProperty && itemIdProperty !== ITEM_IS_KEY
+  const rawItemIdExpr = arrayMap.keyExpression
+    ? t.cloneNode(rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item'), true)
+    : itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
       : t.identifier('item')
   const itemIdExpr = t.callExpression(t.identifier('String'), [rawItemIdExpr])
@@ -1115,8 +1129,9 @@ export function generateCreateItemMethod(
     }
   }
 
-  const rawPatchItemIdExpr =
-    itemIdProperty && itemIdProperty !== ITEM_IS_KEY
+  const rawPatchItemIdExpr = arrayMap.keyExpression
+    ? t.cloneNode(rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item'), true)
+    : itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
       : t.identifier('item')
   const patchItemIdExpr = t.callExpression(t.identifier('String'), [rawPatchItemIdExpr])
