@@ -1070,6 +1070,9 @@ export default class Component<P = Record<string, any>> extends Store {
               }
             }
           }
+          // Sync item identity props so event handlers can resolve item/index.
+          if ((newEl as any).__geaItem !== undefined) (oldEl as any).__geaItem = (newEl as any).__geaItem
+          if ((newEl as any).__geaKey !== undefined) (oldEl as any).__geaKey = (newEl as any).__geaKey
         }
         c.__geaPrev = items.slice()
         return

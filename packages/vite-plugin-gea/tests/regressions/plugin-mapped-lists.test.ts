@@ -902,3 +902,35 @@ export default class App {
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('.map() with (item, index) callback exposes index inside the render method', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import store from './tab-store'
+
+    export default class TabBar extends Component {
+      template({ activeTabIndex, onTabChange }) {
+        return (
+          <div class="tab-titles">
+            {store.tabs.map((tab, index) => (
+              <button
+                key={tab.id}
+                class={\`ghost \${index === activeTabIndex ? "active" : ""}\`}
+                click={() => onTabChange(index)}
+              >
+                {tab.title}
+              </button>
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // The render/create method must accept index as a parameter (not just item)
+  assert.match(output, /render\w*Item\s*\(\s*\w+\s*,\s*\w+\s*\)/, 'render method must accept two params (item, index)')
+  // The index variable must appear in the render method body
+  assert.match(output, /activeTabIndex/, 'activeTabIndex prop reference must appear in compiled output')
+  // The index must not be undefined — it must be the actual second parameter
+  assert.doesNotMatch(output, /undefined\s*===\s*activeTabIndex|activeTabIndex\s*===\s*undefined/, 'index must not resolve to undefined')
+})

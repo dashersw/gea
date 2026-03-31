@@ -1145,3 +1145,85 @@ test('nested member keys let delegated map events target the correct row', async
     restoreDom()
   }
 })
+
+test('.map((tab, index) => ...) renders correct active class and click handler passes correct index', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-map-index-param`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    let clickedIndex: number | undefined
+    const onTabChange = (i: number) => {
+      clickedIndex = i
+    }
+
+    const TabBar = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class TabBar extends Component {
+          template({ tabs, activeTabIndex, onTabChange }) {
+            return (
+              <div class="tab-titles">
+                {tabs.map((tab, index) => (
+                  <button
+                    key={tab.title}
+                    class={\`ghost \${index === activeTabIndex ? 'active' : ''}\`}
+                    click={() => onTabChange(index)}
+                  >
+                    {tab.title}
+                  </button>
+                ))}
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/TabBar.jsx',
+      'TabBar',
+      { Component },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const tabs = [{ title: 'Home' }, { title: 'Search' }, { title: 'Profile' }]
+
+    const component = new TabBar({ tabs, activeTabIndex: 0, onTabChange })
+    component.render(root)
+    await flushMicrotasks()
+
+    const buttons = () => Array.from(component.el.querySelectorAll('button'))
+
+    // Initial render: first button should have 'active' class, others should not
+    assert.ok(buttons()[0]?.className.includes('active'), 'first button should be active initially')
+    assert.ok(!buttons()[1]?.className.includes('active'), 'second button should not be active initially')
+    assert.ok(!buttons()[2]?.className.includes('active'), 'third button should not be active initially')
+
+    // Change active tab to index 1
+    component.__geaUpdateProps({ tabs, activeTabIndex: 1, onTabChange })
+    await flushMicrotasks()
+
+    assert.ok(!buttons()[0]?.className.includes('active'), 'first button should not be active after change')
+    assert.ok(buttons()[1]?.className.includes('active'), 'second button should be active after change')
+    assert.ok(!buttons()[2]?.className.includes('active'), 'third button should not be active after change')
+
+    // Click the third button and verify onTabChange receives index 2
+    clickedIndex = undefined
+    buttons()[2]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await flushMicrotasks()
+    assert.equal(clickedIndex, 2, 'clicking third button should call onTabChange with index 2')
+
+    // Click the first button and verify onTabChange receives index 0
+    clickedIndex = undefined
+    buttons()[0]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await flushMicrotasks()
+    assert.equal(clickedIndex, 0, 'clicking first button should call onTabChange with index 0')
+
+    component.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})

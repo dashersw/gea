@@ -1609,15 +1609,22 @@ export function applyStaticReactivity(
               if (!stateProps.has(dep.observeKey)) stateProps.set(dep.observeKey, dep.pathParts)
             }
 
-            const propDeps = deps.filter((dep) => !dep.storeVar && dep.pathParts[0] === 'props')
-            if (propDeps.length === 0) return
-
             const usedPropNames = new Set<string>()
             const scanNodes: t.Statement[] = [
               ...(info.computationSetupStatements || []).map((s) => t.cloneNode(s, true) as t.Statement),
             ]
             if (info.computationExpr) {
               scanNodes.push(t.expressionStatement(t.cloneNode(info.computationExpr, true) as t.Expression))
+            }
+            const addPropNameFromMember = (path: NodePath<t.MemberExpression>) => {
+              if (
+                templateWholeParam &&
+                t.isIdentifier(path.node.object, { name: templateWholeParam }) &&
+                t.isIdentifier(path.node.property) &&
+                !path.node.computed
+              ) {
+                usedPropNames.add(path.node.property.name)
+              }
             }
             if (scanNodes.length > 0) {
               const prog = t.program(scanNodes)
@@ -1626,18 +1633,27 @@ export function applyStaticReactivity(
                 Identifier(path: NodePath<t.Identifier>) {
                   if (templatePropNames.has(path.node.name)) usedPropNames.add(path.node.name)
                 },
-                MemberExpression(path: NodePath<t.MemberExpression>) {
-                  if (
-                    templateWholeParam &&
-                    t.isIdentifier(path.node.object, { name: templateWholeParam }) &&
-                    t.isIdentifier(path.node.property) &&
-                    !path.node.computed
-                  ) {
-                    usedPropNames.add(path.node.property.name)
-                  }
-                },
+                MemberExpression: addPropNameFromMember,
               })
             }
+            // Also scan the item template for prop references (e.g. index === activeTabIndex in class bindings).
+            // Exclude the item variable and index variable since those are callback-local, not props.
+            if (info.itemTemplate) {
+              const skipVars = new Set([info.itemVariable, ...(info.indexVariable ? [info.indexVariable] : [])])
+              const templateProg = t.program([
+                t.expressionStatement(t.cloneNode(info.itemTemplate, true) as t.Expression),
+              ])
+              traverse(templateProg, {
+                noScope: true,
+                Identifier(path: NodePath<t.Identifier>) {
+                  if (!skipVars.has(path.node.name) && templatePropNames.has(path.node.name)) {
+                    usedPropNames.add(path.node.name)
+                  }
+                },
+                MemberExpression: addPropNameFromMember,
+              })
+            }
+            if (usedPropNames.size === 0) return
 
             unresolvedMapPropRefreshDeps.push({
               mapIdx: getMapIndex(binding.arrayPathParts),
