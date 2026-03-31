@@ -1,13 +1,5 @@
-/**
- * gen-prop-change.ts
- *
- * Generates the `__onPropChange(key, value)` class method that routes
- * incoming prop updates to the correct inline-patch, child-component
- * refresh, conditional-slot patch, or array-refresh handler.
- */
-
 import { t } from '../utils/babel-interop.ts'
-import { appendToBody, id, jsMethod } from 'eszter'
+import { appendToBody, id, js, jsExpr, jsMethod } from 'eszter'
 
 import type { ChildComponent, ConditionalSlot } from '../ir/types.ts'
 import { childHasNoProps } from './gen-children.ts'
@@ -144,7 +136,7 @@ export function ensureOnPropChangeMethod(
     if (child.directMappings && child.directMappings.length > 0) {
       const allSameName = child.directMappings.every((m) => m.parentPropName === m.childPropName)
       const guard = child.directMappings.reduce<t.Expression>((acc, m) => {
-        const test = t.binaryExpression('===', t.identifier('key'), t.stringLiteral(m.parentPropName))
+        const test = t.binaryExpression('===', id('key'), t.stringLiteral(m.parentPropName))
         return acc ? t.logicalExpression('||', acc, test) : test
       }, undefined!)
 
@@ -152,31 +144,15 @@ export function ensureOnPropChangeMethod(
         directForwardCalls.push(
           t.ifStatement(
             guard,
-            t.expressionStatement(
-              t.callExpression(
-                t.memberExpression(
-                  t.memberExpression(t.thisExpression(), t.identifier(child.instanceVar)),
-                  t.identifier('__geaUpdateProps'),
-                ),
-                [t.objectExpression([t.objectProperty(t.identifier('key'), t.identifier('value'), true)])],
-              ),
-            ),
+            js`this.${id(child.instanceVar)}.__geaUpdateProps({[key]: value});` as t.ExpressionStatement,
           ),
         )
       } else {
         for (const m of child.directMappings) {
           directForwardCalls.push(
             t.ifStatement(
-              t.binaryExpression('===', t.identifier('key'), t.stringLiteral(m.parentPropName)),
-              t.expressionStatement(
-                t.callExpression(
-                  t.memberExpression(
-                    t.memberExpression(t.thisExpression(), t.identifier(child.instanceVar)),
-                    t.identifier('__geaUpdateProps'),
-                  ),
-                  [t.objectExpression([t.objectProperty(t.identifier(m.childPropName), t.identifier('value'))])],
-                ),
-              ),
+              t.binaryExpression('===', id('key'), t.stringLiteral(m.parentPropName)),
+              js`this.${id(child.instanceVar)}.__geaUpdateProps({${id(m.childPropName)}: value});` as t.ExpressionStatement,
             ),
           )
         }
@@ -207,23 +183,11 @@ export function ensureOnPropChangeMethod(
   }
 
   const childRefreshCalls: t.Statement[] = childRefreshEntries.map(({ child, depProps }) => {
-    const call = t.expressionStatement(
-      t.callExpression(
-        t.memberExpression(
-          t.memberExpression(t.thisExpression(), t.identifier(child.instanceVar)),
-          t.identifier('__geaUpdateProps'),
-        ),
-        [
-          t.callExpression(
-            t.memberExpression(t.thisExpression(), t.identifier(`__buildProps_${child.instanceVar.replace(/^_/, '')}`)),
-            [],
-          ),
-        ],
-      ),
-    )
+    const buildPropsName = `__buildProps_${child.instanceVar.replace(/^_/, '')}`
+    const call = js`this.${id(child.instanceVar)}.__geaUpdateProps(this.${id(buildPropsName)}());` as t.ExpressionStatement
     if (depProps.size > 0) {
       const guard = Array.from(depProps).reduce<t.Expression>((acc, prop) => {
-        const test = t.binaryExpression('===', t.identifier('key'), t.stringLiteral(prop))
+        const test = t.binaryExpression('===', id('key'), t.stringLiteral(prop))
         return acc ? t.logicalExpression('||', acc, test) : test
       }, undefined!)
       return t.ifStatement(guard, call)
@@ -233,10 +197,10 @@ export function ensureOnPropChangeMethod(
 
   const arrayRefreshCalls: t.Statement[] = arrayRefreshMethodNames.map((name) => {
     const deps = refreshPropDeps.get(name)
-    const call = t.expressionStatement(t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(name)), []))
+    const call = js`this.${id(name)}();` as t.ExpressionStatement
     if (deps && deps.size > 0) {
       const guard = Array.from(deps).reduce<t.Expression>((acc, prop) => {
-        const test = t.binaryExpression('===', t.identifier('key'), t.stringLiteral(prop))
+        const test = t.binaryExpression('===', id('key'), t.stringLiteral(prop))
         return acc ? t.logicalExpression('||', acc, test) : test
       }, undefined!)
       return t.ifStatement(guard, call)
@@ -250,12 +214,10 @@ export function ensureOnPropChangeMethod(
   if (conditionalSlots.length > 0) {
     for (let i = 0; i < conditionalSlots.length; i++) {
       const slot = conditionalSlots[i]
-      const call = t.expressionStatement(
-        t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__geaPatchCond')), [t.numericLiteral(i)]),
-      )
+      const call = js`this.__geaPatchCond(${t.numericLiteral(i)});` as t.ExpressionStatement
       if (slot.dependentPropNames.length > 0) {
         const guard = slot.dependentPropNames.reduce<t.Expression>((acc, prop) => {
-          const test = t.binaryExpression('===', t.identifier('key'), t.stringLiteral(prop))
+          const test = t.binaryExpression('===', id('key'), t.stringLiteral(prop))
           return acc ? t.logicalExpression('||', acc, test) : test
         }, undefined!)
         condPatchCalls.push(t.ifStatement(guard, call))
@@ -267,20 +229,16 @@ export function ensureOnPropChangeMethod(
 
   const patchCalls = Array.from(inlinePatchBodies.entries()).map(([propName, bodyStmts]) =>
     t.ifStatement(
-      t.binaryExpression('===', t.identifier('key'), t.stringLiteral(propName)),
+      t.binaryExpression('===', id('key'), t.stringLiteral(propName)),
       t.blockStatement(bodyStmts.map((s) => t.cloneNode(s, true) as t.Statement)),
     ),
   )
 
   const unresolvedMapRefreshCalls: t.Statement[] = unresolvedMapPropRefreshDeps.map((dep) => {
-    const call = t.expressionStatement(
-      t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__geaSyncMap')), [
-        t.numericLiteral(dep.mapIdx),
-      ]),
-    )
+    const call = js`this.__geaSyncMap(${t.numericLiteral(dep.mapIdx)});` as t.ExpressionStatement
     if (dep.propNames.length > 0) {
       const guard = dep.propNames.reduce<t.Expression>((acc, prop) => {
-        const test = t.binaryExpression('===', t.identifier('key'), t.stringLiteral(prop))
+        const test = t.binaryExpression('===', id('key'), t.stringLiteral(prop))
         return acc ? t.logicalExpression('||', acc, test) : test
       }, undefined!)
       return t.ifStatement(guard, call)

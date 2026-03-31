@@ -34,16 +34,7 @@ function buildHandlerRegistrationStatements(
 ): t.Statement[] {
   if (handlerProps.length === 0) return []
   const stmts: t.Statement[] = [
-    t.ifStatement(
-      t.unaryExpression('!', t.memberExpression(t.thisExpression(), t.identifier('__itemHandlers_'))),
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.thisExpression(), t.identifier('__itemHandlers_')),
-          t.objectExpression([]),
-        ),
-      ),
-    ),
+    js`if (!this.__itemHandlers_) { this.__itemHandlers_ = {}; }`,
   ]
   for (const hp of handlerProps) {
     const handlerClone = t.cloneNode(hp.handlerExpression, true) as t.ArrowFunctionExpression
@@ -54,24 +45,18 @@ function buildHandlerRegistrationStatements(
     const bodyWithProps = replacePropRefsInStatements(body, propNames, wholeParamName)
     const fn =
       bodyWithProps.length === 1 && t.isExpressionStatement(bodyWithProps[0]) && !t.isBlockStatement(handlerExpr.body)
-        ? t.arrowFunctionExpression([t.identifier('e')], (bodyWithProps[0] as t.ExpressionStatement).expression)
-        : t.arrowFunctionExpression([t.identifier('e')], t.blockStatement(bodyWithProps))
+        ? t.arrowFunctionExpression([id('e')], (bodyWithProps[0] as t.ExpressionStatement).expression)
+        : t.arrowFunctionExpression([id('e')], t.blockStatement(bodyWithProps))
     const keyExpr =
       hp.itemIdProperty && hp.itemIdProperty !== ITEM_IS_KEY
         ? t.logicalExpression(
             '??',
-            buildOptionalMemberChain(t.identifier(itemVariable), hp.itemIdProperty),
-            t.identifier(itemVariable),
+            buildOptionalMemberChain(id(itemVariable), hp.itemIdProperty),
+            id(itemVariable),
           )
-        : t.callExpression(t.identifier('String'), [t.identifier(itemVariable)])
+        : t.callExpression(id('String'), [id(itemVariable)])
     stmts.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.memberExpression(t.thisExpression(), t.identifier('__itemHandlers_')), keyExpr, true),
-          fn,
-        ),
-      ),
+      js`this.__itemHandlers_[${keyExpr}] = ${fn};`,
     )
   }
   return stmts
@@ -98,51 +83,34 @@ export function buildPopulateItemHandlersMethod(
     const bodyWithProps = replacePropRefsInStatements(stmtBody, propNames, wholeParamName)
     const fn =
       bodyWithProps.length === 1 && t.isExpressionStatement(bodyWithProps[0]) && !t.isBlockStatement(handlerExpr.body)
-        ? t.arrowFunctionExpression([t.identifier('e')], (bodyWithProps[0] as t.ExpressionStatement).expression)
-        : t.arrowFunctionExpression([t.identifier('e')], t.blockStatement(bodyWithProps))
+        ? t.arrowFunctionExpression([id('e')], (bodyWithProps[0] as t.ExpressionStatement).expression)
+        : t.arrowFunctionExpression([id('e')], t.blockStatement(bodyWithProps))
     const itemVar = 'item' // populate method uses generic loop var
     const keyExpr =
       hp.itemIdProperty && hp.itemIdProperty !== ITEM_IS_KEY
         ? t.logicalExpression(
             '??',
-            buildOptionalMemberChain(t.identifier(itemVar), hp.itemIdProperty),
-            t.identifier(itemVar),
+            buildOptionalMemberChain(id(itemVar), hp.itemIdProperty),
+            id(itemVar),
           )
-        : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
+        : t.callExpression(id('String'), [id(itemVar)])
     loopBody.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.memberExpression(t.thisExpression(), t.identifier('__itemHandlers_')), keyExpr, true),
-          fn,
-        ),
-      ),
+      js`this.__itemHandlers_[${keyExpr}] = ${fn};`,
     )
   }
   const body: t.Statement[] = [
-    t.ifStatement(
-      t.unaryExpression('!', t.memberExpression(t.thisExpression(), t.identifier('__itemHandlers_'))),
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.thisExpression(), t.identifier('__itemHandlers_')),
-          t.objectExpression([]),
-        ),
-      ),
-    ),
-    t.ifStatement(t.unaryExpression('!', t.identifier('arr')), t.returnStatement()),
+    js`if (!this.__itemHandlers_) { this.__itemHandlers_ = {}; }`,
+    js`if (!arr) { return; }`,
     t.forOfStatement(
-      t.variableDeclaration('const', [t.variableDeclarator(t.identifier('item'), null)]),
-      t.identifier('arr'),
+      t.variableDeclaration('const', [t.variableDeclarator(id('item'), null)]),
+      id('arr'),
       t.blockStatement(loopBody),
     ),
   ]
-  return t.classMethod(
-    'method',
-    t.identifier(`__populateItemHandlersFor_${arrayPropName}`),
-    [t.identifier('arr')],
-    t.blockStatement(body),
-  )
+  return appendToBody(
+    jsMethod`${id(`__populateItemHandlersFor_${arrayPropName}`)}(arr) {}`,
+    ...body,
+  ) as t.ClassMethod
 }
 
 // ─── Raw store cache field ─────────────────────────────────────────
@@ -154,7 +122,7 @@ export function buildPopulateItemHandlersMethod(
  * so they're unwrapped before the comparison.
  */
 export function buildRawStoreCacheField(): t.ClassPrivateProperty {
-  return t.classPrivateProperty(t.privateName(t.identifier('__rs')))
+  return t.classPrivateProperty(t.privateName(id('__rs')))
 }
 
 export function buildValueUnwrapHelper(): t.VariableDeclaration {
@@ -184,7 +152,7 @@ function isKnownPrimitive(node: t.Expression): boolean {
 
 function wrapWithV(node: t.Expression): t.Expression {
   if (isKnownPrimitive(node)) return node
-  return t.callExpression(t.identifier('__v'), [node])
+  return t.callExpression(id('__v'), [node])
 }
 
 function unwrapComparisonOperands(node: t.Expression): t.Expression {
@@ -298,7 +266,7 @@ export function generateRenderItemMethod(
           if (!t.isIdentifier(path.node.property)) return
           if (path.node.computed) return
           needsRawStoreCache = true
-          path.node.object = t.identifier('__rs')
+          path.node.object = id('__rs')
         },
       })
       return (program.body[0] as t.ExpressionStatement).expression
@@ -337,7 +305,7 @@ export function generateRenderItemMethod(
 
   const baseMethod = jsMethod`${id(methodName)}(${id(arrayMap.itemVariable)}) {}`
   if (arrayMap.indexVariable) {
-    baseMethod.params.push(t.identifier(arrayMap.indexVariable))
+    baseMethod.params.push(id(arrayMap.indexVariable))
   }
 
   // Only emit the __v helper if it's actually referenced in the output.
@@ -358,20 +326,20 @@ export function generateRenderItemMethod(
   }
   const needsUnwrapHelper = [...rewrittenCallbackBody, returnStmt].some((stmt) => containsVCall(stmt))
 
-  const privateRsField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__rs')))
+  const privateRsField = t.memberExpression(t.thisExpression(), t.privateName(id('__rs')))
   const rawStoreCacheStmts: t.Statement[] = []
   if (needsRawStoreCache && arrayMap.storeVar) {
     rawStoreCacheStmts.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
-          t.identifier('__rs'),
+          id('__rs'),
           t.logicalExpression(
             '||',
             t.cloneNode(privateRsField),
             t.assignmentExpression(
               '=',
               t.cloneNode(privateRsField),
-              t.memberExpression(t.identifier(arrayMap.storeVar), t.identifier('__raw')),
+              t.memberExpression(id(arrayMap.storeVar), id('__raw')),
             ),
           ),
         ),

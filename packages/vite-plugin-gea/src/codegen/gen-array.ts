@@ -7,7 +7,7 @@
  */
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
-import { appendToBody, id, js, jsBlockBody, jsExpr, jsMethod } from 'eszter'
+import { appendToBody, id, js, jsAll, jsBlockBody, jsExpr, jsMethod } from 'eszter'
 import type { ArrayMapBinding, ConditionalMapBinding, RelationalMapBinding } from '../ir/types.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import {
@@ -20,6 +20,7 @@ import {
   pathPartsToString,
 } from './ast-helpers.ts'
 import { collectPatchEntries, childPathRefName, buildElementNavExpr } from './gen-array-patch.ts'
+import { emitPatch, emitMount } from '../emit/registry.ts'
 
 // ─── URL attributes ────────────────────────────────────────────────
 
@@ -83,160 +84,24 @@ function buildPropPatcherFunction(
 ): t.Expression {
   const row = t.identifier('row')
   const value = t.identifier('value')
-  const target = t.identifier('__target')
   const targetExpr = getPropPatcherTargetExpr(binding, row)
 
   if (binding.type === 'class') {
-    return t.arrowFunctionExpression(
-      [row, value],
-      t.callExpression(t.memberExpression(t.memberExpression(row, t.identifier('classList')), t.identifier('toggle')), [
-        t.stringLiteral(binding.classToggleName || propName),
-        value,
-      ]),
-    )
+    const stmts = emitPatch('class', row, value, {
+      classToggleName: binding.classToggleName || propName,
+    })
+    return t.arrowFunctionExpression([row, value], t.blockStatement(stmts))
   }
 
-  if (binding.type === 'checked' || binding.type === 'value') {
-    return t.arrowFunctionExpression(
-      [row, value],
-      t.blockStatement([
-        t.variableDeclaration('const', [t.variableDeclarator(target, targetExpr)]),
-        t.ifStatement(t.unaryExpression('!', target), t.returnStatement()),
-        t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(target, t.identifier(binding.type === 'checked' ? 'checked' : 'value')),
-            value,
-          ),
-        ),
-      ]),
-    )
-  }
-
-  if (binding.type === 'attribute') {
-    const attrName = binding.attributeName || 'class'
-    const setExpr =
-      attrName === 'style'
-        ? t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.memberExpression(target, t.identifier('style')), t.identifier('cssText')),
-              t.conditionalExpression(
-                t.binaryExpression(
-                  '===',
-                  t.unaryExpression('typeof', t.identifier('__attrValue')),
-                  t.stringLiteral('object'),
-                ),
-                t.callExpression(
-                  t.memberExpression(
-                    t.callExpression(
-                      t.memberExpression(
-                        t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('entries')), [
-                          t.identifier('__attrValue'),
-                        ]),
-                        t.identifier('map'),
-                      ),
-                      [
-                        t.arrowFunctionExpression(
-                          [t.arrayPattern([t.identifier('k'), t.identifier('v')])],
-                          t.binaryExpression(
-                            '+',
-                            t.binaryExpression(
-                              '+',
-                              t.callExpression(t.memberExpression(t.identifier('k'), t.identifier('replace')), [
-                                t.regExpLiteral('[A-Z]', 'g'),
-                                t.stringLiteral('-$&'),
-                              ]),
-                              t.stringLiteral(': '),
-                            ),
-                            t.identifier('v'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    t.identifier('join'),
-                  ),
-                  [t.stringLiteral('; ')],
-                ),
-                t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
-              ),
-            ),
-          )
-        : t.blockStatement([
-            t.variableDeclaration('const', [
-              t.variableDeclarator(
-                t.identifier('__newAttr'),
-                URL_ATTRS.has(attrName)
-                  ? t.callExpression(t.identifier('__sanitizeAttr'), [
-                      t.stringLiteral(attrName),
-                      t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
-                    ])
-                  : t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
-              ),
-            ]),
-            t.ifStatement(
-              t.binaryExpression(
-                '!==',
-                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('getAttribute')), [
-                  t.stringLiteral(attrName),
-                ]),
-                t.identifier('__newAttr'),
-              ),
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('setAttribute')), [
-                  t.stringLiteral(attrName),
-                  t.identifier('__newAttr'),
-                ]),
-              ),
-            ),
-          ])
-    return t.arrowFunctionExpression(
-      [row, value],
-      t.blockStatement([
-        t.variableDeclaration('const', [t.variableDeclarator(target, targetExpr)]),
-        t.ifStatement(t.unaryExpression('!', target), t.returnStatement()),
-        t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__attrValue'), value)]),
-        t.ifStatement(
-          t.logicalExpression(
-            '||',
-            t.binaryExpression('==', t.identifier('__attrValue'), t.nullLiteral()),
-            t.binaryExpression('===', t.identifier('__attrValue'), t.booleanLiteral(false)),
-          ),
-          t.blockStatement([
-            t.expressionStatement(
-              t.callExpression(t.memberExpression(target, t.identifier('removeAttribute')), [
-                t.stringLiteral(attrName),
-              ]),
-            ),
-          ]),
-          t.blockStatement([setExpr]),
-        ),
-      ]),
-    )
-  }
-
-  return t.arrowFunctionExpression(
-    [row, value],
-    t.blockStatement([
-      t.variableDeclaration('const', [t.variableDeclarator(target, targetExpr)]),
-      t.ifStatement(t.unaryExpression('!', target), t.returnStatement()),
-      t.expressionStatement(
-        t.logicalExpression(
-          '||',
-          t.logicalExpression(
-            '&&',
-            t.memberExpression(target, t.identifier('firstChild')),
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.memberExpression(target, t.identifier('firstChild')), t.identifier('nodeValue')),
-              value,
-            ),
-          ),
-          t.assignmentExpression('=', t.memberExpression(target, t.identifier('textContent')), value),
-        ),
-      ),
-    ]),
-  )
+  const bodyStmts: t.Statement[] = jsBlockBody`
+    const __target = ${targetExpr};
+    if (!__target) return;
+  `
+  bodyStmts.push(...emitPatch(binding.type, t.identifier('__target'), value, {
+    attributeName: binding.attributeName || (binding.type === 'attribute' ? 'class' : undefined),
+    isUrlAttr: binding.attributeName ? URL_ATTRS.has(binding.attributeName) : false,
+  }))
+  return t.arrowFunctionExpression([row, value], t.blockStatement(bodyStmts))
 }
 
 // ─── Collect item expression keys ──────────────────────────────────
@@ -264,9 +129,6 @@ function buildPatchEntryPropPatcher(entry: {
   attributeName?: string
 }): t.Expression {
   const row = t.identifier('row')
-  const value = t.identifier('value')
-  const item = t.identifier('item')
-  const target = t.identifier('__target')
   const targetExpr =
     entry.childPath.length > 0
       ? t.logicalExpression(
@@ -282,154 +144,22 @@ function buildPatchEntryPropPatcher(entry: {
         )
       : row
 
-  if (entry.type === 'className') {
-    const isRoot = entry.childPath.length === 0
-    const stmts: t.Statement[] = []
-    if (!isRoot) {
-      stmts.push(t.variableDeclaration('const', [t.variableDeclarator(target, targetExpr)]))
-      stmts.push(t.ifStatement(t.unaryExpression('!', target), t.returnStatement()))
-    }
-    const ref = isRoot ? row : target
-    stmts.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(ref, t.identifier('className')),
-          buildTrimmedClassValueExpression(t.cloneNode(entry.expression, true) as t.Expression),
-        ),
-      ),
-    )
-    return t.arrowFunctionExpression([row, value, item], t.blockStatement(stmts))
-  }
-
-  if (entry.type === 'attribute') {
-    const attrName = entry.attributeName || 'class'
-    const propSetExpr =
-      attrName === 'style'
-        ? t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.memberExpression(target, t.identifier('style')), t.identifier('cssText')),
-              t.conditionalExpression(
-                t.binaryExpression(
-                  '===',
-                  t.unaryExpression('typeof', t.identifier('__attrValue')),
-                  t.stringLiteral('object'),
-                ),
-                t.callExpression(
-                  t.memberExpression(
-                    t.callExpression(
-                      t.memberExpression(
-                        t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('entries')), [
-                          t.identifier('__attrValue'),
-                        ]),
-                        t.identifier('map'),
-                      ),
-                      [
-                        t.arrowFunctionExpression(
-                          [t.arrayPattern([t.identifier('k'), t.identifier('v')])],
-                          t.binaryExpression(
-                            '+',
-                            t.binaryExpression(
-                              '+',
-                              t.callExpression(t.memberExpression(t.identifier('k'), t.identifier('replace')), [
-                                t.regExpLiteral('[A-Z]', 'g'),
-                                t.stringLiteral('-$&'),
-                              ]),
-                              t.stringLiteral(': '),
-                            ),
-                            t.identifier('v'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    t.identifier('join'),
-                  ),
-                  [t.stringLiteral('; ')],
-                ),
-                t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
-              ),
-            ),
-          )
-        : t.blockStatement([
-            t.variableDeclaration('const', [
-              t.variableDeclarator(
-                t.identifier('__newAttr'),
-                t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
-              ),
-            ]),
-            t.ifStatement(
-              t.binaryExpression(
-                '!==',
-                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('getAttribute')), [
-                  t.stringLiteral(attrName),
-                ]),
-                t.identifier('__newAttr'),
-              ),
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('setAttribute')), [
-                  t.stringLiteral(attrName),
-                  t.identifier('__newAttr'),
-                ]),
-              ),
-            ),
-          ])
-    return t.arrowFunctionExpression(
-      [row, value, item],
-      t.blockStatement([
-        t.variableDeclaration('const', [t.variableDeclarator(target, targetExpr)]),
-        t.ifStatement(t.unaryExpression('!', target), t.returnStatement()),
-        t.variableDeclaration('const', [
-          t.variableDeclarator(t.identifier('__attrValue'), t.cloneNode(entry.expression, true)),
-        ]),
-        t.ifStatement(
-          t.logicalExpression(
-            '||',
-            t.binaryExpression('==', t.identifier('__attrValue'), t.nullLiteral()),
-            t.binaryExpression('===', t.identifier('__attrValue'), t.booleanLiteral(false)),
-          ),
-          t.blockStatement([
-            t.expressionStatement(
-              t.callExpression(t.memberExpression(target, t.identifier('removeAttribute')), [
-                t.stringLiteral(attrName),
-              ]),
-            ),
-          ]),
-          t.blockStatement([propSetExpr]),
-        ),
-      ]),
-    )
-  }
-
   const isRoot = entry.childPath.length === 0
   const stmts: t.Statement[] = []
   if (!isRoot) {
-    stmts.push(t.variableDeclaration('const', [t.variableDeclarator(target, targetExpr)]))
-    stmts.push(t.ifStatement(t.unaryExpression('!', target), t.returnStatement()))
+    stmts.push(...jsAll`const __target = ${targetExpr}; if (!__target) return;`)
   }
-  const ref = isRoot ? row : target
+  const ref = isRoot ? row : t.identifier('__target')
+  const emitType = entry.type === 'className' ? 'class' : entry.type
   stmts.push(
-    t.expressionStatement(
-      t.logicalExpression(
-        '||',
-        t.logicalExpression(
-          '&&',
-          t.memberExpression(ref, t.identifier('firstChild')),
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(t.memberExpression(ref, t.identifier('firstChild')), t.identifier('nodeValue')),
-            t.cloneNode(entry.expression, true),
-          ),
-        ),
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(ref, t.identifier('textContent')),
-          t.cloneNode(entry.expression, true),
-        ),
-      ),
-    ),
+    ...emitPatch(emitType, ref, t.cloneNode(entry.expression, true) as t.Expression, {
+      attributeName: entry.attributeName,
+    }),
   )
-  return t.arrowFunctionExpression([row, value, item], t.blockStatement(stmts))
+  return t.arrowFunctionExpression(
+    [t.identifier('row'), t.identifier('value'), t.identifier('item')],
+    t.blockStatement(stmts),
+  )
 }
 
 // ─── Build prop patchers object ────────────────────────────────────
@@ -483,7 +213,7 @@ export function generateEnsureArrayConfigsMethod(arrayMaps: ArrayMapBinding[]): 
   if (arrayMaps.length === 0) return null
 
   const body = arrayMaps.map((arrayMap) => {
-    const configProp = t.memberExpression(t.thisExpression(), t.identifier(getArrayConfigPropName(arrayMap)))
+    const configProp = jsExpr`this.${id(getArrayConfigPropName(arrayMap))}`
     const renderMethodName = getArrayRenderMethodName(arrayMap)
     const createMethodName = getArrayCreateMethodName(arrayMap)
     const patchMethodName = getArrayPatchMethodName(arrayMap)
@@ -502,37 +232,15 @@ export function generateEnsureArrayConfigsMethod(arrayMaps: ArrayMapBinding[]): 
       ),
       t.objectProperty(
         t.identifier('render'),
-        t.callExpression(
-          t.memberExpression(
-            t.memberExpression(t.thisExpression(), t.identifier(renderMethodName)),
-            t.identifier('bind'),
-          ),
-          [t.thisExpression()],
-        ),
+        jsExpr`this.${id(renderMethodName)}.bind(this)`,
       ),
       t.objectProperty(
         t.identifier('create'),
-        t.callExpression(
-          t.memberExpression(
-            t.memberExpression(t.thisExpression(), t.identifier(createMethodName)),
-            t.identifier('bind'),
-          ),
-          [t.thisExpression()],
-        ),
+        jsExpr`this.${id(createMethodName)}.bind(this)`,
       ),
       t.objectProperty(
         t.identifier('patchRow'),
-        t.logicalExpression(
-          '&&',
-          t.memberExpression(t.thisExpression(), t.identifier(patchMethodName)),
-          t.callExpression(
-            t.memberExpression(
-              t.memberExpression(t.thisExpression(), t.identifier(patchMethodName)),
-              t.identifier('bind'),
-            ),
-            [t.thisExpression()],
-          ),
-        ),
+        jsExpr`this.${id(patchMethodName)} && this.${id(patchMethodName)}.bind(this)`,
       ),
     ]
 
@@ -540,10 +248,7 @@ export function generateEnsureArrayConfigsMethod(arrayMaps: ArrayMapBinding[]): 
       properties.push(
         t.objectProperty(
           t.identifier('getKey'),
-          t.arrowFunctionExpression(
-            [t.identifier('item')],
-            t.callExpression(t.identifier('String'), [t.identifier('item')]),
-          ),
+          jsExpr`(item) => String(item)`,
         ),
       )
     } else if (arrayMap.itemIdProperty) {
@@ -552,13 +257,7 @@ export function generateEnsureArrayConfigsMethod(arrayMaps: ArrayMapBinding[]): 
           t.identifier('getKey'),
           t.arrowFunctionExpression(
             [t.identifier('item')],
-            t.callExpression(t.identifier('String'), [
-              t.logicalExpression(
-                '??',
-                buildOptionalMemberChain(t.identifier('item'), arrayMap.itemIdProperty),
-                t.identifier('item'),
-              ),
-            ]),
+            jsExpr`String(${buildOptionalMemberChain(t.identifier('item'), arrayMap.itemIdProperty)} ?? item)`,
           ),
         ),
       )
@@ -575,12 +274,9 @@ export function generateEnsureArrayConfigsMethod(arrayMaps: ArrayMapBinding[]): 
       properties.push(t.objectProperty(t.identifier('hasComponentItems'), t.booleanLiteral(true)))
     }
 
-    return t.ifStatement(
-      t.unaryExpression('!', configProp),
-      t.blockStatement([
-        t.expressionStatement(t.assignmentExpression('=', configProp, t.objectExpression(properties))),
-      ]),
-    )
+    return js`if (!${configProp}) {
+      ${configProp} = ${t.objectExpression(properties)};
+    }`
   })
 
   return appendToBody(jsMethod`${id('__ensureArrayConfigs')}() {}`, ...body)
@@ -609,26 +305,15 @@ export function generateArrayRelationalObserver(
     t.variableDeclaration('var', [
       t.variableDeclarator(
         previousValue,
-        t.conditionalExpression(
-          t.memberExpression(t.identifier('change'), t.numericLiteral(0), true),
-          t.memberExpression(
-            t.memberExpression(t.identifier('change'), t.numericLiteral(0), true),
-            t.identifier('previousValue'),
-          ),
-          t.nullLiteral(),
-        ),
+        jsExpr`change[0] ? change[0].previousValue : null`,
       ),
     ]),
     t.variableDeclaration('var', [t.variableDeclarator(t.identifier('__previousRow'), previousRowProp)]),
     t.ifStatement(
-      t.binaryExpression('!=', previousValue, t.nullLiteral()),
+      jsExpr`${previousValue} != null`,
       t.blockStatement([
         t.ifStatement(
-          t.logicalExpression(
-            '||',
-            t.unaryExpression('!', t.identifier('__previousRow')),
-            t.unaryExpression('!', t.memberExpression(t.identifier('__previousRow'), t.identifier('isConnected'))),
-          ),
+          jsExpr`!__previousRow || !__previousRow.isConnected`,
           t.blockStatement(
             buildElsLookup(elsRef, containerRef, previousValue, '__previousRow', arrayMap.containerBindingId),
           ),
@@ -641,7 +326,7 @@ export function generateArrayRelationalObserver(
     ),
     t.variableDeclaration('var', [t.variableDeclarator(t.identifier('__nextRow'), t.nullLiteral())]),
     t.ifStatement(
-      t.binaryExpression('!=', t.identifier('value'), t.nullLiteral()),
+      jsExpr`value != null`,
       t.blockStatement([
         ...buildElsLookup(elsRef, containerRef, t.identifier('value'), '__nextRow', arrayMap.containerBindingId),
         t.ifStatement(
@@ -650,13 +335,7 @@ export function generateArrayRelationalObserver(
         ),
       ]),
     ),
-    t.expressionStatement(
-      t.assignmentExpression(
-        '=',
-        previousRowProp,
-        t.logicalExpression('||', t.identifier('__nextRow'), t.nullLiteral()),
-      ),
-    ),
+    js`${previousRowProp} = __nextRow || null;`,
   ]
 
   return {
@@ -677,26 +356,19 @@ export function generateArrayConditionalPatchObserver(
   const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
   const proxiedArr = arrayMap.isImportedState
     ? buildMemberChain(
-        t.memberExpression(t.identifier(arrayMap.storeVar || 'store'), t.identifier('__store')),
+        jsExpr`${id(arrayMap.storeVar || 'store')}.__store`,
         arrayPath,
       )
     : buildMemberChain(t.thisExpression(), arrayPath)
 
-  const rawArrExpr = t.logicalExpression(
-    '||',
-    t.memberExpression(t.cloneNode(proxiedArr, true), t.identifier('__getTarget')),
-    t.cloneNode(proxiedArr, true),
-  )
+  const rawArrExpr = jsExpr`${t.cloneNode(proxiedArr, true)}.__getTarget || ${t.cloneNode(proxiedArr, true)}`
 
   const loopBody: t.Statement[] = [
-    t.variableDeclaration('const', [
-      t.variableDeclarator(t.identifier('item'), t.memberExpression(t.identifier('__arr'), t.identifier('__i'), true)),
-      t.variableDeclarator(
-        t.identifier('row'),
-        t.memberExpression(t.memberExpression(containerRef, t.identifier('children')), t.identifier('__i'), true),
-      ),
-    ]),
-    t.ifStatement(t.unaryExpression('!', t.identifier('row')), t.continueStatement()),
+    ...jsAll`
+      const item = __arr[__i];
+      const row = ${containerRef}.children[__i];
+    `,
+    js`if (!row) continue;`,
   ]
 
   bindings.forEach((binding, index) => {
@@ -705,8 +377,7 @@ export function generateArrayConditionalPatchObserver(
       ? buildChildAccessExpr(t.identifier('row'), binding.childPath)
       : t.identifier('row')
     loopBody.push(
-      t.variableDeclaration('const', [t.variableDeclarator(t.identifier(targetId), targetExpr)]),
-      t.ifStatement(t.unaryExpression('!', t.identifier(targetId)), t.continueStatement()),
+      ...jsAll`const ${id(targetId)} = ${targetExpr}; if (!${id(targetId)}) continue;`,
       buildConditionalPatchStatement(binding, t.identifier(targetId), arrayMap.itemVariable),
     )
   })
@@ -715,20 +386,11 @@ export function generateArrayConditionalPatchObserver(
     jsMethod`${id(methodName)}(value, change) {}`,
     t.blockStatement([
       lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-      t.ifStatement(t.unaryExpression('!', containerRef), t.returnStatement()),
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier('__arr'),
-          t.conditionalExpression(
-            t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [rawArrExpr]),
-            rawArrExpr,
-            t.arrayExpression([]),
-          ),
-        ),
-      ]),
+      js`if (!${containerRef}) return;`,
+      ...jsAll`const __arr = Array.isArray(${rawArrExpr}) ? ${rawArrExpr} : [];`,
       t.forStatement(
         t.variableDeclaration('let', [t.variableDeclarator(t.identifier('__i'), t.numericLiteral(0))]),
-        t.binaryExpression('<', t.identifier('__i'), t.memberExpression(t.identifier('__arr'), t.identifier('length'))),
+        jsExpr`__i < __arr.length`,
         t.updateExpression('++', t.identifier('__i')),
         t.blockStatement(loopBody),
       ),
@@ -746,28 +408,19 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
   const configRef = t.memberExpression(t.thisExpression(), t.identifier(getArrayConfigPropName(arrayMap)))
   const proxiedArr = arrayMap.isImportedState
     ? buildMemberChain(
-        t.memberExpression(t.identifier(arrayMap.storeVar || 'store'), t.identifier('__store')),
+        jsExpr`${id(arrayMap.storeVar || 'store')}.__store`,
         arrayPath,
       )
     : buildMemberChain(t.thisExpression(), arrayPath)
 
-  const rawArrExpr = t.logicalExpression(
-    '||',
-    t.memberExpression(t.cloneNode(proxiedArr, true), t.identifier('__getTarget')),
-    t.cloneNode(proxiedArr, true),
-  )
+  const rawArrExpr = jsExpr`${t.cloneNode(proxiedArr, true)}.__getTarget || ${t.cloneNode(proxiedArr, true)}`
 
   return appendToBody(
     jsMethod`${id(methodName)}(value, change) {}`,
     t.blockStatement([
       lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-      t.ifStatement(t.unaryExpression('!', containerRef), t.returnStatement()),
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier('__c0'),
-          t.memberExpression(t.identifier('change'), t.numericLiteral(0), true),
-        ),
-      ]),
+      js`if (!${containerRef}) return;`,
+      ...jsAll`const __c0 = change[0];`,
       t.variableDeclaration('const', [
         t.variableDeclarator(
           t.identifier('__skipArrayConditionalRerender'),
@@ -776,48 +429,24 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
             t.identifier('__c0'),
             t.logicalExpression(
               '||',
-              t.binaryExpression(
-                '===',
-                t.memberExpression(t.identifier('__c0'), t.identifier('type')),
-                t.stringLiteral('append'),
-              ),
+              jsExpr`__c0.type === 'append'`,
               t.logicalExpression(
                 '||',
-                t.binaryExpression(
-                  '===',
-                  t.memberExpression(t.identifier('__c0'), t.identifier('type')),
-                  t.stringLiteral('add'),
-                ),
+                jsExpr`__c0.type === 'add'`,
                 t.logicalExpression(
                   '||',
-                  t.binaryExpression(
-                    '===',
-                    t.memberExpression(t.identifier('__c0'), t.identifier('type')),
-                    t.stringLiteral('delete'),
-                  ),
+                  jsExpr`__c0.type === 'delete'`,
                   t.logicalExpression(
                     '||',
-                    t.binaryExpression(
-                      '===',
-                      t.memberExpression(t.identifier('__c0'), t.identifier('type')),
-                      t.stringLiteral('reorder'),
-                    ),
+                    jsExpr`__c0.type === 'reorder'`,
                     t.logicalExpression(
                       '||',
-                      t.binaryExpression(
-                        '===',
-                        t.memberExpression(t.identifier('__c0'), t.identifier('arrayOp')),
-                        t.stringLiteral('swap'),
-                      ),
+                      jsExpr`__c0.arrayOp === 'swap'`,
                       t.logicalExpression(
                         '&&',
-                        t.binaryExpression(
-                          '===',
-                          t.memberExpression(t.identifier('__c0'), t.identifier('type')),
-                          t.stringLiteral('update'),
-                        ),
+                        jsExpr`__c0.type === 'update'`,
                         buildPathPartsEquals(
-                          t.memberExpression(t.identifier('__c0'), t.identifier('pathParts')),
+                          jsExpr`__c0.pathParts`,
                           arrayPathParts,
                         ),
                       ),
@@ -830,29 +459,11 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
         ),
       ]),
       t.ifStatement(
-        t.unaryExpression('!', t.identifier('__skipArrayConditionalRerender')),
+        jsExpr`!__skipArrayConditionalRerender`,
         t.blockStatement([
-          t.expressionStatement(
-            t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__ensureArrayConfigs')), []),
-          ),
-          t.variableDeclaration('const', [
-            t.variableDeclarator(
-              t.identifier('__arr'),
-              t.conditionalExpression(
-                t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [rawArrExpr]),
-                rawArrExpr,
-                t.arrayExpression([]),
-              ),
-            ),
-          ]),
-          t.expressionStatement(
-            t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__applyListChanges')), [
-              containerRef,
-              t.identifier('__arr'),
-              t.nullLiteral(),
-              configRef,
-            ]),
-          ),
+          js`this.__ensureArrayConfigs();`,
+          ...jsAll`const __arr = Array.isArray(${rawArrExpr}) ? ${rawArrExpr} : [];`,
+          js`this.__applyListChanges(${containerRef}, __arr, null, ${configRef});`,
         ]),
       ),
     ]),
@@ -874,44 +485,21 @@ export function generateArrayHandlers(
   const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
   const elsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
 
-  const clearElsStmt = t.expressionStatement(t.assignmentExpression('=', t.cloneNode(elsRef), t.nullLiteral()))
+  const clearElsStmt = js`${t.cloneNode(elsRef)} = null;`
 
   const body: t.Statement[] = [
     lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-    t.ifStatement(t.unaryExpression('!', containerRef), t.returnStatement()),
+    js`if (!${containerRef}) return;`,
     t.ifStatement(
-      t.logicalExpression(
-        '&&',
-        t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [t.identifier(paramName)]),
-        t.binaryExpression(
-          '===',
-          t.memberExpression(t.identifier(paramName), t.identifier('length')),
-          t.numericLiteral(0),
-        ),
-      ),
+      jsExpr`Array.isArray(${id(paramName)}) && ${id(paramName)}.length === 0`,
       t.blockStatement([
         clearElsStmt,
-        t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(containerRef, t.identifier('textContent')),
-            t.stringLiteral(''),
-          ),
-        ),
+        js`${containerRef}.textContent = '';`,
         t.returnStatement(),
       ]),
     ),
-    t.expressionStatement(
-      t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__ensureArrayConfigs')), []),
-    ),
-    t.expressionStatement(
-      t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__applyListChanges')), [
-        containerRef,
-        t.identifier(paramName),
-        t.identifier('change'),
-        configRef,
-      ]),
-    ),
+    js`this.__ensureArrayConfigs();`,
+    js`this.__applyListChanges(${containerRef}, ${id(paramName)}, change, ${configRef});`,
   ]
 
   const method = appendToBody(jsMethod`${id(methodName)}(${id(paramName)}, change) {}`, ...body)
@@ -951,17 +539,7 @@ function buildQueryByItemId(
   containerBindingId: string | undefined,
 ): t.Expression {
   const bind = containerBindingId ?? 'list'
-  return t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
-    t.binaryExpression(
-      '+',
-      t.binaryExpression(
-        '+',
-        t.memberExpression(t.thisExpression(), t.identifier('id')),
-        t.stringLiteral('-' + bind + '-gk-'),
-      ),
-      t.cloneNode(idExpr, true),
-    ),
-  ])
+  return jsExpr`document.getElementById(this.id + ${'-' + bind + '-gk-'} + ${t.cloneNode(idExpr, true)})`
 }
 
 // ─── Path parts equality ───────────────────────────────────────────
@@ -1116,41 +694,17 @@ function buildElsLookup(
         t.variableDeclaration('const', [t.variableDeclarator(ctrLocal, t.cloneNode(containerRef))]),
         t.forStatement(
           t.variableDeclaration('let', [t.variableDeclarator(t.identifier('__i'), t.numericLiteral(0))]),
-          t.binaryExpression(
-            '<',
-            t.identifier('__i'),
-            t.memberExpression(
-              t.memberExpression(ctrLocal, t.identifier('children')),
-              t.identifier('length'),
-            ),
-          ),
+          jsExpr`__i < ${t.cloneNode(ctrLocal, true)}.children.length`,
           t.updateExpression('++', t.identifier('__i')),
           t.blockStatement([
-            t.variableDeclaration('const', [
-              t.variableDeclarator(
-                t.identifier('__ch'),
-                t.memberExpression(
-                  t.memberExpression(t.cloneNode(ctrLocal), t.identifier('children')),
-                  t.identifier('__i'),
-                  true,
-                ),
-              ),
-            ]),
+            ...jsAll`const __ch = ${t.cloneNode(ctrLocal, true)}.children[__i];`,
             t.ifStatement(
               t.logicalExpression(
                 '||',
-                t.binaryExpression(
-                  '==',
-                  t.memberExpression(t.identifier('__ch'), t.identifier('__geaKey')),
-                  t.cloneNode(idExpr, true),
-                ),
+                jsExpr`__ch.__geaKey == ${t.cloneNode(idExpr, true)}`,
                 t.logicalExpression(
                   '&&',
-                  t.binaryExpression(
-                    '==',
-                    t.memberExpression(t.identifier('__ch'), t.identifier('__geaKey')),
-                    t.nullLiteral(),
-                  ),
+                  jsExpr`__ch.__geaKey == null`,
                   t.binaryExpression(
                     '==',
                     t.optionalCallExpression(
@@ -1176,11 +730,7 @@ function buildElsLookup(
     t.variableDeclaration('var', [
       t.variableDeclarator(
         cachedVar,
-        t.logicalExpression(
-          '&&',
-          t.cloneNode(elsRef),
-          t.memberExpression(t.cloneNode(elsRef), t.cloneNode(idExpr, true), true),
-        ),
+        jsExpr`${t.cloneNode(elsRef)} && ${t.cloneNode(elsRef)}[${t.cloneNode(idExpr, true)}]`,
       ),
     ]),
     t.variableDeclaration('var', [
@@ -1192,8 +742,8 @@ function buildElsLookup(
             '||',
             t.logicalExpression(
               '&&',
-              t.logicalExpression('&&', cachedVar, t.memberExpression(cachedVar, t.identifier('isConnected'))),
-              cachedVar,
+              jsExpr`${t.cloneNode(cachedVar, true)} && ${t.cloneNode(cachedVar, true)}.isConnected`,
+              t.cloneNode(cachedVar, true),
             ),
             elsFallback,
           ),

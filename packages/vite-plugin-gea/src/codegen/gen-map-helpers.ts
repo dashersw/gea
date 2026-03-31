@@ -1,11 +1,3 @@
-/**
- * gen-map-helpers.ts
- *
- * Map registration, unresolved-dependency collection, template-map
- * replacement helpers, and class-body utility functions used by the
- * reactivity orchestrator.
- */
-
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
 import { appendToBody, id, js, jsExpr, jsMethod } from 'eszter'
@@ -164,17 +156,9 @@ export function generateMapRegistration(
   const mapIdx = getMapIndex(arrayMap.arrayPathParts)
 
   const containerLookup = arrayMap.containerUserIdExpr
-    ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
-        t.cloneNode(arrayMap.containerUserIdExpr, true) as t.Expression,
-      ])
+    ? (jsExpr`document.getElementById(${t.cloneNode(arrayMap.containerUserIdExpr, true) as t.Expression})` as t.Expression)
     : arrayMap.containerBindingId !== undefined
-      ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
-          t.binaryExpression(
-            '+',
-            t.memberExpression(t.thisExpression(), t.identifier('id')),
-            t.stringLiteral('-' + arrayMap.containerBindingId),
-          ),
-        ])
+      ? (jsExpr`document.getElementById(${jsExpr`this.id`} + ${'-' + arrayMap.containerBindingId})` as t.Expression)
       : (jsExpr`this.$(":scope")` as t.Expression)
 
   let arrExpr = t.cloneNode(unresolvedMap.computationExpr || t.arrayExpression([]), true) as t.Expression
@@ -190,20 +174,22 @@ export function generateMapRegistration(
   }
 
   const prunedSetup = pruneUnusedSetupStatements(setupStatements, arrExpr)
-  const getItemsBody: t.Statement[] = [...prunedSetup, t.returnStatement(arrExpr)]
+  const getItemsBody: t.Statement[] = [...prunedSetup, js`return ${arrExpr};`]
+
+  const createCallExpr = unresolvedMap.indexVariable
+    ? jsExpr`this.${id(createMethodName)}(${id('__item')}, ${id('__idx')})`
+    : jsExpr`this.${id(createMethodName)}(${id('__item')})`
+
+  const createArrow = unresolvedMap.indexVariable
+    ? t.arrowFunctionExpression([id('__item'), id('__idx')], createCallExpr)
+    : t.arrowFunctionExpression([id('__item')], createCallExpr)
 
   const registerArgs: t.Expression[] = [
     t.numericLiteral(mapIdx),
     t.stringLiteral(containerName),
     t.arrowFunctionExpression([], containerLookup),
     t.arrowFunctionExpression([], t.blockStatement(getItemsBody)),
-    t.arrowFunctionExpression(
-      unresolvedMap.indexVariable ? [t.identifier('__item'), t.identifier('__idx')] : [t.identifier('__item')],
-      t.callExpression(
-        t.memberExpression(t.thisExpression(), t.identifier(createMethodName)),
-        unresolvedMap.indexVariable ? [t.identifier('__item'), t.identifier('__idx')] : [t.identifier('__item')],
-      ),
-    ),
+    createArrow,
   ]
 
   if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
@@ -211,7 +197,7 @@ export function generateMapRegistration(
   }
 
   return t.expressionStatement(
-    t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__geaRegisterMap')), registerArgs),
+    t.callExpression(jsExpr`this.__geaRegisterMap`, registerArgs),
   )
 }
 
@@ -402,10 +388,7 @@ export function replaceMapWithComponentArrayItems(
 
       const replacement = opts?.slotBranch
         ? t.stringLiteral('')
-        : t.callExpression(
-            t.memberExpression(t.memberExpression(t.thisExpression(), t.identifier(itemsName)), t.identifier('join')),
-            [t.stringLiteral('')],
-          )
+        : jsExpr`this.${id(itemsName)}.join("")`
       toReplace.replaceWith(replacement)
       replaced = true
     },
@@ -423,12 +406,7 @@ export function replaceMapWithComponentArrayItemsInConditionalSlots(
     for (const key of ['truthyHtmlExpr', 'falsyHtmlExpr'] as const) {
       const expr = slot[key]
       if (!expr) continue
-      const fakeMethod = t.classMethod(
-        'method',
-        t.identifier('__tmpSlotMapReplace'),
-        [t.identifier('__p')],
-        t.blockStatement([t.returnStatement(t.cloneNode(expr, true))]),
-      )
+      const fakeMethod = jsMethod`${id('__tmpSlotMapReplace')}(__p) { return ${t.cloneNode(expr, true)}; }`
       replaceMapWithComponentArrayItems(fakeMethod, arrayExpr, itemsName, { slotBranch: true })
       const ret = fakeMethod.body.body[0]
       if (t.isReturnStatement(ret) && ret.argument) {
@@ -540,10 +518,10 @@ export function injectMapItemAttrsIntoTemplate(
         info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
           ? t.logicalExpression(
               '??',
-              buildOptionalMemberChain(t.identifier(info.itemVariable), info.itemIdProperty),
-              t.identifier(info.itemVariable),
+              buildOptionalMemberChain(id(info.itemVariable), info.itemIdProperty),
+              id(info.itemVariable),
             )
-          : t.callExpression(t.identifier('String'), [t.identifier(info.itemVariable)])
+          : jsExpr`String(${id(info.itemVariable)})`
 
       rootTL.quasis = [
         t.templateElement({ raw: `${tagPart} data-gea-item-id="`, cooked: `${tagPart} data-gea-item-id="` }),
@@ -578,19 +556,13 @@ export function addJoinToUnresolvedMapCalls(templateMethod: t.ClassMethod, _unre
 
       if (alreadyHasJoin) {
         const joinCall = path.parentPath!.parentPath as NodePath<t.CallExpression>
-        const replacement = t.binaryExpression('+', t.cloneNode(joinCall.node, true), t.stringLiteral('<!---->'))
+        const replacement = jsExpr`${t.cloneNode(joinCall.node, true)} + '<!---->'`
         joinCall.replaceWith(replacement)
         joinCall.skip()
         return
       }
 
-      path.replaceWith(
-        t.binaryExpression(
-          '+',
-          t.callExpression(t.memberExpression(path.node, t.identifier('join')), [t.stringLiteral('')]),
-          t.stringLiteral('<!---->'),
-        ),
-      )
+      path.replaceWith(jsExpr`${path.node}.join('') + '<!---->'`)
     },
   })
 }
@@ -645,16 +617,11 @@ export function replaceInlineMapWithRenderCall(
       }
       const indexParamName = t.isIdentifier(arrowFn.params[1]) ? arrowFn.params[1].name : undefined
 
-      const renderArgs: t.Expression[] = [t.identifier(paramName)]
-      if (indexParamName) renderArgs.push(t.identifier(indexParamName))
-      arrowFn.body = t.callExpression(
-        t.memberExpression(t.thisExpression(), t.identifier(renderMethodName)),
-        renderArgs,
-      )
+      arrowFn.body = indexParamName
+        ? jsExpr`this.${id(renderMethodName)}(${id(paramName)}, ${id(indexParamName)})`
+        : jsExpr`this.${id(renderMethodName)}(${id(paramName)})`
 
-      const newMapWithJoin = t.callExpression(t.memberExpression(path.node, t.identifier('join')), [
-        t.stringLiteral(''),
-      ])
+      const newMapWithJoin = jsExpr`${path.node}.join('')`
       const alreadyHasJoin =
         path.parentPath?.isMemberExpression() &&
         t.isIdentifier(path.parentPath.node.property) &&

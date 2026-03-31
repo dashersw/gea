@@ -2,7 +2,53 @@
  * Utilities for optionalizing member expression chains based on
  * binding roots and computed item keys, and early-return guard analysis.
  */
+import { js } from 'eszter'
 import { t } from '../utils/babel-interop.ts'
+
+// ─── Generic deep-map for optionalization ──────────────────────────
+// Uses t.VISITOR_KEYS for structural descent instead of 15+ manual
+// node-type branches.  The `visit` callback may return a replacement
+// node; returning `undefined` means "keep descending structurally".
+
+function deepMapExpr(
+  node: t.Node,
+  visit: (n: t.Node) => t.Node | undefined,
+): t.Node {
+  const hit = visit(node)
+  if (hit !== undefined) return hit
+  const keys = t.VISITOR_KEYS[node.type]
+  if (!keys?.length) return node
+  let changed = false
+  const updates: Record<string, any> = {}
+  for (const key of keys) {
+    if (key === 'left' && t.isAssignmentExpression(node)) continue
+    if (key === 'id' && t.isVariableDeclarator(node)) continue
+    if (
+      key === 'property' &&
+      (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+      !node.computed
+    ) continue
+    if (key === 'key' && t.isObjectProperty(node) && !node.computed) continue
+    const child = (node as any)[key]
+    if (Array.isArray(child)) {
+      let arrChanged = false
+      const mapped = child.map((c: any) => {
+        if (c && typeof c === 'object' && 'type' in c) {
+          const r = deepMapExpr(c, visit)
+          if (r !== c) arrChanged = true
+          return r
+        }
+        return c
+      })
+      if (arrChanged) { changed = true; updates[key] = mapped }
+    } else if (child && typeof child === 'object' && 'type' in child) {
+      const r = deepMapExpr(child, visit)
+      if (r !== child) { changed = true; updates[key] = r }
+    }
+  }
+  if (!changed) return node
+  return { ...node, ...updates } as t.Node
+}
 
 // ─── Early-return guard helpers ─────────────────────────────────────
 
@@ -37,350 +83,105 @@ export function earlyReturnFalsyBindingName(
 
 // ─── Optionalize member chains ──────────────────────────────────────
 
+/**
+ * Core chain optionalizer.  Walks an expression tree, converting
+ * non-computed member accesses to optional (`?.`) when `isRoot`
+ * returns true for the object.  After the first optional link,
+ * all subsequent non-computed accesses become optional too.
+ */
+function optionalizeChains(
+  expr: t.Expression,
+  isRoot: (obj: t.Expression) => boolean,
+): t.Expression {
+  return deepMapExpr(expr, (e) => {
+    // Only intercept non-computed MemberExpression for optionalization
+    if (!t.isMemberExpression(e) || e.computed) return undefined
+    // Recurse into the object sub-tree first (bottom-up chain walking)
+    const obj = optionalizeChains(e.object as t.Expression, isRoot)
+    if (isRoot(e.object as t.Expression))
+      return t.optionalMemberExpression(
+        e.object as t.Expression, e.property as t.Identifier, false, true,
+      )
+    if (t.isOptionalMemberExpression(obj))
+      return t.optionalMemberExpression(
+        obj, e.property as t.Identifier, false, true,
+      )
+    if (obj !== e.object) return t.memberExpression(obj, e.property, false)
+    return undefined
+  }) as t.Expression
+}
+
+/**
+ * Transforms `root.x.y` → `root?.x?.y` for all non-computed member
+ * chains rooted at an identifier named `rootName`.
+ */
 export function optionalizeMemberChainsFromBindingRoot(
   expr: t.Expression,
   rootName: string,
 ): t.Expression {
-  const visit = (e: t.Expression): t.Expression => {
-    if (t.isMemberExpression(e) && !e.computed) {
-      const obj = visit(e.object as t.Expression)
-      if (t.isIdentifier(e.object, { name: rootName }))
-        return t.optionalMemberExpression(
-          e.object,
-          e.property as t.Identifier,
-          false,
-          true,
-        )
-      if (t.isOptionalMemberExpression(obj))
-        return t.optionalMemberExpression(
-          obj,
-          e.property as t.Identifier,
-          false,
-          true,
-        )
-      return t.memberExpression(obj, e.property, false)
+  return optionalizeChains(expr, (obj) => t.isIdentifier(obj, { name: rootName }))
+}
+
+/**
+ * Transforms `obj[itemKey].x.y` → `obj[itemKey]?.x?.y` for all
+ * non-computed member chains following a computed access with `itemKeyName`.
+ */
+export function optionalizeMemberChainsAfterComputedItemKey(
+  expr: t.Expression,
+  itemKeyName: string,
+): t.Expression {
+  return optionalizeChains(expr, (obj) =>
+    t.isMemberExpression(obj) &&
+    obj.computed &&
+    t.isIdentifier(obj.property, { name: itemKeyName }),
+  )
+}
+
+// ─── Statement-level optionalization ────────────────────────────────
+
+function optionalizeInStatements(
+  stmts: t.Statement[],
+  transform: (e: t.Expression) => t.Expression,
+): t.Statement[] {
+  const mapStmt = (s: t.Statement): t.Statement => {
+    if (t.isVariableDeclaration(s))
+      return t.variableDeclaration(
+        s.kind,
+        s.declarations.map((d) =>
+          t.variableDeclarator(d.id, d.init ? transform(d.init) : null),
+        ),
+      )
+    if (t.isExpressionStatement(s)) return js`${transform(s.expression)};`
+    if (t.isReturnStatement(s)) {
+      const arg = s.argument ? transform(s.argument) : null
+      return arg ? js`return ${arg};` : js`return;`
     }
-    if (t.isOptionalMemberExpression(e))
-      return t.optionalMemberExpression(
-        visit(e.object as t.Expression),
-        e.property as t.Expression,
-        e.computed,
-        e.optional,
+    if (t.isBlockStatement(s)) return t.blockStatement(s.body.map(mapStmt))
+    if (t.isIfStatement(s))
+      return t.ifStatement(
+        transform(s.test),
+        mapStmt(s.consequent) as t.Statement,
+        s.alternate ? (mapStmt(s.alternate) as t.Statement) : null,
       )
-    if (t.isOptionalCallExpression(e))
-      return t.optionalCallExpression(
-        visit(e.callee as t.Expression),
-        e.arguments.map((a) =>
-          (t.isExpression(a) ? visit(a) : a) as t.Expression,
-        ),
-        e.optional,
-      )
-    if (t.isCallExpression(e))
-      return t.callExpression(
-        visit(e.callee as t.Expression),
-        e.arguments.map((a) =>
-          (t.isExpression(a) ? visit(a) : a) as t.Expression,
-        ),
-      )
-    if (t.isConditionalExpression(e))
-      return t.conditionalExpression(
-        visit(e.test),
-        visit(e.consequent),
-        visit(e.alternate),
-      )
-    if (t.isLogicalExpression(e))
-      return t.logicalExpression(
-        e.operator,
-        visit(e.left as t.Expression),
-        visit(e.right as t.Expression),
-      )
-    if (t.isBinaryExpression(e))
-      return t.binaryExpression(
-        e.operator,
-        visit(e.left as t.Expression),
-        visit(e.right as t.Expression),
-      )
-    if (t.isUnaryExpression(e))
-      return t.unaryExpression(
-        e.operator,
-        visit(e.argument as t.Expression),
-        e.prefix,
-      )
-    if (t.isSequenceExpression(e))
-      return t.sequenceExpression(
-        e.expressions.map((x) => visit(x as t.Expression)),
-      )
-    if (t.isAssignmentExpression(e))
-      return t.assignmentExpression(
-        e.operator,
-        e.left as t.LVal,
-        visit(e.right as t.Expression),
-      )
-    if (t.isArrayExpression(e))
-      return t.arrayExpression(
-        e.elements.map((el) => {
-          if (el === null) return null
-          if (t.isSpreadElement(el)) return t.spreadElement(visit(el.argument))
-          return visit(el as t.Expression)
-        }),
-      )
-    if (t.isObjectExpression(e))
-      return t.objectExpression(
-        e.properties.map((p) => {
-          if (t.isSpreadElement(p)) return t.spreadElement(visit(p.argument))
-          if (t.isObjectProperty(p))
-            return t.objectProperty(
-              p.computed
-                ? (visit(p.key as t.Expression) as
-                    | t.Expression
-                    | t.Identifier
-                    | t.StringLiteral)
-                : p.key,
-              visit(p.value as t.Expression),
-              p.computed,
-              p.shorthand,
-            )
-          return p
-        }),
-      )
-    if (t.isTemplateLiteral(e))
-      return t.templateLiteral(
-        e.quasis,
-        e.expressions.map((x) => visit(x as t.Expression)),
-      )
-    if (t.isTaggedTemplateExpression(e))
-      return t.taggedTemplateExpression(
-        visit(e.tag as t.Expression),
-        visit(e.quasi) as t.TemplateLiteral,
-      )
-    if (t.isNewExpression(e))
-      return t.newExpression(
-        visit(e.callee as t.Expression),
-        e.arguments.map((a) =>
-          (t.isExpression(a) ? visit(a) : a) as t.Expression,
-        ),
-      )
-    return e
+    return s
   }
-  return visit(expr)
+  return stmts.map((s) => mapStmt(t.cloneNode(s, true) as t.Statement))
 }
 
 export function optionalizeBindingRootInStatements(
   stmts: t.Statement[],
   rootName: string,
 ): t.Statement[] {
-  const mapStmt = (s: t.Statement): t.Statement => {
-    if (t.isVariableDeclaration(s))
-      return t.variableDeclaration(
-        s.kind,
-        s.declarations.map((d) =>
-          t.variableDeclarator(
-            d.id,
-            d.init
-              ? optionalizeMemberChainsFromBindingRoot(d.init, rootName)
-              : null,
-          ),
-        ),
-      )
-    if (t.isExpressionStatement(s))
-      return t.expressionStatement(
-        optionalizeMemberChainsFromBindingRoot(s.expression, rootName),
-      )
-    if (t.isReturnStatement(s))
-      return t.returnStatement(
-        s.argument
-          ? optionalizeMemberChainsFromBindingRoot(s.argument, rootName)
-          : null,
-      )
-    if (t.isBlockStatement(s)) return t.blockStatement(s.body.map(mapStmt))
-    if (t.isIfStatement(s))
-      return t.ifStatement(
-        optionalizeMemberChainsFromBindingRoot(s.test, rootName),
-        mapStmt(s.consequent) as t.Statement,
-        s.alternate ? (mapStmt(s.alternate) as t.Statement) : null,
-      )
-    return s
-  }
-  return stmts.map((s) => mapStmt(t.cloneNode(s, true) as t.Statement))
-}
-
-export function optionalizeMemberChainsAfterComputedItemKey(
-  expr: t.Expression,
-  itemKeyName: string,
-): t.Expression {
-  const visit = (e: t.Expression): t.Expression => {
-    if (t.isMemberExpression(e) && !e.computed) {
-      const origObj = e.object as t.Expression
-      const inner = visit(origObj)
-      if (
-        t.isMemberExpression(origObj) &&
-        origObj.computed &&
-        t.isIdentifier(origObj.property, { name: itemKeyName })
-      ) {
-        return t.optionalMemberExpression(
-          inner,
-          e.property as t.Identifier,
-          false,
-          true,
-        )
-      }
-      if (t.isOptionalMemberExpression(inner))
-        return t.optionalMemberExpression(
-          inner,
-          e.property as t.Identifier,
-          false,
-          true,
-        )
-      return t.memberExpression(inner, e.property, false)
-    }
-    if (t.isMemberExpression(e) && e.computed)
-      return t.memberExpression(
-        visit(e.object as t.Expression),
-        visit(e.property as t.Expression) as t.Expression,
-        true,
-      )
-    if (t.isOptionalMemberExpression(e))
-      return t.optionalMemberExpression(
-        visit(e.object as t.Expression),
-        e.property as t.Expression,
-        e.computed,
-        e.optional,
-      )
-    if (t.isOptionalCallExpression(e))
-      return t.optionalCallExpression(
-        visit(e.callee as t.Expression),
-        e.arguments.map((a) =>
-          (t.isExpression(a) ? visit(a) : a) as t.Expression,
-        ),
-        e.optional,
-      )
-    if (t.isCallExpression(e))
-      return t.callExpression(
-        visit(e.callee as t.Expression),
-        e.arguments.map((a) =>
-          (t.isExpression(a) ? visit(a) : a) as t.Expression,
-        ),
-      )
-    if (t.isConditionalExpression(e))
-      return t.conditionalExpression(
-        visit(e.test),
-        visit(e.consequent),
-        visit(e.alternate),
-      )
-    if (t.isLogicalExpression(e))
-      return t.logicalExpression(
-        e.operator,
-        visit(e.left as t.Expression),
-        visit(e.right as t.Expression),
-      )
-    if (t.isBinaryExpression(e))
-      return t.binaryExpression(
-        e.operator,
-        visit(e.left as t.Expression),
-        visit(e.right as t.Expression),
-      )
-    if (t.isUnaryExpression(e))
-      return t.unaryExpression(
-        e.operator,
-        visit(e.argument as t.Expression),
-        e.prefix,
-      )
-    if (t.isSequenceExpression(e))
-      return t.sequenceExpression(
-        e.expressions.map((x) => visit(x as t.Expression)),
-      )
-    if (t.isAssignmentExpression(e))
-      return t.assignmentExpression(
-        e.operator,
-        e.left as t.LVal,
-        visit(e.right as t.Expression),
-      )
-    if (t.isArrayExpression(e))
-      return t.arrayExpression(
-        e.elements.map((el) => {
-          if (el === null) return null
-          if (t.isSpreadElement(el)) return t.spreadElement(visit(el.argument))
-          return visit(el as t.Expression)
-        }),
-      )
-    if (t.isObjectExpression(e))
-      return t.objectExpression(
-        e.properties.map((p) => {
-          if (t.isSpreadElement(p)) return t.spreadElement(visit(p.argument))
-          if (t.isObjectProperty(p))
-            return t.objectProperty(
-              p.computed
-                ? (visit(p.key as t.Expression) as
-                    | t.Expression
-                    | t.Identifier
-                    | t.StringLiteral)
-                : p.key,
-              visit(p.value as t.Expression),
-              p.computed,
-              p.shorthand,
-            )
-          return p
-        }),
-      )
-    if (t.isTemplateLiteral(e))
-      return t.templateLiteral(
-        e.quasis,
-        e.expressions.map((x) => visit(x as t.Expression)),
-      )
-    if (t.isTaggedTemplateExpression(e))
-      return t.taggedTemplateExpression(
-        visit(e.tag as t.Expression),
-        visit(e.quasi) as t.TemplateLiteral,
-      )
-    if (t.isNewExpression(e))
-      return t.newExpression(
-        visit(e.callee as t.Expression),
-        e.arguments.map((a) =>
-          (t.isExpression(a) ? visit(a) : a) as t.Expression,
-        ),
-      )
-    if (t.isParenthesizedExpression(e))
-      return t.parenthesizedExpression(visit(e.expression))
-    return e
-  }
-  return visit(expr)
+  return optionalizeInStatements(stmts, (e) =>
+    optionalizeMemberChainsFromBindingRoot(e, rootName),
+  )
 }
 
 export function optionalizeComputedItemKeyInStatements(
   stmts: t.Statement[],
   itemKeyName: string,
 ): t.Statement[] {
-  const mapStmt = (s: t.Statement): t.Statement => {
-    if (t.isVariableDeclaration(s))
-      return t.variableDeclaration(
-        s.kind,
-        s.declarations.map((d) =>
-          t.variableDeclarator(
-            d.id,
-            d.init
-              ? optionalizeMemberChainsAfterComputedItemKey(d.init, itemKeyName)
-              : null,
-          ),
-        ),
-      )
-    if (t.isExpressionStatement(s))
-      return t.expressionStatement(
-        optionalizeMemberChainsAfterComputedItemKey(s.expression, itemKeyName),
-      )
-    if (t.isReturnStatement(s))
-      return t.returnStatement(
-        s.argument
-          ? optionalizeMemberChainsAfterComputedItemKey(s.argument, itemKeyName)
-          : null,
-      )
-    if (t.isBlockStatement(s)) return t.blockStatement(s.body.map(mapStmt))
-    if (t.isIfStatement(s))
-      return t.ifStatement(
-        optionalizeMemberChainsAfterComputedItemKey(s.test, itemKeyName),
-        mapStmt(s.consequent) as t.Statement,
-        s.alternate ? (mapStmt(s.alternate) as t.Statement) : null,
-      )
-    return s
-  }
-  return stmts.map((s) => mapStmt(t.cloneNode(s, true) as t.Statement))
+  return optionalizeInStatements(stmts, (e) =>
+    optionalizeMemberChainsAfterComputedItemKey(e, itemKeyName),
+  )
 }

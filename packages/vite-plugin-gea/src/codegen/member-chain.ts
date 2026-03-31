@@ -1,7 +1,3 @@
-/**
- * Member-expression/chain building, observe-key computation,
- * path resolution, and import management utilities.
- */
 import { t } from '../utils/babel-interop.ts'
 import { id, jsImport } from 'eszter'
 import type { PathParts } from '../ir/types.ts'
@@ -19,8 +15,8 @@ export function ensureImport(
 
   const buildSpecifier = () =>
     isDefault
-      ? t.importDefaultSpecifier(t.identifier(specifier))
-      : t.importSpecifier(t.identifier(specifier), t.identifier(specifier))
+      ? t.importDefaultSpecifier(id(specifier))
+      : t.importSpecifier(id(specifier), id(specifier))
 
   if (isDefault) {
     const alreadyHasDefault = program.body.some(
@@ -100,7 +96,7 @@ export function buildMemberChainFromParts(
     const isIndex = /^\d+$/.test(prop)
     return t.memberExpression(
       acc,
-      isIndex ? t.numericLiteral(Number(prop)) : t.identifier(prop),
+      isIndex ? t.numericLiteral(Number(prop)) : id(prop),
       isIndex,
     )
   }, base)
@@ -122,7 +118,7 @@ export function buildOptionalMemberChainFromParts(
     const isIndex = /^\d+$/.test(prop)
     return t.optionalMemberExpression(
       acc,
-      isIndex ? t.numericLiteral(Number(prop)) : t.identifier(prop),
+      isIndex ? t.numericLiteral(Number(prop)) : id(prop),
       isIndex,
       true,
     )

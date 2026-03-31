@@ -6,6 +6,7 @@
  * server-side rendering and reactive update pipeline.
  */
 import { t } from '../utils/babel-interop.ts'
+import { jsExpr, id } from 'eszter'
 import { escapeHtml, normalizeJSXText, toHtmlAttrName, camelToKebab } from '../utils/html.ts'
 import { VOID_ELEMENTS, EVENT_TYPES, RESERVED_HTML_TAG_NAMES } from '../ir/constants.ts'
 import { toGeaEventType } from './event-helpers.ts'
@@ -132,30 +133,7 @@ function tryStaticClassObjectToString(expr: t.ObjectExpression): string | null {
 }
 
 function buildClassObjectExpression(expr: t.Expression): t.Expression {
-  return t.callExpression(
-    t.memberExpression(
-      t.callExpression(
-        t.memberExpression(
-          t.callExpression(
-            t.memberExpression(
-              t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('entries')), [expr]),
-              t.identifier('filter'),
-            ),
-            [
-              t.arrowFunctionExpression(
-                [t.arrayPattern([t.identifier('__k'), t.identifier('__v')])],
-                t.identifier('__v'),
-              ),
-            ],
-          ),
-          t.identifier('map'),
-        ),
-        [t.arrowFunctionExpression([t.arrayPattern([t.identifier('__k')])], t.identifier('__k'))],
-      ),
-      t.identifier('join'),
-    ),
-    [t.stringLiteral(' ')],
-  )
+  return jsExpr`Object.entries(${expr}).filter(([__k, __v]) => __v).map(([__k]) => __k).join(' ')`
 }
 
 function tryStaticStyleObjectToCSS(expr: t.ObjectExpression): string | null {
@@ -178,39 +156,19 @@ function tryStaticStyleObjectToCSS(expr: t.ObjectExpression): string | null {
 }
 
 function buildStyleObjectExpression(expr: t.Expression): t.Expression {
-  return t.callExpression(
-    t.memberExpression(
-      t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('entries')), [expr]),
-      t.identifier('map'),
-    ),
-    [
-      t.arrowFunctionExpression(
-        [t.arrayPattern([t.identifier('__k'), t.identifier('__v')])],
-        t.templateLiteral(
-          [
-            t.templateElement({ raw: '', cooked: '' }, false),
-            t.templateElement({ raw: ': ', cooked: ': ' }, false),
-            t.templateElement({ raw: '', cooked: '' }, true),
-          ],
-          [
-            t.callExpression(t.memberExpression(t.identifier('__k'), t.identifier('replace')), [
-              t.regExpLiteral('[A-Z]', 'g'),
-              t.stringLiteral('-$&'),
-            ]),
-            t.conditionalExpression(
-              t.logicalExpression(
-                '&&',
-                t.binaryExpression('===', t.unaryExpression('typeof', t.identifier('__v')), t.stringLiteral('number')),
-                t.binaryExpression('!==', t.identifier('__v'), t.numericLiteral(0)),
-              ),
-              t.binaryExpression('+', t.identifier('__v'), t.stringLiteral('px')),
-              t.identifier('__v'),
-            ),
-          ],
-        ),
-      ),
-    ],
-  )
+  return jsExpr`Object.entries(${expr}).map(([__k, __v]) => ${
+    t.templateLiteral(
+      [
+        t.templateElement({ raw: '', cooked: '' }, false),
+        t.templateElement({ raw: ': ', cooked: ': ' }, false),
+        t.templateElement({ raw: '', cooked: '' }, true),
+      ],
+      [
+        jsExpr`__k.replace(/[A-Z]/g, '-$&')`,
+        jsExpr`typeof __v === 'number' && __v !== 0 ? __v + 'px' : __v`,
+      ],
+    )
+  })`
 }
 
 // ─── Conditional / expression analysis ─────────────────────────────
@@ -226,7 +184,7 @@ function extractHtmlTemplatesFromConditional(expr: t.Expression): {
       t.isIdentifier(value.callee.property) &&
       value.callee.property.name === 'map'
     ) {
-      return t.callExpression(t.memberExpression(value, t.identifier('join')), [t.stringLiteral('')])
+      return jsExpr`${value}.join('')`
     }
     return value
   }
@@ -383,10 +341,7 @@ const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'data', 'cite'
 
 function wrapWithSanitizeAttr(attrName: string, expr: t.Expression): t.Expression {
   if (!URL_ATTRS.has(attrName)) return expr
-  return t.callExpression(t.identifier('__sanitizeAttr'), [
-    t.stringLiteral(attrName),
-    t.callExpression(t.identifier('String'), [expr]),
-  ])
+  return jsExpr`__sanitizeAttr(${attrName}, String(${expr}))`
 }
 
 // ─── Static string extraction ──────────────────────────────────────
@@ -414,7 +369,7 @@ export function transformJSXFragmentToTemplate(
   const parts: TemplatePart[] = []
   if (ctx.isRoot) {
     parts.push({ type: 'string', value: '<div id="' })
-    parts.push({ type: 'expression', value: t.memberExpression(t.thisExpression(), t.identifier('id')) })
+    parts.push({ type: 'expression', value: jsExpr`this.id` })
     parts.push({ type: 'string', value: '">' })
   }
   processChildren(frag.children, parts, ctx, elementPath)
@@ -755,7 +710,7 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
       pushString(parts, '')
       parts.push({
         type: 'expression',
-        value: t.memberExpression(t.thisExpression(), t.identifier(instance.instanceVar)),
+        value: jsExpr`this.${id(instance.instanceVar)}`,
       })
       return
     }
@@ -782,7 +737,7 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
     pushString(parts, '')
     parts.push({
       type: 'expression',
-      value: t.newExpression(t.identifier(tagName!), [props.expression]),
+      value: jsExpr`new ${id(tagName!)}(${props.expression})`,
     })
     return
   }
@@ -811,11 +766,11 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
         hasDynamicUserId = true
       }
       parts.push({ type: 'string', value: html + ' data-gea-cid="' })
-      parts.push({ type: 'expression', value: t.memberExpression(t.thisExpression(), t.identifier('id')) })
+      parts.push({ type: 'expression', value: jsExpr`this.id` })
       html = '"'
     } else {
       parts.push({ type: 'string', value: html + ' id="' })
-      parts.push({ type: 'expression', value: t.memberExpression(t.thisExpression(), t.identifier('id')) })
+      parts.push({ type: 'expression', value: jsExpr`this.id` })
       html = '"'
     }
     hasBindingId = true
@@ -842,11 +797,7 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
         parts.push({ type: 'string', value: html + ' id="' })
         parts.push({
           type: 'expression',
-          value: t.binaryExpression(
-            '+',
-            t.memberExpression(t.thisExpression(), t.identifier('id')),
-            t.stringLiteral('-' + bindingId),
-          ),
+          value: jsExpr`this.id + ${'-' + bindingId}`,
         })
         html = '"'
       }
@@ -858,8 +809,8 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
     const itemIdProp = ctx.mapItemIdProperty
     const itemIdExpr: t.Expression =
       itemIdProp && itemIdProp !== ITEM_IS_KEY
-        ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier(itemVar), itemIdProp), t.identifier(itemVar))
-        : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
+        ? t.logicalExpression('??', buildOptionalMemberChain(id(itemVar), itemIdProp), id(itemVar))
+        : jsExpr`String(${id(itemVar)})`
 
     {
       parts.push({ type: 'string', value: html + ' data-gea-item-id="' })
@@ -1022,10 +973,10 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
               itemIdProp && itemIdProp !== ITEM_IS_KEY
                 ? t.logicalExpression(
                     '??',
-                    buildOptionalMemberChain(t.identifier(itemVar), itemIdProp),
-                    t.identifier(itemVar),
+                    buildOptionalMemberChain(id(itemVar), itemIdProp),
+                    id(itemVar),
                   )
-                : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
+                : jsExpr`String(${id(itemVar)})`
             parts.push({ type: 'string', value: html })
             parts.push({
               type: 'expression',
@@ -1073,10 +1024,7 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
             return
           }
           parts.push({ type: 'string', value: html })
-          const styleExpr = t.callExpression(
-            t.memberExpression(buildStyleObjectExpression(rawExpr), t.identifier('join')),
-            [t.stringLiteral('; ')],
-          )
+          const styleExpr = jsExpr`${buildStyleObjectExpression(rawExpr)}.join('; ')`
           const skipCondition = buildAttrSkipCondition(styleExpr, rawExpr)
           if (t.isBooleanLiteral(skipCondition) && !skipCondition.value) {
             parts.push({ type: 'string', value: ` style="` })
@@ -1191,11 +1139,7 @@ function processChildren(
         appendString(parts, `<!--`)
         parts.push({
           type: 'expression',
-          value: t.binaryExpression(
-            '+',
-            t.memberExpression(t.thisExpression(), t.identifier('id')),
-            t.stringLiteral('-' + slot.slotId),
-          ),
+          value: jsExpr`this.id + ${'-' + slot.slotId}`,
         })
         appendString(parts, `-->`)
         pushString(parts, '')
@@ -1210,11 +1154,7 @@ function processChildren(
         appendString(parts, `<!--`)
         parts.push({
           type: 'expression',
-          value: t.binaryExpression(
-            '+',
-            t.memberExpression(t.thisExpression(), t.identifier('id')),
-            t.stringLiteral('-' + slot.slotId + '-end'),
-          ),
+          value: jsExpr`this.id + ${'-' + slot.slotId + '-end'}`,
         })
         appendString(parts, `-->`)
       } else {
@@ -1244,11 +1184,7 @@ function processChildren(
           appendString(parts, `<template id="`)
           parts.push({
             type: 'expression',
-            value: t.binaryExpression(
-              '+',
-              t.memberExpression(t.thisExpression(), t.identifier('id')),
-              t.stringLiteral('-' + markerId),
-            ),
+            value: jsExpr`this.id + ${'-' + markerId}`,
           })
           appendString(parts, `"></template>`)
           pushString(parts, '')
@@ -1267,9 +1203,7 @@ function processChildren(
           childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback
         const safeExpr = skipEscape
           ? expr
-          : t.callExpression(t.identifier('__escapeHtml'), [
-              t.callExpression(t.identifier('String'), [expr]),
-            ])
+          : jsExpr`__escapeHtml(String(${expr}))`
         parts.push({ type: 'expression', value: safeExpr })
       }
     }
@@ -1317,7 +1251,7 @@ function buildEventSelectorExpression(suffix?: string): t.Expression {
       t.templateElement({ raw: '#', cooked: '#' }, false),
       t.templateElement({ raw: suffix ? `-${suffix}` : '', cooked: suffix ? `-${suffix}` : '' }, true),
     ],
-    [t.memberExpression(t.thisExpression(), t.identifier('id'))],
+    [jsExpr`this.id`],
   )
 }
 

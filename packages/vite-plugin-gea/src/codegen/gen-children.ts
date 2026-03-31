@@ -1,13 +1,6 @@
-/**
- * Child component injection for the Gea compiler.
- *
- * Handles constructor injection of child component instances,
- * lazy getter generation for conditional children, props builder
- * method creation, and Component._register() calls.
- */
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
-import { appendToBody, id, jsMethod } from 'eszter'
+import { appendToBody, id, js, jsExpr, jsMethod } from 'eszter'
 import type { ChildComponent } from '../ir/types.ts'
 import { pruneUnusedSetupDestructuring, loggingCatchClause } from './ast-helpers.ts'
 import { pascalToKebab } from '../utils/html.ts'
@@ -69,16 +62,13 @@ export function injectChildComponents(
       } else if (!injected) {
         const ctor = appendToBody(
           jsMethod`constructor(...args) {}`,
-          t.expressionStatement(t.callExpression(t.super(), [t.spreadElement(t.identifier('args'))])),
+          js`super(...args);`,
           ...instanceStatements,
         )
         path.node.body.body.unshift(ctor)
         injected = true
       }
 
-      // Generate lazy getters for children inside conditional slots.
-      // These children must not be constructed eagerly because their
-      // created() may depend on props that aren't available yet.
       for (const child of lazyChildren) {
         const isDirect = directForwardingChildren?.has(child.instanceVar)
         const noProps = childHasNoProps(child)
@@ -87,19 +77,13 @@ export function injectChildComponents(
 
         let propsArg: t.Expression
         if (hasPropsBuilder) {
-          propsArg = t.callExpression(
-            t.memberExpression(t.thisExpression(), t.identifier(getPropsBuilderMethodName(child))),
-            [],
-          )
+          propsArg = jsExpr`this.${id(getPropsBuilderMethodName(child))}()`
         } else if (child.directMappings && child.directMappings.length > 0) {
           propsArg = t.objectExpression(
             child.directMappings.map((m) =>
               t.objectProperty(
-                t.identifier(m.childPropName),
-                t.memberExpression(
-                  t.memberExpression(t.thisExpression(), t.identifier('props')),
-                  t.identifier(m.parentPropName),
-                ),
+                id(m.childPropName),
+                jsExpr`this.props.${id(m.parentPropName)}`,
               ),
             ),
           )
@@ -109,23 +93,11 @@ export function injectChildComponents(
 
         const getter = t.classMethod(
           'get',
-          t.identifier(child.instanceVar),
+          id(child.instanceVar),
           [],
           t.blockStatement([
-            t.ifStatement(
-              t.unaryExpression('!', t.memberExpression(t.thisExpression(), t.identifier(backingField))),
-              t.expressionStatement(
-                t.assignmentExpression(
-                  '=',
-                  t.memberExpression(t.thisExpression(), t.identifier(backingField)),
-                  t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__child')), [
-                    t.identifier(child.tagName),
-                    propsArg,
-                  ]),
-                ),
-              ),
-            ),
-            t.returnStatement(t.memberExpression(t.thisExpression(), t.identifier(backingField))),
+            js`if (!this.${id(backingField)}) { this.${id(backingField)} = this.__child(${id(child.tagName)}, ${propsArg}); }`,
+            js`return this.${id(backingField)};`,
           ]),
         )
         path.node.body.body.push(getter)
@@ -156,8 +128,8 @@ export function injectComponentRegistrations(
       if (ownerClass && t.isIdentifier(ownerClass.node.id) && ownerClass.node.id.name !== className) return
       const registrations = Array.from(children.keys()).map((tagName) =>
         t.expressionStatement(
-          t.callExpression(t.memberExpression(t.identifier('Component'), t.identifier('_register')), [
-            t.identifier(tagName),
+          t.callExpression(t.memberExpression(id('Component'), id('_register')), [
+            id(tagName),
             t.stringLiteral(pascalToKebab(tagName)),
           ]),
         ),
@@ -175,10 +147,6 @@ function buildInstanceStatements(
 ): t.ExpressionStatement[] {
   const stmts: t.ExpressionStatement[] = []
   instances.forEach((child) => {
-    // Lazy children (inside conditional slots like && or ternary) are
-    // constructed on first access, not eagerly in the constructor.
-    // Eager construction breaks when the child's created() needs props
-    // that aren't available until the condition becomes true.
     if (child.lazy) return
     let propsArg: t.Expression
     const isDirect = directForwardingChildren?.has(child.instanceVar)
@@ -186,19 +154,13 @@ function buildInstanceStatements(
     const hasPropsBuilder = !isDirect && !noProps
 
     if (hasPropsBuilder) {
-      propsArg = t.callExpression(
-        t.memberExpression(t.thisExpression(), t.identifier(getPropsBuilderMethodName(child))),
-        [],
-      )
+      propsArg = jsExpr`this.${id(getPropsBuilderMethodName(child))}()`
     } else if (child.directMappings && child.directMappings.length > 0) {
       propsArg = t.objectExpression(
         child.directMappings.map((m) =>
           t.objectProperty(
-            t.identifier(m.childPropName),
-            t.memberExpression(
-              t.memberExpression(t.thisExpression(), t.identifier('props')),
-              t.identifier(m.parentPropName),
-            ),
+            id(m.childPropName),
+            jsExpr`this.props.${id(m.parentPropName)}`,
           ),
         ),
       )
@@ -207,16 +169,7 @@ function buildInstanceStatements(
     }
 
     stmts.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.thisExpression(), t.identifier(child.instanceVar)),
-          t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__child')), [
-            t.identifier(child.tagName),
-            propsArg,
-          ]),
-        ),
-      ),
+      js`this.${id(child.instanceVar)} = this.__child(${id(child.tagName)}, ${propsArg});` as t.ExpressionStatement,
     )
   })
   return stmts
@@ -295,9 +248,6 @@ function buildPropsBuilderMethod(child: ChildComponent): t.ClassMethod {
     prunedSetup.splice(insertIndex, 0, guardStmt)
   }
 
-  // Check if the method accesses destructured template params from this.props.
-  // When props haven't been fully populated yet (e.g. during initial construction
-  // or via Store proxy), nested property access can throw. Wrap in try/catch.
   const hasPropsDestructure = prunedSetup.some(
     (stmt) =>
       t.isVariableDeclaration(stmt) &&

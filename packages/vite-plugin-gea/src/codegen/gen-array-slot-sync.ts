@@ -1,10 +1,6 @@
-/**
- * Generate __itemProps_* method and constructor init for component array slots.
- * The runtime's __observeList() handles mount, refresh, and reconciliation.
- */
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
-import { id, jsMethod } from 'eszter'
+import { id, js, jsExpr, jsMethod } from 'eszter'
 import type { UnresolvedMapInfo } from '../ir/types.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { buildComponentPropsExpression, collectTemplateSetupStatements } from '../analyze/binding-resolver.ts'
@@ -58,20 +54,13 @@ export function getComponentArrayMountMethodName(arrayPropName: string): string 
 // ─── Result interface ──────────────────────────────────────────────
 
 export interface ComponentArrayResult {
-  /** The __itemProps_* method */
   itemPropsMethod: t.ClassMethod
-  /** Constructor init statement: this._todosItems = (store.todos ?? []).map(...) */
   constructorInit: t.Statement
-  /** The component tag (constructor) name, e.g. 'TodoItem' */
   componentTag: string
-  /** The container binding ID for __el() lookup (e.g. 'list') */
   containerBindingId?: string
   containerUserIdExpr?: t.Expression
-  /** The item ID property name for keyed reconciliation (e.g. 'id') */
   itemIdProperty?: string
-  /** The array access expression for the store path */
   arrAccessExpr: t.Expression
-  /** Setup statements needed before accessing the array */
   arrSetupStatements: t.Statement[]
 }
 
@@ -172,7 +161,7 @@ export function generateComponentArrayResult(
       },
       MemberExpression(path: NodePath<t.MemberExpression>) {
         if (needsRename && t.isIdentifier(path.node.object) && path.node.object.name === itemVar) {
-          path.node.object = t.identifier('opt')
+          path.node.object = id('opt')
         }
       },
     })
@@ -184,7 +173,7 @@ export function generateComponentArrayResult(
   let arrAccessExpr: t.Expression
   let arrSetupStatements: t.Statement[] = []
   if (storeArrayAccess) {
-    arrAccessExpr = t.memberExpression(t.identifier(storeArrayAccess.storeVar), t.identifier(storeArrayAccess.propName))
+    arrAccessExpr = jsExpr`${id(storeArrayAccess.storeVar)}.${id(storeArrayAccess.propName)}`
   } else if (um.computationExpr) {
     arrSetupStatements = um.computationSetupStatements
       ? replacePropRefsInStatements(
@@ -195,28 +184,21 @@ export function generateComponentArrayResult(
       : []
     arrAccessExpr = replacePropRefsInExpression(t.cloneNode(um.computationExpr, true), propNames, wholeParamName)
   } else {
-    arrAccessExpr = t.memberExpression(
-      t.memberExpression(t.thisExpression(), t.identifier('props')),
-      t.identifier(arrayPropName),
-    )
+    arrAccessExpr = jsExpr`this.props.${id(arrayPropName)}`
   }
 
   arrSetupStatements = pruneUnusedSetupDestructuring(arrSetupStatements, [arrAccessExpr, finalPropsExpr])
 
   const itemPropsMethodName = `__itemProps_${arrayPropName}`
-  const itemPropsCallArgs: t.Expression[] = [t.identifier('opt')]
-  if (indexVar) itemPropsCallArgs.push(t.identifier('__k'))
+  const itemPropsCallArgs: t.Expression[] = [id('opt')]
+  if (indexVar) itemPropsCallArgs.push(id('__k'))
   const itemPropsCall = t.callExpression(
-    t.memberExpression(t.thisExpression(), t.identifier(itemPropsMethodName)),
+    jsExpr`this.${id(itemPropsMethodName)}`,
     itemPropsCallArgs,
   )
 
   const itemPropsSetup = collectTemplateSetupStatements(finalPropsExpr, templateSetupContext)
 
-  // Inside __itemProps_* and __refresh*Items, store reads must bypass the proxy
-  // to avoid re-entrant observation cycles (e.g. reading a computed getter that
-  // depends on the array being iterated). Replace `storeVar` with `storeVar.__raw`
-  // in setup destructuring statements.
   const storeVarNames = new Set<string>()
   if (storeArrayAccess) storeVarNames.add(storeArrayAccess.storeVar)
   for (const stmt of [...itemPropsSetup, ...arrSetupStatements]) {
@@ -233,7 +215,7 @@ export function generateComponentArrayResult(
       if (!t.isVariableDeclaration(stmt)) continue
       for (const decl of stmt.declarations) {
         if (t.isIdentifier(decl.init) && storeVarNames.has(decl.init.name)) {
-          decl.init = t.memberExpression(t.identifier(decl.init.name), t.identifier('__raw'))
+          decl.init = jsExpr`${id(decl.init.name)}.__raw`
         }
       }
     }
@@ -242,32 +224,25 @@ export function generateComponentArrayResult(
   rewriteStoreDestructuring(arrSetupStatements)
 
   const itemPropsMethod = jsMethod`${id(itemPropsMethodName)}(opt) {}`
-  if (indexVar) itemPropsMethod.params.push(t.identifier('__k'))
+  if (indexVar) itemPropsMethod.params.push(id('__k'))
   itemPropsMethod.body.body.push(...itemPropsSetup, t.returnStatement(finalPropsExpr))
 
   const itemIdProp = um.itemIdProperty
   const keyExpr: t.Expression =
     itemIdProp && itemIdProp !== ITEM_IS_KEY
-      ? t.callExpression(t.identifier('String'), [t.memberExpression(t.identifier('opt'), t.identifier(itemIdProp))])
+      ? jsExpr`String(${jsExpr`opt.${id(itemIdProp)}`})`
       : itemIdProp === ITEM_IS_KEY
-        ? t.callExpression(t.identifier('String'), [t.identifier('opt')])
-        : t.binaryExpression('+', t.stringLiteral('__idx_'), t.identifier('__k'))
+        ? jsExpr`String(opt)`
+        : t.binaryExpression('+', t.stringLiteral('__idx_'), id('__k'))
 
-  // Constructor init: this._todosItems = (store.todos ?? []).map((opt, __k) => this.__child(Ctor, this.__itemProps_todos(opt), key))
-  const mapParams: t.Identifier[] = [t.identifier('opt')]
-  if (indexVar || !itemIdProp) mapParams.push(t.identifier('__k'))
-  const childCall = t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__child')), [
-    t.identifier(comp.componentTag),
-    t.cloneNode(itemPropsCall, true),
-    t.cloneNode(keyExpr, true),
-  ])
+  const mapParams: t.Identifier[] = [id('opt')]
+  if (indexVar || !itemIdProp) mapParams.push(id('__k'))
+  const childCall = jsExpr`this.__child(${id(comp.componentTag)}, ${t.cloneNode(itemPropsCall, true)}, ${t.cloneNode(keyExpr, true)})`
   const mapCallback = t.arrowFunctionExpression(mapParams, childCall)
   const nullishCoalesce = t.logicalExpression('??', t.cloneNode(arrAccessExpr, true), t.arrayExpression([]))
   const parenthesized = t.parenthesizedExpression ? t.parenthesizedExpression(nullishCoalesce) : nullishCoalesce
-  const mapCallExpr = t.callExpression(t.memberExpression(parenthesized, t.identifier('map')), [mapCallback])
-  const constructorInit = t.expressionStatement(
-    t.assignmentExpression('=', t.memberExpression(t.thisExpression(), t.identifier(itemsName)), mapCallExpr),
-  )
+  const mapCallExpr = jsExpr`${parenthesized}.map(${mapCallback})`
+  const constructorInit = js`this.${id(itemsName)} = ${mapCallExpr};`
 
   return {
     itemPropsMethod,

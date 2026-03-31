@@ -8,6 +8,7 @@
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
 import type { ClassMethod, ReturnStatement } from '@babel/types'
+import { appendToBody, id, jsExpr, jsMethod } from 'eszter'
 import type { ChildComponent, EventHandler } from '../ir/types.ts'
 import type { AnalysisResult } from '../analyze/analyzer.ts'
 import { analyzeTemplate } from '../analyze/analyzer.ts'
@@ -309,13 +310,7 @@ export function transformComponentFile(
         if (classPath) {
           const refStatements: t.Statement[] = refBindings.flatMap((ref) => {
             const target = ref.targetExpr as t.LVal
-            const q = t.callExpression(
-              t.memberExpression(
-                t.memberExpression(t.thisExpression(), t.identifier('element_')),
-                t.identifier('querySelector'),
-              ),
-              [t.stringLiteral(`[data-gea-ref="${ref.refId}"]`)],
-            )
+            const q = jsExpr`this.element_.querySelector(${t.stringLiteral(`[data-gea-ref="${ref.refId}"]`)})`
             return [
               t.expressionStatement(t.assignmentExpression('=', target, t.nullLiteral())),
               t.expressionStatement(t.assignmentExpression('=', target, q)),
@@ -328,7 +323,7 @@ export function transformComponentFile(
             existingSetup.body.body.push(...refStatements)
           } else {
             classPath.node.body.body.push(
-              t.classMethod('method', t.identifier('__setupRefs'), [], t.blockStatement(refStatements)),
+              appendToBody(jsMethod`${id('__setupRefs')}() {}`, ...refStatements),
             )
           }
           transformed = true

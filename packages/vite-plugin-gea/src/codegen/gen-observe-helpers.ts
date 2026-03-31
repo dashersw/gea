@@ -6,14 +6,14 @@
  */
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
-import { id, js, jsBlockBody, jsExpr } from 'eszter'
+import { js, jsBlockBody, jsExpr } from 'eszter'
 import type { ReactiveBinding, TextExpression } from '../ir/types.ts'
 import {
   buildMemberChainFromParts,
   normalizePathParts,
 } from './ast-helpers.ts'
 import type { StateRefMeta } from '../parse/state-refs.ts'
-import { toggleClass } from './dom-update.ts'
+import { emitPatch, emitMount } from '../emit/registry.ts'
 
 // ─── Path-parts equality test ──────────────────────────────────────
 
@@ -152,21 +152,6 @@ function buildElementLookup(binding: ReactiveBinding, stateRefs?: Map<string, St
   return t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [idExpr])
 }
 
-// ─── Target prop mapping ──────────────────────────────────────────
-
-function buildTargetProp(binding: ReactiveBinding): string {
-  switch (binding.type) {
-    case 'text':
-      return 'textContent'
-    case 'value':
-      return 'value'
-    case 'checked':
-      return 'checked'
-    default:
-      return 'textContent'
-  }
-}
-
 // ─── Simple (direct) update ────────────────────────────────────────
 
 export function buildSimpleUpdate(
@@ -175,26 +160,32 @@ export function buildSimpleUpdate(
   stateRefs: Map<string, StateRefMeta>,
 ): t.Statement {
   const el = buildElementLookup(binding, stateRefs)
-  const target = buildTargetProp(binding)
   const valueExpr = binding.textTemplate ? buildTextTemplateExpression(binding, stateRefs) || param : param
 
-  if (binding.type === 'class') {
-    const pathParts = binding.pathParts || normalizePathParts((binding as any).path || '')
-    const cls = binding.classToggleName || pathParts[pathParts.length - 1] || 'active'
-    return js`if (${el}) { ${jsExpr`${el}.classList.toggle(${cls}, ${param})`}; }`
-  }
-
-  if (binding.textNodeIndex !== undefined && binding.type === 'text') {
-    const idx = t.numericLiteral(binding.textNodeIndex)
-    return js`if (${el}) { let __tn = ${jsExpr`${el}.childNodes[${idx}]`}; if (!__tn || __tn.nodeType !== 3) { __tn = document.createTextNode(${valueExpr}); ${jsExpr`${el}.insertBefore(__tn, ${el}.childNodes[${idx}] || null)`}; } else if (__tn.nodeValue !== ${valueExpr}) { __tn.nodeValue = ${valueExpr}; } }`
-  }
-
-  if (target === 'textContent' && binding.bindingId && binding.bindingId !== '' && !binding.userIdExpr) {
+  // __updateText shortcut for text bindings with a known bindingId
+  if (binding.type === 'text' && binding.textNodeIndex === undefined && binding.bindingId && binding.bindingId !== '' && !binding.userIdExpr) {
     const suffix = t.stringLiteral(binding.bindingId)
     return js`${jsExpr`this.__updateText(${suffix}, ${valueExpr})`};`
   }
 
-  return js`if (${el}) { ${jsExpr`${el}.${id(target)}`} = ${valueExpr}; }`
+  const emitterOpts = {
+    attributeName: binding.attributeName,
+    classToggleName: binding.classToggleName || (binding.type === 'class'
+      ? (binding.pathParts || normalizePathParts((binding as any).path || '')).at(-1) || 'active'
+      : undefined),
+    textNodeIndex: binding.textNodeIndex,
+    isObjectClass: binding.isObjectClass,
+    isBooleanAttr: binding.isBooleanAttr,
+    isUrlAttr: binding.isUrlAttr,
+    isChildrenProp: binding.isChildrenProp,
+  }
+
+  const stmts = emitPatch(binding.type, el, binding.type === 'class' ? param : valueExpr, emitterOpts)
+  if (stmts.length === 0) return js`if (${el}) { ${jsExpr`${el}.textContent`} = ${valueExpr}; }`
+
+  // Wrap emitter output in an if(el) null-guard
+  const body = stmts.length === 1 ? stmts[0] : t.blockStatement(stmts)
+  return t.ifStatement(el, body)
 }
 
 // ─── Wildcard (array-item) update ──────────────────────────────────
@@ -255,13 +246,12 @@ function buildElementUpdate(
   stateRefs: Map<string, StateRefMeta>,
 ): t.Expression {
   const el = t.identifier('element')
-  const target = buildTargetProp(binding)
 
   if (binding.type === 'class') {
-    const pathParts = binding.pathParts || normalizePathParts((binding as any).path || '')
-    const cls = binding.classToggleName || pathParts[pathParts.length - 1] || 'active'
-    // toggleClass returns a t.Statement (expressionStatement); unwrap to expression for this context
-    return (toggleClass(el, cls, param) as t.ExpressionStatement).expression
+    const cls = binding.classToggleName || (binding.pathParts || normalizePathParts((binding as any).path || '')).at(-1) || 'active'
+    const stmts = emitMount('class', el, param, { classToggleName: cls })
+    // emitMount returns an expressionStatement; unwrap to expression for this context
+    return (stmts[0] as t.ExpressionStatement).expression
   }
 
   let targetEl: t.Expression
@@ -277,7 +267,18 @@ function buildElementUpdate(
   }
 
   const valueExpr = binding.textTemplate ? buildTextTemplateExpression(binding, stateRefs) || param : param
-  return t.assignmentExpression('=', t.memberExpression(targetEl, t.identifier(target)), valueExpr)
+  const stmts = emitMount(binding.type, targetEl, valueExpr, {
+    attributeName: binding.attributeName,
+    textNodeIndex: binding.textNodeIndex,
+    isObjectClass: binding.isObjectClass,
+    isBooleanAttr: binding.isBooleanAttr,
+    isUrlAttr: binding.isUrlAttr,
+    isChildrenProp: binding.isChildrenProp,
+  })
+  // For non-class wildcard updates, extract the expression from the first statement
+  if (stmts.length > 0) return (stmts[0] as t.ExpressionStatement).expression
+  // Fallback: simple property assignment
+  return t.assignmentExpression('=', t.memberExpression(targetEl, t.identifier('textContent')), valueExpr)
 }
 
 // ─── Child access expression ───────────────────────────────────────

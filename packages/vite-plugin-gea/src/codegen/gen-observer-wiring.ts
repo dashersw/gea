@@ -53,12 +53,7 @@ export function classMethodUsesParam(method: t.ClassMethod, index: number): bool
 }
 
 function lazyInit(name: string, value: t.Expression): t.Statement {
-  return t.ifStatement(
-    t.unaryExpression('!', t.memberExpression(t.thisExpression(), t.identifier(name))),
-    t.expressionStatement(
-      t.assignmentExpression('=', t.memberExpression(t.thisExpression(), t.identifier(name)), value),
-    ),
-  )
+  return js`if (!this.${id(name)}) { this.${id(name)} = ${value}; }`
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -140,13 +135,7 @@ export function generateCreatedHooks(
       if (handlers.length === 1 && !handlers[0].isVia) {
         // Single handler -- direct method reference
         body.push(
-          t.expressionStatement(
-            t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__observe')), [
-              storeVarExpr,
-              pathArray,
-              t.memberExpression(t.thisExpression(), t.identifier(handlers[0].methodName)),
-            ]),
-          ),
+          js`this.__observe(${storeVarExpr}, ${pathArray}, this.${id(handlers[0].methodName)});`,
         )
       } else {
         // Multiple handlers or via handlers -- merged arrow function
@@ -166,12 +155,8 @@ export function generateCreatedHooks(
           if (seenCallKeys.has(callKey)) continue
           seenCallKeys.add(callKey)
           if (h.isVia && h.rereadExpr) {
-            const callStmt = t.expressionStatement(
-              t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(h.methodName)), [
-                h.passValue === false ? t.identifier('undefined') : t.cloneNode(h.rereadExpr, true),
-                t.nullLiteral(),
-              ]),
-            )
+            const argExpr = h.passValue === false ? t.identifier('undefined') : t.cloneNode(h.rereadExpr, true)
+            const callStmt = js`this.${id(h.methodName)}(${argExpr}, null);`
             if (h.dynamicKeyExpr) {
               const keyId = t.identifier(`__geaKey${hi}`)
               const changeId = t.identifier(`__geaChange${hi}`)
@@ -226,7 +211,7 @@ export function generateCreatedHooks(
                     t.returnStatement(
                       t.logicalExpression(
                         '&&',
-                        t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [partsId]),
+                        jsExpr`Array.isArray(${partsId})` as t.Expression,
                         relevantChangeExpr,
                       ),
                     ),
@@ -241,7 +226,7 @@ export function generateCreatedHooks(
                   t.ifStatement(
                     t.logicalExpression(
                       '&&',
-                      t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [cParam]),
+                      jsExpr`Array.isArray(${cParam})` as t.Expression,
                       someCall,
                     ),
                     t.blockStatement([callStmt]),
@@ -252,21 +237,11 @@ export function generateCreatedHooks(
               callStmts.push(callStmt)
             }
           } else {
-            callStmts.push(
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(h.methodName)), [vParam, cParam]),
-              ),
-            )
+            callStmts.push(js`this.${id(h.methodName)}(${vParam}, ${cParam});`)
           }
         }
         body.push(
-          t.expressionStatement(
-            t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__observe')), [
-              storeVarExpr,
-              pathArray,
-              t.arrowFunctionExpression([vParam, cParam], t.blockStatement(callStmts)),
-            ]),
-          ),
+          js`this.__observe(${storeVarExpr}, ${pathArray}, ${t.arrowFunctionExpression([vParam, cParam], t.blockStatement(callStmts))});`,
         )
       }
     }
@@ -277,53 +252,46 @@ export function generateCreatedHooks(
       const itemsName = getComponentArrayItemsName(config.arrayPropName)
       const itemPropsMethodName = `__itemProps_${config.arrayPropName}`
 
+      const containerArrow = t.arrowFunctionExpression(
+        [],
+        config.containerUserIdExpr
+          ? (jsExpr`document.getElementById(${t.cloneNode(config.containerUserIdExpr, true) as t.Expression})` as t.Expression)
+          : config.containerBindingId
+            ? (jsExpr`this.__el(${t.stringLiteral(config.containerBindingId)})` as t.Expression)
+            : (jsExpr`this.$(":scope")` as t.Expression),
+      )
+
+      const propsArrow = t.arrowFunctionExpression(
+        [t.identifier('opt'), t.identifier('__k')],
+        jsExpr`this.${id(itemPropsMethodName)}(opt, __k)` as t.Expression,
+      )
+
+      let keyArrow: t.ArrowFunctionExpression
+      if (config.itemIdProperty && config.itemIdProperty !== ITEM_IS_KEY) {
+        keyArrow = t.arrowFunctionExpression(
+          [t.identifier('opt')],
+          t.logicalExpression(
+            '??',
+            buildOptionalMemberChain(t.identifier('opt'), config.itemIdProperty),
+            t.identifier('opt'),
+          ),
+        )
+      } else if (config.itemIdProperty === ITEM_IS_KEY) {
+        keyArrow = t.arrowFunctionExpression([t.identifier('opt')], t.identifier('opt'))
+      } else {
+        keyArrow = t.arrowFunctionExpression(
+          [t.identifier('opt'), t.identifier('__k')],
+          jsExpr`'__idx_' + __k` as t.Expression,
+        )
+      }
+
       const configProps: t.ObjectProperty[] = [
-        t.objectProperty(t.identifier('items'), t.memberExpression(t.thisExpression(), t.identifier(itemsName))),
+        t.objectProperty(t.identifier('items'), jsExpr`this.${id(itemsName)}` as t.Expression),
         t.objectProperty(t.identifier('itemsKey'), t.stringLiteral(itemsName)),
-        t.objectProperty(
-          t.identifier('container'),
-          t.arrowFunctionExpression(
-            [],
-            config.containerUserIdExpr
-              ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
-                  t.cloneNode(config.containerUserIdExpr, true) as t.Expression,
-                ])
-              : config.containerBindingId
-                ? t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__el')), [
-                    t.stringLiteral(config.containerBindingId),
-                  ])
-                : (jsExpr`this.$(":scope")` as t.Expression),
-          ),
-        ),
+        t.objectProperty(t.identifier('container'), containerArrow),
         t.objectProperty(t.identifier('Ctor'), t.identifier(config.componentTag)),
-        t.objectProperty(
-          t.identifier('props'),
-          t.arrowFunctionExpression(
-            [t.identifier('opt'), t.identifier('__k')],
-            t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(itemPropsMethodName)), [
-              t.identifier('opt'),
-              t.identifier('__k'),
-            ]),
-          ),
-        ),
-        t.objectProperty(
-          t.identifier('key'),
-          config.itemIdProperty && config.itemIdProperty !== ITEM_IS_KEY
-            ? t.arrowFunctionExpression(
-                [t.identifier('opt')],
-                t.logicalExpression(
-                  '??',
-                  buildOptionalMemberChain(t.identifier('opt'), config.itemIdProperty),
-                  t.identifier('opt'),
-                ),
-              )
-            : config.itemIdProperty === ITEM_IS_KEY
-              ? t.arrowFunctionExpression([t.identifier('opt')], t.identifier('opt'))
-              : t.arrowFunctionExpression(
-                  [t.identifier('opt'), t.identifier('__k')],
-                  t.binaryExpression('+', t.stringLiteral('__idx_'), t.identifier('__k')),
-                ),
-        ),
+        t.objectProperty(t.identifier('props'), propsArrow),
+        t.objectProperty(t.identifier('key'), keyArrow),
       ]
 
       // Merge any scalar observers on the same path into the onchange callback
@@ -335,32 +303,19 @@ export function generateCreatedHooks(
         }
       }
       if (samePathHandlers.length > 0) {
-        const onchangeStmts: t.Statement[] = samePathHandlers.map((h) =>
-          t.expressionStatement(
-            h.isVia && h.rereadExpr
-              ? t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(h.methodName)), [
-                  t.cloneNode(h.rereadExpr, true),
-                  t.nullLiteral(),
-                ])
-              : t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(h.methodName)), [
-                  t.memberExpression(t.identifier(config.storeVar), t.identifier(config.pathParts[0])),
-                  t.nullLiteral(),
-                ]),
-          ),
-        )
+        const onchangeStmts: t.Statement[] = samePathHandlers.map((h) => {
+          if (h.isVia && h.rereadExpr) {
+            return js`this.${id(h.methodName)}(${t.cloneNode(h.rereadExpr, true)}, null);`
+          }
+          return js`this.${id(h.methodName)}(${t.memberExpression(t.identifier(config.storeVar), t.identifier(config.pathParts[0]))}, null);`
+        })
         configProps.push(
           t.objectProperty(t.identifier('onchange'), t.arrowFunctionExpression([], t.blockStatement(onchangeStmts))),
         )
       }
 
       body.push(
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__observeList')), [
-            storeVarExpr,
-            pathArray,
-            t.objectExpression(configProps),
-          ]),
-        ),
+        js`this.__observeList(${storeVarExpr}, ${pathArray}, ${t.objectExpression(configProps)});`,
       )
     }
   }
@@ -378,7 +333,7 @@ export function generateLocalStateObserverSetup(
   observeHandlers: Array<{ pathParts: PathParts; methodName: string }>,
   hasArrayConfigs: boolean,
 ): t.ClassMethod {
-  const localStore = t.memberExpression(t.thisExpression(), t.identifier('__store'))
+  const localStore = jsExpr`this.__store` as t.Expression
   const body: t.Statement[] = []
   if (hasArrayConfigs) {
     body.push(js`this.__ensureArrayConfigs();`)
@@ -386,14 +341,9 @@ export function generateLocalStateObserverSetup(
   body.push(js`if (!${localStore}) { return; }`)
 
   for (const observeHandler of observeHandlers) {
+    const pathArray = t.arrayExpression(observeHandler.pathParts.map((part) => t.stringLiteral(part)))
     body.push(
-      t.expressionStatement(
-        t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__observe')), [
-          t.thisExpression(),
-          t.arrayExpression(observeHandler.pathParts.map((part) => t.stringLiteral(part))),
-          t.memberExpression(t.thisExpression(), t.identifier(observeHandler.methodName)),
-        ]),
-      ),
+      js`this.__observe(this, ${pathArray}, this.${id(observeHandler.methodName)});`,
     )
   }
 
@@ -413,7 +363,7 @@ export function generateStoreInlinePatchObserver(
 ): t.ClassMethod {
   const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
   method.body.body.push(
-    t.ifStatement(t.memberExpression(t.thisExpression(), t.identifier('rendered_')), t.blockStatement(patchStatements)),
+    js`if (this.rendered_) { ${t.blockStatement(patchStatements)} }`,
   )
   return method
 }
@@ -439,14 +389,7 @@ export function generateRerenderObserver(pathParts: PathParts, storeVar?: string
     }
   }
   method.body.body.push(
-    t.ifStatement(
-      t.memberExpression(t.thisExpression(), t.identifier('rendered_')),
-      t.blockStatement([
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__geaRequestRender')), []),
-        ),
-      ]),
-    ),
+    js`if (this.rendered_) { this.__geaRequestRender(); }`,
   )
   return method
 }
@@ -460,7 +403,7 @@ export function generateConditionalSlotObserveMethod(
   const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
 
   const anyPatchedExpr = slotIndices
-    .map((i) => t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${i}`)) as t.Expression)
+    .map((i) => jsExpr`this.${id(`__geaCondPatched_${i}`)}` as t.Expression)
     .reduce((acc, expr) => t.logicalExpression('||', acc, expr))
 
   const patchStatements: t.Statement[] = []
@@ -469,34 +412,10 @@ export function generateConditionalSlotObserveMethod(
   }
   slotIndices.forEach((slotIndex) => {
     patchStatements.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${slotIndex}`)),
-          t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__geaPatchCond')), [
-            t.numericLiteral(slotIndex),
-          ]),
-        ),
-      ),
+      js`this.${id(`__geaCondPatched_${slotIndex}`)} = this.__geaPatchCond(${t.numericLiteral(slotIndex)});`,
     )
     patchStatements.push(
-      t.ifStatement(
-        t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${slotIndex}`)),
-        t.blockStatement([
-          t.expressionStatement(
-            t.callExpression(t.identifier('queueMicrotask'), [
-              t.arrowFunctionExpression(
-                [],
-                t.assignmentExpression(
-                  '=',
-                  t.memberExpression(t.thisExpression(), t.identifier(`__geaCondPatched_${slotIndex}`)),
-                  t.booleanLiteral(false),
-                ),
-              ),
-            ]),
-          ),
-        ]),
-      ),
+      js`if (this.${id(`__geaCondPatched_${slotIndex}`)}) { queueMicrotask(() => this.${id(`__geaCondPatched_${slotIndex}`)} = false); }`,
     )
   })
 
@@ -505,7 +424,7 @@ export function generateConditionalSlotObserveMethod(
   }
 
   method.body.body.push(
-    t.ifStatement(t.memberExpression(t.thisExpression(), t.identifier('rendered_')), t.blockStatement(patchStatements)),
+    js`if (this.rendered_) { ${t.blockStatement(patchStatements)} }`,
   )
 
   return method
@@ -514,14 +433,7 @@ export function generateConditionalSlotObserveMethod(
 export function generateStateChildSwapObserver(pathParts: PathParts, storeVar: string | undefined): t.ClassMethod {
   const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
   method.body.body.push(
-    t.ifStatement(
-      t.memberExpression(t.thisExpression(), t.identifier('rendered_')),
-      t.blockStatement([
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('__geaSwapStateChildren')), []),
-        ),
-      ]),
-    ),
+    js`if (this.rendered_) { this.__geaSwapStateChildren(); }`,
   )
   return method
 }
@@ -545,20 +457,12 @@ export function generateUnresolvedRelationalObserver(
 ): { method: t.ClassMethod; privateFields: string[] } {
   const arrayPathString = pathPartsToString(arrayMap.arrayPathParts)
   const containerName = `__${arrayPathString.replace(/\./g, '_')}_container`
-  const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
+  const containerRef = jsExpr`this.${id(containerName)}` as t.Expression
 
   const containerLookup = arrayMap.containerUserIdExpr
-    ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
-        t.cloneNode(arrayMap.containerUserIdExpr, true) as t.Expression,
-      ])
+    ? (jsExpr`document.getElementById(${t.cloneNode(arrayMap.containerUserIdExpr, true) as t.Expression})` as t.Expression)
     : arrayMap.containerBindingId !== undefined
-      ? t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('getElementById')), [
-          t.binaryExpression(
-            '+',
-            t.memberExpression(t.thisExpression(), t.identifier('id')),
-            t.stringLiteral('-' + arrayMap.containerBindingId),
-          ),
-        ])
+      ? (jsExpr`document.getElementById(this.id + ${t.stringLiteral('-' + arrayMap.containerBindingId)})` as t.Expression)
       : (jsExpr`this.$(":scope")` as t.Expression)
 
   const setupStatements: t.Statement[] = replacePropRefsInStatements(
@@ -576,12 +480,12 @@ export function generateUnresolvedRelationalObserver(
 
   const itemComparison: t.Expression = relBinding.itemProperty
     ? t.optionalMemberExpression(
-        t.memberExpression(t.identifier('__arr'), t.identifier('__i'), true),
+        jsExpr`__arr[__i]` as t.Expression,
         t.identifier(relBinding.itemProperty),
         false,
         true,
       )
-    : t.memberExpression(t.identifier('__arr'), t.identifier('__i'), true)
+    : (jsExpr`__arr[__i]` as t.Expression)
 
   const classNameLiteral = t.stringLiteral(relBinding.classToggleName)
 
@@ -589,7 +493,7 @@ export function generateUnresolvedRelationalObserver(
     t.variableDeclarator(
       t.identifier('__arr'),
       t.conditionalExpression(
-        t.callExpression(t.memberExpression(t.identifier('Array'), t.identifier('isArray')), [arrExpr]),
+        jsExpr`Array.isArray(${arrExpr})` as t.Expression,
         t.cloneNode(arrExpr, true),
         t.arrayExpression([]),
       ),
@@ -597,7 +501,7 @@ export function generateUnresolvedRelationalObserver(
   ])
 
   const commonPreamble: t.Statement[] = [
-    js`if (!this.rendered_) return;` as t.Statement,
+    js`if (!this.rendered_) return;`,
     lazyInit(containerName, containerLookup),
     ...jsBlockBody`if (!${containerRef}) return;`,
     ...setupStatements,
@@ -616,16 +520,8 @@ export function generateUnresolvedRelationalObserver(
         t.ifStatement(
           t.cloneNode(cacheRef, true),
           t.blockStatement([
-            t.expressionStatement(
-              t.callExpression(
-                t.memberExpression(
-                  t.memberExpression(t.cloneNode(cacheRef, true), t.identifier('classList')),
-                  t.identifier('remove'),
-                ),
-                [t.cloneNode(classNameLiteral, true)],
-              ),
-            ),
-            t.expressionStatement(t.assignmentExpression('=', t.cloneNode(cacheRef, true), t.nullLiteral())),
+            js`${t.cloneNode(cacheRef, true)}.classList.remove(${t.cloneNode(classNameLiteral, true)});`,
+            js`${t.cloneNode(cacheRef, true)} = null;`,
           ]),
         ),
         ...jsBlockBody`

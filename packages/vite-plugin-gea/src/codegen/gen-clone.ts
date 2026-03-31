@@ -27,7 +27,8 @@ import {
 } from './ast-helpers.ts'
 import { escapeHtml, normalizeJSXText, toHtmlAttrName } from '../utils/html.ts'
 import { EVENT_TYPES, VOID_ELEMENTS } from '../ir/constants.ts'
-import { setTextContent, setClassName, setChecked, setAttribute, setStyleCssText } from './dom-update.ts'
+import { emitMount } from '../emit/registry.ts'
+import { id, js, jsExpr, jsMethod } from 'eszter'
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -46,12 +47,8 @@ export type CloneIdentityPatch =
 // ─── Event ID expression builder ──────────────────────────────────
 
 function buildEventIdExpr(suffix?: string): t.Expression {
-  if (!suffix) return t.memberExpression(t.thisExpression(), t.identifier('id'))
-  return t.binaryExpression(
-    '+',
-    t.memberExpression(t.thisExpression(), t.identifier('id')),
-    t.stringLiteral('-' + suffix),
-  )
+  if (!suffix) return jsExpr`this.id`
+  return jsExpr`this.id + ${'-' + suffix}`
 }
 
 // ─── JSX to static HTML ───────────────────────────────────────────
@@ -270,13 +267,13 @@ function rewritePropsForClone(
   if (!paramName) return expr
   if (t.isMemberExpression(expr) && t.isIdentifier(expr.object) && expr.object.name === paramName) {
     return t.memberExpression(
-      t.memberExpression(t.thisExpression(), t.identifier('props')),
+      jsExpr`this.props`,
       expr.property,
       expr.computed,
     )
   }
   if (t.isIdentifier(expr) && expr.name === paramName) {
-    return t.memberExpression(t.thisExpression(), t.identifier('props'))
+    return jsExpr`this.props`
   }
   return expr
 }
@@ -332,7 +329,7 @@ function collectIdentityPatchesForElement(
       patches.push({
         kind: 'attr',
         childPath: [...childPath],
-        expr: t.memberExpression(t.thisExpression(), t.identifier('id')),
+        expr: jsExpr`this.id`,
         attrName: 'data-gea-cid',
       })
     } else {
@@ -405,7 +402,7 @@ function collectIdentityPatchesForElement(
           } else {
             selectorExpression = t.templateLiteral(
               [t.templateElement({ raw: '#', cooked: '#' }, false), t.templateElement({ raw: '', cooked: '' }, true)],
-              [t.memberExpression(t.thisExpression(), t.identifier('id'))],
+              [jsExpr`this.id`],
             )
           }
         } else {
@@ -432,7 +429,7 @@ function collectIdentityPatchesForElement(
                   t.templateElement({ raw: '#', cooked: '#' }, false),
                   t.templateElement({ raw: `-${bindingId}`, cooked: `-${bindingId}` }, true),
                 ],
-                [t.memberExpression(t.thisExpression(), t.identifier('id'))],
+                [jsExpr`this.id`],
               )
             }
           } else if (!explicitIdAttr) {
@@ -450,7 +447,7 @@ function collectIdentityPatchesForElement(
                 t.templateElement({ raw: '#', cooked: '#' }, false),
                 t.templateElement({ raw: `-${generatedEventSuffix}`, cooked: `-${generatedEventSuffix}` }, true),
               ],
-              [t.memberExpression(t.thisExpression(), t.identifier('id'))],
+              [jsExpr`this.id`],
             )
           } else if (explicitIdAttr && t.isJSXAttribute(explicitIdAttr)) {
             const idVal = explicitIdAttr.value
@@ -571,30 +568,10 @@ export function generateCloneMembers(
       t.arrowFunctionExpression(
         [],
         t.blockStatement([
-          t.ifStatement(
-            t.binaryExpression(
-              '===',
-              t.unaryExpression('typeof', t.identifier('document')),
-              t.stringLiteral('undefined'),
-            ),
-            t.returnStatement(t.identifier('undefined')),
-          ),
-          t.variableDeclaration('var', [
-            t.variableDeclarator(
-              t.identifier('t'),
-              t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createElement')), [
-                t.stringLiteral('template'),
-              ]),
-            ),
-          ]),
-          t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.identifier('t'), t.identifier('innerHTML')),
-              t.stringLiteral(staticHtml),
-            ),
-          ),
-          t.returnStatement(t.identifier('t')),
+          js`if (typeof document === 'undefined') return undefined;`,
+          js`var t = document.createElement('template');`,
+          js`t.innerHTML = ${staticHtml};`,
+          js`return t;`,
         ]),
       ),
       [],
@@ -607,7 +584,8 @@ export function generateCloneMembers(
 
   const cloneMethodBody = buildCloneTemplateBody(identityPatches, contentPatches, cloneCtx)
 
-  const cloneMethod = t.classMethod('method', t.identifier('__cloneTemplate'), [], t.blockStatement(cloneMethodBody))
+  const cloneMethod = jsMethod`__cloneTemplate() {}`
+  cloneMethod.body.body.push(...cloneMethodBody)
 
   return [staticField, cloneMethod]
 }
@@ -619,37 +597,11 @@ function buildCloneTemplateBody(
   contentPatches: CloneContentPatch[],
   cloneCtx: Ctx,
 ): t.Statement[] {
-  const rootVar = t.identifier('__root')
+  const rootVar = id('__root')
   const stmts: t.Statement[] = [
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        t.identifier('__tpl'),
-        t.memberExpression(t.memberExpression(t.thisExpression(), t.identifier('constructor')), t.identifier('__tpl')),
-      ),
-    ]),
-    t.ifStatement(
-      t.unaryExpression('!', t.identifier('__tpl')),
-      t.blockStatement([
-        t.throwStatement(
-          t.newExpression(t.identifier('Error'), [t.stringLiteral('[gea] __tpl missing for clone template')]),
-        ),
-      ]),
-    ),
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        rootVar,
-        t.callExpression(
-          t.memberExpression(
-            t.memberExpression(
-              t.memberExpression(t.identifier('__tpl'), t.identifier('content')),
-              t.identifier('firstElementChild'),
-            ),
-            t.identifier('cloneNode'),
-          ),
-          [t.booleanLiteral(true)],
-        ),
-      ),
-    ]),
+    js`var __tpl = this.constructor.__tpl;`,
+    js`if (!__tpl) { throw new Error('[gea] __tpl missing for clone template'); }`,
+    js`var __root = __tpl.content.firstElementChild.cloneNode(true);`,
   ]
 
   const refMap = new Map<string, t.Expression>()
@@ -661,10 +613,8 @@ function buildCloneTemplateBody(
     const path = key.split('_').map((n) => parseInt(n, 10))
     const refName = childPathRefName(path)
     const navExpr = buildElementNavExpr(rootVar, path)
-    refMap.set(key, t.memberExpression(rootVar, t.identifier(refName)))
-    stmts.push(
-      t.expressionStatement(t.assignmentExpression('=', t.memberExpression(rootVar, t.identifier(refName)), navExpr)),
-    )
+    refMap.set(key, jsExpr`${rootVar}.${id(refName)}`)
+    stmts.push(js`${rootVar}.${id(refName)} = ${navExpr};`)
   }
 
   const navFor = (childPath: number[]): t.Expression =>
@@ -673,55 +623,26 @@ function buildCloneTemplateBody(
   for (const patch of identityPatches) {
     const nav = navFor(patch.childPath)
     if (patch.kind === 'id') {
-      stmts.push(
-        t.expressionStatement(t.assignmentExpression('=', t.memberExpression(nav, t.identifier('id')), patch.expr)),
-      )
+      stmts.push(js`${nav}.id = ${patch.expr};`)
     } else if (patch.kind === 'attr') {
-      stmts.push(
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(nav, t.identifier('setAttribute')), [
-            t.stringLiteral(patch.attrName),
-            patch.expr,
-          ]),
-        ),
-      )
+      stmts.push(js`${nav}.setAttribute(${patch.attrName}, ${patch.expr});`)
     } else {
-      stmts.push(
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(nav, t.identifier('setAttribute')), [
-            t.stringLiteral('data-gea-event'),
-            t.stringLiteral(patch.token),
-          ]),
-        ),
-      )
+      stmts.push(js`${nav}.setAttribute('data-gea-event', ${patch.token});`)
     }
   }
 
   for (const entry of contentPatches) {
     const navExpr = navFor(entry.childPath)
     const expr = transformJSXExpression(t.cloneNode(entry.expression, true) as t.Expression, cloneCtx, true)
-    switch (entry.type) {
-      case 'className':
-        stmts.push(setClassName(navExpr, buildTrimmedClassValueExpression(expr)))
-        break
-      case 'text':
-        stmts.push(setTextContent(navExpr, expr))
-        break
-      case 'checked':
-        stmts.push(setChecked(navExpr, expr))
-        break
-      case 'attribute': {
-        const attrName = entry.attributeName!
-        if (attrName === 'style') {
-          stmts.push(...setStyleCssText(navExpr, expr))
-        } else {
-          stmts.push(...setAttribute(navExpr, attrName, expr, { guard: false }))
-        }
-        break
-      }
-    }
+    const emitType = entry.type === 'className' ? 'class' : entry.type
+    const emitValue = entry.type === 'className' ? buildTrimmedClassValueExpression(expr) : expr
+    const mountStmts = emitMount(emitType, navExpr, emitValue, {
+      attributeName: entry.attributeName,
+      canSkipClassCoercion: entry.type === 'className',
+    })
+    stmts.push(...mountStmts)
   }
 
-  stmts.push(t.returnStatement(rootVar))
+  stmts.push(js`return ${rootVar};`)
   return stmts
 }

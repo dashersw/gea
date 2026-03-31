@@ -7,11 +7,10 @@
  */
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
-import { appendToBody, id, js, jsMethod } from 'eszter'
+import { appendToBody, id, js, jsAll, jsExpr, jsMethod } from 'eszter'
 import type { ArrayMapBinding } from '../ir/types.ts'
 import {
   buildOptionalMemberChain,
-  buildTrimmedClassValueExpression,
   camelToKebab,
   getJSXTagName,
   isComponentTag,
@@ -23,7 +22,7 @@ import {
 } from './ast-helpers.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { EVENT_NAMES } from './event-helpers.ts'
-import { setAttribute, setClassName, setFirstChildNodeValue, setStyleCssText, withEqualityGuard } from './dom-update.ts'
+import { emitPatch } from '../emit/registry.ts'
 
 // ─── Patch entry types ─────────────────────────────────────────────
 
@@ -37,6 +36,36 @@ interface PatchEntry {
 interface PatchPlan {
   entries: PatchEntry[]
   requiresRerender: boolean
+}
+
+// ─── Shared ref-cache + emit loop ─────────────────────────────────
+
+function buildRefCacheAndApply(entries: PatchEntry[], elVar: t.Identifier, lazyCache: boolean): t.Statement[] {
+  const stmts: t.Statement[] = []
+  const refMap = new Map<string, t.Expression>()
+  for (const entry of entries) {
+    if (entry.childPath.length === 0) continue
+    const key = entry.childPath.join('_')
+    if (refMap.has(key)) continue
+    const refName = childPathRefName(entry.childPath)
+    const navExpr = buildElementNavExpr(elVar, entry.childPath)
+    if (lazyCache) {
+      const refExpr = jsExpr`${elVar}.${id(refName)}`
+      stmts.push(js`if (!${refExpr}) ${elVar}.${id(refName)} = ${navExpr};`)
+      refMap.set(key, refExpr)
+    } else {
+      stmts.push(js`${elVar}.${id(refName)} = ${navExpr};`)
+      refMap.set(key, jsExpr`${elVar}.${id(refName)}`)
+    }
+  }
+  for (const entry of entries) {
+    const navExpr = entry.childPath.length > 0
+      ? refMap.get(entry.childPath.join('_')) || buildElementNavExpr(elVar, entry.childPath)
+      : elVar
+    const emitType = entry.type === 'className' ? 'class' : entry.type
+    stmts.push(...emitPatch(emitType, navExpr, entry.expression, { attributeName: entry.attributeName }))
+  }
+  return stmts
 }
 
 // ─── Dummy prop tree ───────────────────────────────────────────────
@@ -178,104 +207,36 @@ export function generatePatchItemMethod(
   }
 
   const { hoists, patchedEntries } = hoistStoreReads(entries, arrayMap.storeVar)
-  const elVar = t.identifier('row')
-  const body: t.Statement[] = [t.ifStatement(t.unaryExpression('!', elVar), t.returnStatement())]
+  const elVar = id('row')
+  const body: t.Statement[] = [js`if (!${elVar}) return;`]
 
   for (const hoist of hoists) {
-    body.push(t.variableDeclaration('var', [t.variableDeclarator(t.identifier(hoist.varName), hoist.expression)]))
+    body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
   }
 
-  const refMap = new Map<string, t.Expression>()
-  for (const entry of patchedEntries) {
-    if (entry.childPath.length === 0) continue
-    const key = entry.childPath.join('_')
-    if (refMap.has(key)) continue
-    const refName = childPathRefName(entry.childPath)
-    const refExpr = t.memberExpression(elVar, t.identifier(refName))
-    const navExpr = buildElementNavExpr(elVar, entry.childPath)
-    body.push(
-      t.ifStatement(
-        t.unaryExpression('!', refExpr),
-        t.expressionStatement(t.assignmentExpression('=', refExpr, navExpr)),
-      ),
-    )
-    refMap.set(key, refExpr)
-  }
-
-  for (const entry of patchedEntries) {
-    const navExpr =
-      entry.childPath.length > 0
-        ? refMap.get(entry.childPath.join('_')) || buildElementNavExpr(elVar, entry.childPath)
-        : elVar
-    switch (entry.type) {
-      case 'className': {
-        const classVal = t.identifier('__cn')
-        body.push(
-          t.variableDeclaration('var', [
-            t.variableDeclarator(
-              classVal,
-              buildTrimmedClassValueExpression(t.cloneNode(entry.expression, true) as t.Expression),
-            ),
-          ]),
-          withEqualityGuard(navExpr, 'className', classVal, setClassName(t.cloneNode(navExpr, true), classVal)),
-        )
-        break
-      }
-      case 'text':
-        body.push(setFirstChildNodeValue(navExpr, entry.expression))
-        break
-      case 'attribute': {
-        if (entry.attributeName === 'style') {
-          body.push(...setStyleCssText(navExpr, entry.expression))
-        } else {
-          body.push(...setAttribute(navExpr, entry.attributeName!, entry.expression))
-        }
-        break
-      }
-    }
-  }
+  body.push(...buildRefCacheAndApply(patchedEntries, elVar, true))
 
   const rawItemIdExpr =
     itemIdProperty && itemIdProperty !== ITEM_IS_KEY
-      ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
-      : t.identifier('item')
-  const itemIdExpr = t.callExpression(t.identifier('String'), [rawItemIdExpr])
-  body.push(
-    t.expressionStatement(t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaKey')), itemIdExpr)),
-  )
+      ? t.logicalExpression('??', buildOptionalMemberChain(id('item'), itemIdProperty), id('item'))
+      : id('item')
+  const itemIdExpr = jsExpr`String(${rawItemIdExpr})`
+  body.push(js`${elVar}.__geaKey = ${itemIdExpr};`)
 
   const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
   const privateElsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
   body.push(
-    t.expressionStatement(
-      t.assignmentExpression(
-        '=',
-        t.memberExpression(
-          t.logicalExpression(
-            '||',
-            t.cloneNode(privateElsRef),
-            t.assignmentExpression('=', t.cloneNode(privateElsRef), t.objectExpression([])),
-          ),
-          t.cloneNode(itemIdExpr, true),
-          true,
-        ),
-        elVar,
-      ),
-    ),
+    js`(${t.cloneNode(privateElsRef, true)} || (${t.cloneNode(privateElsRef, true)} = {}))[${t.cloneNode(itemIdExpr, true)}] = ${elVar};`,
   )
 
   const patchPrivateFields: string[] = [rowElsProp]
 
-  body.push(
-    t.expressionStatement(
-      t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaItem')), t.identifier('item')),
-    ),
-  )
+  body.push(js`${elVar}.__geaItem = item;`)
 
-  const params: t.Identifier[] = [t.identifier('row'), t.identifier('item'), t.identifier('__prevItem')]
-  if (arrayMap.indexVariable) params.push(t.identifier('__idx'))
+  const params: t.Identifier[] = [id('row'), id('item'), id('__prevItem')]
+  if (arrayMap.indexVariable) params.push(id('__idx'))
   return {
-    method: t.classMethod('method', t.identifier(methodName), params, t.blockStatement(body)),
+    method: t.classMethod('method', id(methodName), params, t.blockStatement(body)),
     privateFields: patchPrivateFields,
   }
 }
@@ -404,9 +365,9 @@ function walkJSXForPatch(node: t.JSXElement, path: number[], entries: PatchEntry
 export function buildElementNavExpr(base: t.Expression, childPath: number[]): t.Expression {
   let expr = base
   for (const idx of childPath) {
-    expr = t.memberExpression(expr, t.identifier('firstElementChild'))
+    expr = jsExpr`${expr}.firstElementChild`
     for (let i = 0; i < idx; i++) {
-      expr = t.memberExpression(expr, t.identifier('nextElementSibling'))
+      expr = jsExpr`${expr}.nextElementSibling`
     }
   }
   return expr
@@ -541,18 +502,14 @@ export function generateCreateItemMethod(
 
   if (requiresRerender) {
     const createMethod = jsMethod`${id(methodName)}(item) {}`
-    if (arrayMap.indexVariable) createMethod.params.push(t.identifier('__idx'))
-    const renderArgs: t.Expression[] = [t.identifier('item')]
-    if (arrayMap.indexVariable) renderArgs.push(t.identifier('__idx'))
+    if (arrayMap.indexVariable) createMethod.params.push(id('__idx'))
+    const renderArgs: t.Expression[] = [id('item')]
+    if (arrayMap.indexVariable) renderArgs.push(id('__idx'))
+    const renderCall = jsExpr`this.${id(renderMethodName)}()`
+    ;(renderCall as t.CallExpression).arguments = renderArgs
     const rerenderBody: t.Statement[] = [
       js`var __tw = document.createElement('template');`,
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(t.identifier('__tw'), t.identifier('innerHTML')),
-          t.callExpression(t.memberExpression(t.thisExpression(), t.identifier(renderMethodName)), renderArgs),
-        ),
-      ),
+      js`__tw.innerHTML = ${renderCall};`,
       js`var el = __tw.content.firstElementChild;`,
     ]
 
@@ -627,18 +584,12 @@ export function generateCreateItemMethod(
           }
         }
         rerenderBody.push(
-          t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.identifier('el'), t.identifier('__geaProps')),
-              t.objectExpression(propsProperties),
-            ),
-          ),
+          js`el.__geaProps = ${t.objectExpression(propsProperties)};`,
         )
       }
     }
 
-    rerenderBody.push(t.returnStatement(t.identifier('el')))
+    rerenderBody.push(js`return el;`)
     return { method: appendToBody(createMethod, ...rerenderBody), needsRawStoreCache: false, privateFields: [] }
   }
 
@@ -655,17 +606,17 @@ export function generateCreateItemMethod(
         t.isIdentifier(hoist.expression.object) &&
         hoist.expression.object.name === arrayMap.storeVar
       ) {
-        hoist.expression.object = t.identifier('__rs')
+        hoist.expression.object = id('__rs')
       }
     }
   }
 
   const propTree = collectItemTemplatePropTree(arrayMap.itemTemplate!, arrayMap.itemVariable)
 
-  const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerProp))
+  const containerRef = jsExpr`this.${id(containerProp)}`
   const privateDcField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__dc')))
-  const cVar = t.identifier('__c')
-  const elVar = t.identifier('el')
+  const cVar = id('__c')
+  const elVar = id('el')
   const privateFields: string[] = ['__dc']
 
   const body: t.Statement[] = []
@@ -673,34 +624,12 @@ export function generateCreateItemMethod(
   if (useRawStoreCache) {
     const privateRsField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__rs')))
     body.push(
-      t.variableDeclaration('var', [
-        t.variableDeclarator(
-          t.identifier('__rs'),
-          t.logicalExpression(
-            '||',
-            t.cloneNode(privateRsField),
-            t.assignmentExpression(
-              '=',
-              t.cloneNode(privateRsField),
-              t.memberExpression(t.identifier(arrayMap.storeVar!), t.identifier('__raw')),
-            ),
-          ),
-        ),
-      ]),
+      js`var __rs = ${t.cloneNode(privateRsField, true)} || (${t.cloneNode(privateRsField, true)} = ${id(arrayMap.storeVar!)}.__raw);`,
     )
   }
 
   body.push(
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        cVar,
-        t.logicalExpression(
-          '||',
-          t.cloneNode(privateDcField),
-          t.assignmentExpression('=', t.cloneNode(privateDcField), containerRef),
-        ),
-      ),
-    ]),
+    js`var ${cVar} = ${t.cloneNode(privateDcField, true)} || (${t.cloneNode(privateDcField, true)} = ${containerRef});`,
   )
 
   const isPrimitiveKey = !itemIdProperty || itemIdProperty === ITEM_IS_KEY
@@ -713,40 +642,19 @@ export function generateCreateItemMethod(
 
   const hasRootClassNamePatch = patchedEntries.some((e) => e.type === 'className' && e.childPath.length === 0)
 
+  const renderCallArgs = arrayMap.indexVariable ? [dummyItem, t.numericLiteral(0)] : [dummyItem]
+  const renderCall = jsExpr`this.${id(renderMethodName)}()`
+  ;(renderCall as t.CallExpression).arguments = renderCallArgs
+
   const tplInit: t.Statement[] = [
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        t.identifier('__tw'),
-        t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createElement')), [
-          t.stringLiteral('template'),
-        ]),
-      ),
-    ]),
-    t.expressionStatement(
-      t.assignmentExpression(
-        '=',
-        t.memberExpression(t.identifier('__tw'), t.identifier('innerHTML')),
-        t.callExpression(
-          t.memberExpression(t.thisExpression(), t.identifier(renderMethodName)),
-          arrayMap.indexVariable ? [dummyItem, t.numericLiteral(0)] : [dummyItem],
-        ),
-      ),
-    ),
-    t.expressionStatement(
-      t.assignmentExpression(
-        '=',
-        t.memberExpression(cVar, t.identifier('__geaTpl')),
-        t.memberExpression(
-          t.memberExpression(t.identifier('__tw'), t.identifier('content')),
-          t.identifier('firstElementChild'),
-        ),
-      ),
-    ),
+    js`var __tw = document.createElement('template');`,
+    js`__tw.innerHTML = ${renderCall};`,
+    js`${cVar}.__geaTpl = __tw.content.firstElementChild;`,
     t.expressionStatement(
       t.optionalCallExpression(
         t.optionalMemberExpression(
-          t.memberExpression(cVar, t.identifier('__geaTpl')),
-          t.identifier('removeAttribute'),
+          jsExpr`${cVar}.__geaTpl`,
+          id('removeAttribute'),
           false,
           true,
         ),
@@ -758,144 +666,45 @@ export function generateCreateItemMethod(
 
   if (hasRootClassNamePatch) {
     tplInit.push(
-      t.ifStatement(
-        t.logicalExpression(
-          '&&',
-          t.memberExpression(cVar, t.identifier('__geaTpl')),
-          t.memberExpression(t.memberExpression(cVar, t.identifier('__geaTpl')), t.identifier('className')),
-        ),
-        t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(t.memberExpression(cVar, t.identifier('__geaTpl')), t.identifier('className')),
-            t.stringLiteral(''),
-          ),
-        ),
-      ),
+      js`if (${cVar}.__geaTpl && ${cVar}.__geaTpl.className) ${cVar}.__geaTpl.className = '';`,
     )
   }
   body.push(
-    t.ifStatement(
-      t.unaryExpression('!', t.memberExpression(cVar, t.identifier('__geaTpl'))),
-      t.blockStatement([t.tryStatement(t.blockStatement(tplInit), loggingCatchClause())]),
-    ),
+    js`if (!${cVar}.__geaTpl) ${t.blockStatement([t.tryStatement(t.blockStatement(tplInit), loggingCatchClause())])}`,
   )
+
+  const tplCloneExpr = jsExpr`${cVar}.__geaTpl.cloneNode(${true})`
+  const fallbackRenderArgs = arrayMap.indexVariable ? [id('item'), id('__idx')] : [id('item')]
+  const fallbackRenderCall = jsExpr`this.${id(renderMethodName)}()`
+  ;(fallbackRenderCall as t.CallExpression).arguments = fallbackRenderArgs
 
   body.push(
     t.ifStatement(
-      t.memberExpression(cVar, t.identifier('__geaTpl')),
+      jsExpr`${cVar}.__geaTpl`,
+      t.blockStatement([js`var ${elVar} = ${tplCloneExpr};`]),
       t.blockStatement([
-        t.variableDeclaration('var', [
-          t.variableDeclarator(
-            elVar,
-            t.callExpression(
-              t.memberExpression(t.memberExpression(cVar, t.identifier('__geaTpl')), t.identifier('cloneNode')),
-              [t.booleanLiteral(true)],
-            ),
-          ),
-        ]),
-      ]),
-      t.blockStatement([
-        t.variableDeclaration('var', [
-          t.variableDeclarator(
-            t.identifier('__fw'),
-            t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createElement')), [
-              t.stringLiteral('template'),
-            ]),
-          ),
-        ]),
-        t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(t.identifier('__fw'), t.identifier('innerHTML')),
-            t.callExpression(
-              t.memberExpression(t.thisExpression(), t.identifier(renderMethodName)),
-              arrayMap.indexVariable ? [t.identifier('item'), t.identifier('__idx')] : [t.identifier('item')],
-            ),
-          ),
-        ),
-        t.variableDeclaration('var', [
-          t.variableDeclarator(
-            elVar,
-            t.memberExpression(
-              t.memberExpression(t.identifier('__fw'), t.identifier('content')),
-              t.identifier('firstElementChild'),
-            ),
-          ),
-        ]),
+        ...jsAll`
+          var __fw = document.createElement('template');
+          __fw.innerHTML = ${fallbackRenderCall};
+          var ${elVar} = __fw.content.firstElementChild;
+        `,
       ]),
     ),
   )
 
   for (const hoist of hoists) {
-    body.push(t.variableDeclaration('var', [t.variableDeclarator(t.identifier(hoist.varName), hoist.expression)]))
+    body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
   }
 
-  // Precompute and cache DOM element refs for childPaths used by propPatchers
-  const refMap = new Map<string, t.Expression>()
-  for (const entry of patchedEntries) {
-    if (entry.childPath.length === 0) continue
-    const key = entry.childPath.join('_')
-    if (refMap.has(key)) continue
-    const refName = childPathRefName(entry.childPath)
-    const navExpr = buildElementNavExpr(elVar, entry.childPath)
-    body.push(
-      t.expressionStatement(t.assignmentExpression('=', t.memberExpression(elVar, t.identifier(refName)), navExpr)),
-    )
-    refMap.set(key, t.memberExpression(elVar, t.identifier(refName)))
-  }
-
-  for (const entry of patchedEntries) {
-    const navExpr =
-      entry.childPath.length > 0
-        ? refMap.get(entry.childPath.join('_')) || buildElementNavExpr(elVar, entry.childPath)
-        : elVar
-    switch (entry.type) {
-      case 'className': {
-        const classExpr = t.cloneNode(entry.expression, true) as t.Expression
-        if (
-          t.isConditionalExpression(classExpr) &&
-          t.isStringLiteral(classExpr.alternate) &&
-          classExpr.alternate.value === ''
-        ) {
-          body.push(
-            t.ifStatement(classExpr.test, setClassName(navExpr, buildTrimmedClassValueExpression(classExpr.consequent))),
-          )
-        } else {
-          body.push(setClassName(navExpr, buildTrimmedClassValueExpression(classExpr)))
-        }
-        break
-      }
-      case 'text':
-        body.push(setFirstChildNodeValue(navExpr, entry.expression))
-        break
-      case 'attribute': {
-        if (entry.attributeName === 'style') {
-          body.push(...setStyleCssText(navExpr, entry.expression))
-        } else {
-          body.push(...setAttribute(navExpr, entry.attributeName!, entry.expression))
-        }
-        break
-      }
-    }
-  }
+  body.push(...buildRefCacheAndApply(patchedEntries, elVar, false))
 
   const rawPatchItemIdExpr =
     itemIdProperty && itemIdProperty !== ITEM_IS_KEY
-      ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
-      : t.identifier('item')
-  const patchItemIdExpr = t.callExpression(t.identifier('String'), [rawPatchItemIdExpr])
-  body.push(
-    t.expressionStatement(
-      t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaKey')), patchItemIdExpr),
-    ),
-  )
-
-  body.push(
-    t.expressionStatement(
-      t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaItem')), t.identifier('item')),
-    ),
-  )
+      ? t.logicalExpression('??', buildOptionalMemberChain(id('item'), itemIdProperty), id('item'))
+      : id('item')
+  const patchItemIdExpr = jsExpr`String(${rawPatchItemIdExpr})`
+  body.push(js`${elVar}.__geaKey = ${patchItemIdExpr};`)
+  body.push(js`${elVar}.__geaItem = item;`)
 
   // For component-root map items, set __geaProps with actual JS values
   // so extractComponentProps_ can use them instead of stringified HTML attributes
@@ -927,24 +736,16 @@ export function generateCreateItemMethod(
       propsProperties.push(t.objectProperty(t.identifier(name), rewrittenExpr))
     }
     if (propsProperties.length > 0) {
-      body.push(
-        t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(elVar, t.identifier('__geaProps')),
-            t.objectExpression(propsProperties),
-          ),
-        ),
-      )
+      body.push(js`${elVar}.__geaProps = ${t.objectExpression(propsProperties)};`)
     }
   }
 
-  body.push(t.returnStatement(elVar))
+  body.push(js`return ${elVar};`)
 
-  const createParams: t.Identifier[] = [t.identifier('item')]
-  if (arrayMap.indexVariable) createParams.push(t.identifier('__idx'))
+  const createParams: t.Identifier[] = [id('item')]
+  if (arrayMap.indexVariable) createParams.push(id('__idx'))
   return {
-    method: t.classMethod('method', t.identifier(methodName), createParams, t.blockStatement(body)),
+    method: t.classMethod('method', id(methodName), createParams, t.blockStatement(body)),
     needsRawStoreCache: useRawStoreCache,
     privateFields,
   }
