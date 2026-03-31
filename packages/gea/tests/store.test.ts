@@ -709,20 +709,20 @@ describe('Store – pathParts correctness after interning', () => {
     assert.deepEqual(changes[0].pathParts, ['items', '0'])
   })
 
-  it('interned pathParts are referentially identical for same path across stores', async () => {
-    const s1 = new Store({ items: [1, 2, 3] })
-    const s2 = new Store({ items: [4, 5, 6] })
-    const c1: StoreChange[] = []
-    const c2: StoreChange[] = []
-    s1.observe('items', (_v, c) => c1.push(...c))
-    s2.observe('items', (_v, c) => c2.push(...c))
-    s1.items.pop() // path "items.2"
-    s2.items.pop() // path "items.2"
+  it('interned pathParts are referentially identical for repeated operations at the same index', async () => {
+    const store = new Store({ items: [1, 2, 3] })
+    const changes: StoreChange[] = []
+    store.observe('items', (_v, c) => changes.push(...c))
+    store.items.shift() // removes index 0 → pathParts = ['items', '0']
     await flush()
+    store.items.shift() // removes new index 0 → same path 'items.0'
+    await flush()
+    assert.deepEqual(changes[0].pathParts, ['items', '0'])
+    assert.deepEqual(changes[1].pathParts, ['items', '0'])
     assert.strictEqual(
-      c1[0].pathParts,
-      c2[0].pathParts,
-      'same path string must return the same interned array reference',
+      changes[0].pathParts,
+      changes[1].pathParts,
+      'same baseParts + same segment must return the same cached array reference',
     )
   })
 
