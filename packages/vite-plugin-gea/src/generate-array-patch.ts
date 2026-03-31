@@ -396,36 +396,6 @@ export function generatePatchItemMethod(
   )
 
   const patchPrivateFields: string[] = [rowElsProp]
-  if (false && arrayMap.containerBindingId) {
-    const bindId = arrayMap.containerBindingId
-    const privateIdField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__id')))
-    patchPrivateFields.push('__id')
-    body.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(elVar, t.identifier('id')),
-          t.binaryExpression(
-            '+',
-            t.binaryExpression(
-              '+',
-              t.logicalExpression(
-                '||',
-                t.cloneNode(privateIdField),
-                t.assignmentExpression(
-                  '=',
-                  t.cloneNode(privateIdField),
-                  t.memberExpression(t.thisExpression(), t.identifier('id_')),
-                ),
-              ),
-              t.stringLiteral('-' + bindId + '-gk-'),
-            ),
-            t.cloneNode(itemIdExpr, true),
-          ),
-        ),
-      ),
-    )
-  }
 
   body.push(
     t.expressionStatement(
@@ -1157,37 +1127,6 @@ export function generateCreateItemMethod(
       t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaKey')), patchItemIdExpr),
     ),
   )
-
-  if (false) {
-    const bindId = arrayMap.containerBindingId!
-    const privateIdField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__id')))
-    privateFields.push('__id')
-    body.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(elVar, t.identifier('id')),
-          t.binaryExpression(
-            '+',
-            t.binaryExpression(
-              '+',
-              t.logicalExpression(
-                '||',
-                t.cloneNode(privateIdField),
-                t.assignmentExpression(
-                  '=',
-                  t.cloneNode(privateIdField),
-                  t.memberExpression(t.thisExpression(), t.identifier('id_')),
-                ),
-              ),
-              t.stringLiteral('-' + bindId + '-gk-'),
-            ),
-            t.cloneNode(itemIdExpr, true),
-          ),
-        ),
-      ),
-    )
-  }
 
   body.push(
     t.expressionStatement(

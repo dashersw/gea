@@ -18,6 +18,7 @@ export function __escapeHtml(str: string): string {
 
 export function __sanitizeAttr(name: string, value: string): string {
   if (_URL_ATTRS.has(name)) {
+    // eslint-disable-next-line no-control-regex -- intentional: strip null bytes and control chars for XSS prevention
     const stripped = value.replace(/[\s\u0000-\u001F]+/g, '').toLowerCase()
     if (/^(javascript|vbscript|data):/.test(stripped) && !stripped.startsWith('data:image/')) {
       return ''

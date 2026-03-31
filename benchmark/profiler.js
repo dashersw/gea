@@ -149,7 +149,7 @@
         set(val) {
           startTiming('dom.textContent')
           try {
-            return origSet.call(this, val)
+            origSet.call(this, val)
           } finally {
             endTiming('dom.textContent')
           }
@@ -165,7 +165,7 @@
         set(val) {
           startTiming('dom.className')
           try {
-            return origSet.call(this, val)
+            origSet.call(this, val)
           } finally {
             endTiming('dom.className')
           }
@@ -201,7 +201,7 @@
         set(val) {
           startTiming('dom.nodeValue')
           try {
-            return origSet.call(this, val)
+            origSet.call(this, val)
           } finally {
             endTiming('dom.nodeValue')
           }
@@ -217,7 +217,7 @@
         set(val) {
           startTiming('dom.innerHTML')
           try {
-            return origSet.call(this, val)
+            origSet.call(this, val)
           } finally {
             endTiming('dom.innerHTML')
           }
