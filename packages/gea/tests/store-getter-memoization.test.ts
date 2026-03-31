@@ -133,3 +133,62 @@ describe('Store getter memoization', () => {
     assert.equal(store.total, 5)
   })
 })
+
+describe('Store getter memoization – uncacheable getters', () => {
+  it('does not cache getter that reads an internal (_-prefixed) field', () => {
+    let calls = 0
+    class MixedStore extends Store {
+      value = 5
+      _factor = 2  // internal, starts with _
+      get total() {
+        calls++
+        return this.value * (this as any)._factor
+      }
+    }
+    const store = new MixedStore()
+    assert.equal(store.total, 10)
+    assert.equal(store.total, 10)
+    // Each access must recompute because _factor is untrackable
+    assert.equal(calls, 2, 'getter reading internal field must not be cached')
+
+    ;(store as any)._factor = 3
+    assert.equal(store.total, 15, 'updated value when _factor changes')
+  })
+
+  it('does not cache getter that calls a function-valued own property', () => {
+    let calls = 0
+    class FnStore extends Store {
+      value = 5
+      multiply = (x: number) => x * 2
+      get doubled() {
+        calls++
+        return this.multiply(this.value)
+      }
+    }
+    const store = new FnStore()
+    assert.equal(store.doubled, 10)
+    assert.equal(store.doubled, 10)
+    // Function-valued field reads prevent caching
+    assert.equal(calls, 2, 'getter calling function field must not be cached')
+  })
+
+  it('marks parent getter uncacheable when child getter is uncacheable', () => {
+    let childCalls = 0
+    class ChainedUncacheable extends Store {
+      value = 5
+      _scale = 2
+      get inner() {
+        childCalls++
+        return this.value * (this as any)._scale
+      }
+      get outer() {
+        return this.inner + 1
+      }
+    }
+    const store = new ChainedUncacheable()
+    assert.equal(store.outer, 11)
+    assert.equal(store.outer, 11)
+    // outer depends on inner which is uncacheable → outer must also recompute
+    assert.equal(childCalls, 2, 'parent of uncacheable getter must also recompute')
+  })
+})

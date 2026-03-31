@@ -236,6 +236,7 @@ export function rootGetValue(t: any, prop: string, receiver: any): any {
       }
       // Clear stale deps before fresh tracking
       _clearGetterDeps(t, prop)
+      t._uncacheableGetters.delete(prop)  // reset for fresh computation
       t._getterStack.push(prop)
       t._getterStackSet.add(prop)
       let value: any
@@ -244,6 +245,10 @@ export function rootGetValue(t: any, prop: string, receiver: any): any {
       } finally {
         t._getterStack.pop()
         t._getterStackSet.delete(prop)
+        // Propagate uncacheable status to the parent getter (if any)
+        if (t._uncacheableGetters.has(prop) && t._getterStack.length > 0) {
+          t._uncacheableGetters.add(t._getterStack[t._getterStack.length - 1])
+        }
       }
       // After computing, propagate our field deps into parent getter (if any)
       if (t._getterStack.length > 0) {
@@ -253,7 +258,7 @@ export function rootGetValue(t: any, prop: string, receiver: any): any {
       // or non-reactive fields produce no tracked deps and must not be cached since
       // changes to those fields won't invalidate the cache.
       const deps = t._getterFieldDeps.get(prop)
-      if (deps && deps.size > 0) {
+      if (deps && deps.size > 0 && !t._uncacheableGetters.has(prop)) {
         cache.set(prop, value)
       }
       return value
@@ -261,12 +266,17 @@ export function rootGetValue(t: any, prop: string, receiver: any): any {
     return Reflect.get(t, prop, receiver)
   }
 
-  // Own property — record as dep of any currently-computing getter
-  if (t._getterStack.length > 0) {
-    _recordFieldDep(t, prop)
-  }
-
   const value = t[prop]
+  // Own property — record as dep or mark uncacheable for currently-computing getter
+  if (t._getterStack.length > 0) {
+    if (typeof value === 'function') {
+      // Calling a function field is not safely trackable; the function's result
+      // may depend on non-reactive state that can't be observed.
+      t._uncacheableGetters.add(t._getterStack[t._getterStack.length - 1])
+    } else {
+      _recordFieldDep(t, prop)
+    }
+  }
   if (typeof value === 'function') return value
   if (value !== null && value !== undefined && typeof value === 'object') {
     const proto = Object.getPrototypeOf(value)
@@ -468,6 +478,7 @@ export class Store {
   private _fieldToGetters = new Map<string, Set<string>>()
   private _getterStack: string[] = []
   private _getterStackSet = new Set<string>()
+  private _uncacheableGetters = new Set<string>()
 
   /**
    * Browser root proxy: **4 traps only** (get/set/deleteProperty/defineProperty).
@@ -485,7 +496,13 @@ export class Store {
           if (prop === '__isProxy') return true
           if (prop === '__raw') return t
           if (prop === '__getRawTarget') return t
-          if (isInternalProp(prop)) return Reflect.get(t, prop, receiver)
+          if (isInternalProp(prop)) {
+            if ((t as any)._getterStack?.length > 0) {
+              const stack = (t as any)._getterStack
+              ;(t as any)._uncacheableGetters.add(stack[stack.length - 1])
+            }
+            return Reflect.get(t, prop, receiver)
+          }
           return rootGetValue(t, prop, receiver)
         },
         set(t, prop, value) {
