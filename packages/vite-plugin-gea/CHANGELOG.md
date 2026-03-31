@@ -1,5 +1,15 @@
 # @geajs/vite-plugin
 
+## 1.0.27
+
+### Patch Changes
+
+- [`068cbaa`](https://github.com/dashersw/gea/commit/068cbaa508bdf093c80b0684e818771d20fe8658) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Fix key expression with index parameter causing ReferenceError**: When a map key uses the index parameter (e.g. `key={`${tag}-${i}`}`), the generated key function and create/patch methods now correctly rewrite the index variable (`i` → `__ki`/`__idx`). Previously the original variable name was left as-is, causing `ReferenceError: i is not defined` at runtime.
+
+  ### @geajs/core (patch)
+  - **Pass index to key functions in `__geaSyncItems`**: `itemKey()` calls now receive the array index so index-based key functions can compute the correct key value.
+
 ## 1.0.26
 
 ### Patch Changes
