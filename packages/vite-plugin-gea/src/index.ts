@@ -606,7 +606,7 @@ export function geaPlugin(): Plugin {
         if (error?.__geaCompileError) {
           throw error
         }
-        console.warn(`[gea-plugin] Failed to transform ${cleanId}:`, error.message)
+        console.warn(`[gea-plugin] Failed to transform ${cleanId}:`, error.message, '\n', error.stack)
         return null
       }
     },

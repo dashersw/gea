@@ -159,6 +159,7 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
             originalAST,
             componentImportsUsedAsTags,
             knownComponentImports,
+            false,
           )
           if (result) transformed = true
         }
