@@ -20,50 +20,22 @@ import {
   pathPartsToString,
 } from './ast-helpers.ts'
 import { collectPatchEntries, childPathRefName, buildElementNavExpr } from './gen-array-patch.ts'
-
-function thisProp(name: string): t.MemberExpression {
-  return t.memberExpression(t.thisExpression(), t.identifier(name))
-}
-function thisPrivate(name: string): t.MemberExpression {
-  return t.memberExpression(t.thisExpression(), t.privateName(id(name)))
-}
-import { emitPatch, emitMount } from '../emit/registry.ts'
-
-// ─── URL attributes ────────────────────────────────────────────────
-
-const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'data', 'cite', 'poster', 'background'])
+import { emitPatch } from '../emit/registry.ts'
 
 // ─── Internal helpers ──────────────────────────────────────────────
 
-function getArrayPathParts(arrayMap: ArrayMapBinding): string[] {
-  return arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || '')
-}
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'data', 'cite', 'poster', 'background'])
 
-function getArrayPath(arrayMap: ArrayMapBinding): string {
-  return pathPartsToString(getArrayPathParts(arrayMap))
-}
+function thisProp(name: string): t.MemberExpression { return t.memberExpression(t.thisExpression(), id(name)) }
+function thisPrivate(name: string): t.MemberExpression { return t.memberExpression(t.thisExpression(), t.privateName(id(name))) }
 
-function getArrayCapName(arrayMap: ArrayMapBinding): string {
-  const arrayPath = getArrayPath(arrayMap)
-  return arrayPath.charAt(0).toUpperCase() + arrayPath.slice(1).replace(/\./g, '')
-}
-
-function getArrayConfigPropName(arrayMap: ArrayMapBinding): string {
-  const arrayPath = getArrayPath(arrayMap)
-  return `__${arrayPath.replace(/\./g, '_')}ListConfig`
-}
-
-function getArrayCreateMethodName(arrayMap: ArrayMapBinding): string {
-  return `create${getArrayCapName(arrayMap)}Item`
-}
-
-function getArrayRenderMethodName(arrayMap: ArrayMapBinding): string {
-  return `render${getArrayCapName(arrayMap)}Item`
-}
-
-function getArrayPatchMethodName(arrayMap: ArrayMapBinding): string {
-  return `patch${getArrayCapName(arrayMap)}Item`
-}
+function getArrayPathParts(am: ArrayMapBinding): string[] { return am.arrayPathParts || normalizePathParts((am as any).arrayPath || '') }
+function getArrayPath(am: ArrayMapBinding): string { return pathPartsToString(getArrayPathParts(am)) }
+function getArrayCapName(am: ArrayMapBinding): string { const p = getArrayPath(am); return p.charAt(0).toUpperCase() + p.slice(1).replace(/\./g, '') }
+function getArrayConfigPropName(am: ArrayMapBinding): string { return `__${getArrayPath(am).replace(/\./g, '_')}ListConfig` }
+function getArrayCreateMethodName(am: ArrayMapBinding): string { return `create${getArrayCapName(am)}Item` }
+function getArrayRenderMethodName(am: ArrayMapBinding): string { return `render${getArrayCapName(am)}Item` }
+function getArrayPatchMethodName(am: ArrayMapBinding): string { return `patch${getArrayCapName(am)}Item` }
 
 // ─── Prop patcher target expression ────────────────────────────────
 
@@ -82,22 +54,17 @@ function buildPropPatcherFunction(
   binding: { type: string; selector: string; classToggleName?: string; childPath?: number[]; attributeName?: string },
   propName: string,
 ): t.Expression {
-  const row = t.identifier('row')
-  const value = t.identifier('value')
+  const row = id('row'), value = id('value')
   const targetExpr = getPropPatcherTargetExpr(binding, row)
 
   if (binding.type === 'class') {
-    const stmts = emitPatch('class', row, value, {
-      classToggleName: binding.classToggleName || propName,
-    })
-    return t.arrowFunctionExpression([row, value], t.blockStatement(stmts))
+    return t.arrowFunctionExpression([row, value], t.blockStatement(
+      emitPatch('class', row, value, { classToggleName: binding.classToggleName || propName }),
+    ))
   }
 
-  const bodyStmts: t.Statement[] = jsBlockBody`
-    const __target = ${targetExpr};
-    if (!__target) return;
-  `
-  bodyStmts.push(...emitPatch(binding.type, t.identifier('__target'), value, {
+  const bodyStmts: t.Statement[] = jsBlockBody`const __target = ${targetExpr}; if (!__target) return;`
+  bodyStmts.push(...emitPatch(binding.type, id('__target'), value, {
     attributeName: binding.attributeName || (binding.type === 'attribute' ? 'class' : undefined),
     isUrlAttr: binding.attributeName ? URL_ATTRS.has(binding.attributeName) : false,
   }))
@@ -108,13 +75,11 @@ function buildPropPatcherFunction(
 
 function collectItemExpressionKeys(expr: t.Expression): string[] {
   const keys = new Set<string>()
-  const program = t.program([t.expressionStatement(t.cloneNode(expr, true) as t.Expression)])
-  traverse(program, {
+  traverse(t.program([t.expressionStatement(t.cloneNode(expr, true))]), {
     noScope: true,
     MemberExpression(path: NodePath<t.MemberExpression>) {
-      if (!t.isIdentifier(path.node.object, { name: 'item' })) return
-      if (path.node.computed || !t.isIdentifier(path.node.property)) return
-      keys.add(path.node.property.name)
+      if (t.isIdentifier(path.node.object, { name: 'item' }) && !path.node.computed && t.isIdentifier(path.node.property))
+        keys.add(path.node.property.name)
     },
   })
   return Array.from(keys)
@@ -128,38 +93,20 @@ function buildPatchEntryPropPatcher(entry: {
   expression: t.Expression
   attributeName?: string
 }): t.Expression {
-  const row = t.identifier('row')
-  const targetExpr =
-    entry.childPath.length > 0
-      ? t.logicalExpression(
-          '||',
-          t.memberExpression(row, t.identifier(childPathRefName(entry.childPath))),
-          t.parenthesizedExpression(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.cloneNode(row, true), t.identifier(childPathRefName(entry.childPath))),
-              buildElementNavExpr(t.cloneNode(row, true), entry.childPath),
-            ),
-          ),
-        )
-      : row
-
+  const row = id('row')
+  const refName = childPathRefName(entry.childPath)
   const isRoot = entry.childPath.length === 0
-  const stmts: t.Statement[] = []
-  if (!isRoot) {
-    stmts.push(...jsAll`const __target = ${targetExpr}; if (!__target) return;`)
-  }
-  const ref = isRoot ? row : t.identifier('__target')
+  const targetExpr = isRoot ? row
+    : t.logicalExpression('||',
+        jsExpr`${row}.${id(refName)}`,
+        t.parenthesizedExpression(t.assignmentExpression('=',
+          jsExpr`${t.cloneNode(row, true)}.${id(refName)}`,
+          buildElementNavExpr(t.cloneNode(row, true), entry.childPath))))
+
+  const stmts: t.Statement[] = isRoot ? [] : jsAll`const __target = ${targetExpr}; if (!__target) return;`
   const emitType = entry.type === 'className' ? 'class' : entry.type
-  stmts.push(
-    ...emitPatch(emitType, ref, t.cloneNode(entry.expression, true) as t.Expression, {
-      attributeName: entry.attributeName,
-    }),
-  )
-  return t.arrowFunctionExpression(
-    [t.identifier('row'), t.identifier('value'), t.identifier('item')],
-    t.blockStatement(stmts),
-  )
+  stmts.push(...emitPatch(emitType, isRoot ? row : id('__target'), t.cloneNode(entry.expression, true) as t.Expression, { attributeName: entry.attributeName }))
+  return t.arrowFunctionExpression([id('row'), id('value'), id('item')], t.blockStatement(stmts))
 }
 
 // ─── Build prop patchers object ────────────────────────────────────
@@ -212,67 +159,35 @@ function buildPropPatchersObject(arrayMap: ArrayMapBinding): t.ObjectExpression 
 export function generateEnsureArrayConfigsMethod(arrayMaps: ArrayMapBinding[]): t.ClassMethod | null {
   if (arrayMaps.length === 0) return null
 
+  const prop = (key: string, val: t.Expression) => t.objectProperty(id(key), val)
+
   const body = arrayMaps.map((arrayMap) => {
     const configProp = jsExpr`this.${id(getArrayConfigPropName(arrayMap))}`
     const renderMethodName = getArrayRenderMethodName(arrayMap)
     const createMethodName = getArrayCreateMethodName(arrayMap)
     const patchMethodName = getArrayPatchMethodName(arrayMap)
     const propPatchers = buildPropPatchersObject(arrayMap)
-    const hasIndex = !!arrayMap.indexVariable
-    const renderLambdaParams: t.Identifier[] = [t.identifier('item')]
-    const renderCallArgs: t.Expression[] = [t.identifier('item')]
-    if (hasIndex) {
-      renderLambdaParams.push(t.identifier('__idx'))
-      renderCallArgs.push(t.identifier('__idx'))
-    }
     const properties: t.ObjectProperty[] = [
-      t.objectProperty(
-        t.identifier('arrayPathParts'),
-        t.arrayExpression(getArrayPathParts(arrayMap).map((part) => t.stringLiteral(part))),
-      ),
-      t.objectProperty(
-        t.identifier('render'),
-        jsExpr`this.${id(renderMethodName)}.bind(this)`,
-      ),
-      t.objectProperty(
-        t.identifier('create'),
-        jsExpr`this.${id(createMethodName)}.bind(this)`,
-      ),
-      t.objectProperty(
-        t.identifier('patchRow'),
-        jsExpr`this.${id(patchMethodName)} && this.${id(patchMethodName)}.bind(this)`,
-      ),
+      prop('arrayPathParts', t.arrayExpression(getArrayPathParts(arrayMap).map((p) => t.stringLiteral(p)))),
+      prop('render', jsExpr`this.${id(renderMethodName)}.bind(this)`),
+      prop('create', jsExpr`this.${id(createMethodName)}.bind(this)`),
+      prop('patchRow', jsExpr`this.${id(patchMethodName)} && this.${id(patchMethodName)}.bind(this)`),
     ]
 
     if (arrayMap.itemIdProperty === ITEM_IS_KEY) {
-      properties.push(
-        t.objectProperty(
-          t.identifier('getKey'),
-          jsExpr`(item) => String(item)`,
-        ),
-      )
+      properties.push(prop('getKey', jsExpr`(item) => String(item)`))
     } else if (arrayMap.itemIdProperty) {
-      properties.push(
-        t.objectProperty(
-          t.identifier('getKey'),
-          t.arrowFunctionExpression(
-            [t.identifier('item')],
-            jsExpr`String(${buildOptionalMemberChain(t.identifier('item'), arrayMap.itemIdProperty)} ?? item)`,
-          ),
-        ),
-      )
+      properties.push(prop('getKey', t.arrowFunctionExpression(
+        [id('item')],
+        jsExpr`String(${buildOptionalMemberChain(id('item'), arrayMap.itemIdProperty)} ?? item)`,
+      )))
     }
 
-    if (propPatchers) {
-      properties.push(t.objectProperty(t.identifier('propPatchers'), propPatchers))
-    }
+    if (propPatchers) properties.push(prop('propPatchers', propPatchers))
 
-    // Detect if the map item template root is a component (PascalCase tag)
     const rootIsComponent =
       t.isJSXElement(arrayMap.itemTemplate) && isComponentTag(getJSXTagName(arrayMap.itemTemplate.openingElement.name))
-    if (rootIsComponent) {
-      properties.push(t.objectProperty(t.identifier('hasComponentItems'), t.booleanLiteral(true)))
-    }
+    if (rootIsComponent) properties.push(prop('hasComponentItems', t.booleanLiteral(true)))
 
     return js`if (!${configProp}) {
       ${configProp} = ${t.objectExpression(properties)};
@@ -302,37 +217,24 @@ export function generateArrayRelationalObserver(
 
   const body: t.Statement[] = [
     lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        previousValue,
-        jsExpr`change[0] ? change[0].previousValue : null`,
-      ),
-    ]),
-    t.variableDeclaration('var', [t.variableDeclarator(t.identifier('__previousRow'), previousRowProp)]),
+    js`var ${previousValue} = change[0] ? change[0].previousValue : null;`,
+    js`var __previousRow = ${previousRowProp};`,
     t.ifStatement(
       jsExpr`${previousValue} != null`,
       t.blockStatement([
         t.ifStatement(
           jsExpr`!__previousRow || !__previousRow.isConnected`,
-          t.blockStatement(
-            buildElsLookup(elsRef, containerRef, previousValue, '__previousRow', arrayMap.containerBindingId),
-          ),
+          t.blockStatement(buildElsLookup(elsRef, containerRef, previousValue, '__previousRow', arrayMap.containerBindingId)),
         ),
-        t.ifStatement(
-          t.identifier('__previousRow'),
-          t.blockStatement(buildRelationalClassStatements(t.identifier('__previousRow'), bindings, false, 'old')),
-        ),
+        t.ifStatement(id('__previousRow'), t.blockStatement(buildRelationalClassStatements(id('__previousRow'), bindings, false, 'old'))),
       ]),
     ),
-    t.variableDeclaration('var', [t.variableDeclarator(t.identifier('__nextRow'), t.nullLiteral())]),
+    js`var __nextRow = null;`,
     t.ifStatement(
       jsExpr`value != null`,
       t.blockStatement([
-        ...buildElsLookup(elsRef, containerRef, t.identifier('value'), '__nextRow', arrayMap.containerBindingId),
-        t.ifStatement(
-          t.identifier('__nextRow'),
-          t.blockStatement(buildRelationalClassStatements(t.identifier('__nextRow'), bindings, true, 'new')),
-        ),
+        ...buildElsLookup(elsRef, containerRef, id('value'), '__nextRow', arrayMap.containerBindingId),
+        t.ifStatement(id('__nextRow'), t.blockStatement(buildRelationalClassStatements(id('__nextRow'), bindings, true, 'new'))),
       ]),
     ),
     js`${previousRowProp} = __nextRow || null;`,
@@ -389,9 +291,9 @@ export function generateArrayConditionalPatchObserver(
       js`if (!${containerRef}) return;`,
       ...jsAll`const __arr = Array.isArray(${rawArrExpr}) ? ${rawArrExpr} : [];`,
       t.forStatement(
-        t.variableDeclaration('let', [t.variableDeclarator(t.identifier('__i'), t.numericLiteral(0))]),
+        js`let __i = 0;` as unknown as t.VariableDeclaration,
         jsExpr`__i < __arr.length`,
-        t.updateExpression('++', t.identifier('__i')),
+        t.updateExpression('++', id('__i')),
         t.blockStatement(loopBody),
       ),
     ]),
@@ -421,43 +323,20 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
       lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
       js`if (!${containerRef}) return;`,
       ...jsAll`const __c0 = change[0];`,
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier('__skipArrayConditionalRerender'),
-          t.logicalExpression(
-            '&&',
-            t.identifier('__c0'),
-            t.logicalExpression(
-              '||',
-              jsExpr`__c0.type === 'append'`,
-              t.logicalExpression(
-                '||',
-                jsExpr`__c0.type === 'add'`,
-                t.logicalExpression(
-                  '||',
-                  jsExpr`__c0.type === 'delete'`,
-                  t.logicalExpression(
-                    '||',
-                    jsExpr`__c0.type === 'reorder'`,
-                    t.logicalExpression(
-                      '||',
-                      jsExpr`__c0.arrayOp === 'swap'`,
-                      t.logicalExpression(
-                        '&&',
-                        jsExpr`__c0.type === 'update'`,
-                        buildPathPartsEquals(
-                          jsExpr`__c0.pathParts`,
-                          arrayPathParts,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ]),
+      (() => {
+        const skipTypes: t.Expression[] = [
+          jsExpr`__c0.type === 'append'`,
+          jsExpr`__c0.type === 'add'`,
+          jsExpr`__c0.type === 'delete'`,
+          jsExpr`__c0.type === 'reorder'`,
+          jsExpr`__c0.arrayOp === 'swap'`,
+          t.logicalExpression('&&', jsExpr`__c0.type === 'update'`, buildPathPartsEquals(jsExpr`__c0.pathParts`, arrayPathParts)),
+        ]
+        const orChain = skipTypes.reduce<t.Expression>((a, b) => t.logicalExpression('||', a, b))
+        return t.variableDeclaration('const', [
+          t.variableDeclarator(id('__skipArrayConditionalRerender'), t.logicalExpression('&&', id('__c0'), orChain)),
+        ])
+      })(),
       t.ifStatement(
         jsExpr`!__skipArrayConditionalRerender`,
         t.blockStatement([
@@ -480,10 +359,10 @@ export function generateArrayHandlers(
   const arrayPath = pathPartsToString(arrayPathPartsValue)
   const paramName = arrayPathPartsValue[arrayPathPartsValue.length - 1] || 'items'
   const containerName = `__${arrayPath.replace(/\./g, '_')}_container`
-  const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
-  const configRef = t.memberExpression(t.thisExpression(), t.identifier(getArrayConfigPropName(arrayMap)))
+  const containerRef = thisProp(containerName)
+  const configRef = thisProp(getArrayConfigPropName(arrayMap))
   const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
-  const elsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
+  const elsRef = thisPrivate(rowElsProp)
 
   const clearElsStmt = js`${t.cloneNode(elsRef)} = null;`
 
@@ -552,8 +431,6 @@ function buildPathPartsEquals(expr: t.Expression, parts: string[]): t.Expression
   return result
 }
 
-// buildChildAccessExpr is now buildElementNavExpr from gen-array-patch
-
 // ─── Conditional patch statement ───────────────────────────────────
 
 function buildConditionalPatchStatement(
@@ -597,21 +474,12 @@ function buildConditionalPatchStatement(
   )
 }
 
-// ─── Rename item variable ──────────────────────────────────────────
-
 function renameItemVariable(expr: t.Expression, itemVariable: string): t.Expression {
   const cloned = t.cloneNode(expr, true) as t.Expression
   const program = t.program([t.expressionStatement(cloned)])
-  traverse(program, {
-    noScope: true,
-    Identifier(path: NodePath<t.Identifier>) {
-      if (path.node.name === itemVariable) path.node.name = 'item'
-    },
-  })
+  traverse(program, { noScope: true, Identifier(path: NodePath<t.Identifier>) { if (path.node.name === itemVariable) path.node.name = 'item' } })
   return (program.body[0] as t.ExpressionStatement).expression
 }
-
-// ─── Relational class statements ───────────────────────────────────
 
 function buildRelationalClassStatements(
   rowExpr: t.Expression,
@@ -659,70 +527,50 @@ function buildElsLookup(
   containerBindingId?: string,
 ): t.Statement[] {
   const elsFallback = buildQueryByItemId(t.cloneNode(containerRef), t.cloneNode(idExpr, true), containerBindingId)
-  const ctrLocal = t.identifier('__ctr')
+  const ctr = id('__ctr')
+  const ch = id('__ch')
+  const i = id('__i')
   const qsFallback = t.callExpression(
-    t.arrowFunctionExpression(
-      [],
-      t.blockStatement([
-        t.variableDeclaration('const', [t.variableDeclarator(ctrLocal, t.cloneNode(containerRef))]),
-        t.forStatement(
-          t.variableDeclaration('let', [t.variableDeclarator(t.identifier('__i'), t.numericLiteral(0))]),
-          jsExpr`__i < ${t.cloneNode(ctrLocal, true)}.children.length`,
-          t.updateExpression('++', t.identifier('__i')),
-          t.blockStatement([
-            ...jsAll`const __ch = ${t.cloneNode(ctrLocal, true)}.children[__i];`,
-            t.ifStatement(
-              t.logicalExpression(
-                '||',
-                jsExpr`__ch.__geaKey == ${t.cloneNode(idExpr, true)}`,
-                t.logicalExpression(
-                  '&&',
-                  jsExpr`__ch.__geaKey == null`,
-                  t.binaryExpression(
-                    '==',
-                    t.optionalCallExpression(
-                      t.optionalMemberExpression(t.identifier('__ch'), t.identifier('getAttribute'), false, true),
-                      [t.stringLiteral('data-gea-item-id')],
-                      false,
-                    ),
-                    t.cloneNode(idExpr, true),
-                  ),
-                ),
+    t.arrowFunctionExpression([], t.blockStatement([
+      js`const ${ctr} = ${t.cloneNode(containerRef)};`,
+      t.forStatement(
+        js`let ${i} = 0;` as unknown as t.VariableDeclaration,
+        jsExpr`${i} < ${t.cloneNode(ctr, true)}.children.length`,
+        t.updateExpression('++', t.cloneNode(i, true)),
+        t.blockStatement([
+          js`const ${ch} = ${t.cloneNode(ctr, true)}.children[${t.cloneNode(i, true)}];`,
+          t.ifStatement(
+            t.logicalExpression('||',
+              jsExpr`${ch}.__geaKey == ${t.cloneNode(idExpr, true)}`,
+              t.logicalExpression('&&',
+                jsExpr`${ch}.__geaKey == null`,
+                t.binaryExpression('==',
+                  t.optionalCallExpression(
+                    t.optionalMemberExpression(t.cloneNode(ch, true), id('getAttribute'), false, true),
+                    [t.stringLiteral('data-gea-item-id')], false),
+                  t.cloneNode(idExpr, true)),
               ),
-              t.returnStatement(t.identifier('__ch')),
             ),
-          ]),
-        ),
-        t.returnStatement(t.nullLiteral()),
-      ]),
-    ),
+            t.returnStatement(t.cloneNode(ch, true)),
+          ),
+        ]),
+      ),
+      t.returnStatement(t.nullLiteral()),
+    ])),
     [],
   )
-  const cachedVar = t.identifier('__cached')
+  const cached = id('__cached')
   return [
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        cachedVar,
-        jsExpr`${t.cloneNode(elsRef)} && ${t.cloneNode(elsRef)}[${t.cloneNode(idExpr, true)}]`,
-      ),
-    ]),
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        t.identifier(rowVar),
-        t.logicalExpression(
-          '||',
-          t.logicalExpression(
-            '||',
-            t.logicalExpression(
-              '&&',
-              jsExpr`${t.cloneNode(cachedVar, true)} && ${t.cloneNode(cachedVar, true)}.isConnected`,
-              t.cloneNode(cachedVar, true),
-            ),
-            elsFallback,
-          ),
-          qsFallback,
-        ),
-      ),
-    ]),
+    js`var ${cached} = ${t.cloneNode(elsRef)} && ${t.cloneNode(elsRef)}[${t.cloneNode(idExpr, true)}];`,
+    t.variableDeclaration('var', [t.variableDeclarator(
+      id(rowVar),
+      t.logicalExpression('||',
+        t.logicalExpression('||',
+          t.logicalExpression('&&',
+            jsExpr`${t.cloneNode(cached, true)} && ${t.cloneNode(cached, true)}.isConnected`,
+            t.cloneNode(cached, true)),
+          elsFallback),
+        qsFallback),
+    )]),
   ]
 }

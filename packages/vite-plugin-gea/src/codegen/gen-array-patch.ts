@@ -348,19 +348,13 @@ function walkJSXForPatch(node: t.JSXElement, path: number[], entries: PatchEntry
   const textParts: Array<{ raw: string } | { expr: t.Expression }> = []
 
   for (const child of node.children) {
-    if (t.isJSXElement(child)) {
-      hasElementChild = true
-    } else if (t.isJSXFragment(child)) {
-      hasElementChild = true
-    } else if (t.isJSXExpressionContainer(child) && !t.isJSXEmptyExpression(child.expression)) {
+    if (t.isJSXElement(child) || t.isJSXFragment(child)) hasElementChild = true
+    else if (t.isJSXExpressionContainer(child) && !t.isJSXEmptyExpression(child.expression))
       textParts.push({ expr: child.expression as t.Expression })
-    } else if (t.isJSXText(child)) {
-      const raw = child.value
-      if (textParts.length > 0 && 'raw' in textParts[textParts.length - 1]) {
-        ;(textParts[textParts.length - 1] as { raw: string }).raw += raw
-      } else {
-        textParts.push({ raw })
-      }
+    else if (t.isJSXText(child)) {
+      const last = textParts[textParts.length - 1]
+      if (last && 'raw' in last) last.raw += child.value
+      else textParts.push({ raw: child.value })
     }
   }
 
@@ -400,15 +394,7 @@ function walkJSXForPatch(node: t.JSXElement, path: number[], entries: PatchEntry
   }
 }
 
-// ─── DOM navigation expression builder ─────────────────────────────
-
-/**
- * Build a DOM navigation expression using firstElementChild/nextElementSibling
- * to reach the element at the given child path. For example:
- *   [0]    -> base.firstElementChild
- *   [1]    -> base.firstElementChild.nextElementSibling
- *   [1, 0] -> base.firstElementChild.nextElementSibling.firstElementChild
- */
+/** Build DOM navigation via firstElementChild/nextElementSibling for a child path. */
 export function buildElementNavExpr(base: t.Expression, childPath: number[]): t.Expression {
   let expr = base
   for (const idx of childPath) {
@@ -424,17 +410,9 @@ export function childPathRefName(path: number[]): string {
   return `__ref_${path.join('_')}`
 }
 
-// ─── Store read hoisting ───────────────────────────────────────────
+interface HoistedVar { varName: string; expression: t.Expression }
 
-interface HoistedVar {
-  varName: string
-  expression: t.Expression
-}
-
-/**
- * Hoist store property reads out of per-item patch expressions so they are
- * evaluated once per batch instead of once per row.
- */
+/** Hoist store property reads out of per-item patch expressions. */
 function hoistStoreReads(
   entries: PatchEntry[],
   storeVar: string | undefined,

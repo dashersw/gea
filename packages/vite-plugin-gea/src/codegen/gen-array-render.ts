@@ -26,6 +26,20 @@ import type { TemplateSetupContext } from '../analyze/binding-resolver.ts'
 
 // ─── Handler registration ──────────────────────────────────────────
 
+function buildHandlerArrowFn(handlerExpr: t.ArrowFunctionExpression, propNames: Set<string>, wholeParamName?: string): t.ArrowFunctionExpression {
+  const body = t.isBlockStatement(handlerExpr.body) ? handlerExpr.body.body : [t.expressionStatement(handlerExpr.body)]
+  const bodyWithProps = replacePropRefsInStatements(body, propNames, wholeParamName)
+  return bodyWithProps.length === 1 && t.isExpressionStatement(bodyWithProps[0]) && !t.isBlockStatement(handlerExpr.body)
+    ? t.arrowFunctionExpression([id('e')], (bodyWithProps[0] as t.ExpressionStatement).expression)
+    : t.arrowFunctionExpression([id('e')], t.blockStatement(bodyWithProps))
+}
+
+function buildItemKeyExpr(itemIdProperty: string | undefined, itemVar: string): t.Expression {
+  return itemIdProperty && itemIdProperty !== ITEM_IS_KEY
+    ? t.logicalExpression('??', buildOptionalMemberChain(id(itemVar), itemIdProperty), id(itemVar))
+    : t.callExpression(id('String'), [id(itemVar)])
+}
+
 function buildHandlerRegistrationStatements(
   handlerProps: HandlerPropInMap[],
   itemVariable: string,
@@ -33,39 +47,17 @@ function buildHandlerRegistrationStatements(
   wholeParamName?: string,
 ): t.Statement[] {
   if (handlerProps.length === 0) return []
-  const stmts: t.Statement[] = [
-    js`if (!this.__itemHandlers_) { this.__itemHandlers_ = {}; }`,
-  ]
+  const stmts: t.Statement[] = [js`if (!this.__itemHandlers_) { this.__itemHandlers_ = {}; }`]
   for (const hp of handlerProps) {
-    const handlerClone = t.cloneNode(hp.handlerExpression, true) as t.ArrowFunctionExpression
-    const handlerExpr = handlerClone
-    const body = t.isBlockStatement(handlerExpr.body)
-      ? handlerExpr.body.body
-      : [t.expressionStatement(handlerExpr.body)]
-    const bodyWithProps = replacePropRefsInStatements(body, propNames, wholeParamName)
-    const fn =
-      bodyWithProps.length === 1 && t.isExpressionStatement(bodyWithProps[0]) && !t.isBlockStatement(handlerExpr.body)
-        ? t.arrowFunctionExpression([id('e')], (bodyWithProps[0] as t.ExpressionStatement).expression)
-        : t.arrowFunctionExpression([id('e')], t.blockStatement(bodyWithProps))
-    const keyExpr =
-      hp.itemIdProperty && hp.itemIdProperty !== ITEM_IS_KEY
-        ? t.logicalExpression(
-            '??',
-            buildOptionalMemberChain(id(itemVariable), hp.itemIdProperty),
-            id(itemVariable),
-          )
-        : t.callExpression(id('String'), [id(itemVariable)])
-    stmts.push(
-      js`this.__itemHandlers_[${keyExpr}] = ${fn};`,
-    )
+    const fn = buildHandlerArrowFn(t.cloneNode(hp.handlerExpression, true) as t.ArrowFunctionExpression, propNames, wholeParamName)
+    stmts.push(js`this.__itemHandlers_[${buildItemKeyExpr(hp.itemIdProperty, itemVariable)}] = ${fn};`)
   }
   return stmts
 }
 
 // ─── Populate item handlers method ─────────────────────────────────
 
-/** Build a method that populates __itemHandlers_ from an array. Used when the template
- *  uses the map inline (unresolved maps) so the render method's registration never runs. */
+/** Build a method that populates __itemHandlers_ from an array. */
 export function buildPopulateItemHandlersMethod(
   arrayPropName: string,
   handlerProps: HandlerPropInMap[],
@@ -73,32 +65,12 @@ export function buildPopulateItemHandlersMethod(
   wholeParamName?: string,
 ): t.ClassMethod | null {
   if (handlerProps.length === 0) return null
-  const loopBody: t.Statement[] = []
-  for (const hp of handlerProps) {
-    const handlerClone = t.cloneNode(hp.handlerExpression, true) as t.ArrowFunctionExpression
-    const handlerExpr = handlerClone
-    const stmtBody = t.isBlockStatement(handlerExpr.body)
-      ? handlerExpr.body.body
-      : [t.expressionStatement(handlerExpr.body)]
-    const bodyWithProps = replacePropRefsInStatements(stmtBody, propNames, wholeParamName)
-    const fn =
-      bodyWithProps.length === 1 && t.isExpressionStatement(bodyWithProps[0]) && !t.isBlockStatement(handlerExpr.body)
-        ? t.arrowFunctionExpression([id('e')], (bodyWithProps[0] as t.ExpressionStatement).expression)
-        : t.arrowFunctionExpression([id('e')], t.blockStatement(bodyWithProps))
-    const itemVar = 'item' // populate method uses generic loop var
-    const keyExpr =
-      hp.itemIdProperty && hp.itemIdProperty !== ITEM_IS_KEY
-        ? t.logicalExpression(
-            '??',
-            buildOptionalMemberChain(id(itemVar), hp.itemIdProperty),
-            id(itemVar),
-          )
-        : t.callExpression(id('String'), [id(itemVar)])
-    loopBody.push(
-      js`this.__itemHandlers_[${keyExpr}] = ${fn};`,
-    )
-  }
-  const body: t.Statement[] = [
+  const loopBody: t.Statement[] = handlerProps.map((hp) => {
+    const fn = buildHandlerArrowFn(t.cloneNode(hp.handlerExpression, true) as t.ArrowFunctionExpression, propNames, wholeParamName)
+    return js`this.__itemHandlers_[${buildItemKeyExpr(hp.itemIdProperty, 'item')}] = ${fn};`
+  })
+  return appendToBody(
+    jsMethod`${id(`__populateItemHandlersFor_${arrayPropName}`)}(arr) {}`,
     js`if (!this.__itemHandlers_) { this.__itemHandlers_ = {}; }`,
     js`if (!arr) { return; }`,
     t.forOfStatement(
@@ -106,10 +78,6 @@ export function buildPopulateItemHandlersMethod(
       id('arr'),
       t.blockStatement(loopBody),
     ),
-  ]
-  return appendToBody(
-    jsMethod`${id(`__populateItemHandlersFor_${arrayPropName}`)}(arr) {}`,
-    ...body,
   ) as t.ClassMethod
 }
 
@@ -327,25 +295,9 @@ export function generateRenderItemMethod(
   const needsUnwrapHelper = [...rewrittenCallbackBody, returnStmt].some((stmt) => containsVCall(stmt))
 
   const privateRsField = t.memberExpression(t.thisExpression(), t.privateName(id('__rs')))
-  const rawStoreCacheStmts: t.Statement[] = []
-  if (needsRawStoreCache && arrayMap.storeVar) {
-    rawStoreCacheStmts.push(
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          id('__rs'),
-          t.logicalExpression(
-            '||',
-            t.cloneNode(privateRsField),
-            t.assignmentExpression(
-              '=',
-              t.cloneNode(privateRsField),
-              t.memberExpression(id(arrayMap.storeVar), id('__raw')),
-            ),
-          ),
-        ),
-      ]),
-    )
-  }
+  const rawStoreCacheStmts: t.Statement[] = needsRawStoreCache && arrayMap.storeVar
+    ? [js`const __rs = ${t.cloneNode(privateRsField)} || (${t.cloneNode(privateRsField)} = ${id(arrayMap.storeVar)}.__raw);`]
+    : []
 
   const method = appendToBody(
     baseMethod,
