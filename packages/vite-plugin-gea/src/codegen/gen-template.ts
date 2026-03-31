@@ -14,8 +14,8 @@ import {
   isComponentTag as isCompTag,
   buildTrimmedClassJoinedExpression,
   buildTrimmedClassValueExpression,
-  buildOptionalMemberChain,
-} from './ast-helpers.ts'
+} from './jsx-utils.ts'
+import { buildOptionalMemberChain } from './member-chain.ts'
 import {
   isEventAttribute,
   isMapCall as isMapCallExpr,

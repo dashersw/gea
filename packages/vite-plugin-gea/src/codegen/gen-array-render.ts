@@ -14,11 +14,15 @@ import {
   buildOptionalMemberChain,
   normalizePathParts,
   pathPartsToString,
+} from './member-chain.ts'
+import {
   replacePropRefsInExpression,
   replacePropRefsInStatements,
+} from './prop-ref-utils.ts'
+import {
   optionalizeMemberChainsAfterComputedItemKey,
   optionalizeComputedItemKeyInStatements,
-} from './ast-helpers.ts'
+} from './optionalize-utils.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { getTemplateParamBinding } from '../analyze/template-param-utils.ts'
 import { collectTemplateSetupStatements } from '../analyze/binding-resolver.ts'

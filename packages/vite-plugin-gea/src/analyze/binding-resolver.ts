@@ -3,7 +3,7 @@ import type { NodePath } from '../utils/babel-interop.ts'
 import { getTemplateParamBinding } from './template-param-utils.ts'
 import type { EventHandler } from '../ir/types.ts'
 import type { ChildComponent, ObserveDependency } from '../ir/types.ts'
-import { buildObserveKey, resolvePath } from '../codegen/ast-helpers.ts'
+import { buildObserveKey, resolvePath } from '../codegen/member-chain.ts'
 import type { StateRefMeta } from '../parse/state-refs.ts'
 
 export interface TemplateSetupContext {

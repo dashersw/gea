@@ -11,14 +11,16 @@ import { appendToBody, id, js, jsAll, jsBlockBody, jsExpr, jsMethod } from 'eszt
 import type { ArrayMapBinding, ConditionalMapBinding, RelationalMapBinding } from '../ir/types.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import {
-  buildOptionalMemberChain,
-  buildMemberChain,
   buildTrimmedClassValueExpression,
   getJSXTagName,
   isComponentTag,
+} from './jsx-utils.ts'
+import {
+  buildOptionalMemberChain,
+  buildMemberChain,
   normalizePathParts,
   pathPartsToString,
-} from './ast-helpers.ts'
+} from './member-chain.ts'
 import { collectPatchEntries, childPathRefName, buildElementNavExpr } from './gen-array-patch.ts'
 import { emitPatch } from '../emit/registry.ts'
 

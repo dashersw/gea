@@ -2,7 +2,8 @@ import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
 import { appendToBody, id, js, jsExpr, jsMethod } from 'eszter'
 import type { ChildComponent } from '../ir/types.ts'
-import { pruneUnusedSetupDestructuring, loggingCatchClause } from './ast-helpers.ts'
+import { pruneUnusedSetupDestructuring } from './prop-ref-utils.ts'
+import { loggingCatchClause } from './postprocess-helpers.ts'
 import { pascalToKebab } from '../utils/html.ts'
 
 export function childHasNoProps(child: ChildComponent): boolean {

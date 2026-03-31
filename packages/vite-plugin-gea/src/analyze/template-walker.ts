@@ -15,8 +15,8 @@ import {
   buildObserveKey,
   pathPartsToString,
   resolvePath,
-  generateSelector,
-} from '../codegen/ast-helpers.ts'
+} from '../codegen/member-chain.ts'
+import { generateSelector } from '../codegen/jsx-utils.ts'
 import {
   isEventAttribute,
   isMapCall,

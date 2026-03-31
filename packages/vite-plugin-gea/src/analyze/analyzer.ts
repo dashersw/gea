@@ -8,10 +8,8 @@ import type {
   ArrayMapBinding,
   UnresolvedMapInfo,
 } from '../ir/types.ts'
-import {
-  buildObserveKey,
-  getDirectChildElements,
-} from '../codegen/ast-helpers.ts'
+import { buildObserveKey } from '../codegen/member-chain.ts'
+import { getDirectChildElements } from '../codegen/jsx-utils.ts'
 import { getTemplateParamBinding } from './template-param-utils.ts'
 import type { StateRefMeta } from '../parse/state-refs.ts'
 import {

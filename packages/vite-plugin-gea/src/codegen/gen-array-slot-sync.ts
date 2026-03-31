@@ -9,10 +9,12 @@ import { transformJSXExpression, transformJSXFragmentToTemplate } from './gen-te
 import {
   getJSXTagName,
   isComponentTag,
+} from './jsx-utils.ts'
+import {
   pruneUnusedSetupDestructuring,
   replacePropRefsInExpression,
   replacePropRefsInStatements,
-} from './ast-helpers.ts'
+} from './prop-ref-utils.ts'
 
 // ─── Component child detection ─────────────────────────────────────
 

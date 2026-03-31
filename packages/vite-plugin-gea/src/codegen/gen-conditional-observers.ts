@@ -7,11 +7,13 @@ import {
   earlyReturnFalsyBindingName,
   optionalizeBindingRootInStatements,
   optionalizeMemberChainsFromBindingRoot,
+} from './optionalize-utils.ts'
+import {
   pruneDeadParamDestructuring,
   replacePropRefsInExpression,
   replacePropRefsInStatements,
-} from './ast-helpers.ts'
-import { pruneUnusedSetupDestructuring } from './ast-helpers.ts'
+  pruneUnusedSetupDestructuring,
+} from './prop-ref-utils.ts'
 import { inlineIntoConstructor, stripHtmlArrayMapJoinChainsInAst } from './gen-map-helpers.ts'
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -18,17 +18,21 @@ import { emitPatch } from '../emit/registry.ts'
 import { BOOLEAN_HTML_ATTRS } from '../ir/constants.ts'
 
 import {
+  isAlwaysStringExpression,
+  isWhitespaceFree,
+} from './jsx-utils.ts'
+import {
   buildObserveKey,
+  resolvePath,
+} from './member-chain.ts'
+import {
   pruneDeadParamDestructuring,
   derivedExprGuardsValueWhenNullish,
   expressionAccessesValueProperties,
   replacePropRefsInExpression,
   replacePropRefsInStatements,
   replaceThisPropsRootWithValueParam,
-  resolvePath,
-  isAlwaysStringExpression,
-  isWhitespaceFree,
-} from './ast-helpers.ts'
+} from './prop-ref-utils.ts'
 
 const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'data', 'cite', 'poster', 'background'])
 

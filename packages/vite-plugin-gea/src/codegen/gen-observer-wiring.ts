@@ -22,9 +22,11 @@ import {
   buildOptionalMemberChain,
   getObserveMethodName,
   pathPartsToString,
+} from './member-chain.ts'
+import {
   replacePropRefsInExpression,
   replacePropRefsInStatements,
-} from './ast-helpers.ts'
+} from './prop-ref-utils.ts'
 import { getComponentArrayItemsName } from './gen-array-slot-sync.ts'
 
 // ═══════════════════════════════════════════════════════════════════════════

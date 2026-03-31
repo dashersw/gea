@@ -10,16 +10,18 @@ import type { NodePath } from '@babel/traverse'
 import { appendToBody, id, js, jsAll, jsExpr, jsMethod } from 'eszter'
 import type { ArrayMapBinding } from '../ir/types.ts'
 import {
-  buildOptionalMemberChain,
-  camelToKebab,
   getJSXTagName,
   isComponentTag,
-  loggingCatchClause,
+} from './jsx-utils.ts'
+import { camelToKebab } from '../utils/html.ts'
+import {
+  buildOptionalMemberChain,
   normalizePathParts,
-  optionalizeMemberChainsAfterComputedItemKey,
   pathPartsToString,
-  replacePropRefsInExpression,
-} from './ast-helpers.ts'
+} from './member-chain.ts'
+import { replacePropRefsInExpression } from './prop-ref-utils.ts'
+import { optionalizeMemberChainsAfterComputedItemKey } from './optionalize-utils.ts'
+import { loggingCatchClause } from './postprocess-helpers.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { EVENT_NAMES } from './event-helpers.ts'
 import { emitPatch } from '../emit/registry.ts'

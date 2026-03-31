@@ -1,6 +1,6 @@
 import * as t from '@babel/types'
 import type { PathParts, ReactiveBinding, TextExpression } from '../ir/types.ts'
-import { buildObserveKey, pathPartsToString, resolvePath } from '../codegen/ast-helpers.ts'
+import { buildObserveKey, pathPartsToString, resolvePath } from '../codegen/member-chain.ts'
 import type { StateRefMeta } from '../parse/state-refs.ts'
 
 export function resolvePropRef(

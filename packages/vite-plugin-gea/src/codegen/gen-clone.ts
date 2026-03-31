@@ -19,13 +19,12 @@ import {
 } from './event-helpers.ts'
 import {
   buildTrimmedClassValueExpression,
-  camelToKebab,
   getDirectChildElements,
   getJSXTagName,
   isComponentTag,
-  replacePropRefsInExpression,
-} from './ast-helpers.ts'
-import { escapeHtml, normalizeJSXText, toHtmlAttrName } from '../utils/html.ts'
+} from './jsx-utils.ts'
+import { replacePropRefsInExpression } from './prop-ref-utils.ts'
+import { camelToKebab, escapeHtml, normalizeJSXText, toHtmlAttrName } from '../utils/html.ts'
 import { EVENT_TYPES, VOID_ELEMENTS } from '../ir/constants.ts'
 import { emitMount } from '../emit/registry.ts'
 import { id, js, jsClassProp, jsExpr, jsMethod, tpl } from 'eszter'

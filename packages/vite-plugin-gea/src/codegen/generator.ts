@@ -30,12 +30,12 @@ import {
   type DirectPropMapping,
 } from './gen-children.ts'
 import { getTemplateParamBinding } from '../analyze/template-param-utils.ts'
+import { pruneUnusedSetupDestructuring } from './prop-ref-utils.ts'
 import {
-  pruneUnusedSetupDestructuring,
   cacheThisIdInMethod,
   wrapEventsGetterWithCache,
   wrapSubpathCacheGuards,
-} from './ast-helpers.ts'
+} from './postprocess-helpers.ts'
 import { applyStaticReactivity } from './reactivity.ts'
 import {
   analyzeStoreGetters,

@@ -5,10 +5,12 @@ import type { EventHandler, StateRefMeta } from '../ir/types.ts'
 import {
   buildMemberChainFromParts,
   buildOptionalMemberChain,
+} from './member-chain.ts'
+import {
   extractHandlerBody,
   replacePropRefsInExpression,
   replacePropRefsInStatements,
-} from './ast-helpers.ts'
+} from './prop-ref-utils.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { collectTemplateSetupStatements } from '../analyze/binding-resolver.ts'
 

@@ -11,7 +11,7 @@ import { t } from '../utils/babel-interop.ts'
 import {
   getDirectChildElements,
   getJSXTagName,
-} from '../codegen/ast-helpers.ts'
+} from '../codegen/jsx-utils.ts'
 import { EVENT_NAMES, toGeaEventType } from '../codegen/event-helpers.ts'
 
 // ─── Walk context ─────────────────────────────────────────────────

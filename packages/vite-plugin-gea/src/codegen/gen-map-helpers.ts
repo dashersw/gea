@@ -10,9 +10,11 @@ import type { StateRefMeta } from '../parse/state-refs.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 
 import {
-  buildObserveKey, buildOptionalMemberChain, pathPartsToString,
-  replacePropRefsInExpression, replacePropRefsInStatements, resolvePath,
-} from './ast-helpers.ts'
+  buildObserveKey, buildOptionalMemberChain, pathPartsToString, resolvePath,
+} from './member-chain.ts'
+import {
+  replacePropRefsInExpression, replacePropRefsInStatements,
+} from './prop-ref-utils.ts'
 
 // Private helpers
 

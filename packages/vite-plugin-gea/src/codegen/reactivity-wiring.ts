@@ -25,7 +25,7 @@ import {
   getObserveMethodName,
   parseObserveKey,
   pathPartsToString,
-} from './ast-helpers.ts'
+} from './member-chain.ts'
 import { buildValueUnwrapHelper } from './gen-array-render.ts'
 
 import type { ReactivityContext } from './reactivity-types.ts'
