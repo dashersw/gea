@@ -1,5 +1,11 @@
 # @geajs/vite-plugin
 
+## 1.0.21
+
+### Patch Changes
+
+- [`12b7f3a`](https://github.com/dashersw/gea/commit/12b7f3af4c35867a08f5d971d94191ae8174e638) Thanks [@dashersw](https://github.com/dashersw)! - Add setAttribute equality guards to map-item patch methods (patch\_\_\*Item) in generate-array-patch.ts and generate-array.ts, matching the observer method guards added in v1.0.20
+
 ## 1.0.20
 
 ### Patch Changes
