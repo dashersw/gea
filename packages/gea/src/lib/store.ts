@@ -76,6 +76,10 @@ function proxyIterate(
       let indexCache = cache.get(arr)
       if (indexCache !== undefined) {
         p = indexCache.get(i)
+        // Validate cached proxy still wraps the current element
+        if (p !== undefined && p.__getTarget !== item) {
+          p = undefined
+        }
       }
       if (p === undefined) {
         const nextPath = basePath ? `${basePath}.${i}` : String(i)
@@ -1405,12 +1409,16 @@ export class Store {
         }
         if (prop === 'length' && Array.isArray(obj)) {
           store._arrayIndexProxyCache.delete(obj)
+          store._iterateProxyCache.delete(obj)
           obj[prop] = value
           return true
         }
 
         const isNew = !Object.prototype.hasOwnProperty.call(obj, prop)
-        if (Array.isArray(obj) && isNumericIndex(prop)) store._arrayIndexProxyCache.delete(obj)
+        if (Array.isArray(obj) && isNumericIndex(prop)) {
+          store._arrayIndexProxyCache.delete(obj)
+          store._iterateProxyCache.delete(obj)
+        }
         if (oldValue && typeof oldValue === 'object') {
           store._proxyCache.delete(oldValue)
           store._arrayIndexProxyCache.delete(oldValue)
@@ -1494,7 +1502,10 @@ export class Store {
           return true
         }
         const oldValue = obj[prop]
-        if (Array.isArray(obj) && isNumericIndex(prop)) store._arrayIndexProxyCache.delete(obj)
+        if (Array.isArray(obj) && isNumericIndex(prop)) {
+          store._arrayIndexProxyCache.delete(obj)
+          store._iterateProxyCache.delete(obj)
+        }
         if (oldValue && typeof oldValue === 'object') {
           store._proxyCache.delete(oldValue)
           store._arrayIndexProxyCache.delete(oldValue)
