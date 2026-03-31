@@ -1063,18 +1063,17 @@ export class Store {
           store._clearArrayIndexCache(arr)
           const previousOrder = arr.slice()
           Array.prototype[method].apply(arr, args)
-          const used = new Array(previousOrder.length).fill(false)
+          const indexLookup = new Map<any, number[]>()
+          for (let i = 0; i < previousOrder.length; i++) {
+            const v = previousOrder[i]
+            const bucket = indexLookup.get(v)
+            if (bucket) bucket.push(i)
+            else indexLookup.set(v, [i])
+          }
           const permutation = new Array(arr.length)
           for (let i = 0; i < arr.length; i++) {
-            let previousIndex = -1
-            for (let j = 0; j < previousOrder.length; j++) {
-              if (used[j]) continue
-              if (previousOrder[j] !== arr[i]) continue
-              previousIndex = j
-              used[j] = true
-              break
-            }
-            permutation[i] = previousIndex === -1 ? i : previousIndex
+            const indices = indexLookup.get(arr[i])
+            permutation[i] = indices && indices.length > 0 ? indices.shift()! : i
           }
           store._emitChanges([
             {
