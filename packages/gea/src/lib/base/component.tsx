@@ -1010,8 +1010,8 @@ export default class Component<P = Record<string, any>> extends Store {
     keyProp?: string | ((item: any) => string),
   ): void {
     const itemKey = typeof keyProp === 'function'
-      ? keyProp
-      : (item: any): string => {
+      ? (item: any, index?: number) => keyProp(item, index)
+      : (item: any, _index?: number): string => {
           if (item != null && typeof item === 'object') {
             if (keyProp && keyProp in item) return String(item[keyProp])
             if ('id' in item) return String(item.id)
@@ -1035,7 +1035,7 @@ export default class Component<P = Record<string, any>> extends Store {
     if (prev.length === items.length) {
       let same = true
       for (let j = 0; j < prev.length; j++) {
-        if (itemKey(prev[j]) !== itemKey(items[j])) {
+        if (itemKey(prev[j], j) !== itemKey(items[j], j)) {
           same = false
           break
         }
@@ -1087,7 +1087,7 @@ export default class Component<P = Record<string, any>> extends Store {
     if (items.length > prev.length && prev.length > 0) {
       let appendOk = true
       for (let j = 0; j < prev.length; j++) {
-        if (itemKey(prev[j]) !== itemKey(items[j])) {
+        if (itemKey(prev[j], j) !== itemKey(items[j], j)) {
           appendOk = false
           break
         }
@@ -1114,7 +1114,7 @@ export default class Component<P = Record<string, any>> extends Store {
 
     if (items.length < prev.length) {
       const newSet = new Set<string>()
-      for (let j = 0; j < items.length; j++) newSet.add(itemKey(items[j]))
+      for (let j = 0; j < items.length; j++) newSet.add(itemKey(items[j], j))
       const removals: ChildNode[] = []
       for (let sc: ChildNode | null = container.firstChild; sc; sc = sc.nextSibling) {
         if (sc.nodeType === 1) {

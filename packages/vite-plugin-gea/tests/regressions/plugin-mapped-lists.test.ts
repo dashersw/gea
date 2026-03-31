@@ -994,3 +994,36 @@ test('template literal key expression is preserved in data-gea-item-id', () => {
     'data-gea-item-id must reference tab.title from the template literal key',
   )
 })
+
+test('template literal key with index parameter does not produce ReferenceError', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class TagsInput extends Component {
+      template({ tags }) {
+        return (
+          <div class="tags">
+            {tags.map((tag, i) => (
+              <span key={\`\${tag}-\${i}\`} data-index={String(i)}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // The key function in __geaRegisterMap must accept both item and index params
+  assert.match(
+    output,
+    /\(__k,\s*__ki\)\s*=>/,
+    'key function must accept both item and index parameters',
+  )
+  // create/patch methods must use __idx, not the original 'i'
+  assert.match(
+    output,
+    /__geaKey = String\(`\$\{item}-\$\{__idx}\`\)/,
+    'create/patch __geaKey must use __idx, not original index variable',
+  )
+})

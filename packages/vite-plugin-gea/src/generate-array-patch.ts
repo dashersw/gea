@@ -20,14 +20,21 @@ import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const traverse = require('@babel/traverse').default
 
-/** Rewrite occurrences of `fromVar` to `toVar` in a cloned expression (for key expressions). */
-function rewriteItemVarInExpression(expr: t.Expression, fromVar: string, toVar: string): t.Expression {
-  if (fromVar === toVar) return expr
+/** Rewrite occurrences of variable names in a cloned expression (for key expressions). */
+function rewriteItemVarInExpression(
+  expr: t.Expression,
+  fromVar: string,
+  toVar: string,
+  renames?: Map<string, string>,
+): t.Expression {
+  const renameMap = new Map(renames || [])
+  renameMap.set(fromVar, toVar)
   const cloned = t.cloneNode(expr, true)
   traverse(t.program([t.expressionStatement(cloned)]), {
     noScope: true,
     Identifier(path: NodePath<t.Identifier>) {
-      if (path.node.name === fromVar) path.node.name = toVar
+      const replacement = renameMap.get(path.node.name)
+      if (replacement) path.node.name = replacement
     },
   })
   return cloned
@@ -378,8 +385,9 @@ export function generatePatchItemMethod(
     }
   }
 
+  const keyRenames = arrayMap.indexVariable ? new Map([[arrayMap.indexVariable, '__idx']]) : undefined
   const rawItemIdExpr = arrayMap.keyExpression
-    ? t.cloneNode(rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item'), true)
+    ? t.cloneNode(rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item', keyRenames), true)
     : itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
       : t.identifier('item')
@@ -1129,8 +1137,9 @@ export function generateCreateItemMethod(
     }
   }
 
+  const createKeyRenames = arrayMap.indexVariable ? new Map([[arrayMap.indexVariable, '__idx']]) : undefined
   const rawPatchItemIdExpr = arrayMap.keyExpression
-    ? t.cloneNode(rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item'), true)
+    ? t.cloneNode(rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item', createKeyRenames), true)
     : itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
       : t.identifier('item')

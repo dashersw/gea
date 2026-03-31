@@ -3590,16 +3590,21 @@ function generateMapRegistration(
   if (unresolvedMap.keyExpression) {
     // Complex key expression (e.g. template literal) — pass a key function
     const keyExpr = t.cloneNode(unresolvedMap.keyExpression, true)
-    // Rewrite item variable to __k for the key function parameter
+    // Rewrite item variable (and index variable if present) for the key function parameters
     const itemVar = unresolvedMap.itemVariable
+    const idxVar = unresolvedMap.indexVariable
     traverse(t.program([t.expressionStatement(keyExpr)]), {
       noScope: true,
       Identifier(path: NodePath<t.Identifier>) {
         if (path.node.name === itemVar) path.node.name = '__k'
+        else if (idxVar && path.node.name === idxVar) path.node.name = '__ki'
       },
     })
+    const keyFnParams = idxVar
+      ? [t.identifier('__k'), t.identifier('__ki')]
+      : [t.identifier('__k')]
     registerArgs.push(
-      t.arrowFunctionExpression([t.identifier('__k')], t.callExpression(t.identifier('String'), [keyExpr])),
+      t.arrowFunctionExpression(keyFnParams, t.callExpression(t.identifier('String'), [keyExpr])),
     )
   } else if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
     registerArgs.push(t.stringLiteral(arrayMap.itemIdProperty))
