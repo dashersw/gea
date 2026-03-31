@@ -729,6 +729,25 @@ describe('Store – Map reactivity', () => {
     const store = new Store({ data: new Map<string, number>() })
     assert.equal(store.data, store.data)
   })
+
+  it('Map.set() with object key throws TypeError', () => {
+    const store = new Store({ data: new Map<any, number>() })
+    assert.throws(
+      () => (store.data as Map<any, number>).set({}, 1),
+      /Reactive Map keys must be strings or numbers/,
+    )
+  })
+
+  it('Map.set() with numeric key works correctly', async () => {
+    const store = new Store({ data: new Map<number, string>() })
+    const changes: StoreChange[][] = []
+    store.observe('data', (_v, c) => changes.push(c))
+    ;(store.data as Map<number, string>).set(1, 'one')
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0][0].property, '1')
+    assert.equal(changes[0][0].newValue, 'one')
+  })
 })
 
 describe('Store – Set reactivity', () => {

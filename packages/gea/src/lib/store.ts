@@ -1197,20 +1197,34 @@ export class Store {
     return null
   }
 
+  /**
+   * Creates a reactive Proxy for a Map instance.
+   *
+   * Keys MUST be strings or numbers. Object keys are rejected with a TypeError
+   * because non-string keys would be silently serialized to "[object Object]"
+   * when stored in StoreChange.property and pathParts, causing observer path
+   * collisions and unreachable change events.
+   */
   private _createMapProxy(map: Map<any, any>, basePath: string, baseParts: string[]): any {
     const store = this // eslint-disable-line @typescript-eslint/no-this-alias
     const proxy = new Proxy(map, {
       get(target, prop) {
         if (prop === 'set') {
           return (key: any, value: any) => {
+            if (typeof key !== 'string' && typeof key !== 'number') {
+              throw new TypeError(
+                `[gea] Reactive Map keys must be strings or numbers, got: ${typeof key}`,
+              )
+            }
+            const keyStr = String(key)
             const oldValue = target.get(key)
             target.set(key, value)
             if (oldValue !== value) {
               store._emitChanges([{
                 type: 'set',
-                property: String(key),
+                property: keyStr,
                 target,
-                pathParts: appendPathParts(baseParts, String(key)),
+                pathParts: appendPathParts(baseParts, keyStr),
                 newValue: value,
                 previousValue: oldValue,
               }])
@@ -1220,15 +1234,21 @@ export class Store {
         }
         if (prop === 'delete') {
           return (key: any) => {
+            if (typeof key !== 'string' && typeof key !== 'number') {
+              throw new TypeError(
+                `[gea] Reactive Map keys must be strings or numbers, got: ${typeof key}`,
+              )
+            }
+            const keyStr = String(key)
             const existed = target.has(key)
             const oldValue = target.get(key)
             target.delete(key)
             if (existed) {
               store._emitChanges([{
                 type: 'delete',
-                property: String(key),
+                property: keyStr,
                 target,
-                pathParts: appendPathParts(baseParts, String(key)),
+                pathParts: appendPathParts(baseParts, keyStr),
                 previousValue: oldValue,
               }])
             }

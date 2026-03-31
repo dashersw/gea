@@ -1,5 +1,6 @@
 ---
 "@geajs/core": minor
+"@geajs/vite-plugin": minor
 ---
 
 ### @geajs/core (minor)
