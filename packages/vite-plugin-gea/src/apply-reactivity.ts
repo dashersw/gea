@@ -534,6 +534,19 @@ export function applyStaticReactivity(
         ClassDeclaration(classPath: NodePath<t.ClassDeclaration>) {
           if (!t.isIdentifier(classPath.node.id) || classPath.node.id.name !== className) return
 
+          // Extract original (pre-transform) class body for JSX detection in render props.
+          // The current classPath.node.body has JSX already compiled away.
+          let originalClassBody: t.ClassBody | undefined
+          traverse(originalAST, {
+            noScope: true,
+            ClassDeclaration(origClass: NodePath<t.ClassDeclaration>) {
+              if (t.isIdentifier(origClass.node.id) && origClass.node.id.name === className) {
+                originalClassBody = origClass.node.body
+                origClass.stop()
+              }
+            },
+          })
+
           const templateMethod = classPath.node.body.body.find(
             (n): n is t.ClassMethod => t.isClassMethod(n) && t.isIdentifier(n.key) && n.key.name === 'template',
           )
@@ -708,7 +721,10 @@ export function applyStaticReactivity(
                 t.ifStatement(notTextNode, insertNewTextNode, updateExisting),
               ])
             } else if (pb.type === 'text') {
-              const targetProp = pb.propName === 'children' ? 'innerHTML' : 'textContent'
+              const isHtmlProducing =
+                pb.propName === 'children' ||
+                (pb.expression && originalClassBody && expressionCallsJSXReturningClassProp(pb.expression, originalClassBody))
+              const targetProp = isHtmlProducing ? 'innerHTML' : 'textContent'
               const assignStmt = t.expressionStatement(
                 t.assignmentExpression(
                   '=',
@@ -717,7 +733,7 @@ export function applyStaticReactivity(
                 ),
               )
               const consequent =
-                pb.propName === 'children'
+                isHtmlProducing
                   ? t.blockStatement([
                       assignStmt,
                       // After replacing innerHTML for children, re-initialize child
@@ -4246,6 +4262,49 @@ function getTemplateParamIdentifier(classBody: t.ClassBody): string | undefined 
   )
   const binding = templateMethod ? getTemplateParamBinding(templateMethod.params[0]) : undefined
   return t.isIdentifier(binding) ? binding.name : undefined
+}
+
+/** True if expression is a call to a property whose value is an arrow function
+ *  containing JSX in the class body (render prop pattern). */
+function expressionCallsJSXReturningClassProp(expr: t.Expression, classBody: t.ClassBody): boolean {
+  if (!t.isCallExpression(expr)) return false
+  let propName: string | undefined
+  if (t.isMemberExpression(expr.callee) && t.isIdentifier(expr.callee.property) && !expr.callee.computed) {
+    propName = expr.callee.property.name
+  }
+  if (!propName) return false
+  const scanValue = (node: t.Node): boolean => {
+    if (t.isObjectExpression(node)) {
+      for (const prop of node.properties) {
+        if (
+          t.isObjectProperty(prop) &&
+          t.isIdentifier(prop.key) &&
+          prop.key.name === propName &&
+          (t.isArrowFunctionExpression(prop.value) || t.isFunctionExpression(prop.value))
+        ) {
+          let found = false
+          const check = (n: t.Node): void => {
+            if (found) return
+            if (t.isJSXElement(n) || t.isJSXFragment(n)) { found = true; return }
+            for (const key of t.VISITOR_KEYS[n.type] || []) {
+              const child = (n as any)[key]
+              if (Array.isArray(child)) child.forEach((c: any) => c && typeof c === 'object' && 'type' in c && check(c))
+              else if (child && typeof child === 'object' && 'type' in child) check(child)
+              if (found) return
+            }
+          }
+          check(prop.value)
+          return found
+        }
+      }
+    }
+    if (t.isArrayExpression(node)) return node.elements.some((el) => el != null && scanValue(el))
+    return false
+  }
+  for (const member of classBody.body) {
+    if (t.isClassProperty(member) && member.value && scanValue(member.value)) return true
+  }
+  return false
 }
 
 /** Collect template prop names referenced in an array item template (for __onPropChange handledPropNames). */

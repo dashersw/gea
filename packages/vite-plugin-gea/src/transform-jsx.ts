@@ -356,6 +356,47 @@ function expressionContainsJSX(expr: t.Expression): boolean {
 }
 
 /**
+ * True if expression is a CallExpression whose callee accesses a property name
+ * that is known to be a JSX-returning function in the class body.
+ * Covers render-prop patterns like `activeTab.content()` where
+ * `content: () => <SummaryContent />` is defined in the class.
+ */
+function callsJSXReturningProperty(expr: t.Expression, classBody?: t.ClassBody): boolean {
+  if (!classBody || !t.isCallExpression(expr)) return false
+  // Extract the property name from the callee (e.g. `activeTab.content()` → 'content')
+  let propName: string | undefined
+  if (t.isMemberExpression(expr.callee) && t.isIdentifier(expr.callee.property) && !expr.callee.computed) {
+    propName = expr.callee.property.name
+  }
+  if (!propName) return false
+  // Scan class body for any property/assignment containing an object with
+  // a matching arrow function property whose body contains JSX
+  for (const member of classBody.body) {
+    if (!t.isClassProperty(member) || !member.value) continue
+    const scanValue = (node: t.Node): boolean => {
+      if (t.isObjectExpression(node)) {
+        for (const prop of node.properties) {
+          if (
+            t.isObjectProperty(prop) &&
+            t.isIdentifier(prop.key) &&
+            prop.key.name === propName &&
+            (t.isArrowFunctionExpression(prop.value) || t.isFunctionExpression(prop.value))
+          ) {
+            return expressionContainsJSX(prop.value as t.Expression)
+          }
+        }
+      }
+      if (t.isArrayExpression(node)) {
+        return node.elements.some((el) => el && scanValue(el))
+      }
+      return false
+    }
+    if (scanValue(member.value)) return true
+  }
+  return false
+}
+
+/**
  * True if expression accesses `props.children` or `this.props.children`.
  * The `children` prop contains compiler-generated HTML from the parent and must not be escaped.
  */
@@ -572,6 +613,8 @@ export interface Ctx {
   mapItemVariable?: string
   /** Container binding ID for map items (when set, use `id` instead of `data-gea-item-id`) */
   mapContainerBindingId?: string
+  /** Class body for JSX-returning property detection (render props) */
+  classBody?: t.ClassBody
   sourceFile?: string
   lazyChildComponents?: boolean
   conditionalSlots?: ConditionalSlotInfo[]
@@ -1458,7 +1501,7 @@ function processChildren(
         // - Map callback expressions: item properties may hold component instances
         //   whose toString() returns HTML (e.g. {item.content} in Tabs)
         const skipEscape =
-          childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback
+          childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback || callsJSXReturningProperty(rawExpr, ctx.classBody)
         const safeExpr = skipEscape
           ? expr
           : t.callExpression(t.identifier('__escapeHtml'), [
