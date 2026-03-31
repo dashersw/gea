@@ -358,6 +358,8 @@ function expressionContainsJSX(expr: t.Expression): boolean {
  * The `children` prop contains compiler-generated HTML from the parent and must not be escaped.
  */
 function isChildrenPropAccess(expr: t.Expression): boolean {
+  // Destructured: children (bare identifier from template({ children }))
+  if (t.isIdentifier(expr) && expr.name === 'children') return true
   // props.children
   if (
     t.isMemberExpression(expr) &&

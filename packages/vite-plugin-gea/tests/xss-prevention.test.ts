@@ -169,3 +169,31 @@ describe('XSS prevention: dangerouslySetInnerHTML', () => {
     )
   })
 })
+
+describe('XSS prevention: destructured children prop is not double-escaped', () => {
+  it('does not wrap destructured {children} with __escapeHtml in template', () => {
+    const output = transformComponentSource(`
+      import { Component } from '@geajs/core'
+
+      export default class Layout extends Component {
+        template({ children }) {
+          return (
+            <main>
+              <div class="content">{children}</div>
+            </main>
+          )
+        }
+      }
+    `)
+
+    // children contains HTML from the parent component — must not be escaped
+    assert.ok(
+      !output.includes('__escapeHtml(String(children))'),
+      'destructured children prop must not be wrapped with __escapeHtml, got: ' + output,
+    )
+    assert.ok(
+      output.includes('${children}') || output.includes('${children ||'),
+      'children should be interpolated directly in the template',
+    )
+  })
+})
