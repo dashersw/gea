@@ -34,8 +34,8 @@ import {
   getPropContext,
   getRootClassSelector,
 } from './event-helpers.ts'
-import type { ChildComponent, EventHandler, HandlerPropInMap, ObserveDependency } from '../ir.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { ChildComponent, EventHandler, HandlerPropInMap, ObserveDependency } from '../ir/types.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 
 // ─── Exported interfaces ───────────────────────────────────────────
 

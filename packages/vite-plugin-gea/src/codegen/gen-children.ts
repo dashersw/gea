@@ -8,7 +8,7 @@
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
 import { appendToBody, id, jsMethod } from 'eszter'
-import type { ChildComponent } from '../ir.ts'
+import type { ChildComponent } from '../ir/types.ts'
 import { pruneUnusedSetupDestructuring, loggingCatchClause } from './ast-helpers.ts'
 import { pascalToKebab } from '../utils/html.ts'
 

@@ -10,7 +10,7 @@ import type {
   RelationalMapBinding,
   TextExpression,
   UnresolvedMapInfo,
-} from '../ir.ts'
+} from '../ir/types.ts'
 import {
   buildObserveKey,
   pathPartsToString,
@@ -18,7 +18,7 @@ import {
   generateSelector,
   getDirectChildElements,
   getJSXTagName,
-} from '../utils.ts'
+} from '../codegen/ast-helpers.ts'
 import { EVENT_NAMES, toGeaEventType } from '../component-event-helpers.ts'
 import { analyzeJSXInMap } from './map-analyzer.ts'
 import {
@@ -36,7 +36,7 @@ import {
   hasExplicitItemKey,
 } from './helpers.ts'
 import { collectExpressionDependencies, collectTemplateSetupStatements } from './binding-resolver.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 import {
   resolveHelperCallExpression,
   collectUnresolvedComputationDependencies,

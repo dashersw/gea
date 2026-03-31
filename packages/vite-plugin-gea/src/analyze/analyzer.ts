@@ -7,13 +7,13 @@ import type {
   ReactiveBinding,
   ArrayMapBinding,
   UnresolvedMapInfo,
-} from '../ir.ts'
+} from '../ir/types.ts'
 import {
   buildObserveKey,
   getDirectChildElements,
-} from '../utils.ts'
+} from '../codegen/ast-helpers.ts'
 import { getTemplateParamBinding } from './template-param-utils.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 import {
   analyzeAttributes,
   collectTextChildren,

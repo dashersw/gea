@@ -8,7 +8,7 @@
 import { t } from '../utils/babel-interop.ts'
 import { id, jsMethod } from 'eszter'
 
-import type { ArrayMapBinding, ConditionalSlot } from '../ir.ts'
+import type { ArrayMapBinding, ConditionalSlot } from '../ir/types.ts'
 
 import {
   earlyReturnFalsyBindingName,

@@ -6,10 +6,10 @@ import type {
   PathParts,
   ReactiveBinding,
   RelationalMapBinding,
-} from '../ir.ts'
-import { buildObserveKey, resolvePath, generateSelector, getDirectChildElements } from '../utils.ts'
+} from '../ir/types.ts'
+import { buildObserveKey, resolvePath, generateSelector, getDirectChildElements } from '../codegen/ast-helpers.ts'
 import { ITEM_IS_KEY } from './helpers.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 
 function getItemMemberPath(expr: t.Expression, itemVar: string): string | null {
   const parts: string[] = []

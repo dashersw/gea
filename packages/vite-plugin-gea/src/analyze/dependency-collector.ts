@@ -5,16 +5,16 @@ import type {
   ObserveDependency,
   PathParts,
   UnresolvedRelationalClassBinding,
-} from '../ir.ts'
+} from '../ir/types.ts'
 import {
   buildObserveKey,
   resolvePath,
-} from '../utils.ts'
+} from '../codegen/ast-helpers.ts'
 import {
   extractCallbackBodyStatements,
 } from './helpers.ts'
 import { collectExpressionDependencies, collectTemplateSetupStatements } from './binding-resolver.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 
 /** Derived filter/slice/sort/reverse chain descriptor for unresolved maps. */
 export interface DerivedUnresolvedMapDescriptor {

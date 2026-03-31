@@ -8,7 +8,7 @@
 import { t } from '../utils/babel-interop.ts'
 import { getTemplateParamBinding } from '../analyze/template-param-utils.ts'
 import { id, jsBlockBody, jsMethod } from 'eszter'
-import type { EventHandler } from '../ir.ts'
+import type { EventHandler } from '../ir/types.ts'
 import type { StateRefMeta } from '../ir/types.ts'
 import {
   buildMemberChainFromParts,

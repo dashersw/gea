@@ -15,7 +15,7 @@ import type {
   PathParts,
   UnresolvedMapInfo,
   UnresolvedRelationalClassBinding,
-} from '../ir.ts'
+} from '../ir/types.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 
 import {

@@ -5,7 +5,7 @@
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
 import { id, jsMethod } from 'eszter'
-import type { UnresolvedMapInfo } from '../ir.ts'
+import type { UnresolvedMapInfo } from '../ir/types.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { buildComponentPropsExpression, collectTemplateSetupStatements } from '../transform-attributes.ts'
 import type { TemplateSetupContext } from '../transform-attributes.ts'

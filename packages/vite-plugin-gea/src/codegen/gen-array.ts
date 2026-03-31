@@ -8,7 +8,7 @@
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
 import { appendToBody, id, js, jsBlockBody, jsExpr, jsMethod } from 'eszter'
-import type { ArrayMapBinding, ConditionalMapBinding, RelationalMapBinding } from '../ir.ts'
+import type { ArrayMapBinding, ConditionalMapBinding, RelationalMapBinding } from '../ir/types.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import {
   buildOptionalMemberChain,

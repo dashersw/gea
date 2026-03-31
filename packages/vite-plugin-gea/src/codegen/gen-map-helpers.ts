@@ -16,7 +16,7 @@ import type {
   ConditionalSlot,
   PathParts,
   UnresolvedMapInfo,
-} from '../ir.ts'
+} from '../ir/types.ts'
 import type { StateRefMeta } from '../parse/state-refs.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 

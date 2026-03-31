@@ -4,8 +4,8 @@
  */
 import { t } from '../utils/babel-interop.ts'
 import { id, jsImport } from 'eszter'
-import type { PathParts } from '../ir.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { PathParts } from '../ir/types.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 
 // ─── Import management ──────────────────────────────────────────────
 

@@ -9,7 +9,7 @@
 import { t } from '../utils/babel-interop.ts'
 import { appendToBody, id, jsMethod } from 'eszter'
 
-import type { ChildComponent, ConditionalSlot } from '../ir.ts'
+import type { ChildComponent, ConditionalSlot } from '../ir/types.ts'
 import { childHasNoProps } from './gen-children.ts'
 
 // ═══════════════════════════════════════════════════════════════════════════

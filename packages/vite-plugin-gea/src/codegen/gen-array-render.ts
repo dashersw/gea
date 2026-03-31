@@ -8,7 +8,7 @@
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
 import { appendToBody, id, js, jsMethod } from 'eszter'
-import type { ArrayMapBinding, EventHandler, HandlerPropInMap } from '../ir.ts'
+import type { ArrayMapBinding, EventHandler, HandlerPropInMap } from '../ir/types.ts'
 import { transformJSXToTemplate } from '../transform-jsx.ts'
 import {
   buildOptionalMemberChain,

@@ -7,12 +7,12 @@
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '@babel/traverse'
 import { id, js, jsBlockBody, jsExpr } from 'eszter'
-import type { ReactiveBinding, TextExpression } from '../ir.ts'
+import type { ReactiveBinding, TextExpression } from '../ir/types.ts'
 import {
   buildMemberChainFromParts,
   normalizePathParts,
 } from './ast-helpers.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 
 // ─── Path-parts equality test ──────────────────────────────────────
 

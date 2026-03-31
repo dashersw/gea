@@ -29,7 +29,7 @@ import type {
   ReactiveBinding,
   UnresolvedMapInfo,
   UnresolvedRelationalClassBinding,
-} from '../ir.ts'
+} from '../ir/types.ts'
 
 // ── Analyze layer ──────────────────────────────────────────────────────────
 import { analyzeTemplate } from '../analyze/analyzer.ts'

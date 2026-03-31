@@ -7,9 +7,9 @@
  */
 import { t } from '../utils/babel-interop.ts'
 import { id, jsMethod } from 'eszter'
-import type { ReactiveBinding } from '../ir.ts'
+import type { ReactiveBinding } from '../ir/types.ts'
 import { buildSimpleUpdate, buildWildcardUpdate } from './gen-observe-helpers.ts'
-import type { StateRefMeta } from '../parse.ts'
+import type { StateRefMeta } from '../parse/state-refs.ts'
 import {
   buildObserveKey,
   getObserveMethodName,

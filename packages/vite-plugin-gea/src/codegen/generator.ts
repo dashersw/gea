@@ -8,7 +8,7 @@
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
 import type { ClassMethod, ReturnStatement } from '@babel/types'
-import type { ChildComponent, EventHandler } from '../ir.ts'
+import type { ChildComponent, EventHandler } from '../ir/types.ts'
 import type { AnalysisResult } from '../analyze/analyzer.ts'
 import { analyzeTemplate } from '../analyze/analyzer.ts'
 import { collectStateReferences } from '../parse/state-refs.ts'
