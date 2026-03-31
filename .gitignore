@@ -1,5 +1,7 @@
 node_modules
 .history
+.omc
+.serena
 .DS_Store
 dist
 dist-profile
