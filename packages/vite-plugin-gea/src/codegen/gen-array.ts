@@ -20,6 +20,13 @@ import {
   pathPartsToString,
 } from './ast-helpers.ts'
 import { collectPatchEntries, childPathRefName, buildElementNavExpr } from './gen-array-patch.ts'
+
+function thisProp(name: string): t.MemberExpression {
+  return t.memberExpression(t.thisExpression(), t.identifier(name))
+}
+function thisPrivate(name: string): t.MemberExpression {
+  return t.memberExpression(t.thisExpression(), t.privateName(id(name)))
+}
 import { emitPatch, emitMount } from '../emit/registry.ts'
 
 // ─── URL attributes ────────────────────────────────────────────────
@@ -64,16 +71,9 @@ function getPropPatcherTargetExpr(
   binding: { selector: string; childPath?: number[] },
   rowExpr: t.Expression,
 ): t.Expression {
-  if (binding.childPath && binding.childPath.length > 0) {
-    return buildChildAccessExpr(rowExpr, binding.childPath)
-  }
-  if (binding.selector === ':scope') {
-    return t.cloneNode(rowExpr, true)
-  }
-  throw new Error(
-    `getPropPatcherTargetExpr: childPath required when selector is not :scope (got "${binding.selector}"). ` +
-      'Ensure map item bindings have childPath from analysis.',
-  )
+  if (binding.childPath?.length) return buildElementNavExpr(rowExpr, binding.childPath)
+  if (binding.selector === ':scope') return t.cloneNode(rowExpr, true)
+  throw new Error(`getPropPatcherTargetExpr: childPath required when selector is not :scope (got "${binding.selector}").`)
 }
 
 // ─── Build prop patcher function ───────────────────────────────────
@@ -292,13 +292,13 @@ export function generateArrayRelationalObserver(
 ): { method: t.ClassMethod; privateFields: string[] } {
   const arrayPath = pathPartsToString(getArrayPathParts(arrayMap))
   const containerName = `__${arrayPath.replace(/\./g, '_')}_container`
-  const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
-  const previousValue = t.identifier('__previousValue')
+  const containerRef = thisProp(containerName)
+  const previousValue = id('__previousValue')
   const previousRowName = `__prev_${pathPartsToString(path).replace(/\./g, '_')}_row`
-  const previousRowProp = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(previousRowName)))
+  const previousRowProp = thisPrivate(previousRowName)
 
   const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
-  const elsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
+  const elsRef = thisPrivate(rowElsProp)
 
   const body: t.Statement[] = [
     lazyInit(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
@@ -353,7 +353,7 @@ export function generateArrayConditionalPatchObserver(
 ): t.ClassMethod {
   const arrayPath = pathPartsToString(getArrayPathParts(arrayMap))
   const containerName = `__${arrayPath.replace(/\./g, '_')}_container`
-  const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
+  const containerRef = thisProp(containerName)
   const proxiedArr = arrayMap.isImportedState
     ? buildMemberChain(
         jsExpr`${id(arrayMap.storeVar || 'store')}.__store`,
@@ -374,7 +374,7 @@ export function generateArrayConditionalPatchObserver(
   bindings.forEach((binding, index) => {
     const targetId = `__target_${index}`
     const targetExpr = binding.childPath.length
-      ? buildChildAccessExpr(t.identifier('row'), binding.childPath)
+      ? buildElementNavExpr(t.identifier('row'), binding.childPath)
       : t.identifier('row')
     loopBody.push(
       ...jsAll`const ${id(targetId)} = ${targetExpr}; if (!${id(targetId)}) continue;`,
@@ -404,8 +404,8 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
   const arrayPath = pathPartsToString(getArrayPathParts(arrayMap))
   const arrayPathParts = getArrayPathParts(arrayMap)
   const containerName = `__${arrayPath.replace(/\./g, '_')}_container`
-  const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerName))
-  const configRef = t.memberExpression(t.thisExpression(), t.identifier(getArrayConfigPropName(arrayMap)))
+  const containerRef = thisProp(containerName)
+  const configRef = thisProp(getArrayConfigPropName(arrayMap))
   const proxiedArr = arrayMap.isImportedState
     ? buildMemberChain(
         jsExpr`${id(arrayMap.storeVar || 'store')}.__store`,
@@ -545,41 +545,14 @@ function buildQueryByItemId(
 // ─── Path parts equality ───────────────────────────────────────────
 
 function buildPathPartsEquals(expr: t.Expression, parts: string[]): t.Expression {
-  return parts.reduce<t.Expression>(
-    (acc, part, index) =>
-      t.logicalExpression(
-        '&&',
-        acc,
-        t.binaryExpression(
-          '===',
-          t.memberExpression(t.cloneNode(expr), t.numericLiteral(index), true),
-          t.stringLiteral(part),
-        ),
-      ),
-    t.logicalExpression(
-      '&&',
-      t.cloneNode(expr),
-      t.binaryExpression(
-        '===',
-        t.memberExpression(t.cloneNode(expr), t.identifier('length')),
-        t.numericLiteral(parts.length),
-      ),
-    ),
-  )
-}
-
-// ─── Child access expression ───────────────────────────────────────
-
-function buildChildAccessExpr(base: t.Expression, path: number[]): t.Expression {
-  let expr = base
-  for (const idx of path) {
-    expr = t.memberExpression(expr, t.identifier('firstElementChild'))
-    for (let i = 0; i < idx; i++) {
-      expr = t.memberExpression(expr, t.identifier('nextElementSibling'))
-    }
+  let result: t.Expression = jsExpr`${t.cloneNode(expr)} && ${t.cloneNode(expr)}.length === ${parts.length}`
+  for (let i = 0; i < parts.length; i++) {
+    result = t.logicalExpression('&&', result, jsExpr`${t.cloneNode(expr)}[${i}] === ${parts[i]}`)
   }
-  return expr
+  return result
 }
+
+// buildChildAccessExpr is now buildElementNavExpr from gen-array-patch
 
 // ─── Conditional patch statement ───────────────────────────────────
 

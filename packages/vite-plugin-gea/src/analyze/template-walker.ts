@@ -16,10 +16,14 @@ import {
   pathPartsToString,
   resolvePath,
   generateSelector,
+} from '../codegen/ast-helpers.ts'
+import {
+  isEventAttribute,
+  isMapCall,
+  classifyAttribute,
   getDirectChildElements,
   getJSXTagName,
-} from '../codegen/ast-helpers.ts'
-import { EVENT_NAMES, toGeaEventType } from '../codegen/event-helpers.ts'
+} from './jsx-walker.ts'
 import {
   resolveExpr,
   resolvePropRef,
@@ -89,7 +93,7 @@ export function analyzeAttributes(
     if (!attr.value || !t.isJSXExpressionContainer(attr.value)) return
     const name = attr.name.name
     if (name === 'ref') return
-    if (EVENT_NAMES.has(name) || EVENT_NAMES.has(toGeaEventType(name))) return
+    if (isEventAttribute(name)) return
     if (name === 'dangerouslySetInnerHTML') {
       // Track as a state-dependent binding for reactive innerHTML updates
       const expr = attr.value.expression
@@ -135,10 +139,11 @@ export function analyzeAttributes(
       return
     }
 
+    const kind = classifyAttribute(name)
     const attrType =
-      name === 'class' || name === 'className'
+      kind === 'class'
         ? 'class'
-        : name === 'value' || name === 'checked'
+        : kind === 'value' || kind === 'checked'
           ? (name as 'value' | 'checked')
           : 'attribute'
     const derived = buildDerivedPropBindings(
@@ -428,14 +433,7 @@ export function analyzeChildren(
   })
 }
 
-function isMapCall(expr: t.Expression | t.JSXEmptyExpression): boolean {
-  return (
-    t.isCallExpression(expr) &&
-    t.isMemberExpression(expr.callee) &&
-    t.isIdentifier(expr.callee.property) &&
-    expr.callee.property.name === 'map'
-  )
-}
+// isMapCall is now imported from jsx-walker.ts
 
 interface NestedMapInfo {
   mapExpr: t.CallExpression

@@ -38,6 +38,60 @@ interface PatchPlan {
   requiresRerender: boolean
 }
 
+// ─── Shared helpers ───────────────────────────────────────────────
+
+function thisPrivate(name: string): t.MemberExpression {
+  return t.memberExpression(t.thisExpression(), t.privateName(id(name)))
+}
+
+/** Collect declared variable names from template setup statements. */
+function collectSetupVarNames(statements: t.Statement[]): Set<string> {
+  const names = new Set<string>()
+  for (const stmt of statements) {
+    if (!t.isVariableDeclaration(stmt)) continue
+    for (const decl of stmt.declarations) {
+      if (t.isIdentifier(decl.id)) names.add(decl.id.name)
+      else if (t.isObjectPattern(decl.id)) {
+        for (const prop of decl.id.properties) {
+          if (t.isObjectProperty(prop) && t.isIdentifier(prop.value)) names.add(prop.value.name)
+          else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) names.add(prop.argument.name)
+        }
+      }
+    }
+  }
+  return names
+}
+
+/** Collect free variable names referenced in a list of expressions. */
+function collectFreeVars(expressions: t.Expression[]): Set<string> {
+  const freeVars = new Set<string>()
+  for (const expr of expressions) {
+    traverse(t.expressionStatement(t.cloneNode(expr, true)), {
+      noScope: true,
+      Identifier(p: NodePath<t.Identifier>) {
+        if (t.isMemberExpression(p.parent) && p.parent.property === p.node && !p.parent.computed) return
+        freeVars.add(p.node.name)
+      },
+    })
+  }
+  return freeVars
+}
+
+/** Check if any setup variable is referenced by patch entries; if so, rerender is required. */
+function setupForcesRerender(
+  setupCtx: { statements: t.Statement[] } | undefined,
+  entries: PatchEntry[],
+): boolean {
+  if (!setupCtx || setupCtx.statements.length === 0) return false
+  const setupVars = collectSetupVarNames(setupCtx.statements)
+  if (setupVars.size === 0) return false
+  const freeVars = collectFreeVars(entries.map((e) => e.expression))
+  for (const name of setupVars) {
+    if (freeVars.has(name)) return true
+  }
+  return false
+}
+
 // ─── Shared ref-cache + emit loop ─────────────────────────────────
 
 function buildRefCacheAndApply(entries: PatchEntry[], elVar: t.Identifier, lazyCache: boolean): t.Statement[] {
@@ -68,25 +122,91 @@ function buildRefCacheAndApply(entries: PatchEntry[], elVar: t.Identifier, lazyC
   return stmts
 }
 
+// ─── Array map naming helpers ──────────────────────────────────────
+
+function getCapName(arrayMap: ArrayMapBinding): string {
+  const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''))
+  const arrayName = arrayPath.replace(/\./g, '')
+  return arrayName.charAt(0).toUpperCase() + arrayName.slice(1)
+}
+
+function isComponentRootTemplate(arrayMap: ArrayMapBinding): boolean {
+  return t.isJSXElement(arrayMap.itemTemplate) && isComponentTag(getJSXTagName(arrayMap.itemTemplate.openingElement.name))
+}
+
+function applyPropRefs(entries: PatchEntry[], templatePropNames?: Set<string>, wholeParamName?: string): PatchEntry[] {
+  const propNames = templatePropNames ?? new Set<string>()
+  if (propNames.size === 0 && !wholeParamName) return entries
+  return entries.map((e) => ({
+    ...e,
+    expression: replacePropRefsInExpression(t.cloneNode(e.expression, true) as t.Expression, propNames, wholeParamName),
+  }))
+}
+
+function buildItemIdExpr(itemIdProperty: string | undefined): t.Expression {
+  const rawExpr = itemIdProperty && itemIdProperty !== ITEM_IS_KEY
+    ? t.logicalExpression('??', buildOptionalMemberChain(id('item'), itemIdProperty), id('item'))
+    : id('item')
+  return jsExpr`String(${rawExpr})`
+}
+
+/** Build `this.renderXxxItem(args)` call expression. For create's dummy call, pass dummyItem/dummyIdx. */
+function buildRenderCall(renderMethodName: string, indexVariable?: string, itemArg?: t.Expression, idxArg?: t.Expression): t.Expression {
+  const args: t.Expression[] = [itemArg ?? id('item')]
+  if (indexVariable) args.push(idxArg ?? id('__idx'))
+  const call = jsExpr`this.${id(renderMethodName)}()`
+  ;(call as t.CallExpression).arguments = args
+  return call
+}
+
+/** Collect component __geaProps properties from a JSX element template. */
+function collectComponentProps(arrayMap: ArrayMapBinding, propNames: Set<string>, wholeParamName?: string): t.ObjectProperty[] {
+  const propsProperties: t.ObjectProperty[] = []
+  const cloned = t.cloneNode(arrayMap.itemTemplate!, true) as t.JSXElement
+  for (const attr of cloned.openingElement.attributes) {
+    if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
+    const name = attr.name.name
+    if (name === 'key' || EVENT_NAMES.has(name)) continue
+    if (!t.isJSXExpressionContainer(attr.value) || t.isJSXEmptyExpression(attr.value.expression)) continue
+    const exprClone = t.cloneNode(attr.value.expression as t.Expression, true)
+    const tempProg = t.file(t.program([t.expressionStatement(exprClone)]))
+    traverse(tempProg, {
+      Identifier(path: NodePath<t.Identifier>) {
+        if (path.node.name === arrayMap.itemVariable) path.node.name = 'item'
+        else if (arrayMap.indexVariable && path.node.name === arrayMap.indexVariable) path.node.name = '__idx'
+      },
+    })
+    let rewrittenExpr = (tempProg.program.body[0] as t.ExpressionStatement).expression
+    if (propNames.size > 0 || wholeParamName) {
+      rewrittenExpr = replacePropRefsInExpression(t.cloneNode(rewrittenExpr, true) as t.Expression, propNames, wholeParamName)
+    }
+    propsProperties.push(t.objectProperty(id(name), rewrittenExpr))
+  }
+  return propsProperties
+}
+
 // ─── Dummy prop tree ───────────────────────────────────────────────
 
 interface DummyPropTree {
   [key: string]: DummyPropTree | true
 }
 
-function ensureDummyTreePath(tree: DummyPropTree, path: string): void {
-  const parts = normalizePathParts(path)
-  if (parts.length === 0) return
+function walkDummyTree(tree: DummyPropTree, parts: string[], write: boolean): void {
   let cursor = tree
   for (let i = 0; i < parts.length; i++) {
     const key = parts[i]
     if (i === parts.length - 1) {
-      if (!(key in cursor)) cursor[key] = true
+      if (write && !(key in cursor)) cursor[key] = true
       return
     }
     if (!(key in cursor) || cursor[key] === true) cursor[key] = {}
     cursor = cursor[key] as DummyPropTree
   }
+}
+
+function ensureDummyTreePath(tree: DummyPropTree, path: string): void {
+  const parts = normalizePathParts(path)
+  if (parts.length > 0) walkDummyTree(tree, parts, true)
 }
 
 function collectItemTemplatePropTree(template: t.JSXElement | t.JSXFragment, itemVar: string): DummyPropTree {
@@ -102,16 +222,7 @@ function collectItemTemplatePropTree(template: t.JSXElement | t.JSXFragment, ite
         node = node.object
       }
       if (!t.isIdentifier(node, { name: itemVar }) || chain.length === 0) return
-      let cursor: DummyPropTree = tree
-      for (let i = 0; i < chain.length; i++) {
-        const key = chain[i]
-        if (i === chain.length - 1) {
-          if (!(key in cursor)) cursor[key] = true
-        } else {
-          if (!(key in cursor) || cursor[key] === true) cursor[key] = {}
-          cursor = cursor[key] as DummyPropTree
-        }
-      }
+      walkDummyTree(tree, chain, true)
     },
   })
   return tree
@@ -120,18 +231,15 @@ function collectItemTemplatePropTree(template: t.JSXElement | t.JSXFragment, ite
 function buildDummyFromTree(tree: DummyPropTree, keyPathParts: string[] | null): t.ObjectExpression {
   const props: t.ObjectProperty[] = []
   for (const [key, value] of Object.entries(tree)) {
-    const matchesKeyPath = keyPathParts && keyPathParts.length > 0 && keyPathParts[0] === key
-    if (matchesKeyPath && keyPathParts!.length === 1) {
-      props.push(t.objectProperty(t.identifier(key), t.numericLiteral(0)))
-    } else if (matchesKeyPath) {
-      props.push(
-        t.objectProperty(t.identifier(key), buildDummyFromTree(value === true ? {} : value, keyPathParts!.slice(1))),
-      )
-    } else if (value === true) {
-      props.push(t.objectProperty(t.identifier(key), t.stringLiteral(' ')))
-    } else {
-      props.push(t.objectProperty(t.identifier(key), buildDummyFromTree(value, null)))
-    }
+    const matchesKey = keyPathParts && keyPathParts.length > 0 && keyPathParts[0] === key
+    const val = matchesKey && keyPathParts!.length === 1
+      ? t.numericLiteral(0)
+      : matchesKey
+        ? buildDummyFromTree(value === true ? {} : value, keyPathParts!.slice(1))
+        : value === true
+          ? t.stringLiteral(' ')
+          : buildDummyFromTree(value, null)
+    props.push(t.objectProperty(id(key), val))
   }
   return t.objectExpression(props)
 }
@@ -145,99 +253,38 @@ export function generatePatchItemMethod(
   templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
 ): { method: t.ClassMethod | null; privateFields: string[] } {
   if (!arrayMap.itemTemplate) return { method: null, privateFields: [] }
-  const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''))
-  const arrayName = arrayPath.replace(/\./g, '')
-  const capName = arrayName.charAt(0).toUpperCase() + arrayName.slice(1)
-  const methodName = `patch${capName}Item`
-  const itemIdProperty = arrayMap.itemIdProperty
+  const methodName = `patch${getCapName(arrayMap)}Item`
 
-  const itemTemplateRootIsComponent =
-    t.isJSXElement(arrayMap.itemTemplate) && isComponentTag(getJSXTagName(arrayMap.itemTemplate.openingElement.name))
-  if (itemTemplateRootIsComponent) return { method: null, privateFields: [] }
+  if (isComponentRootTemplate(arrayMap)) return { method: null, privateFields: [] }
 
   let { entries, requiresRerender } = collectPatchEntries(arrayMap)
   if (arrayMap.callbackBodyStatements?.length) requiresRerender = true
-
-  if (!requiresRerender && templateSetupContext && templateSetupContext.statements.length > 0) {
-    const setupVarNames = new Set<string>()
-    for (const stmt of templateSetupContext.statements) {
-      if (!t.isVariableDeclaration(stmt)) continue
-      for (const decl of stmt.declarations) {
-        if (t.isIdentifier(decl.id)) setupVarNames.add(decl.id.name)
-        else if (t.isObjectPattern(decl.id)) {
-          for (const prop of decl.id.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.value)) setupVarNames.add(prop.value.name)
-            else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) setupVarNames.add(prop.argument.name)
-          }
-        }
-      }
-    }
-    if (setupVarNames.size > 0) {
-      const freeVars = new Set<string>()
-      for (const entry of entries) {
-        traverse(t.expressionStatement(t.cloneNode(entry.expression, true)), {
-          noScope: true,
-          Identifier(p: NodePath<t.Identifier>) {
-            if (t.isMemberExpression(p.parent) && p.parent.property === p.node && !p.parent.computed) return
-            freeVars.add(p.node.name)
-          },
-        })
-      }
-      for (const name of setupVarNames) {
-        if (freeVars.has(name)) {
-          requiresRerender = true
-          break
-        }
-      }
-    }
-  }
-
+  if (!requiresRerender) requiresRerender = setupForcesRerender(templateSetupContext, entries)
   if (requiresRerender || entries.length === 0) return { method: null, privateFields: [] }
 
-  const propNames = templatePropNames ?? new Set<string>()
-  if (propNames.size > 0 || wholeParamName) {
-    entries = entries.map((e) => ({
-      ...e,
-      expression: replacePropRefsInExpression(
-        t.cloneNode(e.expression, true) as t.Expression,
-        propNames,
-        wholeParamName,
-      ),
-    }))
-  }
-
+  entries = applyPropRefs(entries, templatePropNames, wholeParamName)
   const { hoists, patchedEntries } = hoistStoreReads(entries, arrayMap.storeVar)
   const elVar = id('row')
   const body: t.Statement[] = [js`if (!${elVar}) return;`]
 
-  for (const hoist of hoists) {
-    body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
-  }
-
+  for (const hoist of hoists) body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
   body.push(...buildRefCacheAndApply(patchedEntries, elVar, true))
 
-  const rawItemIdExpr =
-    itemIdProperty && itemIdProperty !== ITEM_IS_KEY
-      ? t.logicalExpression('??', buildOptionalMemberChain(id('item'), itemIdProperty), id('item'))
-      : id('item')
-  const itemIdExpr = jsExpr`String(${rawItemIdExpr})`
+  const itemIdExpr = buildItemIdExpr(arrayMap.itemIdProperty)
   body.push(js`${elVar}.__geaKey = ${itemIdExpr};`)
 
   const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
-  const privateElsRef = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(rowElsProp)))
+  const privateElsRef = thisPrivate(rowElsProp)
   body.push(
     js`(${t.cloneNode(privateElsRef, true)} || (${t.cloneNode(privateElsRef, true)} = {}))[${t.cloneNode(itemIdExpr, true)}] = ${elVar};`,
   )
-
-  const patchPrivateFields: string[] = [rowElsProp]
-
   body.push(js`${elVar}.__geaItem = item;`)
 
   const params: t.Identifier[] = [id('row'), id('item'), id('__prevItem')]
   if (arrayMap.indexVariable) params.push(id('__idx'))
   return {
     method: t.classMethod('method', id(methodName), params, t.blockStatement(body)),
-    privateFields: patchPrivateFields,
+    privateFields: [rowElsProp],
   }
 }
 
@@ -435,157 +482,50 @@ export function generateCreateItemMethod(
   templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
 ): { method: t.ClassMethod | null; needsRawStoreCache: boolean; privateFields: string[] } {
   if (!arrayMap.itemTemplate) return { method: null, needsRawStoreCache: false, privateFields: [] }
-  const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''))
-  const arrayName = arrayPath.replace(/\./g, '')
-  const capName = arrayName.charAt(0).toUpperCase() + arrayName.slice(1)
+  const capName = getCapName(arrayMap)
   const methodName = `create${capName}Item`
   const renderMethodName = `render${capName}Item`
+  const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''))
   const containerProp = `__${arrayPath.replace(/\./g, '_')}_container`
   const itemIdProperty = arrayMap.itemIdProperty
-
-  // Detect if the map item template root is a component (PascalCase tag)
-  const itemTemplateRootIsComponent =
-    t.isJSXElement(arrayMap.itemTemplate) && isComponentTag(getJSXTagName(arrayMap.itemTemplate.openingElement.name))
+  const itemTemplateRootIsComponent = isComponentRootTemplate(arrayMap)
+  const propNames = templatePropNames ?? new Set<string>()
 
   let { entries, requiresRerender } = collectPatchEntries(arrayMap)
+  if (arrayMap.callbackBodyStatements?.length) requiresRerender = true
+  if (!requiresRerender) requiresRerender = setupForcesRerender(templateSetupContext, entries)
 
-  if (arrayMap.callbackBodyStatements?.length) {
-    requiresRerender = true
-  }
-
-  if (!requiresRerender && templateSetupContext && templateSetupContext.statements.length > 0) {
-    const setupVarNames = new Set<string>()
-    for (const stmt of templateSetupContext.statements) {
-      if (t.isVariableDeclaration(stmt)) {
-        for (const decl of stmt.declarations) {
-          if (t.isIdentifier(decl.id)) setupVarNames.add(decl.id.name)
-          else if (t.isObjectPattern(decl.id)) {
-            for (const prop of decl.id.properties) {
-              if (t.isObjectProperty(prop) && t.isIdentifier(prop.value)) setupVarNames.add(prop.value.name)
-              else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) setupVarNames.add(prop.argument.name)
-            }
-          }
-        }
-      }
-    }
-    if (setupVarNames.size > 0) {
-      const freeVars = new Set<string>()
-      for (const entry of entries) {
-        traverse(t.expressionStatement(t.cloneNode(entry.expression, true)), {
-          noScope: true,
-          Identifier(p: NodePath<t.Identifier>) {
-            if (t.isMemberExpression(p.parent) && p.parent.property === p.node && !p.parent.computed) return
-            freeVars.add(p.node.name)
-          },
-        })
-      }
-      for (const name of setupVarNames) {
-        if (freeVars.has(name)) {
-          requiresRerender = true
-          break
-        }
-      }
-    }
-  }
-
-  const propNames = templatePropNames ?? new Set<string>()
-  if (propNames.size > 0 || wholeParamName) {
-    entries = entries.map((e) => ({
-      ...e,
-      expression: replacePropRefsInExpression(
-        t.cloneNode(e.expression, true) as t.Expression,
-        propNames,
-        wholeParamName,
-      ),
-    }))
-  }
+  entries = applyPropRefs(entries, templatePropNames, wholeParamName)
 
   if (requiresRerender) {
     const createMethod = jsMethod`${id(methodName)}(item) {}`
     if (arrayMap.indexVariable) createMethod.params.push(id('__idx'))
-    const renderArgs: t.Expression[] = [id('item')]
-    if (arrayMap.indexVariable) renderArgs.push(id('__idx'))
-    const renderCall = jsExpr`this.${id(renderMethodName)}()`
-    ;(renderCall as t.CallExpression).arguments = renderArgs
+    const renderCall = buildRenderCall(renderMethodName, arrayMap.indexVariable)
     const rerenderBody: t.Statement[] = [
       js`var __tw = document.createElement('template');`,
       js`__tw.innerHTML = ${renderCall};`,
       js`var el = __tw.content.firstElementChild;`,
     ]
 
-    // For component-root map items, set __geaProps with actual JS values
     if (itemTemplateRootIsComponent && t.isJSXElement(arrayMap.itemTemplate)) {
-      const propsProperties: t.ObjectProperty[] = []
-      const cloned = t.cloneNode(arrayMap.itemTemplate, true) as t.JSXElement
-      for (const attr of cloned.openingElement.attributes) {
-        if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
-        const propName = attr.name.name
-        if (propName === 'key' || EVENT_NAMES.has(propName)) continue
-        if (!t.isJSXExpressionContainer(attr.value) || t.isJSXEmptyExpression(attr.value.expression)) continue
-        const exprClone = t.cloneNode(attr.value.expression as t.Expression, true)
-        const tempProg = t.file(t.program([t.expressionStatement(exprClone)]))
-        traverse(tempProg, {
-          Identifier(path: NodePath<t.Identifier>) {
-            if (path.node.name === arrayMap.itemVariable) path.node.name = 'item'
-            else if (arrayMap.indexVariable && path.node.name === arrayMap.indexVariable) path.node.name = '__idx'
-          },
-        })
-        const rewrittenExpr = (tempProg.program.body[0] as t.ExpressionStatement).expression
-        propsProperties.push(t.objectProperty(t.identifier(propName), rewrittenExpr))
-      }
+      const propsProperties = collectComponentProps(arrayMap, propNames, wholeParamName)
       if (propsProperties.length > 0) {
-        // Include template setup statements if __geaProps references template-local variables
         if (templateSetupContext && templateSetupContext.statements.length > 0) {
-          const setupVarNames = new Set<string>()
-          for (const stmt of templateSetupContext.statements) {
-            if (t.isVariableDeclaration(stmt)) {
-              for (const decl of stmt.declarations) {
-                if (t.isIdentifier(decl.id)) setupVarNames.add(decl.id.name)
-                else if (t.isObjectPattern(decl.id)) {
-                  for (const prop of decl.id.properties) {
-                    if (t.isObjectProperty(prop) && t.isIdentifier(prop.value)) setupVarNames.add(prop.value.name)
-                    else if (t.isRestElement(prop) && t.isIdentifier(prop.argument))
-                      setupVarNames.add(prop.argument.name)
-                  }
-                }
-              }
-            }
-          }
-          const propsRefsFreeVars = new Set<string>()
-          for (const prop of propsProperties) {
-            traverse(t.expressionStatement(t.cloneNode(prop.value as t.Expression, true)), {
-              noScope: true,
-              Identifier(p: NodePath<t.Identifier>) {
-                if (t.isMemberExpression(p.parent) && p.parent.property === p.node && !p.parent.computed) return
-                propsRefsFreeVars.add(p.node.name)
-              },
-            })
-          }
+          const setupVars = collectSetupVarNames(templateSetupContext.statements)
+          const propsFreeVars = collectFreeVars(propsProperties.map((p) => p.value as t.Expression))
           let needsSetup = false
-          for (const name of setupVarNames) {
-            if (propsRefsFreeVars.has(name)) {
-              needsSetup = true
-              break
-            }
-          }
+          for (const name of setupVars) { if (propsFreeVars.has(name)) { needsSetup = true; break } }
           if (needsSetup) {
-            const propRefsNames = propNames ?? new Set<string>()
             for (const stmt of templateSetupContext.statements) {
               let clonedStmt = t.cloneNode(stmt, true) as t.Statement
-              if (propRefsNames.size > 0 || wholeParamName) {
-                clonedStmt = replacePropRefsInExpression(
-                  clonedStmt as any,
-                  propRefsNames,
-                  wholeParamName,
-                ) as any as t.Statement
+              if (propNames.size > 0 || wholeParamName) {
+                clonedStmt = replacePropRefsInExpression(clonedStmt as any, propNames, wholeParamName) as any as t.Statement
               }
               rerenderBody.push(clonedStmt)
             }
           }
         }
-        rerenderBody.push(
-          js`el.__geaProps = ${t.objectExpression(propsProperties)};`,
-        )
+        rerenderBody.push(js`el.__geaProps = ${t.objectExpression(propsProperties)};`)
       }
     }
 
@@ -596,41 +536,29 @@ export function generateCreateItemMethod(
   if (entries.length === 0) return { method: null, needsRawStoreCache: false, privateFields: [] }
 
   const { hoists, patchedEntries } = hoistStoreReads(entries, arrayMap.storeVar)
-
   const useRawStoreCache = hoists.length > 0 && !!arrayMap.storeVar
 
   if (useRawStoreCache) {
     for (const hoist of hoists) {
-      if (
-        t.isMemberExpression(hoist.expression) &&
-        t.isIdentifier(hoist.expression.object) &&
-        hoist.expression.object.name === arrayMap.storeVar
-      ) {
+      if (t.isMemberExpression(hoist.expression) && t.isIdentifier(hoist.expression.object) && hoist.expression.object.name === arrayMap.storeVar) {
         hoist.expression.object = id('__rs')
       }
     }
   }
 
   const propTree = collectItemTemplatePropTree(arrayMap.itemTemplate!, arrayMap.itemVariable)
-
   const containerRef = jsExpr`this.${id(containerProp)}`
-  const privateDcField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__dc')))
+  const privateDcField = thisPrivate('__dc')
   const cVar = id('__c')
   const elVar = id('el')
-  const privateFields: string[] = ['__dc']
-
   const body: t.Statement[] = []
 
   if (useRawStoreCache) {
-    const privateRsField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__rs')))
-    body.push(
-      js`var __rs = ${t.cloneNode(privateRsField, true)} || (${t.cloneNode(privateRsField, true)} = ${id(arrayMap.storeVar!)}.__raw);`,
-    )
+    const privateRsField = thisPrivate('__rs')
+    body.push(js`var __rs = ${t.cloneNode(privateRsField, true)} || (${t.cloneNode(privateRsField, true)} = ${id(arrayMap.storeVar!)}.__raw);`)
   }
 
-  body.push(
-    js`var ${cVar} = ${t.cloneNode(privateDcField, true)} || (${t.cloneNode(privateDcField, true)} = ${containerRef});`,
-  )
+  body.push(js`var ${cVar} = ${t.cloneNode(privateDcField, true)} || (${t.cloneNode(privateDcField, true)} = ${containerRef});`)
 
   const isPrimitiveKey = !itemIdProperty || itemIdProperty === ITEM_IS_KEY
   const dummyItem: t.Expression = isPrimitiveKey
@@ -641,10 +569,7 @@ export function generateCreateItemMethod(
       })()
 
   const hasRootClassNamePatch = patchedEntries.some((e) => e.type === 'className' && e.childPath.length === 0)
-
-  const renderCallArgs = arrayMap.indexVariable ? [dummyItem, t.numericLiteral(0)] : [dummyItem]
-  const renderCall = jsExpr`this.${id(renderMethodName)}()`
-  ;(renderCall as t.CallExpression).arguments = renderCallArgs
+  const renderCall = buildRenderCall(renderMethodName, arrayMap.indexVariable, dummyItem, t.numericLiteral(0))
 
   const tplInit: t.Statement[] = [
     js`var __tw = document.createElement('template');`,
@@ -652,12 +577,7 @@ export function generateCreateItemMethod(
     js`${cVar}.__geaTpl = __tw.content.firstElementChild;`,
     t.expressionStatement(
       t.optionalCallExpression(
-        t.optionalMemberExpression(
-          jsExpr`${cVar}.__geaTpl`,
-          id('removeAttribute'),
-          false,
-          true,
-        ),
+        t.optionalMemberExpression(jsExpr`${cVar}.__geaTpl`, id('removeAttribute'), false, true),
         [t.stringLiteral('data-gea-item-id')],
         false,
       ),
@@ -665,19 +585,12 @@ export function generateCreateItemMethod(
   ]
 
   if (hasRootClassNamePatch) {
-    tplInit.push(
-      js`if (${cVar}.__geaTpl && ${cVar}.__geaTpl.className) ${cVar}.__geaTpl.className = '';`,
-    )
+    tplInit.push(js`if (${cVar}.__geaTpl && ${cVar}.__geaTpl.className) ${cVar}.__geaTpl.className = '';`)
   }
-  body.push(
-    js`if (!${cVar}.__geaTpl) ${t.blockStatement([t.tryStatement(t.blockStatement(tplInit), loggingCatchClause())])}`,
-  )
+  body.push(js`if (!${cVar}.__geaTpl) ${t.blockStatement([t.tryStatement(t.blockStatement(tplInit), loggingCatchClause())])}`)
 
   const tplCloneExpr = jsExpr`${cVar}.__geaTpl.cloneNode(${true})`
-  const fallbackRenderArgs = arrayMap.indexVariable ? [id('item'), id('__idx')] : [id('item')]
-  const fallbackRenderCall = jsExpr`this.${id(renderMethodName)}()`
-  ;(fallbackRenderCall as t.CallExpression).arguments = fallbackRenderArgs
-
+  const fallbackRenderCall = buildRenderCall(renderMethodName, arrayMap.indexVariable)
   body.push(
     t.ifStatement(
       jsExpr`${cVar}.__geaTpl`,
@@ -692,52 +605,16 @@ export function generateCreateItemMethod(
     ),
   )
 
-  for (const hoist of hoists) {
-    body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
-  }
-
+  for (const hoist of hoists) body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
   body.push(...buildRefCacheAndApply(patchedEntries, elVar, false))
 
-  const rawPatchItemIdExpr =
-    itemIdProperty && itemIdProperty !== ITEM_IS_KEY
-      ? t.logicalExpression('??', buildOptionalMemberChain(id('item'), itemIdProperty), id('item'))
-      : id('item')
-  const patchItemIdExpr = jsExpr`String(${rawPatchItemIdExpr})`
+  const patchItemIdExpr = buildItemIdExpr(itemIdProperty)
   body.push(js`${elVar}.__geaKey = ${patchItemIdExpr};`)
   body.push(js`${elVar}.__geaItem = item;`)
 
-  // For component-root map items, set __geaProps with actual JS values
-  // so extractComponentProps_ can use them instead of stringified HTML attributes
   if (itemTemplateRootIsComponent && t.isJSXElement(arrayMap.itemTemplate)) {
-    const propsProperties: t.ObjectProperty[] = []
-    const cloned = t.cloneNode(arrayMap.itemTemplate, true) as t.JSXElement
-    for (const attr of cloned.openingElement.attributes) {
-      if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
-      const name = attr.name.name
-      if (name === 'key' || EVENT_NAMES.has(name)) continue
-      if (!t.isJSXExpressionContainer(attr.value) || t.isJSXEmptyExpression(attr.value.expression)) continue
-      // Rewrite itemVariable references to 'item'
-      const exprClone = t.cloneNode(attr.value.expression as t.Expression, true)
-      const tempProg = t.file(t.program([t.expressionStatement(exprClone)]))
-      traverse(tempProg, {
-        Identifier(path: NodePath<t.Identifier>) {
-          if (path.node.name === arrayMap.itemVariable) path.node.name = 'item'
-          else if (arrayMap.indexVariable && path.node.name === arrayMap.indexVariable) path.node.name = '__idx'
-        },
-      })
-      let rewrittenExpr = (tempProg.program.body[0] as t.ExpressionStatement).expression
-      if (propNames.size > 0 || wholeParamName) {
-        rewrittenExpr = replacePropRefsInExpression(
-          t.cloneNode(rewrittenExpr, true) as t.Expression,
-          propNames,
-          wholeParamName,
-        )
-      }
-      propsProperties.push(t.objectProperty(t.identifier(name), rewrittenExpr))
-    }
-    if (propsProperties.length > 0) {
-      body.push(js`${elVar}.__geaProps = ${t.objectExpression(propsProperties)};`)
-    }
+    const propsProperties = collectComponentProps(arrayMap, propNames, wholeParamName)
+    if (propsProperties.length > 0) body.push(js`${elVar}.__geaProps = ${t.objectExpression(propsProperties)};`)
   }
 
   body.push(js`return ${elVar};`)
@@ -747,7 +624,7 @@ export function generateCreateItemMethod(
   return {
     method: t.classMethod('method', id(methodName), createParams, t.blockStatement(body)),
     needsRawStoreCache: useRawStoreCache,
-    privateFields,
+    privateFields: ['__dc'],
   }
 }
 
@@ -773,19 +650,15 @@ export function templateRequiresRerender(file: t.File): boolean {
   return requiresRerender
 }
 
-function branchContainsJSX(expr: t.Expression): boolean {
-  let containsJSX = false
-  const program = t.program([t.expressionStatement(t.cloneNode(expr, true))])
-  traverse(program, {
-    noScope: true,
-    JSXElement(path: NodePath<t.JSXElement>) {
-      containsJSX = true
-      path.stop()
-    },
-    JSXFragment(path: NodePath<t.JSXFragment>) {
-      containsJSX = true
-      path.stop()
-    },
-  })
-  return containsJSX
+function branchContainsJSX(node: t.Node): boolean {
+  if (t.isJSXElement(node) || t.isJSXFragment(node)) return true
+  for (const key of t.VISITOR_KEYS[node.type] || []) {
+    const child = (node as any)[key]
+    if (Array.isArray(child)) {
+      for (const c of child) if (c && typeof c === 'object' && 'type' in c && branchContainsJSX(c)) return true
+    } else if (child && typeof child === 'object' && 'type' in child) {
+      if (branchContainsJSX(child)) return true
+    }
+  }
+  return false
 }

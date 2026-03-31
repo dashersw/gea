@@ -11,13 +11,18 @@ import { escapeHtml, normalizeJSXText, toHtmlAttrName, camelToKebab } from '../u
 import { VOID_ELEMENTS, EVENT_TYPES, RESERVED_HTML_TAG_NAMES } from '../ir/constants.ts'
 import { toGeaEventType } from './event-helpers.ts'
 import {
-  getJSXTagName,
   isComponentTag as isCompTag,
   buildTrimmedClassJoinedExpression,
   buildTrimmedClassValueExpression,
   buildOptionalMemberChain,
-  getDirectChildElements,
 } from './ast-helpers.ts'
+import {
+  isEventAttribute,
+  isMapCall as isMapCallExpr,
+  classifyAttribute,
+  getDirectChildElements,
+  getJSXTagName,
+} from '../analyze/jsx-walker.ts'
 import {
   ITEM_IS_KEY,
   detectItemIdProperty,
