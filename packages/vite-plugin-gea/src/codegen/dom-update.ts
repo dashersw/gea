@@ -17,6 +17,19 @@ export function setTextContent(el: t.Expression, expr: t.Expression): t.Statemen
   )
 }
 
+// ─── el.firstChild.nodeValue = expr ───────────────────────────────
+
+/** el.firstChild.nodeValue = expr (for patching text inside elements with child nodes) */
+export function setFirstChildNodeValue(el: t.Expression, expr: t.Expression): t.Statement {
+  return t.expressionStatement(
+    t.assignmentExpression(
+      '=',
+      t.memberExpression(t.memberExpression(el, t.identifier('firstChild')), t.identifier('nodeValue')),
+      expr,
+    ),
+  )
+}
+
 // ─── el.className = expr ───────────────────────────────────────────
 
 /** el.className = expr */
@@ -59,7 +72,9 @@ export function setValue(el: t.Expression, expr: t.Expression): t.Statement {
 // ─── el.setAttribute / el.removeAttribute ─────────────────────────
 
 /**
- * Emit the standard attribute patch block:
+ * Emit an attribute patch block.
+ *
+ * With `guard: true` (the default, used in array-patch for incremental updates):
  *
  *   var __av = expr;
  *   if (__av == null || __av === false) {
@@ -69,50 +84,67 @@ export function setValue(el: t.Expression, expr: t.Expression): t.Statement {
  *     if (el.getAttribute(name) !== __newAttr) el.setAttribute(name, __newAttr);
  *   }
  *
- * These two statements are returned as an array; callers that accept
- * multiple statements (e.g. body.push(...)) should spread the result.
+ * With `guard: false` (used in clone template for initial mount):
+ *
+ *   var __av = expr;
+ *   if (__av == null || __av === false) el.removeAttribute(name)
+ *   else el.setAttribute(name, String(__av))
+ *
+ * Returns an array of statements; callers should spread into the surrounding body.
  */
 export function setAttribute(
   el: t.Expression,
   name: string,
   expr: t.Expression,
+  { guard = true }: { guard?: boolean } = {},
 ): t.Statement[] {
   const attrVal = t.identifier('__av')
-  return [
-    t.variableDeclaration('var', [t.variableDeclarator(attrVal, expr)]),
-    t.ifStatement(
-      t.logicalExpression(
-        '||',
-        t.binaryExpression('==', t.cloneNode(attrVal), t.nullLiteral()),
-        t.binaryExpression('===', t.cloneNode(attrVal), t.booleanLiteral(false)),
-      ),
-      t.expressionStatement(
-        t.callExpression(t.memberExpression(el, t.identifier('removeAttribute')), [t.stringLiteral(name)]),
-      ),
-      t.blockStatement([
-        t.variableDeclaration('const', [
-          t.variableDeclarator(
-            t.identifier('__newAttr'),
-            t.callExpression(t.identifier('String'), [t.cloneNode(attrVal)]),
-          ),
-        ]),
-        t.ifStatement(
-          t.binaryExpression(
-            '!==',
-            t.callExpression(t.memberExpression(t.cloneNode(el, true), t.identifier('getAttribute')), [
-              t.stringLiteral(name),
-            ]),
-            t.identifier('__newAttr'),
-          ),
-          t.expressionStatement(
-            t.callExpression(t.memberExpression(t.cloneNode(el, true), t.identifier('setAttribute')), [
-              t.stringLiteral(name),
-              t.identifier('__newAttr'),
-            ]),
-          ),
+  const nullishTest = t.logicalExpression(
+    '||',
+    t.binaryExpression('==', t.cloneNode(attrVal), t.nullLiteral()),
+    t.binaryExpression('===', t.cloneNode(attrVal), t.booleanLiteral(false)),
+  )
+  const removeStmt = t.expressionStatement(
+    t.callExpression(t.memberExpression(el, t.identifier('removeAttribute')), [t.stringLiteral(name)]),
+  )
+
+  let setStmt: t.Statement
+  if (guard) {
+    setStmt = t.blockStatement([
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier('__newAttr'),
+          t.callExpression(t.identifier('String'), [t.cloneNode(attrVal)]),
         ),
       ]),
-    ),
+      t.ifStatement(
+        t.binaryExpression(
+          '!==',
+          t.callExpression(t.memberExpression(t.cloneNode(el, true), t.identifier('getAttribute')), [
+            t.stringLiteral(name),
+          ]),
+          t.identifier('__newAttr'),
+        ),
+        t.expressionStatement(
+          t.callExpression(t.memberExpression(t.cloneNode(el, true), t.identifier('setAttribute')), [
+            t.stringLiteral(name),
+            t.identifier('__newAttr'),
+          ]),
+        ),
+      ),
+    ])
+  } else {
+    setStmt = t.expressionStatement(
+      t.callExpression(t.memberExpression(t.cloneNode(el, true), t.identifier('setAttribute')), [
+        t.stringLiteral(name),
+        t.callExpression(t.identifier('String'), [t.cloneNode(attrVal)]),
+      ]),
+    )
+  }
+
+  return [
+    t.variableDeclaration('var', [t.variableDeclarator(attrVal, expr)]),
+    t.ifStatement(nullishTest, removeStmt, setStmt),
   ]
 }
 

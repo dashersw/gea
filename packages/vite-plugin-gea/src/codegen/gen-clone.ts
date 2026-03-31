@@ -715,31 +715,7 @@ function buildCloneTemplateBody(
         if (attrName === 'style') {
           stmts.push(...setStyleCssText(navExpr, expr))
         } else {
-          // In gen-clone, the non-style attribute case uses a simpler
-          // removeAttribute / setAttribute(String(val)) pattern without the
-          // getAttribute equality guard that gen-array-patch uses.
-          const attrVal = t.identifier('__av')
-          stmts.push(
-            t.variableDeclaration('var', [t.variableDeclarator(attrVal, expr)]),
-            t.ifStatement(
-              t.logicalExpression(
-                '||',
-                t.binaryExpression('==', t.cloneNode(attrVal), t.nullLiteral()),
-                t.binaryExpression('===', t.cloneNode(attrVal), t.booleanLiteral(false)),
-              ),
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(navExpr, t.identifier('removeAttribute')), [
-                  t.stringLiteral(attrName),
-                ]),
-              ),
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(t.cloneNode(navExpr, true), t.identifier('setAttribute')), [
-                  t.stringLiteral(attrName),
-                  t.callExpression(t.identifier('String'), [t.cloneNode(attrVal)]),
-                ]),
-              ),
-            ),
-          )
+          stmts.push(...setAttribute(navExpr, attrName, expr, { guard: false }))
         }
         break
       }

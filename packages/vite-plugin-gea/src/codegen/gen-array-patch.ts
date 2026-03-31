@@ -23,7 +23,7 @@ import {
 } from './ast-helpers.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { EVENT_NAMES } from './event-helpers.ts'
-import { setAttribute, setStyleCssText, withEqualityGuard } from './dom-update.ts'
+import { setAttribute, setClassName, setFirstChildNodeValue, setStyleCssText, withEqualityGuard } from './dom-update.ts'
 
 // ─── Patch entry types ─────────────────────────────────────────────
 
@@ -217,27 +217,12 @@ export function generatePatchItemMethod(
               buildTrimmedClassValueExpression(t.cloneNode(entry.expression, true) as t.Expression),
             ),
           ]),
-          withEqualityGuard(
-            navExpr,
-            'className',
-            classVal,
-            t.expressionStatement(
-              t.assignmentExpression('=', t.memberExpression(t.cloneNode(navExpr, true), t.identifier('className')), classVal),
-            ),
-          ),
+          withEqualityGuard(navExpr, 'className', classVal, setClassName(t.cloneNode(navExpr, true), classVal)),
         )
         break
       }
       case 'text':
-        body.push(
-          t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.memberExpression(navExpr, t.identifier('firstChild')), t.identifier('nodeValue')),
-              entry.expression,
-            ),
-          ),
-        )
+        body.push(setFirstChildNodeValue(navExpr, entry.expression))
         break
       case 'attribute': {
         if (entry.attributeName === 'style') {
@@ -874,40 +859,15 @@ export function generateCreateItemMethod(
           classExpr.alternate.value === ''
         ) {
           body.push(
-            t.ifStatement(
-              classExpr.test,
-              t.expressionStatement(
-                t.assignmentExpression(
-                  '=',
-                  t.memberExpression(navExpr, t.identifier('className')),
-                  buildTrimmedClassValueExpression(classExpr.consequent),
-                ),
-              ),
-            ),
+            t.ifStatement(classExpr.test, setClassName(navExpr, buildTrimmedClassValueExpression(classExpr.consequent))),
           )
         } else {
-          body.push(
-            t.expressionStatement(
-              t.assignmentExpression(
-                '=',
-                t.memberExpression(navExpr, t.identifier('className')),
-                buildTrimmedClassValueExpression(classExpr),
-              ),
-            ),
-          )
+          body.push(setClassName(navExpr, buildTrimmedClassValueExpression(classExpr)))
         }
         break
       }
       case 'text':
-        body.push(
-          t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(t.memberExpression(navExpr, t.identifier('firstChild')), t.identifier('nodeValue')),
-              entry.expression,
-            ),
-          ),
-        )
+        body.push(setFirstChildNodeValue(navExpr, entry.expression))
         break
       case 'attribute': {
         if (entry.attributeName === 'style') {
