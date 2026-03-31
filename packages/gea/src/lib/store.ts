@@ -135,10 +135,137 @@ function shouldSkipReactiveWrapForPath(basePath: string): boolean {
   return false
 }
 
+/** Per-prototype getter name cache — computed once per subclass. */
+const _protoGetterCache = new WeakMap<object, Set<string>>()
+
+function _getProtoGetters(t: any): Set<string> {
+  const proto = Object.getPrototypeOf(t)
+  let cache = _protoGetterCache.get(proto)
+  if (!cache) {
+    cache = new Set<string>()
+    let p: any = proto
+    while (p && p !== Object.prototype) {
+      const names = Object.getOwnPropertyNames(p)
+      for (let i = 0; i < names.length; i++) {
+        const name = names[i]
+        if (name === 'constructor') continue
+        const desc = Object.getOwnPropertyDescriptor(p, name)
+        if (desc && desc.get) cache.add(name)
+      }
+      p = Object.getPrototypeOf(p)
+    }
+    _protoGetterCache.set(proto, cache)
+  }
+  return cache
+}
+
+function _recordFieldDep(t: any, fieldName: string): void {
+  const getterName = t._getterStack[t._getterStack.length - 1]
+  let deps = t._getterFieldDeps.get(getterName)
+  if (!deps) {
+    deps = new Set<string>()
+    t._getterFieldDeps.set(getterName, deps)
+  }
+  if (!deps.has(fieldName)) {
+    deps.add(fieldName)
+    let gtrs = t._fieldToGetters.get(fieldName)
+    if (!gtrs) {
+      gtrs = new Set<string>()
+      t._fieldToGetters.set(fieldName, gtrs)
+    }
+    gtrs.add(getterName)
+  }
+}
+
+function _mergeChildGetterDepsIntoParent(t: any, childGetter: string): void {
+  const parentGetter = t._getterStack[t._getterStack.length - 1]
+  const childDeps = t._getterFieldDeps.get(childGetter)
+  if (!childDeps || childDeps.size === 0) return
+  let parentDeps = t._getterFieldDeps.get(parentGetter)
+  if (!parentDeps) {
+    parentDeps = new Set<string>()
+    t._getterFieldDeps.set(parentGetter, parentDeps)
+  }
+  for (const field of childDeps) {
+    if (!parentDeps.has(field)) {
+      parentDeps.add(field)
+      let gtrs = t._fieldToGetters.get(field)
+      if (!gtrs) {
+        gtrs = new Set<string>()
+        t._fieldToGetters.set(field, gtrs)
+      }
+      gtrs.add(parentGetter)
+    }
+  }
+}
+
+function _clearGetterDeps(t: any, getterName: string): void {
+  const oldDeps = t._getterFieldDeps.get(getterName)
+  if (!oldDeps) return
+  for (const field of oldDeps) {
+    const gtrs = t._fieldToGetters.get(field)
+    if (gtrs) {
+      gtrs.delete(getterName)
+      if (gtrs.size === 0) t._fieldToGetters.delete(field)
+    }
+  }
+  t._getterFieldDeps.delete(getterName)
+}
+
+function _invalidateGettersForField(t: any, fieldName: string): void {
+  const gtrs = t._fieldToGetters.get(fieldName)
+  if (!gtrs || gtrs.size === 0) return
+  for (const getter of gtrs) {
+    if (t._getterCache.has(getter)) {
+      t._getterCache.delete(getter)
+    }
+  }
+}
+
 export function rootGetValue(t: any, prop: string, receiver: any): any {
   if (!Object.prototype.hasOwnProperty.call(t, prop)) {
+    // Memoize user-defined getters on Store subclasses
+    if (_getProtoGetters(t).has(prop) && !t._getterStackSet.has(prop)) {
+      const cache = t._getterCache
+      if (cache.has(prop)) {
+        // Propagate this getter's field deps into any currently-computing parent getter
+        if (t._getterStack.length > 0) {
+          _mergeChildGetterDepsIntoParent(t, prop)
+        }
+        return cache.get(prop)
+      }
+      // Clear stale deps before fresh tracking
+      _clearGetterDeps(t, prop)
+      t._getterStack.push(prop)
+      t._getterStackSet.add(prop)
+      let value: any
+      try {
+        value = Reflect.get(t, prop, receiver)
+      } finally {
+        t._getterStack.pop()
+        t._getterStackSet.delete(prop)
+      }
+      // After computing, propagate our field deps into parent getter (if any)
+      if (t._getterStack.length > 0) {
+        _mergeChildGetterDepsIntoParent(t, prop)
+      }
+      // Only cache if reactive deps were recorded; getters reading internal (_-prefixed)
+      // or non-reactive fields produce no tracked deps and must not be cached since
+      // changes to those fields won't invalidate the cache.
+      const deps = t._getterFieldDeps.get(prop)
+      if (deps && deps.size > 0) {
+        cache.set(prop, value)
+      }
+      return value
+    }
     return Reflect.get(t, prop, receiver)
   }
+
+  // Own property — record as dep of any currently-computing getter
+  if (t._getterStack.length > 0) {
+    _recordFieldDep(t, prop)
+  }
+
   const value = t[prop]
   if (typeof value === 'function') return value
   if (value !== null && value !== undefined && typeof value === 'object') {
@@ -180,6 +307,7 @@ export function rootSetValue(t: any, prop: string, value: any): boolean {
       t._topLevelProxies.delete(prop)
     }
     t[prop] = value
+    _invalidateGettersForField(t, prop)
     t._pendingChanges.push({
       type: hadProp ? 'update' : 'add',
       property: prop,
@@ -226,6 +354,7 @@ export function rootSetValue(t: any, prop: string, value: any): boolean {
     }
     if (isAppend) {
       const start = oldValue.length
+      _invalidateGettersForField(t, prop)
       t._emitChanges([
         {
           type: 'append',
@@ -241,6 +370,7 @@ export function rootSetValue(t: any, prop: string, value: any): boolean {
     }
   }
 
+  _invalidateGettersForField(t, prop)
   t._pendingChanges.push({
     type: hadProp ? 'update' : 'add',
     property: prop,
@@ -271,6 +401,7 @@ export function rootDeleteProperty(t: any, prop: string): boolean {
   }
   t._topLevelProxies.delete(prop)
   delete t[prop]
+  _invalidateGettersForField(t, prop)
   t._emitChanges([
     {
       type: 'delete',
@@ -332,6 +463,11 @@ export class Store {
   private _pathPartsCache = new Map<string, string[]>()
   private _pendingBatchKind: 0 | 1 | 2 = 0
   private _pendingBatchArrayPathParts: string[] | null = null
+  private _getterCache = new Map<string, any>()
+  private _getterFieldDeps = new Map<string, Set<string>>()
+  private _fieldToGetters = new Map<string, Set<string>>()
+  private _getterStack: string[] = []
+  private _getterStackSet = new Set<string>()
 
   /**
    * Browser root proxy: **4 traps only** (get/set/deleteProperty/defineProperty).
@@ -864,6 +1000,10 @@ export class Store {
       const change = changes[i]
       this._pendingChanges.push(change)
       this._trackPendingChange(change)
+      // Invalidate getter caches when a top-level field (or nested field) changes
+      if (change.pathParts.length > 0) {
+        _invalidateGettersForField(this, change.pathParts[0])
+      }
     }
     if (!this._flushScheduled) {
       this._flushScheduled = true
@@ -875,6 +1015,9 @@ export class Store {
   private _queueChange(change: StoreChange): void {
     this._pendingChanges.push(change)
     this._trackPendingChange(change)
+    if (change.pathParts.length > 0) {
+      _invalidateGettersForField(this, change.pathParts[0])
+    }
   }
 
   private _trackPendingChange(change: StoreChange): void {
@@ -930,6 +1073,9 @@ export class Store {
       arrayIndex: arrayMeta.arrayIndex,
       leafPathParts: getLeafPathParts(property),
       isArrayItemPropUpdate: true,
+    }
+    if (change.pathParts.length > 0) {
+      _invalidateGettersForField(this, change.pathParts[0])
     }
     this._pendingChanges.push(change)
     if (this._pendingBatchKind === 0) {
