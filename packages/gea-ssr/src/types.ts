@@ -57,6 +57,7 @@ export interface GeaComponentInstance<P extends Record<string, unknown> = Record
   onAfterRender?(): void
   onAfterRenderHooks?(): void
   __geaRequestRender?(): void
+  __adoptListItems?(): void
 }
 
 /**

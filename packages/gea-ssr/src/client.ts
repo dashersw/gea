@@ -82,7 +82,7 @@ export function hydrate(
   // Attach reactivity bindings (observers, events)
   if (typeof app.attachBindings_ === 'function') app.attachBindings_()
   if (typeof app.mountCompiledChildComponents_ === 'function') app.mountCompiledChildComponents_()
-  if (typeof (app as Record<string, unknown>).__adoptListItems === 'function') (app as Record<string, Function>).__adoptListItems()
+  if (typeof app.__adoptListItems === 'function') app.__adoptListItems()
   if (typeof app.instantiateChildComponents_ === 'function') app.instantiateChildComponents_()
   if (typeof app.setupEventDirectives_ === 'function') app.setupEventDirectives_()
   if (typeof app.onAfterRender === 'function') app.onAfterRender()
