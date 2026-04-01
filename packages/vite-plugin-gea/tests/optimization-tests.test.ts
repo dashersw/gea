@@ -11,6 +11,7 @@ import { parseSource } from '../src/parse'
 import { transformComponentFile } from '../src/transform-component'
 import { geaPlugin } from '../src/index'
 import { __escapeHtml, __sanitizeAttr } from '../../gea/src/lib/base/component'
+import { compileJsxComponent, loadRuntimeModules } from './helpers/compile'
 
 const generate = 'default' in babelGenerator ? babelGenerator.default : babelGenerator
 
@@ -851,4 +852,80 @@ test('clone optimization: component with dynamic class and child component', () 
   assert.ok(code.includes('__tpl'), 'should have clone optimization even with dynamic class')
   assert.ok(code.includes('__cloneTemplate'), 'should have __cloneTemplate')
   assert.ok(code.includes('replaceChild'), 'should replace placeholder')
+})
+
+// --- P1-PERF-6 runtime: verify DOM behavior after mount ---
+test('clone optimization: runtime DOM - child slot placeholder is replaced after mount', async () => {
+  const restoreDom = installDom()
+  let app: { dispose: () => void } | undefined
+
+  try {
+    const seed = `opt-runtime-${Date.now()}-${Math.random()}`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const headerSource = `
+      import { Component } from '@geajs/core'
+      export default function Header() {
+        return <header class="the-header">Hello</header>
+      }
+    `
+    const Header = await compileJsxComponent(
+      headerSource,
+      '/virtual/Header.jsx',
+      'Header',
+      { Component },
+    )
+
+    const parentSource = `
+      import { Component } from '@geajs/core'
+      import Header from './Header'
+      export default class ParentComp extends Component {
+        template() {
+          return (
+            <div class="wrapper">
+              <Header />
+              <p>static text</p>
+            </div>
+          )
+        }
+      }
+    `
+    const ParentComp = await compileJsxComponent(
+      parentSource,
+      '/virtual/ParentComp.jsx',
+      'ParentComp',
+      { Component, Header },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    app = new (ParentComp as new () => { render: (el: HTMLElement) => void; dispose: () => void })()
+    app.render(root)
+    await flushMicrotasks()
+
+    // Placeholder must be gone after mount
+    assert.equal(
+      root.querySelector('[data-gea-child-slot]'),
+      null,
+      'data-gea-child-slot placeholder should be removed after mount',
+    )
+
+    // The child component's element should be present in the DOM
+    assert.ok(
+      root.querySelector('.the-header') !== null,
+      'child component element (.the-header) should be inside root',
+    )
+
+    // The wrapper div should also be present
+    assert.ok(
+      root.querySelector('.wrapper') !== null,
+      'parent wrapper element should be in root',
+    )
+
+    root.remove()
+  } finally {
+    app?.dispose()
+    await flushMicrotasks()
+    restoreDom()
+  }
 })

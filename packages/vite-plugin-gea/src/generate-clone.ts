@@ -43,6 +43,15 @@ const EVENT_TYPES = new Set([
   'drop',
 ])
 
+/** HTML parent tags where inserting an arbitrary child element is invalid. */
+const RESTRICTED_CLONE_PARENTS = new Set([
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'a', 'b', 'i', 'em', 'strong',
+  'table', 'tbody', 'thead', 'tfoot', 'tr', 'colgroup',
+  'ul', 'ol', 'dl',
+  'select', 'optgroup',
+  'svg', 'g', 'defs', 'symbol', 'marker', 'clipPath', 'mask', 'pattern',
+])
+
 const VOID_ELEMENTS = new Set([
   'area',
   'base',
@@ -133,10 +142,14 @@ export function jsxToStaticHtml(
   refCounter: { value: number },
   elementPath: string[] = [],
   _isRoot = true,
+  parentTag?: string,
 ): string | null {
   const tagName = getJSXTagName(node.openingElement.name)
   const isComp = Boolean(tagName && isComponentTag(tagName))
-  if (isComp) return '<div data-gea-child-slot></div>'
+  if (isComp) {
+    if (!parentTag || RESTRICTED_CLONE_PARENTS.has(parentTag)) return null
+    return `<${parentTag} data-gea-child-slot></${parentTag}>`
+  }
 
   const effectiveTag = tagName!
   let html = `<${effectiveTag}`
@@ -186,7 +199,7 @@ export function jsxToStaticHtml(
   }
 
   html += '>'
-  const childHtml = processStaticChildren(node.children, refCounter, elementPath)
+  const childHtml = processStaticChildren(node.children, refCounter, elementPath, undefined, undefined, effectiveTag)
   if (childHtml === null) return null
   return html + childHtml + `</${effectiveTag}>`
 }
@@ -197,6 +210,7 @@ function processStaticChildren(
   parentPath: string[],
   dcCursor?: { index: number },
   directChildren?: ReturnType<typeof getDirectChildElements>,
+  parentTag?: string,
 ): string | null {
   const cursor = dcCursor ?? { index: 0 }
   const dc = directChildren ?? getDirectChildElements(children as any)
@@ -209,11 +223,11 @@ function processStaticChildren(
       const seg = dc[cursor.index]?.selectorSegment
       cursor.index++
       const nextPath = seg ? [...parentPath, seg] : parentPath
-      const inner = jsxToStaticHtml(child, refCounter, nextPath, false)
+      const inner = jsxToStaticHtml(child, refCounter, nextPath, false, parentTag)
       if (inner === null) return null
       out += inner
     } else if (t.isJSXFragment(child)) {
-      const inner = processStaticChildren(child.children, refCounter, parentPath, cursor, dc)
+      const inner = processStaticChildren(child.children, refCounter, parentPath, cursor, dc, parentTag)
       if (inner === null) return null
       out += inner
     } else if (t.isJSXExpressionContainer(child) && !t.isJSXEmptyExpression(child.expression)) {
