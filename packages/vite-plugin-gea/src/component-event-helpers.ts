@@ -15,6 +15,39 @@ export interface HoistableRootEventMeta {
   selector: string
 }
 
+export const EVENT_NAMES = new Set([
+  'click',
+  'dblclick',
+  'mousedown',
+  'mouseup',
+  'mouseover',
+  'mouseout',
+  'mousemove',
+  'keydown',
+  'keyup',
+  'keypress',
+  'focus',
+  'blur',
+  'input',
+  'change',
+  'submit',
+  'scroll',
+  'touchstart',
+  'touchmove',
+  'touchend',
+  'tap',
+  'longTap',
+  'swipeRight',
+  'swipeUp',
+  'swipeLeft',
+  'swipeDown',
+  'dragstart',
+  'dragend',
+  'dragover',
+  'dragleave',
+  'drop',
+])
+
 export function toGeaEventType(attrName: string): string {
   if (attrName.startsWith('on') && attrName.length > 2) {
     const rest = attrName.slice(2)

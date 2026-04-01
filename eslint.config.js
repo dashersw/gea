@@ -2,6 +2,11 @@ import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import eslintConfigPrettier from 'eslint-config-prettier'
 import globals from 'globals'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+/** Pin parser root so nested clones (e.g. `.claude/worktrees/*`) are not a second TSConfig root. */
+const repoRoot = dirname(fileURLToPath(import.meta.url))
 
 export default [
   {
@@ -21,6 +26,7 @@ export default [
       'website/playground/gea-core.js',
       'website/playground/index.mjs.map',
       'tests/e2e/vendor/babel.min.js',
+      '**/.claude/worktrees/**',
     ],
   },
 
@@ -32,6 +38,9 @@ export default [
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
+      parserOptions: {
+        tsconfigRootDir: repoRoot,
+      },
       globals: {
         ...globals.browser,
         ...globals.node,

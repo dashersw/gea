@@ -26,6 +26,8 @@ import {
   ITEM_IS_KEY,
   detectItemIdProperty,
   extractItemTemplate,
+  extractKeyExpression,
+  hasExplicitItemKey,
   normalizeDestructuredMapCallback,
 } from './analyze-helpers.ts'
 
@@ -354,10 +356,53 @@ function expressionContainsJSX(expr: t.Expression): boolean {
 }
 
 /**
+ * True if expression is a CallExpression whose callee accesses a property name
+ * that is known to be a JSX-returning function in the class body.
+ * Covers render-prop patterns like `activeTab.content()` where
+ * `content: () => <SummaryContent />` is defined in the class.
+ */
+function callsJSXReturningProperty(expr: t.Expression, classBody?: t.ClassBody): boolean {
+  if (!classBody || !t.isCallExpression(expr)) return false
+  // Extract the property name from the callee (e.g. `activeTab.content()` → 'content')
+  let propName: string | undefined
+  if (t.isMemberExpression(expr.callee) && t.isIdentifier(expr.callee.property) && !expr.callee.computed) {
+    propName = expr.callee.property.name
+  }
+  if (!propName) return false
+  // Scan class body for any property/assignment containing an object with
+  // a matching arrow function property whose body contains JSX
+  for (const member of classBody.body) {
+    if (!t.isClassProperty(member) || !member.value) continue
+    const scanValue = (node: t.Node): boolean => {
+      if (t.isObjectExpression(node)) {
+        for (const prop of node.properties) {
+          if (
+            t.isObjectProperty(prop) &&
+            t.isIdentifier(prop.key) &&
+            prop.key.name === propName &&
+            (t.isArrowFunctionExpression(prop.value) || t.isFunctionExpression(prop.value))
+          ) {
+            return expressionContainsJSX(prop.value as t.Expression)
+          }
+        }
+      }
+      if (t.isArrayExpression(node)) {
+        return node.elements.some((el) => el && scanValue(el))
+      }
+      return false
+    }
+    if (scanValue(member.value)) return true
+  }
+  return false
+}
+
+/**
  * True if expression accesses `props.children` or `this.props.children`.
  * The `children` prop contains compiler-generated HTML from the parent and must not be escaped.
  */
 function isChildrenPropAccess(expr: t.Expression): boolean {
+  // Destructured: children (bare identifier from template({ children }))
+  if (t.isIdentifier(expr) && expr.name === 'children') return true
   // props.children
   if (
     t.isMemberExpression(expr) &&
@@ -562,10 +607,14 @@ export interface Ctx {
   handlerPropsInMap?: HandlerPropInMap[]
   /** itemIdProperty for the current map (e.g. 'id') */
   mapItemIdProperty?: string
+  /** Full key expression AST when key is not a simple item.prop */
+  mapKeyExpression?: t.Expression
   /** Map callback param name (e.g. 'opt', 'item') for itemId expression */
   mapItemVariable?: string
   /** Container binding ID for map items (when set, use `id` instead of `data-gea-item-id`) */
   mapContainerBindingId?: string
+  /** Class body for JSX-returning property detection (render props) */
+  classBody?: t.ClassBody
   sourceFile?: string
   lazyChildComponents?: boolean
   conditionalSlots?: ConditionalSlotInfo[]
@@ -717,13 +766,18 @@ function replaceJSXInExpression(
     normalizeDestructuredMapCallback(fn)
     const handlerPropsInMap: HandlerPropInMap[] = []
     const mapItemVariable = t.isIdentifier(fn.params[0]) ? fn.params[0].name : 'item'
-    const mapItemIdProperty = detectItemIdProperty(extractItemTemplate(fn), mapItemVariable) || 'id'
+    const itemTemplate = extractItemTemplate(fn)
+    const mapItemIdProperty = detectItemIdProperty(itemTemplate, mapItemVariable) || 'id'
+    const mapKeyExpr = !detectItemIdProperty(itemTemplate, mapItemVariable) && hasExplicitItemKey(itemTemplate)
+      ? extractKeyExpression(itemTemplate)
+      : undefined
     const mapCtx = {
       ...ctx,
       inMapCallback: true,
       handlerPropsInMap,
       mapItemIdProperty,
       mapItemVariable,
+      ...(mapKeyExpr ? { mapKeyExpression: mapKeyExpr } : {}),
       conditionalSlots: undefined,
       conditionalSlotCursor: undefined,
       conditionalSlotNodeMap: undefined,
@@ -1038,8 +1092,9 @@ function processElement(node: t.JSXElement, parts: TemplatePart[], ctx: Ctx, ele
   if (ctx.inMapCallback && elementPath.length === 0 && ctx.mapItemVariable) {
     const itemVar = ctx.mapItemVariable
     const itemIdProp = ctx.mapItemIdProperty
-    const itemIdExpr: t.Expression =
-      itemIdProp && itemIdProp !== ITEM_IS_KEY
+    const itemIdExpr: t.Expression = ctx.mapKeyExpression
+      ? t.callExpression(t.identifier('String'), [t.cloneNode(ctx.mapKeyExpression, true)])
+      : itemIdProp && itemIdProp !== ITEM_IS_KEY
         ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier(itemVar), itemIdProp), t.identifier(itemVar))
         : t.callExpression(t.identifier('String'), [t.identifier(itemVar)])
 
@@ -1446,7 +1501,7 @@ function processChildren(
         // - Map callback expressions: item properties may hold component instances
         //   whose toString() returns HTML (e.g. {item.content} in Tabs)
         const skipEscape =
-          childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback
+          childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback || callsJSXReturningProperty(rawExpr, ctx.classBody)
         const safeExpr = skipEscape
           ? expr
           : t.callExpression(t.identifier('__escapeHtml'), [

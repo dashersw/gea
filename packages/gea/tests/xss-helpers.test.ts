@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
-import { describe, it, beforeEach, afterEach } from 'node:test'
+import { describe, it } from 'node:test'
 import { Component } from '../src/index'
 
 describe('Component.__escapeHtml', () => {
   it('escapes angle brackets', () => {
-    assert.equal(Component.__escapeHtml('<script>alert("xss")</script>'), '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;')
+    assert.equal(
+      Component.__escapeHtml('<script>alert("xss")</script>'),
+      '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;',
+    )
   })
 
   it('escapes ampersands', () => {

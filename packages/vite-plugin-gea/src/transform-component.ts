@@ -146,6 +146,7 @@ export function transformComponentFile(
           earlyReturnBarrierIndex: analysis.earlyReturnBarrierIndex,
         },
         sourceFile,
+        classBody,
         isRoot: true,
         conditionalSlots: conditionalSlotInfos,
         conditionalSlotCursor: { value: 0 },

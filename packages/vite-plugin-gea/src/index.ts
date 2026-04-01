@@ -268,6 +268,19 @@ function isComponentImportSource(source: string): boolean {
   return true
 }
 
+/**
+ * Gea functional components compile to classes but their **source** has no `extends Component`.
+ * `isComponentModule` must still treat them as components so HMR wraps imports in
+ * `createHotComponentProxy` and tab switches don't reconstruct stale constructors.
+ */
+function looksLikeGeaFunctionalComponentSource(source: string): boolean {
+  if (!source.includes('<') || !source.includes('>')) return false
+  if (/export\s+default\s+async\s+function\b/.test(source)) return true
+  if (/export\s+default\s+function\b/.test(source)) return true
+  if (/export\s+default\s*\([^)]*\)\s*=>\s*/.test(source)) return true
+  return false
+}
+
 export function geaPlugin(): Plugin {
   const storeModules = new Set<string>()
   const componentModules = new Set<string>()
@@ -334,6 +347,10 @@ export function geaPlugin(): Plugin {
     try {
       const source = readFileSync(filePath, 'utf8')
       if (source.includes('extends Component')) {
+        componentModules.add(filePath)
+        return true
+      }
+      if (looksLikeGeaFunctionalComponentSource(source)) {
         componentModules.add(filePath)
         return true
       }

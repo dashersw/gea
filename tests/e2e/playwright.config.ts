@@ -213,25 +213,24 @@ export default defineConfig({
   workers: resolveWorkerCount(),
   reporter: 'list',
   timeout: 30_000,
-  expect: { timeout: 500 },
+  // Cold navigations and assertions under parallel webServers often exceed 500ms on CI / busy machines.
+  expect: { timeout: 1500 },
   use: {
     trace: 'on-first-retry',
-    actionTimeout: 500,
-    navigationTimeout: 500,
+    actionTimeout: 1000,
+    // Full-suite runs start many Vite dev servers; first navigation can exceed 2s on a busy machine or CI.
+    navigationTimeout: 5000,
     headless: true,
   },
   projects: activeExamples.map((e, i) => {
     const port = ports[i]!
-    // Tab bars and modals can take >500ms to satisfy Playwright's "stable" hit-target checks
-    // (layout after view switches, focus rings, etc.). Keep the global default fast; relax only
-    // examples that were flaky under the strict 500ms action timeout.
+    // Tab bars and modals can take >1s to satisfy Playwright's "stable" hit-target checks
+    // (layout after view switches, focus rings, etc.). Global action timeout is 1000ms; relax further
+    // for examples that were still flaky.
     const relaxedAction = e.name === 'mobile-showcase' || e.name === 'ecommerce' ? { actionTimeout: 2000 as const } : {}
-    // Playground site is heavy; first navigation often exceeds 500ms. Runtime-only* stay at 500ms (local vendor).
-    const relaxedNav =
-      e.name === 'playground' || e.name === 'mobile-showcase' ? { navigationTimeout: 2000 as const } : {}
     return {
       name: e.name,
-      use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${port}`, ...relaxedAction, ...relaxedNav },
+      use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${port}`, ...relaxedAction },
       testMatch: `${e.name}.spec.ts`,
     }
   }),

@@ -237,6 +237,7 @@ export function generateRenderItemMethod(
     mapItemIdProperty: arrayMap.itemIdProperty || 'id',
     mapItemVariable: arrayMap.itemVariable,
     mapContainerBindingId: arrayMap.containerBindingId,
+    ...(arrayMap.keyExpression ? { mapKeyExpression: arrayMap.keyExpression } : {}),
   }
   if (t.isJSXFragment(modified)) {
     const err = new Error(
@@ -391,6 +392,7 @@ export function generateRenderItemMethod(
     h.mapContext = {
       arrayPathParts: arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''),
       itemIdProperty: arrayMap.itemIdProperty || 'id',
+      ...(arrayMap.keyExpression ? { keyExpression: t.cloneNode(arrayMap.keyExpression, true) } : {}),
       itemVariable: arrayMap.itemVariable,
       indexVariable: arrayMap.indexVariable,
       isImportedState: arrayMap.isImportedState || false,

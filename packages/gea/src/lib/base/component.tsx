@@ -18,6 +18,7 @@ export function __escapeHtml(str: string): string {
 
 export function __sanitizeAttr(name: string, value: string): string {
   if (_URL_ATTRS.has(name)) {
+    // eslint-disable-next-line no-control-regex -- intentional: strip null bytes and control chars for XSS prevention
     const stripped = value.replace(/[\s\u0000-\u001F]+/g, '').toLowerCase()
     if (/^(javascript|vbscript|data):/.test(stripped) && !stripped.startsWith('data:image/')) {
       return ''
@@ -599,6 +600,9 @@ export default class Component<P = Record<string, any>> extends Store {
       child.mountCompiledChildComponents_()
       child.instantiateChildComponents_()
       child.setupEventDirectives_()
+      if (typeof (child as any).__setupRefs === 'function') {
+        ;(child as any).__setupRefs()
+      }
       child.onAfterRender()
       child.onAfterRenderHooks()
       child.__syncUnrenderedListItems()
@@ -924,7 +928,7 @@ export default class Component<P = Record<string, any>> extends Store {
     getContainer: () => HTMLElement | null,
     getItems: () => any[],
     createItem: (item: any) => HTMLElement,
-    keyProp?: string,
+    keyProp?: string | ((item: any) => string),
   ): void {
     if (!this.__geaMaps) this.__geaMaps = {}
     this.__geaMaps[idx] = {
@@ -1006,15 +1010,18 @@ export default class Component<P = Record<string, any>> extends Store {
     container: HTMLElement,
     items: any[],
     createItemFn: (item: any, index?: number) => HTMLElement,
-    keyProp?: string,
+    keyProp?: string | ((item: any) => string),
   ): void {
-    const itemKey = (item: any): string => {
-      if (item != null && typeof item === 'object') {
-        if (keyProp && keyProp in item) return String(item[keyProp])
-        if ('id' in item) return String(item.id)
-      }
-      return String(item)
-    }
+    const itemKey =
+      typeof keyProp === 'function'
+        ? (item: any, index?: number) => keyProp(item, index)
+        : (item: any, _index?: number): string => {
+            if (item != null && typeof item === 'object') {
+              if (keyProp && keyProp in item) return String(item[keyProp])
+              if ('id' in item) return String(item.id)
+            }
+            return String(item)
+          }
 
     const c = container as any
     let prev: any[] | undefined = c.__geaPrev
@@ -1032,7 +1039,7 @@ export default class Component<P = Record<string, any>> extends Store {
     if (prev.length === items.length) {
       let same = true
       for (let j = 0; j < prev.length; j++) {
-        if (itemKey(prev[j]) !== itemKey(items[j])) {
+        if (itemKey(prev[j], j) !== itemKey(items[j], j)) {
           same = false
           break
         }
@@ -1069,6 +1076,9 @@ export default class Component<P = Record<string, any>> extends Store {
               }
             }
           }
+          // Sync item identity props so event handlers can resolve item/index.
+          if ((newEl as any).__geaItem !== undefined) (oldEl as any).__geaItem = (newEl as any).__geaItem
+          if ((newEl as any).__geaKey !== undefined) (oldEl as any).__geaKey = (newEl as any).__geaKey
         }
         c.__geaPrev = items.slice()
         return
@@ -1081,7 +1091,7 @@ export default class Component<P = Record<string, any>> extends Store {
     if (items.length > prev.length && prev.length > 0) {
       let appendOk = true
       for (let j = 0; j < prev.length; j++) {
-        if (itemKey(prev[j]) !== itemKey(items[j])) {
+        if (itemKey(prev[j], j) !== itemKey(items[j], j)) {
           appendOk = false
           break
         }
@@ -1108,7 +1118,7 @@ export default class Component<P = Record<string, any>> extends Store {
 
     if (items.length < prev.length) {
       const newSet = new Set<string>()
-      for (let j = 0; j < items.length; j++) newSet.add(itemKey(items[j]))
+      for (let j = 0; j < items.length; j++) newSet.add(itemKey(items[j], j))
       const removals: ChildNode[] = []
       for (let sc: ChildNode | null = container.firstChild; sc; sc = sc.nextSibling) {
         if (sc.nodeType === 1) {

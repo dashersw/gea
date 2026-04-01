@@ -349,6 +349,21 @@ export function detectItemIdProperty(
   return undefined
 }
 
+/** Extract the raw key expression AST from a map item template (for complex keys like template literals). */
+export function extractKeyExpression(
+  template: t.JSXElement | t.JSXFragment | undefined,
+): t.Expression | undefined {
+  if (!template || !t.isJSXElement(template)) return undefined
+  for (const attr of template.openingElement.attributes) {
+    if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name) || attr.name.name !== 'key') continue
+    if (!t.isJSXExpressionContainer(attr.value)) continue
+    const keyExpr = attr.value.expression
+    if (t.isJSXEmptyExpression(keyExpr)) continue
+    return keyExpr as t.Expression
+  }
+  return undefined
+}
+
 export function hasExplicitItemKey(template: t.JSXElement | t.JSXFragment | undefined): boolean {
   if (!template || !t.isJSXElement(template)) return false
   return template.openingElement.attributes.some(

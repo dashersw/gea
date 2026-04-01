@@ -223,3 +223,104 @@ test('map callback render method includes template-local setup statements for fr
   const renderBody = renderMethod![1]
   assert.match(renderBody, /issueStore\.issue/, 'render method must re-derive issue from store')
 })
+
+test('map event handler using only index skips helper and uses indexOf fast path', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class ItemList extends Component {
+      constructor() {
+        super()
+        this.items = []
+      }
+
+      removeAt(idx) {
+        this.items.splice(idx, 1)
+      }
+
+      template() {
+        return (
+          <ul>
+            {this.items.map((item, index) => (
+              <li key={item.id} click={() => this.removeAt(index)}>
+                {item.label}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    }
+  `)
+
+  const eventMethod = output.match(/__event_click_\d+\(e,\s*targetComponent\)\s*\{([\s\S]*?)\n {2}\}/)
+  assert.ok(eventMethod, 'event handler method should be generated')
+  assert.doesNotMatch(
+    eventMethod![1],
+    /__getMapItemFromEvent/,
+    'index-only handler should not call __getMapItemFromEvent helper',
+  )
+  assert.match(eventMethod![1], /\.indexOf\(__el\.__geaItem\)/, 'should resolve index via indexOf on __geaItem')
+})
+
+test('map event handler using only item calls helper without indexOf', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class ItemList extends Component {
+      constructor() {
+        super()
+        this.items = []
+      }
+
+      remove(item) {}
+
+      template() {
+        return (
+          <ul>
+            {this.items.map((item, index) => (
+              <li key={item.id} click={() => this.remove(item)}>
+                {item.label}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    }
+  `)
+
+  assert.match(output, /__getMapItemFromEvent/, 'item-only handler should call __getMapItemFromEvent helper')
+
+  const eventMethod = output.match(/__event_click_\d+\(e,\s*targetComponent\)\s*\{([\s\S]*?)\n {2}\}/)
+  assert.ok(eventMethod, 'event handler method should be generated')
+  assert.doesNotMatch(eventMethod![1], /indexOf/, 'item-only handler should not use indexOf')
+})
+
+test('map event handler using both item and index calls helper and uses indexOf', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class ItemList extends Component {
+      constructor() {
+        super()
+        this.items = []
+      }
+
+      update(item, idx) {}
+
+      template() {
+        return (
+          <ul>
+            {this.items.map((item, index) => (
+              <li key={item.id} click={() => this.update(item, index)}>
+                {item.label}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    }
+  `)
+
+  assert.match(output, /__getMapItemFromEvent/, 'both-needed handler should call __getMapItemFromEvent helper')
+  assert.match(output, /\.indexOf\(__el\.__geaItem\)/, 'should resolve index via indexOf on __geaItem')
+})

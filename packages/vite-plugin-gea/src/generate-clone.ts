@@ -7,6 +7,7 @@ import {
   getPropContext,
   getRootClassSelector,
   toGeaEventType,
+  EVENT_NAMES,
 } from './component-event-helpers.ts'
 import {
   buildTrimmedClassValueExpression,
@@ -16,39 +17,6 @@ import {
   isComponentTag,
   replacePropRefsInExpression,
 } from './utils.ts'
-
-const EVENT_NAMES = new Set([
-  'click',
-  'dblclick',
-  'mousedown',
-  'mouseup',
-  'mouseover',
-  'mouseout',
-  'mousemove',
-  'keydown',
-  'keyup',
-  'keypress',
-  'focus',
-  'blur',
-  'input',
-  'change',
-  'submit',
-  'scroll',
-  'touchstart',
-  'touchmove',
-  'touchend',
-  'tap',
-  'longTap',
-  'swipeRight',
-  'swipeUp',
-  'swipeLeft',
-  'swipeDown',
-  'dragstart',
-  'dragend',
-  'dragover',
-  'dragleave',
-  'drop',
-])
 
 const EVENT_TYPES = new Set([
   'click',
@@ -159,7 +127,7 @@ export function jsxToStaticHtml(
   node: t.JSXElement,
   refCounter: { value: number },
   elementPath: string[] = [],
-  isRoot = true,
+  _isRoot = true,
 ): string | null {
   const tagName = getJSXTagName(node.openingElement.name)
   const isComp = Boolean(tagName && isComponentTag(tagName))
@@ -263,7 +231,14 @@ export function collectClonePatchEntries(
     if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
     const name = attr.name.name
 
-    if (name === 'key' || name === 'id' || EVENT_NAMES.has(name)) continue
+    if (
+      name === 'key' ||
+      name === 'id' ||
+      name === 'ref' ||
+      EVENT_NAMES.has(name) ||
+      EVENT_NAMES.has(toGeaEventType(name))
+    )
+      continue
 
     if (!t.isJSXExpressionContainer(attr.value) || t.isJSXEmptyExpression(attr.value.expression)) continue
 

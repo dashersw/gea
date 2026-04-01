@@ -14,18 +14,6 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   return result
 }
 
-async function readChunks(stream: ReadableStream<Uint8Array>): Promise<string[]> {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  const chunks: string[] = []
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(decoder.decode(value))
-  }
-  return chunks
-}
-
 describe('createSSRStream', () => {
   it('produces valid HTML with all three sections', async () => {
     const stream = createSSRStream({
@@ -43,7 +31,9 @@ describe('createSSRStream', () => {
   it('shell chunk flushes before render completes', async () => {
     let renderCalled = false
     let releaseRender!: () => void
-    const renderGate = new Promise<void>((resolve) => { releaseRender = resolve })
+    const renderGate = new Promise<void>((resolve) => {
+      releaseRender = resolve
+    })
     const stream = createSSRStream({
       shellBefore: '<head>shell</head><body><div id="app">',
       shellAfter: '</div></body></html>',
@@ -60,7 +50,9 @@ describe('createSSRStream', () => {
     assert.ok(decoder.decode(first.value).includes('shell'))
     assert.ok(renderCalled, 'render should have been called')
     releaseRender()
-    while (!(await reader.read()).done) { /* drain */ }
+    while (!(await reader.read()).done) {
+      /* drain */
+    }
   })
 
   it('embeds state in a script tag', async () => {

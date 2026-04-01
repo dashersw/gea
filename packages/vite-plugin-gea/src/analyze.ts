@@ -23,6 +23,7 @@ import {
   getJSXTagName,
 } from './utils.ts'
 import { getTemplateParamBinding } from './template-param-utils.ts'
+import { EVENT_NAMES, toGeaEventType } from './component-event-helpers.ts'
 import { analyzeJSXInMap } from './analyze-map.ts'
 import {
   resolveExpr,
@@ -34,6 +35,7 @@ import {
   extractCallbackBodyStatements,
   normalizeDestructuredMapCallback,
   detectItemIdProperty,
+  extractKeyExpression,
   hasRootUserIdAttribute,
   detectContainerSelector,
   hasExplicitItemKey,
@@ -674,40 +676,17 @@ function analyzeAttributes(
     if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) return
     if (!attr.value || !t.isJSXExpressionContainer(attr.value)) return
     const name = attr.name.name
-    if (
-      [
-        'click',
-        'dblclick',
-        'change',
-        'input',
-        'keydown',
-        'keyup',
-        'blur',
-        'focus',
-        'mousedown',
-        'mouseup',
-        'submit',
-        'tap',
-        'longTap',
-        'swipeRight',
-        'swipeUp',
-        'swipeLeft',
-        'swipeDown',
-        'dragstart',
-        'dragend',
-        'dragover',
-        'dragleave',
-        'drop',
-      ].includes(name)
-    )
-      return
+    if (name === 'ref') return
+    if (EVENT_NAMES.has(name) || EVENT_NAMES.has(toGeaEventType(name))) return
     if (name === 'dangerouslySetInnerHTML') {
       // Track as a state-dependent binding for reactive innerHTML updates
       const expr = attr.value.expression
       if (templateSetupContext && !t.isJSXEmptyExpression(expr)) {
         const setupStatements = collectTemplateSetupStatements(expr, templateSetupContext)
         const dependencies = collectExpressionDependencies(expr, stateRefs, setupStatements)
-        const stateDeps = dependencies.filter((d) => d.storeVar || (d.pathParts.length > 0 && d.pathParts[0] !== 'props'))
+        const stateDeps = dependencies.filter(
+          (d) => d.storeVar || (d.pathParts.length > 0 && d.pathParts[0] !== 'props'),
+        )
         if (stateDeps.length > 0) {
           const selector = generateSelector(elementPath)
           propBindings.push({
@@ -1208,6 +1187,7 @@ function handleArrayMap(
         itemVariable: itemVar,
         ...(indexVar ? { indexVariable: indexVar } : {}),
         itemIdProperty: itemIdProp,
+        ...(!itemIdProp && hasExplicitItemKey(itemTemplate) ? { keyExpression: t.cloneNode(extractKeyExpression(itemTemplate)!, true) } : {}),
         rootHasUserId: hasRootUserIdAttribute(itemTemplate),
         computationExpr: t.cloneNode(normalizedArrayExpr, true),
         computationSetupStatements: computationSetupStatements.map((stmt) => t.cloneNode(stmt, true) as t.Statement),
@@ -1326,6 +1306,7 @@ function handleArrayMap(
     isImportedState: result.isImportedState || false,
     isKeyed,
     itemIdProperty: itemIdProperty || (isKeyed ? undefined : 'id'),
+    ...(!itemIdProperty && isKeyed ? { keyExpression: t.cloneNode(extractKeyExpression(itemTemplate)!, true) } : {}),
     classToggleName,
     conditionalBindings,
     ...(cbBodyStmts.length > 0 ? { callbackBodyStatements: cbBodyStmts } : {}),
@@ -1713,6 +1694,16 @@ function collectDependentPropNames(
   return Array.from(names)
 }
 
+function isInsideRefAttribute(path: NodePath): boolean {
+  let current: NodePath | null = path
+  while (current) {
+    if (t.isJSXAttribute(current.node) && t.isJSXIdentifier(current.node.name) && current.node.name.name === 'ref')
+      return true
+    current = current.parentPath
+  }
+  return false
+}
+
 function collectAllStateAccesses(
   templateMethod: ClassMethod,
   stateRefs: Map<string, StateRefMeta>,
@@ -1746,6 +1737,7 @@ function collectAllStateAccesses(
     noScope: true,
     Identifier(path: NodePath<t.Identifier>) {
       if (!stateRefs.has(path.node.name)) return
+      if (isInsideRefAttribute(path)) return
       const ref = stateRefs.get(path.node.name)!
       // Skip identifiers that are objects of property access — the MemberExpression
       // handler will register the deeper path (e.g. currentCategory.name → ["currentCategory", "name"]).
@@ -1789,6 +1781,7 @@ function collectAllStateAccesses(
     },
     MemberExpression(path: NodePath<t.MemberExpression>) {
       if (!t.isIdentifier(path.node.property)) return
+      if (isInsideRefAttribute(path)) return
 
       const parent = path.parentPath
       if (parent && t.isCallExpression(parent.node) && parent.node.callee === path.node) return

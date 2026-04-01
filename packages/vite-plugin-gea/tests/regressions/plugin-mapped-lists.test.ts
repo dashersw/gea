@@ -902,3 +902,128 @@ export default class App {
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('.map() with (item, index) callback exposes index inside the render method', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import store from './tab-store'
+
+    export default class TabBar extends Component {
+      template({ activeTabIndex, onTabChange }) {
+        return (
+          <div class="tab-titles">
+            {store.tabs.map((tab, index) => (
+              <button
+                key={tab.id}
+                class={\`ghost \${index === activeTabIndex ? "active" : ""}\`}
+                click={() => onTabChange(index)}
+              >
+                {tab.title}
+              </button>
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // The render/create method must accept index as a parameter (not just item)
+  assert.match(output, /render\w*Item\s*\(\s*\w+\s*,\s*\w+\s*\)/, 'render method must accept two params (item, index)')
+  // The index variable must appear in the render method body
+  assert.match(output, /activeTabIndex/, 'activeTabIndex prop reference must appear in compiled output')
+  // The index must not be undefined — it must be the actual second parameter
+  assert.doesNotMatch(
+    output,
+    /undefined\s*===\s*activeTabIndex|activeTabIndex\s*===\s*undefined/,
+    'index must not resolve to undefined',
+  )
+})
+
+test('store-only component array map generates __observeList and createdHooks', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import recordingStore from './recording-store'
+    import SidebarItem from './SidebarItem'
+
+    export default class RecordingSidebar extends Component {
+      template() {
+        return (
+          <div class="recordings">
+            {recordingStore.recordings.map((recording) => (
+              <SidebarItem key={recording.folder} folder={recording.folder} name={recording.name} />
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  assert.match(output, /__observeList/, 'must generate __observeList call for store-based component array')
+  assert.match(output, /createdHooks/, 'must generate createdHooks method')
+  assert.match(output, /_recordingsItems/, 'must generate _recordingsItems array')
+})
+
+test('template literal key expression is preserved in data-gea-item-id', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class TabBar extends Component {
+      template({ tabs, activeTabIndex, onTabChange }) {
+        return (
+          <div class="tab-titles">
+            {tabs.map((tab) => (
+              <button
+                key={\`\${tab.title}-button\`}
+                class="ghost"
+              >
+                {tab.title}
+              </button>
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // The key expression should use tab.title (not String(tab) which gives [object Object])
+  assert.doesNotMatch(
+    output,
+    /data-gea-item-id="\$\{String\(tab\)\}"/,
+    'must not stringify the whole item object as key — causes [object Object]',
+  )
+  // The template literal key should evaluate to something that includes tab.title
+  assert.match(
+    output,
+    /data-gea-item-id="[^"]*tab\.title|data-gea-item-id="[^"]*tab\?\.title/,
+    'data-gea-item-id must reference tab.title from the template literal key',
+  )
+})
+
+test('template literal key with index parameter does not produce ReferenceError', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class TagsInput extends Component {
+      template({ tags }) {
+        return (
+          <div class="tags">
+            {tags.map((tag, i) => (
+              <span key={\`\${tag}-\${i}\`} data-index={String(i)}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // The key function in __geaRegisterMap must accept both item and index params
+  assert.match(output, /\(__k,\s*__ki\)\s*=>/, 'key function must accept both item and index parameters')
+  // create/patch methods must use __idx, not the original 'i'
+  assert.match(
+    output,
+    /__geaKey = String\(`\$\{item}-\$\{__idx}`\)/,
+    'create/patch __geaKey must use __idx, not original index variable',
+  )
+})

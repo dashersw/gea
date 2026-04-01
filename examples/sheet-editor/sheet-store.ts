@@ -166,26 +166,29 @@ export class SheetStore extends Store {
         const next = { kind: 'err', message: '#CIRC!' } as const
         nextComputed[addr] = sameComputedCell(prevComputed[addr], next) ? prevComputed[addr]! : next
       }
-      this.computed = nextComputed
-      return
-    }
-
-    for (const addr of order) {
-      const body = getBodyFn(addr)
-      const res = evaluateFormula(body, (a) => {
-        const n = this.getNumericForEvalWith(nextComputed, a)
-        return n
-      })
-      if (res.ok === false) {
-        const next = { kind: 'err', message: res.error } as const
-        nextComputed[addr] = sameComputedCell(prevComputed[addr], next) ? prevComputed[addr]! : next
-      } else {
-        const next = { kind: 'num', value: res.value } as const
-        nextComputed[addr] = sameComputedCell(prevComputed[addr], next) ? prevComputed[addr]! : next
+    } else {
+      for (const addr of order) {
+        const body = getBodyFn(addr)
+        const res = evaluateFormula(body, (a) => {
+          const n = this.getNumericForEvalWith(nextComputed, a)
+          return n
+        })
+        if (res.ok === false) {
+          const next = { kind: 'err', message: res.error } as const
+          nextComputed[addr] = sameComputedCell(prevComputed[addr], next) ? prevComputed[addr]! : next
+        } else {
+          const next = { kind: 'num', value: res.value } as const
+          nextComputed[addr] = sameComputedCell(prevComputed[addr], next) ? prevComputed[addr]! : next
+        }
       }
     }
 
-    this.computed = nextComputed
+    for (const key of Object.keys(prevComputed)) {
+      if (!(key in nextComputed)) delete this.computed[key]
+    }
+    for (const [key, value] of Object.entries(nextComputed)) {
+      if (prevComputed[key] !== value) this.computed[key] = value
+    }
   }
 
   private getNumericForEvalWith(

@@ -76,10 +76,20 @@ async function main() {
     return {
       formatted: p.formatResults(results),
       json: p.exportJSON(results),
+      comparison: p.exportComparisonPairs(results),
     }
   })
 
   console.log(results.formatted)
+
+  if (results.comparison && results.comparison.length) {
+    console.log('\n── Direct vs click (avg ms) ──────────────────────────────')
+    for (const row of results.comparison) {
+      console.log(
+        `  ${row.name.padEnd(40)} direct ${String(row.avgTotalMsDirect).padStart(8)}  click ${String(row.avgTotalMsClick).padStart(8)}  Δ ${String(row.deltaTotalMs).padStart(8)}  (sync Δ ${String(row.deltaSyncMs).padStart(8)})`,
+      )
+    }
+  }
 
   // Also output JSON summary
   console.log('\n── JSON Summary ─────────────────────────────────────────')

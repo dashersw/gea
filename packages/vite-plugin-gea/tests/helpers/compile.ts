@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { ResolvedConfig } from 'vite'
 import { geaPlugin } from '../../src/index'
 import { __escapeHtml, __sanitizeAttr } from '../../../gea/src/lib/base/component'
+import type { GeaHmrBindings } from './gea-hmr-runtime'
 
 const HELPERS_DIR = dirname(fileURLToPath(import.meta.url))
 
@@ -33,6 +35,63 @@ export async function transformGeaSourceToEvalBody(source: string, id: string): 
     .replace(/^import\s+['"][^'"]+['"];?\s*$/gm, '')
     .replaceAll('import.meta.hot', 'undefined')
     .replaceAll('import.meta.url', '""')
+    .replace(/export default class\s+/g, 'class ')
+    .replace(/export default function\s+/g, 'function ')
+    .replace(/export class\s+/g, 'class ')
+    .replace(/^export type\s+[^;]+;?\s*$/gm, '')
+    .replace(/export\s*\{[^}]*\}\s*;?/g, '')
+}
+
+function parseNamedImportBindings(namesStr: string): string[] {
+  return namesStr.split(',').map((part) => {
+    const p = part.trim()
+    const m = p.match(/^(\w+)\s+as\s+(\w+)$/)
+    if (m) return m[2]!
+    return p
+  })
+}
+
+/**
+ * Same as {@link transformGeaSourceToEvalBody}, but keeps the HMR block alive:
+ * `import.meta.hot` → `globalThis.__geaHmrTestHot`, `import.meta.url` → `moduleUrl`,
+ * and `virtual:gea-hmr` imports become `const { … } = __geaHmrBindings`.
+ */
+export async function transformGeaSourceToEvalBodyForHmr(
+  source: string,
+  id: string,
+  moduleUrl: string,
+): Promise<string> {
+  const plugin = geaPlugin()
+  const configResolved = plugin.configResolved
+  if (typeof configResolved === 'function') {
+    configResolved.call({} as never, { command: 'serve' } as ResolvedConfig)
+  }
+  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
+  const result = await transform?.call({} as never, source, id)
+  assert.ok(result)
+
+  let code = typeof result === 'string' ? result : result.code
+
+  const esbuild = await import('esbuild')
+  const stripped = await esbuild.transform(code, { loader: 'ts', target: 'esnext' })
+  code = stripped.code
+
+  let hmrBindingNames: string[] = []
+  code = code.replace(/import\s*\{([^}]+)\}\s*from\s*['"]virtual:gea-hmr['"]\s*;?/g, (_m, names: string) => {
+    hmrBindingNames = parseNamedImportBindings(names)
+    return ''
+  })
+
+  const hmrPrelude = hmrBindingNames.length > 0 ? `const { ${hmrBindingNames.join(', ')} } = __geaHmrBindings;\n` : ''
+
+  code = hmrPrelude + code
+
+  return code
+    .replace(/^import .*;$/gm, '')
+    .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
+    .replace(/^import\s+['"][^'"]+['"];?\s*$/gm, '')
+    .replaceAll('import.meta.hot', 'globalThis.__geaHmrTestHot')
+    .replaceAll('import.meta.url', JSON.stringify(moduleUrl))
     .replace(/export default class\s+/g, 'class ')
     .replace(/export default function\s+/g, 'function ')
     .replace(/export class\s+/g, 'class ')
@@ -73,6 +132,28 @@ export async function compileJsxComponent(
   const compiledSource = `${body}
 return ${className};`
   return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings))
+}
+
+/**
+ * Like {@link compileJsxComponent}, but wires `virtual:gea-hmr` to `hmrBindings` and uses `moduleUrl`
+ * as `import.meta.url` so `registerHotModule` / proxies resolve consistently.
+ */
+export async function compileJsxComponentForHmr(
+  source: string,
+  id: string,
+  moduleUrl: string,
+  className: string,
+  bindings: Record<string, unknown>,
+  hmrBindings: GeaHmrBindings,
+) {
+  const allBindings = { ..._xssHelpers, ...bindings }
+  const body = await transformGeaSourceToEvalBodyForHmr(source, id, moduleUrl)
+  const compiledSource = `${body}
+return ${className};`
+  return new Function(...Object.keys(allBindings), '__geaHmrBindings', compiledSource)(
+    ...Object.values(allBindings),
+    hmrBindings,
+  )
 }
 
 export async function loadRuntimeModules(seed: string) {

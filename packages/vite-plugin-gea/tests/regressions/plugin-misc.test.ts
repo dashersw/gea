@@ -473,6 +473,130 @@ test('HMR runtime skips accessor properties during state snapshot', () => {
   )
 })
 
+test('ref attribute does not generate a reactive observer', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class ChatInput extends Component {
+      myTextarea = null
+      template() {
+        return (
+          <div>
+            <textarea ref={this.myTextarea}></textarea>
+            <button onclick={this.trySubmit}>Send</button>
+          </div>
+        )
+      }
+      trySubmit() {
+        console.log(this.myTextarea)
+      }
+    }
+  `)
+
+  assert.doesNotMatch(
+    output,
+    /__observe_local_myTextarea|__observe.*myTextarea/,
+    'ref binding must not generate a reactive observer for the ref target property',
+  )
+  assert.doesNotMatch(
+    output,
+    /setAttribute\(\s*["']ref["']/,
+    'ref must not be set as an HTML attribute in observer or clone patch',
+  )
+  assert.doesNotMatch(
+    output,
+    /removeAttribute\(\s*["']ref["']/,
+    'ref must not be removed as an HTML attribute in observer or clone patch',
+  )
+  assert.match(output, /data-gea-ref/, 'ref should still produce data-gea-ref marker')
+  assert.match(output, /__setupRefs/, 'ref should still generate __setupRefs method')
+})
+
+test('ref attribute does not generate clone patch entry', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class Canvas extends Component {
+      canvasEl = null
+      template() {
+        return <canvas ref={this.canvasEl} width="800" height="600" />
+      }
+    }
+  `)
+
+  assert.doesNotMatch(
+    output,
+    /\.setAttribute\(\s*["']ref["']/,
+    'clone template must not patch ref as an HTML attribute',
+  )
+  assert.doesNotMatch(
+    output,
+    /__observe_local_canvasEl|__observe.*canvasEl/,
+    'ref target must not generate a reactive observer',
+  )
+})
+
+test('onclick (on-prefixed) event does not generate clone patch entry or observer', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class Button extends Component {
+      template() {
+        return <button onclick={this.handleClick}>Click</button>
+      }
+      handleClick() {}
+    }
+  `)
+
+  assert.doesNotMatch(
+    output,
+    /\.setAttribute\(\s*["']onclick["']/,
+    'onclick must not be set as an HTML attribute in clone patch',
+  )
+  assert.doesNotMatch(
+    output,
+    /__observe_local_handleClick/,
+    'onclick handler must not generate a reactive observer',
+  )
+})
+
+test('ref with onclick: ref gets marker, neither generates observer', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+
+    export default class Form extends Component {
+      inputEl = null
+      template() {
+        return (
+          <form>
+            <input ref={this.inputEl} />
+            <button onclick={this.submit}>Go</button>
+          </form>
+        )
+      }
+      submit() {}
+    }
+  `)
+
+  assert.match(output, /data-gea-ref/, 'ref marker should be present')
+  assert.match(output, /__setupRefs/, '__setupRefs should be generated')
+  assert.doesNotMatch(
+    output,
+    /__observe_local_inputEl/,
+    'ref target must not have a reactive observer',
+  )
+  assert.doesNotMatch(
+    output,
+    /\.setAttribute\(\s*["']ref["']/,
+    'ref must not appear as HTML attribute in clone patch',
+  )
+  assert.doesNotMatch(
+    output,
+    /\.setAttribute\(\s*["']onclick["']/,
+    'onclick must not appear as HTML attribute in clone patch',
+  )
+})
+
 test('plugin skips HMR injection for build transforms', async () => {
   const plugin = geaPlugin()
   const configResolved =

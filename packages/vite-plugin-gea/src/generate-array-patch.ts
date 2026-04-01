@@ -20,6 +20,26 @@ import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const traverse = require('@babel/traverse').default
 
+/** Rewrite occurrences of variable names in a cloned expression (for key expressions). */
+export function rewriteItemVarInExpression(
+  expr: t.Expression,
+  fromVar: string,
+  toVar: string,
+  renames?: Map<string, string>,
+): t.Expression {
+  const renameMap = new Map(renames || [])
+  renameMap.set(fromVar, toVar)
+  const cloned = t.cloneNode(expr, true)
+  traverse(t.program([t.expressionStatement(cloned)]), {
+    noScope: true,
+    Identifier(path: NodePath<t.Identifier>) {
+      const replacement = renameMap.get(path.node.name)
+      if (replacement) path.node.name = replacement
+    },
+  })
+  return cloned
+}
+
 interface PatchEntry {
   childPath: number[]
   type: 'text' | 'className' | 'attribute'
@@ -112,20 +132,71 @@ function collectItemTemplatePropTree(template: t.JSXElement | t.JSXFragment, ite
   return tree
 }
 
-function buildDummyFromTree(tree: DummyPropTree, keyPathParts: string[] | null): t.ObjectExpression {
+/** Member chain from `item` to callee, e.g. `tab.content()` → ['content'], `tab.a.b()` → ['a','b']. */
+function getCalleeMemberChainFromItem(callee: t.Expression, itemVar: string): string[] | null {
+  const chain: string[] = []
+  let node: t.Expression = callee
+  while (t.isMemberExpression(node) && !node.computed && t.isIdentifier(node.property)) {
+    chain.unshift(node.property.name)
+    node = node.object as t.Expression
+  }
+  if (!t.isIdentifier(node, { name: itemVar }) || chain.length === 0) return null
+  return chain
+}
+
+/** Properties invoked as `item.foo()` need function dummies in template init, not strings. */
+function collectItemCalleePropertyPaths(template: t.JSXElement | t.JSXFragment, itemVar: string): Set<string> {
+  const paths = new Set<string>()
+  const program = t.program([t.expressionStatement(t.cloneNode(template, true))])
+  traverse(program, {
+    noScope: true,
+    CallExpression(path: NodePath<t.CallExpression>) {
+      const chain = getCalleeMemberChainFromItem(path.node.callee, itemVar)
+      if (chain) paths.add(chain.join('.'))
+    },
+  })
+  return paths
+}
+
+function buildDummyFromTree(
+  tree: DummyPropTree,
+  keyPathParts: string[] | null,
+  calleePaths: Set<string>,
+  pathPrefix: string[] = [],
+): t.ObjectExpression {
   const props: t.ObjectProperty[] = []
   for (const [key, value] of Object.entries(tree)) {
+    const pathHere = [...pathPrefix, key]
+    const pathStr = pathHere.join('.')
     const matchesKeyPath = keyPathParts && keyPathParts.length > 0 && keyPathParts[0] === key
     if (matchesKeyPath && keyPathParts!.length === 1) {
       props.push(t.objectProperty(t.identifier(key), t.numericLiteral(0)))
     } else if (matchesKeyPath) {
       props.push(
-        t.objectProperty(t.identifier(key), buildDummyFromTree(value === true ? {} : value, keyPathParts!.slice(1))),
+        t.objectProperty(
+          t.identifier(key),
+          buildDummyFromTree(
+            value === true ? {} : (value as DummyPropTree),
+            keyPathParts!.slice(1),
+            calleePaths,
+            pathHere,
+          ),
+        ),
       )
     } else if (value === true) {
-      props.push(t.objectProperty(t.identifier(key), t.stringLiteral(' ')))
+      props.push(
+        t.objectProperty(
+          t.identifier(key),
+          calleePaths.has(pathStr)
+            ? // Return empty string so `${item.content()}` in template init does not inject "null" / escaped markup.
+              t.arrowFunctionExpression([], t.stringLiteral(''), true)
+            : t.stringLiteral(' '),
+        ),
+      )
     } else {
-      props.push(t.objectProperty(t.identifier(key), buildDummyFromTree(value, null)))
+      props.push(
+        t.objectProperty(t.identifier(key), buildDummyFromTree(value as DummyPropTree, null, calleePaths, pathHere)),
+      )
     }
   }
   return t.objectExpression(props)
@@ -142,7 +213,6 @@ export function generatePatchItemMethod(
   const arrayName = arrayPath.replace(/\./g, '')
   const capName = arrayName.charAt(0).toUpperCase() + arrayName.slice(1)
   const methodName = `patch${capName}Item`
-  const containerProp = `__${arrayPath.replace(/\./g, '_')}_container`
   const itemIdProperty = arrayMap.itemIdProperty
 
   const itemTemplateRootIsComponent =
@@ -337,12 +407,26 @@ export function generatePatchItemMethod(
                   t.stringLiteral(entry.attributeName!),
                 ]),
               ),
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(navExpr, t.identifier('setAttribute')), [
-                  t.stringLiteral(entry.attributeName!),
-                  t.callExpression(t.identifier('String'), [attrVal]),
+              t.blockStatement([
+                t.variableDeclaration('const', [
+                  t.variableDeclarator(t.identifier('__newAttr'), t.callExpression(t.identifier('String'), [attrVal])),
                 ]),
-              ),
+                t.ifStatement(
+                  t.binaryExpression(
+                    '!==',
+                    t.callExpression(t.memberExpression(t.cloneNode(navExpr, true), t.identifier('getAttribute')), [
+                      t.stringLiteral(entry.attributeName!),
+                    ]),
+                    t.identifier('__newAttr'),
+                  ),
+                  t.expressionStatement(
+                    t.callExpression(t.memberExpression(t.cloneNode(navExpr, true), t.identifier('setAttribute')), [
+                      t.stringLiteral(entry.attributeName!),
+                      t.identifier('__newAttr'),
+                    ]),
+                  ),
+                ),
+              ]),
             ),
           )
         }
@@ -351,8 +435,10 @@ export function generatePatchItemMethod(
     }
   }
 
-  const rawItemIdExpr =
-    itemIdProperty && itemIdProperty !== ITEM_IS_KEY
+  const keyRenames = arrayMap.indexVariable ? new Map([[arrayMap.indexVariable, '__idx']]) : undefined
+  const rawItemIdExpr = arrayMap.keyExpression
+    ? t.cloneNode(rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item', keyRenames), true)
+    : itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
       : t.identifier('item')
   const itemIdExpr = t.callExpression(t.identifier('String'), [rawItemIdExpr])
@@ -381,36 +467,6 @@ export function generatePatchItemMethod(
   )
 
   const patchPrivateFields: string[] = [rowElsProp]
-  if (false && arrayMap.containerBindingId) {
-    const bindId = arrayMap.containerBindingId
-    const privateIdField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__id')))
-    patchPrivateFields.push('__id')
-    body.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(elVar, t.identifier('id')),
-          t.binaryExpression(
-            '+',
-            t.binaryExpression(
-              '+',
-              t.logicalExpression(
-                '||',
-                t.cloneNode(privateIdField),
-                t.assignmentExpression(
-                  '=',
-                  t.cloneNode(privateIdField),
-                  t.memberExpression(t.thisExpression(), t.identifier('id_')),
-                ),
-              ),
-              t.stringLiteral('-' + bindId + '-gk-'),
-            ),
-            t.cloneNode(itemIdExpr, true),
-          ),
-        ),
-      ),
-    )
-  }
 
   body.push(
     t.expressionStatement(
@@ -426,6 +482,29 @@ export function generatePatchItemMethod(
   }
 }
 
+/** `item.foo()` / `tab.content()` must rerender; `String(item.x)` is still patchable text. */
+function textPatchHasItemMethodCall(expr: t.Expression, itemVar: string): boolean {
+  const calleeIsItemMethod = (callee: t.Expression): boolean =>
+    t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.object, { name: itemVar })
+  const visit = (e: t.Expression): boolean => {
+    let found = false
+    traverse(t.program([t.expressionStatement(t.cloneNode(e, true))]), {
+      noScope: true,
+      CallExpression(p: NodePath<t.CallExpression>) {
+        if (calleeIsItemMethod(p.node.callee)) {
+          found = true
+          p.stop()
+        }
+      },
+    })
+    return found
+  }
+  if (t.isTemplateLiteral(expr)) {
+    return expr.expressions.some((ex) => visit(ex as t.Expression))
+  }
+  return visit(expr)
+}
+
 export function collectPatchEntries(arrayMap: ArrayMapBinding): PatchPlan {
   const cloned = t.cloneNode(arrayMap.itemTemplate!, true) as t.JSXElement | t.JSXFragment
   const tempFile = t.file(t.program([t.expressionStatement(cloned)]))
@@ -439,7 +518,7 @@ export function collectPatchEntries(arrayMap: ArrayMapBinding): PatchPlan {
 
   const modified = (tempFile.program.body[0] as t.ExpressionStatement).expression
   const entries: PatchEntry[] = []
-  const requiresRerender = templateRequiresRerender(tempFile)
+  let requiresRerender = templateRequiresRerender(tempFile)
   if (t.isJSXElement(modified)) {
     const rootTagName = getJSXTagName(modified.openingElement.name)
     const rootIsComponent = isComponentTag(rootTagName)
@@ -447,6 +526,16 @@ export function collectPatchEntries(arrayMap: ArrayMapBinding): PatchPlan {
   }
   for (const ent of entries) {
     ent.expression = optionalizeMemberChainsAfterComputedItemKey(ent.expression, 'item')
+  }
+  // Patching `row.firstChild.nodeValue = \`...\${item.content()}\`` stringifies component returns.
+  // Patch entries always use the name `item` (see Identifier rename above).
+  if (!requiresRerender) {
+    for (const ent of entries) {
+      if (ent.type === 'text' && textPatchHasItemMethodCall(ent.expression, 'item')) {
+        requiresRerender = true
+        break
+      }
+    }
   }
   return { entries, requiresRerender }
 }
@@ -799,10 +888,14 @@ export function generateCreateItemMethod(
   const propTree = collectItemTemplatePropTree(arrayMap.itemTemplate!, arrayMap.itemVariable)
 
   const containerRef = t.memberExpression(t.thisExpression(), t.identifier(containerProp))
-  const privateDcField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__dc')))
+  // Each .map() needs its own template-cache field; sharing `#__dc` makes the second map reuse the
+  // first map's container ref and corrupt DOM (e.g. two tabs.map() in one component).
+  const dcFieldSuffix = arrayMap.containerBindingId ?? arrayPath.replace(/\./g, '_')
+  const dcPrivateName = `__dc_${dcFieldSuffix}`
+  const privateDcField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier(dcPrivateName)))
   const cVar = t.identifier('__c')
   const elVar = t.identifier('el')
-  const privateFields: string[] = ['__dc']
+  const privateFields: string[] = [dcPrivateName]
 
   const body: t.Statement[] = []
 
@@ -839,12 +932,16 @@ export function generateCreateItemMethod(
     ]),
   )
 
-  const isPrimitiveKey = !itemIdProperty || itemIdProperty === ITEM_IS_KEY
+  // String `__dummy__` is only valid when the row template never reads the item as an object
+  // (no keyExpression / no member access). Otherwise template init calls e.g. `item.content()` and crashes.
+  const isPrimitiveKey =
+    (itemIdProperty === ITEM_IS_KEY || !itemIdProperty) && !arrayMap.keyExpression && Object.keys(propTree).length === 0
+  const calleePaths = collectItemCalleePropertyPaths(arrayMap.itemTemplate!, arrayMap.itemVariable)
   const dummyItem: t.Expression = isPrimitiveKey
     ? t.stringLiteral('__dummy__')
     : (() => {
         if (itemIdProperty) ensureDummyTreePath(propTree, itemIdProperty)
-        return buildDummyFromTree(propTree, itemIdProperty ? normalizePathParts(itemIdProperty) : null)
+        return buildDummyFromTree(propTree, itemIdProperty ? normalizePathParts(itemIdProperty) : null, calleePaths)
       })()
 
   const hasRootClassNamePatch = patchedEntries.some((e) => e.type === 'className' && e.childPath.length === 0)
@@ -1103,12 +1200,26 @@ export function generateCreateItemMethod(
                   t.stringLiteral(entry.attributeName!),
                 ]),
               ),
-              t.expressionStatement(
-                t.callExpression(t.memberExpression(navExpr, t.identifier('setAttribute')), [
-                  t.stringLiteral(entry.attributeName!),
-                  t.callExpression(t.identifier('String'), [attrVal]),
+              t.blockStatement([
+                t.variableDeclaration('const', [
+                  t.variableDeclarator(t.identifier('__newAttr'), t.callExpression(t.identifier('String'), [attrVal])),
                 ]),
-              ),
+                t.ifStatement(
+                  t.binaryExpression(
+                    '!==',
+                    t.callExpression(t.memberExpression(t.cloneNode(navExpr, true), t.identifier('getAttribute')), [
+                      t.stringLiteral(entry.attributeName!),
+                    ]),
+                    t.identifier('__newAttr'),
+                  ),
+                  t.expressionStatement(
+                    t.callExpression(t.memberExpression(t.cloneNode(navExpr, true), t.identifier('setAttribute')), [
+                      t.stringLiteral(entry.attributeName!),
+                      t.identifier('__newAttr'),
+                    ]),
+                  ),
+                ),
+              ]),
             ),
           )
         }
@@ -1117,8 +1228,13 @@ export function generateCreateItemMethod(
     }
   }
 
-  const rawPatchItemIdExpr =
-    itemIdProperty && itemIdProperty !== ITEM_IS_KEY
+  const createKeyRenames = arrayMap.indexVariable ? new Map([[arrayMap.indexVariable, '__idx']]) : undefined
+  const rawPatchItemIdExpr = arrayMap.keyExpression
+    ? t.cloneNode(
+        rewriteItemVarInExpression(arrayMap.keyExpression, arrayMap.itemVariable, 'item', createKeyRenames),
+        true,
+      )
+    : itemIdProperty && itemIdProperty !== ITEM_IS_KEY
       ? t.logicalExpression('??', buildOptionalMemberChain(t.identifier('item'), itemIdProperty), t.identifier('item'))
       : t.identifier('item')
   const patchItemIdExpr = t.callExpression(t.identifier('String'), [rawPatchItemIdExpr])
@@ -1127,37 +1243,6 @@ export function generateCreateItemMethod(
       t.assignmentExpression('=', t.memberExpression(elVar, t.identifier('__geaKey')), patchItemIdExpr),
     ),
   )
-
-  if (false) {
-    const bindId = arrayMap.containerBindingId!
-    const privateIdField = t.memberExpression(t.thisExpression(), t.privateName(t.identifier('__id')))
-    privateFields.push('__id')
-    body.push(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.memberExpression(elVar, t.identifier('id')),
-          t.binaryExpression(
-            '+',
-            t.binaryExpression(
-              '+',
-              t.logicalExpression(
-                '||',
-                t.cloneNode(privateIdField),
-                t.assignmentExpression(
-                  '=',
-                  t.cloneNode(privateIdField),
-                  t.memberExpression(t.thisExpression(), t.identifier('id_')),
-                ),
-              ),
-              t.stringLiteral('-' + bindId + '-gk-'),
-            ),
-            t.cloneNode(itemIdExpr, true),
-          ),
-        ),
-      ),
-    )
-  }
 
   body.push(
     t.expressionStatement(

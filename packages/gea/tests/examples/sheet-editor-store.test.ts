@@ -80,4 +80,43 @@ describe('examples/sheet-editor SheetStore', () => {
     s.moveSelection(0, 1)
     assert.equal(s.activeAddress, 'A20')
   })
+
+  it('recalc with no formulas should not trigger computed observer', async () => {
+    let computedObserverCalls = 0
+    s.observe('computed', () => {
+      computedObserverCalls++
+    })
+
+    s.setCellRaw('A1', 'hello')
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+
+    assert.equal(
+      computedObserverCalls,
+      0,
+      `computed observer fired ${computedObserverCalls} time(s) even though there are no formula cells — recalc() should not reassign this.computed`,
+    )
+  })
+
+  it('recalc after non-formula edit should not trigger computed observer', async () => {
+    s.setCellRaw('A1', '10')
+    s.setCellRaw('B1', '=A1*2')
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+
+    let computedObserverCalls = 0
+    s.observe('computed', () => {
+      computedObserverCalls++
+    })
+
+    s.setCellRaw('C1', '42')
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+
+    assert.equal(
+      computedObserverCalls,
+      0,
+      `computed observer fired ${computedObserverCalls} time(s) even though no formula results changed — recalc() should not reassign this.computed when formula values are identical`,
+    )
+  })
 })

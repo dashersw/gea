@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom'
 import { parseSource } from '../src/parse'
 import { transformComponentFile } from '../src/transform-component'
 import { geaPlugin } from '../src/index'
+import { __escapeHtml, __sanitizeAttr } from '../../gea/src/lib/base/component'
 
 const generate = 'default' in babelGenerator ? babelGenerator.default : babelGenerator
 
@@ -56,6 +57,7 @@ function installDom() {
     window: globalThis.window,
     document: globalThis.document,
     HTMLElement: globalThis.HTMLElement,
+    Element: globalThis.Element,
     Node: globalThis.Node,
     NodeFilter: globalThis.NodeFilter,
     MutationObserver: globalThis.MutationObserver,
@@ -69,6 +71,7 @@ function installDom() {
     window: dom.window,
     document: dom.window.document,
     HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
     Node: dom.window.Node,
     NodeFilter: dom.window.NodeFilter,
     MutationObserver: dom.window.MutationObserver,
@@ -494,5 +497,275 @@ export default class MultiStore extends Store {
     )
   } finally {
     await rm(dir, { recursive: true, force: true })
+  }
+})
+
+async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
+  const allBindings = { __escapeHtml, __sanitizeAttr, ...bindings }
+  const plugin = geaPlugin()
+  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
+  const result = await transform?.call({} as never, source, id)
+  assert.ok(result)
+
+  const code = typeof result === 'string' ? result : result.code
+  const compiledSource = `${code
+    .replace(/^import .*;$/gm, '')
+    .replaceAll('import.meta.hot', 'undefined')
+    .replaceAll('import.meta.url', '""')
+    .replace(/export default class\s+/, 'class ')}
+return ${className};`
+
+  return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings))
+}
+
+// --- setAttribute equality guard ---
+
+test('compiler should generate equality guard for setAttribute on attribute bindings', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gea-attr-guard-'))
+
+  try {
+    const storePath = join(dir, 'grid-store.ts')
+    const componentPath = join(dir, 'Cell.jsx')
+
+    await writeFile(
+      storePath,
+      `import { Store } from '@geajs/core'
+export default class GridStore extends Store {
+  activeId = 0
+}`,
+    )
+
+    const output = await transformWithFile(
+      `
+        import { Component } from '@geajs/core'
+        import store from './grid-store'
+
+        export default class Cell extends Component {
+          template() {
+            return <td tabIndex={store.activeId === 99 ? 0 : -1}>cell</td>
+          }
+        }
+      `,
+      componentPath,
+    )
+
+    // className gets: if (__el.className !== __newClass) __el.className = __newClass
+    // setAttribute should similarly guard with a value comparison before writing.
+    // Currently the compiler emits unconditional setAttribute — this test should FAIL.
+    assert.match(
+      output,
+      /getAttribute\(["']tabIndex["']\)|tabIndex["']\)\s*!==|__prevAttr/,
+      'setAttribute for tabIndex should be guarded by an equality check, like className is',
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('store observer should not call setAttribute when attribute value has not changed', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `attr-guard-rt-${Date.now()}`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    const store = new (class extends Store {
+      activeId = 1
+    })()
+
+    const CellClass = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import store from './store.ts'
+
+        export default class Cell extends Component {
+          template() {
+            return <td tabIndex={store.activeId === 99 ? 0 : -1}>cell</td>
+          }
+        }
+      `,
+      '/virtual/Cell.jsx',
+      'Cell',
+      { Component, store },
+    )
+
+    const cell = new CellClass()
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    cell.render(root)
+    await flushMicrotasks()
+
+    const td = cell.el as HTMLElement
+    assert.equal(td.tagName, 'TD')
+    assert.equal(td.getAttribute('tabIndex'), '-1')
+
+    let setAttributeCalls = 0
+    const originalSetAttribute = td.setAttribute.bind(td)
+    td.setAttribute = function (name: string, value: string) {
+      setAttributeCalls++
+      return originalSetAttribute(name, value)
+    }
+
+    // activeId changes from 1 to 2 — neither is 99, so tabIndex stays -1.
+    // The observer fires, but setAttribute should be skipped since the value didn't change.
+    store.activeId = 2
+    await flushMicrotasks()
+
+    assert.equal(td.getAttribute('tabIndex'), '-1', 'tabIndex value should still be -1')
+    assert.equal(
+      setAttributeCalls,
+      0,
+      `setAttribute was called ${setAttributeCalls} time(s) on the td even though tabIndex value did not change (was -1, still -1)`,
+    )
+
+    cell.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('map-item patch method should generate equality guard for setAttribute on attribute bindings', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gea-map-attr-guard-'))
+
+  try {
+    const storePath = join(dir, 'grid-store.ts')
+    const componentPath = join(dir, 'Grid.jsx')
+
+    await writeFile(
+      storePath,
+      `import { Store } from '@geajs/core'
+export default class GridStore extends Store {
+  activeId = 0
+  items = [{ id: 1 }, { id: 2 }, { id: 3 }]
+}`,
+    )
+
+    const output = await transformWithFile(
+      `
+        import { Component } from '@geajs/core'
+        import store from './grid-store'
+
+        export default class Grid extends Component {
+          template() {
+            return (
+              <table>
+                <tbody>
+                  {store.items.map(item => (
+                    <tr key={item.id} tabIndex={store.activeId === item.id ? 0 : -1}>
+                      <td>{item.id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          }
+        }
+      `,
+      componentPath,
+    )
+
+    assert.match(
+      output,
+      /getAttribute\(["']tabIndex["']\)/,
+      'map-item patch setAttribute for tabIndex should be guarded by a getAttribute equality check',
+    )
+
+    const setAttrMatches = output.match(/\.setAttribute\(["']tabIndex["']/g) || []
+    const getAttrMatches = output.match(/\.getAttribute\(["']tabIndex["']/g) || []
+    assert.ok(
+      getAttrMatches.length >= setAttrMatches.length,
+      `Every setAttribute("tabIndex") should have a corresponding getAttribute guard. ` +
+        `Found ${setAttrMatches.length} setAttribute but only ${getAttrMatches.length} getAttribute`,
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('selecting a cell in a grid should only mutate the old and new selected cells, not all cells', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `grid-select-${Date.now()}`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    const store = new (class extends Store {
+      activeId = 1
+    })()
+
+    const CellClass = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import store from './store.ts'
+
+        export default class GridCell extends Component {
+          template() {
+            const selected = store.activeId === this.props.id
+            return (
+              <td
+                class={selected ? 'cell selected' : 'cell'}
+                tabIndex={selected ? 0 : -1}
+              >
+                {this.props.label}
+              </td>
+            )
+          }
+        }
+      `,
+      '/virtual/GridCell.jsx',
+      'GridCell',
+      { Component, store },
+    )
+
+    const CELL_COUNT = 10
+    const cells: InstanceType<typeof CellClass>[] = []
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    for (let i = 1; i <= CELL_COUNT; i++) {
+      const cell = new CellClass({ id: i, label: `cell-${i}` })
+      cell.render(root)
+      cells.push(cell)
+    }
+    await flushMicrotasks()
+
+    assert.equal(cells[0].el.className, 'cell selected')
+    assert.equal(cells[1].el.className, 'cell')
+
+    const mutations: string[] = []
+    const observer = new MutationObserver((records) => {
+      for (const r of records) {
+        if (r.type === 'attributes') {
+          mutations.push(`attr:${r.attributeName}:${(r.target as HTMLElement).getAttribute(r.attributeName!)}`)
+        } else if (r.type === 'characterData') {
+          mutations.push(`text:${r.target.nodeValue}`)
+        } else if (r.type === 'childList') {
+          mutations.push(`childList:+${r.addedNodes.length}:-${r.removedNodes.length}`)
+        }
+      }
+    })
+
+    for (const cell of cells) {
+      observer.observe(cell.el, { attributes: true, characterData: true, childList: true, subtree: true })
+    }
+
+    store.activeId = 3
+    await flushMicrotasks()
+    await new Promise((r) => setTimeout(r, 10))
+    observer.disconnect()
+
+    assert.equal(cells[0].el.className, 'cell', 'old selected cell should lose selected class')
+    assert.equal(cells[2].el.className, 'cell selected', 'new selected cell should gain selected class')
+    assert.equal(cells[2].el.getAttribute('tabIndex'), '0')
+    assert.equal(cells[0].el.getAttribute('tabIndex'), '-1')
+
+    // Only the old selected (cell 1) and new selected (cell 3) should have DOM mutations.
+    // All other 8 cells should have ZERO mutations — their class and tabIndex didn't change.
+    assert.ok(
+      mutations.length <= 4,
+      `Expected at most 4 DOM mutations (2 class + 2 tabIndex) but got ${mutations.length}: ${JSON.stringify(mutations)}`,
+    )
+
+    for (const cell of cells) cell.dispose()
+  } finally {
+    restoreDom()
   }
 })

@@ -57,7 +57,6 @@ import {
   resolvePath,
   pruneUnusedSetupDestructuring,
   earlyReturnFalsyBindingName,
-  cacheThisIdInMethod,
   optionalizeBindingRootInStatements,
   optionalizeMemberChainsFromBindingRoot,
 } from './utils.ts'
@@ -534,6 +533,19 @@ export function applyStaticReactivity(
         ClassDeclaration(classPath: NodePath<t.ClassDeclaration>) {
           if (!t.isIdentifier(classPath.node.id) || classPath.node.id.name !== className) return
 
+          // Extract original (pre-transform) class body for JSX detection in render props.
+          // The current classPath.node.body has JSX already compiled away.
+          let originalClassBody: t.ClassBody | undefined
+          traverse(originalAST, {
+            noScope: true,
+            ClassDeclaration(origClass: NodePath<t.ClassDeclaration>) {
+              if (t.isIdentifier(origClass.node.id) && origClass.node.id.name === className) {
+                originalClassBody = origClass.node.body
+                origClass.stop()
+              }
+            },
+          })
+
           const templateMethod = classPath.node.body.body.find(
             (n): n is t.ClassMethod => t.isClassMethod(n) && t.isIdentifier(n.key) && n.key.name === 'template',
           )
@@ -669,28 +681,24 @@ export function applyStaticReactivity(
                   t.assignmentExpression(
                     '=',
                     t.identifier('__tn'),
-                    t.callExpression(
-                      t.memberExpression(t.identifier('document'), t.identifier('createTextNode')),
-                      [t.cloneNode(valueExpr, true)],
-                    ),
+                    t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createTextNode')), [
+                      t.cloneNode(valueExpr, true),
+                    ]),
                   ),
                 ),
                 t.expressionStatement(
-                  t.callExpression(
-                    t.memberExpression(t.identifier('__el'), t.identifier('insertBefore')),
-                    [
-                      t.identifier('__tn'),
-                      t.logicalExpression(
-                        '||',
-                        t.memberExpression(
-                          t.memberExpression(t.identifier('__el'), t.identifier('childNodes')),
-                          t.cloneNode(tnIdx, true),
-                          true,
-                        ),
-                        t.nullLiteral(),
+                  t.callExpression(t.memberExpression(t.identifier('__el'), t.identifier('insertBefore')), [
+                    t.identifier('__tn'),
+                    t.logicalExpression(
+                      '||',
+                      t.memberExpression(
+                        t.memberExpression(t.identifier('__el'), t.identifier('childNodes')),
+                        t.cloneNode(tnIdx, true),
+                        true,
                       ),
-                    ],
-                  ),
+                      t.nullLiteral(),
+                    ),
+                  ]),
                 ),
               ])
               const updateExisting = t.ifStatement(
@@ -712,7 +720,12 @@ export function applyStaticReactivity(
                 t.ifStatement(notTextNode, insertNewTextNode, updateExisting),
               ])
             } else if (pb.type === 'text') {
-              const targetProp = pb.propName === 'children' ? 'innerHTML' : 'textContent'
+              const isHtmlProducing =
+                pb.propName === 'children' ||
+                (pb.expression &&
+                  originalClassBody &&
+                  expressionCallsJSXReturningClassProp(pb.expression, originalClassBody))
+              const targetProp = isHtmlProducing ? 'innerHTML' : 'textContent'
               const assignStmt = t.expressionStatement(
                 t.assignmentExpression(
                   '=',
@@ -720,34 +733,33 @@ export function applyStaticReactivity(
                   t.cloneNode(valueExpr, true),
                 ),
               )
-              const consequent =
-                pb.propName === 'children'
-                  ? t.blockStatement([
-                      assignStmt,
-                      // After replacing innerHTML for children, re-initialize child
-                      // components that were created from the new HTML string.
+              const consequent = isHtmlProducing
+                ? t.blockStatement([
+                    assignStmt,
+                    // After replacing innerHTML for children, re-initialize child
+                    // components that were created from the new HTML string.
+                    t.expressionStatement(
+                      t.callExpression(
+                        t.memberExpression(t.thisExpression(), t.identifier('instantiateChildComponents_')),
+                        [],
+                      ),
+                    ),
+                    // Reconnect compiled children from the parent component whose
+                    // DOM elements were replaced by the innerHTML update.
+                    t.ifStatement(
+                      t.memberExpression(t.thisExpression(), t.identifier('parentComponent')),
                       t.expressionStatement(
                         t.callExpression(
-                          t.memberExpression(t.thisExpression(), t.identifier('instantiateChildComponents_')),
+                          t.memberExpression(
+                            t.memberExpression(t.thisExpression(), t.identifier('parentComponent')),
+                            t.identifier('mountCompiledChildComponents_'),
+                          ),
                           [],
                         ),
                       ),
-                      // Reconnect compiled children from the parent component whose
-                      // DOM elements were replaced by the innerHTML update.
-                      t.ifStatement(
-                        t.memberExpression(t.thisExpression(), t.identifier('parentComponent')),
-                        t.expressionStatement(
-                          t.callExpression(
-                            t.memberExpression(
-                              t.memberExpression(t.thisExpression(), t.identifier('parentComponent')),
-                              t.identifier('mountCompiledChildComponents_'),
-                            ),
-                            [],
-                          ),
-                        ),
-                      ),
-                    ])
-                  : assignStmt
+                    ),
+                  ])
+                : assignStmt
               updateStmt = t.ifStatement(
                 t.binaryExpression(
                   '!==',
@@ -853,6 +865,41 @@ export function applyStaticReactivity(
             } else if (pb.type === 'attribute' && pb.attributeName) {
               const attrName = pb.attributeName
               if (attrName === 'style') {
+                const cssTextExpr = t.conditionalExpression(
+                  t.binaryExpression('===', t.unaryExpression('typeof', valueExpr), t.stringLiteral('object')),
+                  t.callExpression(
+                    t.memberExpression(
+                      t.callExpression(
+                        t.memberExpression(
+                          t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('entries')), [
+                            valueExpr,
+                          ]),
+                          t.identifier('map'),
+                        ),
+                        [
+                          t.arrowFunctionExpression(
+                            [t.arrayPattern([t.identifier('k'), t.identifier('v')])],
+                            t.binaryExpression(
+                              '+',
+                              t.binaryExpression(
+                                '+',
+                                t.callExpression(t.memberExpression(t.identifier('k'), t.identifier('replace')), [
+                                  t.regExpLiteral('[A-Z]', 'g'),
+                                  t.stringLiteral('-$&'),
+                                ]),
+                                t.stringLiteral(': '),
+                              ),
+                              t.identifier('v'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      t.identifier('join'),
+                    ),
+                    [t.stringLiteral('; ')],
+                  ),
+                  t.callExpression(t.identifier('String'), [valueExpr]),
+                )
                 updateStmt = t.ifStatement(
                   t.logicalExpression(
                     '||',
@@ -864,60 +911,53 @@ export function applyStaticReactivity(
                       t.stringLiteral('style'),
                     ]),
                   ),
-                  t.expressionStatement(
-                    t.assignmentExpression(
-                      '=',
-                      t.memberExpression(
-                        t.memberExpression(t.identifier('__el'), t.identifier('style')),
-                        t.identifier('cssText'),
-                      ),
-                      t.conditionalExpression(
-                        t.binaryExpression('===', t.unaryExpression('typeof', valueExpr), t.stringLiteral('object')),
-                        t.callExpression(
-                          t.memberExpression(
-                            t.callExpression(
-                              t.memberExpression(
-                                t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('entries')), [
-                                  valueExpr,
-                                ]),
-                                t.identifier('map'),
-                              ),
-                              [
-                                t.arrowFunctionExpression(
-                                  [t.arrayPattern([t.identifier('k'), t.identifier('v')])],
-                                  t.binaryExpression(
-                                    '+',
-                                    t.binaryExpression(
-                                      '+',
-                                      t.callExpression(t.memberExpression(t.identifier('k'), t.identifier('replace')), [
-                                        t.regExpLiteral('[A-Z]', 'g'),
-                                        t.stringLiteral('-$&'),
-                                      ]),
-                                      t.stringLiteral(': '),
-                                    ),
-                                    t.identifier('v'),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            t.identifier('join'),
-                          ),
-                          [t.stringLiteral('; ')],
+                  t.blockStatement([
+                    t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__newCss'), cssTextExpr)]),
+                    t.ifStatement(
+                      t.binaryExpression(
+                        '!==',
+                        t.memberExpression(
+                          t.memberExpression(t.identifier('__el'), t.identifier('style')),
+                          t.identifier('cssText'),
                         ),
-                        t.callExpression(t.identifier('String'), [valueExpr]),
+                        t.identifier('__newCss'),
+                      ),
+                      t.expressionStatement(
+                        t.assignmentExpression(
+                          '=',
+                          t.memberExpression(
+                            t.memberExpression(t.identifier('__el'), t.identifier('style')),
+                            t.identifier('cssText'),
+                          ),
+                          t.identifier('__newCss'),
+                        ),
+                      ),
+                    ),
+                  ]),
+                )
+              } else if (attrName === 'dangerouslySetInnerHTML') {
+                updateStmt = t.blockStatement([
+                  t.variableDeclaration('const', [
+                    t.variableDeclarator(
+                      t.identifier('__newHtml'),
+                      t.callExpression(t.identifier('String'), [valueExpr]),
+                    ),
+                  ]),
+                  t.ifStatement(
+                    t.binaryExpression(
+                      '!==',
+                      t.memberExpression(t.identifier('__el'), t.identifier('innerHTML')),
+                      t.identifier('__newHtml'),
+                    ),
+                    t.expressionStatement(
+                      t.assignmentExpression(
+                        '=',
+                        t.memberExpression(t.identifier('__el'), t.identifier('innerHTML')),
+                        t.identifier('__newHtml'),
                       ),
                     ),
                   ),
-                )
-              } else if (attrName === 'dangerouslySetInnerHTML') {
-                // dangerouslySetInnerHTML: assign directly to innerHTML (no escaping)
-                updateStmt = t.expressionStatement(
-                  t.assignmentExpression(
-                    '=',
-                    t.memberExpression(t.identifier('__el'), t.identifier('innerHTML')),
-                    t.callExpression(t.identifier('String'), [valueExpr]),
-                  ),
-                )
+                ])
               } else {
                 const isBooleanAttr = BOOLEAN_HTML_ATTRS.has(attrName)
                 const removeCondition = isBooleanAttr
@@ -927,6 +967,14 @@ export function applyStaticReactivity(
                       t.binaryExpression('===', valueExpr, t.nullLiteral()),
                       t.binaryExpression('===', valueExpr, t.identifier('undefined')),
                     )
+                const newAttrValueExpr = isBooleanAttr
+                  ? t.stringLiteral('')
+                  : URL_ATTRS.has(attrName)
+                    ? t.callExpression(t.identifier('__sanitizeAttr'), [
+                        t.stringLiteral(attrName),
+                        t.callExpression(t.identifier('String'), [valueExpr]),
+                      ])
+                    : t.callExpression(t.identifier('String'), [valueExpr])
                 updateStmt = t.ifStatement(
                   removeCondition,
                   t.expressionStatement(
@@ -934,19 +982,24 @@ export function applyStaticReactivity(
                       t.stringLiteral(attrName),
                     ]),
                   ),
-                  t.expressionStatement(
-                    t.callExpression(t.memberExpression(t.identifier('__el'), t.identifier('setAttribute')), [
-                      t.stringLiteral(attrName),
-                      isBooleanAttr
-                        ? t.stringLiteral('')
-                        : URL_ATTRS.has(attrName)
-                          ? t.callExpression(t.identifier('__sanitizeAttr'), [
-                              t.stringLiteral(attrName),
-                              t.callExpression(t.identifier('String'), [valueExpr]),
-                            ])
-                          : t.callExpression(t.identifier('String'), [valueExpr]),
-                    ]),
-                  ),
+                  t.blockStatement([
+                    t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__newAttr'), newAttrValueExpr)]),
+                    t.ifStatement(
+                      t.binaryExpression(
+                        '!==',
+                        t.callExpression(t.memberExpression(t.identifier('__el'), t.identifier('getAttribute')), [
+                          t.stringLiteral(attrName),
+                        ]),
+                        t.identifier('__newAttr'),
+                      ),
+                      t.expressionStatement(
+                        t.callExpression(t.memberExpression(t.identifier('__el'), t.identifier('setAttribute')), [
+                          t.stringLiteral(attrName),
+                          t.identifier('__newAttr'),
+                        ]),
+                      ),
+                    ),
+                  ]),
                 )
               }
             } else {
@@ -1464,6 +1517,7 @@ export function applyStaticReactivity(
               itemTemplate: um.itemTemplate,
               isImportedState: false,
               itemIdProperty: um.itemIdProperty,
+              ...(um.keyExpression ? { keyExpression: um.keyExpression } : {}),
               ...(um.callbackBodyStatements?.length ? { callbackBodyStatements: um.callbackBodyStatements } : {}),
             }
             unresolvedBindings.push({ info: um, binding: syntheticBinding })
@@ -1483,6 +1537,7 @@ export function applyStaticReactivity(
             mapItemAttrInfos.push({
               itemVariable: um.itemVariable,
               itemIdProperty: um.itemIdProperty,
+              ...(um.keyExpression ? { keyExpression: um.keyExpression } : {}),
               containerBindingId: um.containerBindingId,
               eventToken: tokenMatch ? tokenMatch[1] : undefined,
             })
@@ -1572,15 +1627,22 @@ export function applyStaticReactivity(
               if (!stateProps.has(dep.observeKey)) stateProps.set(dep.observeKey, dep.pathParts)
             }
 
-            const propDeps = deps.filter((dep) => !dep.storeVar && dep.pathParts[0] === 'props')
-            if (propDeps.length === 0) return
-
             const usedPropNames = new Set<string>()
             const scanNodes: t.Statement[] = [
               ...(info.computationSetupStatements || []).map((s) => t.cloneNode(s, true) as t.Statement),
             ]
             if (info.computationExpr) {
               scanNodes.push(t.expressionStatement(t.cloneNode(info.computationExpr, true) as t.Expression))
+            }
+            const addPropNameFromMember = (path: NodePath<t.MemberExpression>) => {
+              if (
+                templateWholeParam &&
+                t.isIdentifier(path.node.object, { name: templateWholeParam }) &&
+                t.isIdentifier(path.node.property) &&
+                !path.node.computed
+              ) {
+                usedPropNames.add(path.node.property.name)
+              }
             }
             if (scanNodes.length > 0) {
               const prog = t.program(scanNodes)
@@ -1589,18 +1651,27 @@ export function applyStaticReactivity(
                 Identifier(path: NodePath<t.Identifier>) {
                   if (templatePropNames.has(path.node.name)) usedPropNames.add(path.node.name)
                 },
-                MemberExpression(path: NodePath<t.MemberExpression>) {
-                  if (
-                    templateWholeParam &&
-                    t.isIdentifier(path.node.object, { name: templateWholeParam }) &&
-                    t.isIdentifier(path.node.property) &&
-                    !path.node.computed
-                  ) {
-                    usedPropNames.add(path.node.property.name)
-                  }
-                },
+                MemberExpression: addPropNameFromMember,
               })
             }
+            // Also scan the item template for prop references (e.g. index === activeTabIndex in class bindings).
+            // Exclude the item variable and index variable since those are callback-local, not props.
+            if (info.itemTemplate) {
+              const skipVars = new Set([info.itemVariable, ...(info.indexVariable ? [info.indexVariable] : [])])
+              const templateProg = t.program([
+                t.expressionStatement(t.cloneNode(info.itemTemplate, true) as t.Expression),
+              ])
+              traverse(templateProg, {
+                noScope: true,
+                Identifier(path: NodePath<t.Identifier>) {
+                  if (!skipVars.has(path.node.name) && templatePropNames.has(path.node.name)) {
+                    usedPropNames.add(path.node.name)
+                  }
+                },
+                MemberExpression: addPropNameFromMember,
+              })
+            }
+            if (usedPropNames.size === 0) return
 
             unresolvedMapPropRefreshDeps.push({
               mapIdx: getMapIndex(binding.arrayPathParts),
@@ -2460,6 +2531,7 @@ export function applyStaticReactivity(
               itemVariable: arrayMap.itemVariable,
               ...(arrayMap.indexVariable ? { indexVariable: arrayMap.indexVariable } : {}),
               itemIdProperty: arrayMap.itemIdProperty,
+              ...(arrayMap.keyExpression ? { keyExpression: arrayMap.keyExpression } : {}),
               containerElementPath: arrayMap.containerElementPath,
               containerBindingId: arrayMap.containerBindingId,
               computationExpr: computationExprSafe ?? computationExpr,
@@ -3078,7 +3150,18 @@ export function applyStaticReactivity(
               }
             }
 
-            if (importedStores.size > 0 || localObserveHandlers.size > 0 || mapRegistrations.length > 0) {
+            // Ensure store groups exist for observeList configs so __observeList
+            // calls are generated even when there are no other observe handlers
+            for (const olc of observeListConfigs) {
+              ensureStoreGroup(olc.storeVar)
+            }
+
+            if (
+              importedStores.size > 0 ||
+              localObserveHandlers.size > 0 ||
+              mapRegistrations.length > 0 ||
+              observeListConfigs.length > 0
+            ) {
               const storeConfigs = Array.from(importedStores.entries()).map(([storeVar, config]) => ({
                 storeVar,
                 captureExpression: config.captureExpression,
@@ -3093,12 +3176,6 @@ export function applyStaticReactivity(
                   }),
                 ),
               }))
-
-              // Ensure store groups exist for observeList configs so __observeList
-              // calls are generated even when there are no other observe handlers
-              for (const olc of observeListConfigs) {
-                ensureStoreGroup(olc.storeVar)
-              }
 
               if (storeConfigs.length > 0 || mapRegistrations.length > 0 || observeListConfigs.length > 0) {
                 const createdHooksMethod = generateCreatedHooks(
@@ -3515,7 +3592,22 @@ function generateMapRegistration(
     ),
   ]
 
-  if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
+  if (unresolvedMap.keyExpression) {
+    // Complex key expression (e.g. template literal) — pass a key function
+    const keyExpr = t.cloneNode(unresolvedMap.keyExpression, true)
+    // Rewrite item variable (and index variable if present) for the key function parameters
+    const itemVar = unresolvedMap.itemVariable
+    const idxVar = unresolvedMap.indexVariable
+    traverse(t.program([t.expressionStatement(keyExpr)]), {
+      noScope: true,
+      Identifier(path: NodePath<t.Identifier>) {
+        if (path.node.name === itemVar) path.node.name = '__k'
+        else if (idxVar && path.node.name === idxVar) path.node.name = '__ki'
+      },
+    })
+    const keyFnParams = idxVar ? [t.identifier('__k'), t.identifier('__ki')] : [t.identifier('__k')]
+    registerArgs.push(t.arrowFunctionExpression(keyFnParams, t.callExpression(t.identifier('String'), [keyExpr])))
+  } else if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
     registerArgs.push(t.stringLiteral(arrayMap.itemIdProperty))
   }
 
@@ -4178,6 +4270,52 @@ function getTemplateParamIdentifier(classBody: t.ClassBody): string | undefined 
   return t.isIdentifier(binding) ? binding.name : undefined
 }
 
+/** True if expression is a call to a property whose value is an arrow function
+ *  containing JSX in the class body (render prop pattern). */
+function expressionCallsJSXReturningClassProp(expr: t.Expression, classBody: t.ClassBody): boolean {
+  if (!t.isCallExpression(expr)) return false
+  let propName: string | undefined
+  if (t.isMemberExpression(expr.callee) && t.isIdentifier(expr.callee.property) && !expr.callee.computed) {
+    propName = expr.callee.property.name
+  }
+  if (!propName) return false
+  const scanValue = (node: t.Node): boolean => {
+    if (t.isObjectExpression(node)) {
+      for (const prop of node.properties) {
+        if (
+          t.isObjectProperty(prop) &&
+          t.isIdentifier(prop.key) &&
+          prop.key.name === propName &&
+          (t.isArrowFunctionExpression(prop.value) || t.isFunctionExpression(prop.value))
+        ) {
+          let found = false
+          const check = (n: t.Node): void => {
+            if (found) return
+            if (t.isJSXElement(n) || t.isJSXFragment(n)) {
+              found = true
+              return
+            }
+            for (const key of t.VISITOR_KEYS[n.type] || []) {
+              const child = (n as any)[key]
+              if (Array.isArray(child)) child.forEach((c: any) => c && typeof c === 'object' && 'type' in c && check(c))
+              else if (child && typeof child === 'object' && 'type' in child) check(child)
+              if (found) return
+            }
+          }
+          check(prop.value)
+          return found
+        }
+      }
+    }
+    if (t.isArrayExpression(node)) return node.elements.some((el) => el != null && scanValue(el))
+    return false
+  }
+  for (const member of classBody.body) {
+    if (t.isClassProperty(member) && member.value && scanValue(member.value)) return true
+  }
+  return false
+}
+
 /** Collect template prop names referenced in an array item template (for __onPropChange handledPropNames). */
 function collectPropNamesFromItemTemplate(
   itemTemplate: t.JSXElement | t.JSXFragment | null | undefined,
@@ -4231,6 +4369,7 @@ function injectMapItemAttrsIntoTemplate(
   mapInfos: Array<{
     itemVariable: string
     itemIdProperty?: string
+    keyExpression?: t.Expression
     containerBindingId?: string
     eventToken?: string
   }>,
@@ -4287,8 +4426,9 @@ function injectMapItemAttrsIntoTemplate(
       const isIntrinsicRoot = !tagName.includes('-')
       const eventAttr = info.eventToken && isIntrinsicRoot ? ` data-gea-event="${info.eventToken}"` : ''
 
-      const itemIdExpr =
-        info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
+      const itemIdExpr = info.keyExpression
+        ? t.callExpression(t.identifier('String'), [t.cloneNode(info.keyExpression, true)])
+        : info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
           ? t.logicalExpression(
               '??',
               buildOptionalMemberChain(t.identifier(info.itemVariable), info.itemIdProperty),

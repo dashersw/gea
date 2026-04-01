@@ -1673,9 +1673,7 @@ function replaceIdentifierWithClonedExpr(node: t.Node, name: string, expr: t.Exp
  */
 function optimizeBoundValueAliasesInSequence(stmts: t.Statement[]): t.Statement[] {
   const out = [...stmts]
-  let changed = true
-  while (changed) {
-    changed = false
+  while (true) {
     const idx = out.findIndex(
       (s) =>
         t.isVariableDeclaration(s) &&
@@ -1695,7 +1693,6 @@ function optimizeBoundValueAliasesInSequence(stmts: t.Statement[]): t.Statement[
       renameIdentifier(blk, '__boundValue', aliasedName)
       out.length = 0
       out.push(...blk.body)
-      changed = true
       continue
     }
 
@@ -1710,7 +1707,6 @@ function optimizeBoundValueAliasesInSequence(stmts: t.Statement[]): t.Statement[
     replaceIdentifierWithClonedExpr(blk, '__boundValue', init)
     out.length = 0
     out.push(...blk.body)
-    changed = true
   }
   return out
 }

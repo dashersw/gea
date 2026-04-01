@@ -363,5 +363,47 @@ test('static text with single quotes is escaped as &#39;', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Render prop / dynamic content function calls
+// ---------------------------------------------------------------------------
+
+test('render prop call result must not be escaped with __escapeHtml', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import SummaryContent from './SummaryContent'
+
+    export default class Main extends Component {
+      activeTabIndex = 0
+      tabs = [
+        { index: 0, title: "Summary", content: () => <SummaryContent /> },
+      ]
+
+      template() {
+        const activeTab = this.tabs[this.activeTabIndex]
+        return (
+          <div class="main">
+            <div class="tab-content">
+              {activeTab.content()}
+            </div>
+          </div>
+        )
+      }
+    }
+  `)
+
+  // A call that returns JSX/component HTML must not be escaped
+  assert.ok(
+    !output.includes('__escapeHtml(String(activeTab.content()))'),
+    'render prop call returning JSX must not be wrapped with __escapeHtml, got: ' +
+      output.match(/__escapeHtml[^)]*\)/)?.[0],
+  )
+
+  // Observer must use innerHTML (not textContent) for render prop updates
+  assert.ok(
+    !output.includes('.textContent') || output.includes('.innerHTML'),
+    'observer for render prop must use innerHTML, not textContent',
+  )
+})
+
+// ---------------------------------------------------------------------------
 // JSXNamespacedName handling
 // ---------------------------------------------------------------------------

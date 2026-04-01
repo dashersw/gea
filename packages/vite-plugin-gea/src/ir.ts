@@ -48,6 +48,8 @@ export interface EventHandler {
   mapContext?: {
     arrayPathParts: PathParts
     itemIdProperty: string
+    /** When the map uses a non-trivial `key` (e.g. template literal), use this for DOM↔item lookup. */
+    keyExpression?: t.Expression
     itemVariable: string
     indexVariable?: string
     isImportedState: boolean
@@ -98,6 +100,8 @@ export interface ArrayMapBinding {
   isImportedState?: boolean
   isKeyed?: boolean
   itemIdProperty?: string
+  /** Full key expression AST when key is not a simple item.prop (e.g. template literals, concatenation) */
+  keyExpression?: t.Expression
   classToggleName?: string
   conditionalBindings?: ConditionalMapBinding[]
 }
@@ -163,6 +167,8 @@ export interface UnresolvedMapInfo {
   itemVariable: string
   indexVariable?: string
   itemIdProperty?: string
+  /** Full key expression AST when key is not a simple item.prop (e.g. template literals, concatenation) */
+  keyExpression?: t.Expression
   computationExpr?: t.Expression
   /** Expression that appears as the map's object in the template (for replacement matching). When computationExpr is inlined from const x = y, this stays as identifier x. */
   mapObjectExpr?: t.Expression

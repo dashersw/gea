@@ -1,6 +1,6 @@
 {
   "name": "@geajs/vite-plugin",
-  "version": "1.0.15",
+  "version": "1.0.28",
   "description": "Vite plugin for Gea framework - JSX/TSX transform, reactivity, HMR",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,6 +40,7 @@
     "gea-env.d.ts"
   ],
   "scripts": {
+    "prepublishOnly": "tsup src/index.ts --format esm --dts --clean --external vite",
     "build": "tsup src/index.ts --format esm --dts --clean --external vite",
     "test": "tsx --test 'tests/**/*.test.ts'",
     "test:e2e": "npx playwright test --config=../../tests/e2e/playwright.config.ts",

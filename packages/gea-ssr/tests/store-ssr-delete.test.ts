@@ -2,12 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { Store } from '@geajs/core'
 import { createSSRRootProxyHandler } from '../src/ssr-proxy-handler.ts'
-import { resolveOverlay, runInSSRContext } from '../src/ssr-context.ts'
-
-function getRaw(store: object): object {
-  const r = Reflect.get(store, '__getRawTarget')
-  return typeof r === 'object' && r !== null ? r : store
-}
+import { runInSSRContext } from '../src/ssr-context.ts'
 
 describe('Store SSR overlay – delete tombstone', () => {
   beforeEach(() => {

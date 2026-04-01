@@ -1,4 +1,4 @@
-import type { GeaComponentConstructor, RouteMap, RouteEntry } from './types'
+import type { GeaComponentConstructor, RouteMap } from './types'
 import { isComponentConstructor, isRouteGroup } from './types'
 
 export interface ServerRouteResult {
@@ -68,7 +68,13 @@ function resolveRoutes(
     if (typeof entry === 'string') {
       const match = matchRoute(pattern, path)
       if (match) {
-        return { route: pattern, params: match.params, component: null, matches: [...parentMatches, pattern], guardRedirect: entry }
+        return {
+          route: pattern,
+          params: match.params,
+          component: null,
+          matches: [...parentMatches, pattern],
+          guardRedirect: entry,
+        }
       }
       continue
     }
@@ -122,7 +128,13 @@ function resolveRoutes(
     // Exact match — entry is a component constructor
     const match = matchRoute(pattern, path)
     if (match) {
-      return { route: pattern, params: match.params, component: entry, matches: [...parentMatches, pattern], guardRedirect: null }
+      return {
+        route: pattern,
+        params: match.params,
+        component: entry,
+        matches: [...parentMatches, pattern],
+        guardRedirect: null,
+      }
     }
   }
 

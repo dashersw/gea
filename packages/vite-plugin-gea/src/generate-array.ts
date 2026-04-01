@@ -151,17 +151,34 @@ function buildPropPatcherFunction(
               ),
             ),
           )
-        : t.expressionStatement(
-            t.callExpression(t.memberExpression(target, t.identifier('setAttribute')), [
-              t.stringLiteral(attrName),
-              URL_ATTRS.has(attrName)
-                ? t.callExpression(t.identifier('__sanitizeAttr'), [
-                    t.stringLiteral(attrName),
-                    t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
-                  ])
-                : t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
+        : t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier('__newAttr'),
+                URL_ATTRS.has(attrName)
+                  ? t.callExpression(t.identifier('__sanitizeAttr'), [
+                      t.stringLiteral(attrName),
+                      t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
+                    ])
+                  : t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
+              ),
             ]),
-          )
+            t.ifStatement(
+              t.binaryExpression(
+                '!==',
+                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('getAttribute')), [
+                  t.stringLiteral(attrName),
+                ]),
+                t.identifier('__newAttr'),
+              ),
+              t.expressionStatement(
+                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('setAttribute')), [
+                  t.stringLiteral(attrName),
+                  t.identifier('__newAttr'),
+                ]),
+              ),
+            ),
+          ])
     return t.arrowFunctionExpression(
       [row, value],
       t.blockStatement([
@@ -319,12 +336,29 @@ function buildPatchEntryPropPatcher(entry: {
               ),
             ),
           )
-        : t.expressionStatement(
-            t.callExpression(t.memberExpression(target, t.identifier('setAttribute')), [
-              t.stringLiteral(attrName),
-              t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
+        : t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier('__newAttr'),
+                t.callExpression(t.identifier('String'), [t.identifier('__attrValue')]),
+              ),
             ]),
-          )
+            t.ifStatement(
+              t.binaryExpression(
+                '!==',
+                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('getAttribute')), [
+                  t.stringLiteral(attrName),
+                ]),
+                t.identifier('__newAttr'),
+              ),
+              t.expressionStatement(
+                t.callExpression(t.memberExpression(t.cloneNode(target, true), t.identifier('setAttribute')), [
+                  t.stringLiteral(attrName),
+                  t.identifier('__newAttr'),
+                ]),
+              ),
+            ),
+          ])
     return t.arrowFunctionExpression(
       [row, value, item],
       t.blockStatement([
@@ -832,7 +866,10 @@ function buildConditionalPatchStatement(
     if (__attrValue == null || __attrValue === false) {
       ${jsExpr`${target}.removeAttribute(${binding.attributeName || 'class'})`};
     } else {
-      ${jsExpr`${target}.setAttribute(${binding.attributeName || 'class'}, String(__attrValue))`};
+      const __newAttr = String(__attrValue);
+      if (${jsExpr`${target}.getAttribute(${binding.attributeName || 'class'})`} !== __newAttr) {
+        ${jsExpr`${target}.setAttribute(${binding.attributeName || 'class'}, __newAttr)`};
+      }
     }
   `,
   )
@@ -886,22 +923,6 @@ function buildRelationalClassStatements(
   })
 }
 
-function buildFindIndexLookup(
-  containerRef: t.MemberExpression,
-  idExpr: t.Expression,
-  rowVar: string,
-  containerBindingId?: string,
-): t.Statement[] {
-  return [
-    t.variableDeclaration('var', [
-      t.variableDeclarator(
-        t.identifier(rowVar),
-        buildQueryByItemId(t.cloneNode(containerRef), t.cloneNode(idExpr, true), containerBindingId),
-      ),
-    ]),
-  ]
-}
-
 function buildElsLookup(
   elsRef: t.MemberExpression,
   containerRef: t.MemberExpression,
@@ -921,10 +942,7 @@ function buildElsLookup(
           t.binaryExpression(
             '<',
             t.identifier('__i'),
-            t.memberExpression(
-              t.memberExpression(ctrLocal, t.identifier('children')),
-              t.identifier('length'),
-            ),
+            t.memberExpression(t.memberExpression(ctrLocal, t.identifier('children')), t.identifier('length')),
           ),
           t.updateExpression('++', t.identifier('__i')),
           t.blockStatement([

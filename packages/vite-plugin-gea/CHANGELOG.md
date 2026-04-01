@@ -1,5 +1,121 @@
 # @geajs/vite-plugin
 
+## 1.0.28
+
+### Patch Changes
+
+- [`564150d`](https://github.com/dashersw/gea/commit/564150d21e556b1cbe10f6059d9526722564d7e8) Thanks [@dashersw](https://github.com/dashersw)! - Fix duplicate `.map()` blocks in one component sharing a single `#__dc` template-cache field, which bound the second map to the wrong container and could clear sibling DOM (e.g. tab titles vs tab contents) on prop updates.
+
+  Fix delegated map click handlers: `__getMapItemFromEvent` now resolves items using the same expression as the JSX `key` (e.g. template literals like `` `${tab.title}-button` ``) instead of defaulting to `.id`, so `onTabChange` receives the real item and `tab.index` is correct.
+
+  Map row template init: use object dummies with `content: () => ''` (and non-primitive dummies when the row reads object fields or uses a composite key) so `render*Item("__dummy__")` never calls `tab.content` on a string.
+
+  When a row’s text slot uses an **item method call** like `item.content()`, skip surgical `nodeValue` patches and rerender the row — patching would stringify component output as escaped HTML.
+
+- [`564150d`](https://github.com/dashersw/gea/commit/564150d21e556b1cbe10f6059d9526722564d7e8) Thanks [@dashersw](https://github.com/dashersw)! - Treat Gea **functional** component modules (JSX + default-exported function) as component modules for HMR so relative imports are wrapped in `createHotComponentProxy`. Fixes stale tab content after child HMR when switching tabs (parent module does not re-run).
+
+## 1.0.27
+
+### Patch Changes
+
+- [`068cbaa`](https://github.com/dashersw/gea/commit/068cbaa508bdf093c80b0684e818771d20fe8658) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Fix key expression with index parameter causing ReferenceError**: When a map key uses the index parameter (e.g. `key={`${tag}-${i}`}`), the generated key function and create/patch methods now correctly rewrite the index variable (`i` → `__ki`/`__idx`). Previously the original variable name was left as-is, causing `ReferenceError: i is not defined` at runtime.
+
+  ### @geajs/core (patch)
+  - **Pass index to key functions in `__geaSyncItems`**: `itemKey()` calls now receive the array index so index-based key functions can compute the correct key value.
+
+## 1.0.26
+
+### Patch Changes
+
+- [`2bd3560`](https://github.com/dashersw/gea/commit/2bd35602fe5b37cac79add22a16cf6ad3d64a1f2) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Fix render prop calls rendering as HTML text**: Calls to JSX-returning functions (e.g. `{activeTab.content()}` where `content: () => <SummaryContent />`) were wrapped with `__escapeHtml` in the template and updated via `textContent` in observers. Both now correctly treat the result as HTML — no escaping in the template, and `innerHTML` in the observer.
+  - **Fix destructured `{children}` double-escape**: Bare `children` identifier from `template({ children })` was not recognized by `isChildrenPropAccess`, causing `__escapeHtml(String(children))` to escape parent-provided HTML.
+  - **Support expression-based map keys**: Template literals and other non-simple key expressions (e.g. `key={`${tab.title}-button`}`) now correctly produce `data-gea-item-id`, `__geaKey`, and key functions for `__geaRegisterMap`. Previously fell back to `String(item)` producing `[object Object]`.
+
+  ### @geajs/core (patch)
+  - **Accept key functions in `__geaSyncItems`**: The `keyProp` parameter now accepts `(item) => string` functions in addition to property name strings, enabling expression-based map key extraction at runtime.
+
+## 1.0.25
+
+### Patch Changes
+
+- [`fc6532c`](https://github.com/dashersw/gea/commit/fc6532cf3af6b59e36ef20beb08d92d1c2a261d6) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Support expression-based map keys**: Template literals (`key={`${tab.title}-button`}`), string concatenation, and other non-simple expressions are now correctly preserved in `data-gea-item-id`, `__geaKey`, and `__geaRegisterMap`. Previously, only simple `item.prop` keys were recognized; complex keys fell back to `String(item)` producing `[object Object]`.
+
+  ### @geajs/core (patch)
+  - **Accept key functions in `__geaSyncItems`**: The `keyProp` parameter now accepts a function `(item) => string` in addition to a property name string, enabling runtime key extraction for expression-based map keys.
+
+## 1.0.24
+
+### Patch Changes
+
+- [`fe1a433`](https://github.com/dashersw/gea/commit/fe1a4336462a4d99faee1bd6a561f96fb06c3c1f) Thanks [@dashersw](https://github.com/dashersw)! - Fix destructured `{children}` prop being double-escaped in template output. `isChildrenPropAccess` only recognized `props.children` and `this.props.children` but not the bare `children` identifier from `template({ children })`. The children HTML from the parent was wrapped with `__escapeHtml(String(children))`, rendering it as visible HTML text instead of parsed DOM.
+
+## 1.0.23
+
+### Patch Changes
+
+- [`dc4ce46`](https://github.com/dashersw/gea/commit/dc4ce46ccb9ff5570fc7d676ed9174623ff7efa2) Thanks [@dashersw](https://github.com/dashersw)! - Fix store-only component array maps not observing store changes. When a component's only store access was a `.map()` rendering child components (e.g. `store.recordings.map(r => <SidebarItem .../>)`), the compiler failed to generate `createdHooks` with `__observeList`, so store updates never triggered re-renders. The guard that gates `createdHooks` generation now includes `observeListConfigs`, and `ensureStoreGroup` runs before `storeConfigs` is built.
+
+## 1.0.22
+
+### Patch Changes
+
+- [`570180a`](https://github.com/dashersw/gea/commit/570180a8e6a41ec148ca95437282081b9f201879) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Fix `.map((item, index) => ...)` prop reactivity**: Props used inside map item templates (e.g. `activeTabIndex` in a class binding like `index === activeTabIndex`) are now correctly tracked as dependencies. Previously, only props referenced in the array source expression were tracked, so `__onPropChange` never called `__geaSyncMap` when those item-template props changed.
+
+  ### @geajs/core (patch)
+  - **Fix event handlers on initial template-rendered map items**: In `__geaSyncItems`, the "same keys" fast-path now copies `__geaItem` and `__geaKey` from the freshly-created element onto the existing DOM element. This ensures delegated event handlers can resolve the item (and its index) even for buttons that were rendered as HTML strings on first render and never went through `create__*Item`.
+
+## 1.0.21
+
+### Patch Changes
+
+- [`12b7f3a`](https://github.com/dashersw/gea/commit/12b7f3af4c35867a08f5d971d94191ae8174e638) Thanks [@dashersw](https://github.com/dashersw)! - Add setAttribute equality guards to map-item patch methods (patch\_\_\*Item) in generate-array-patch.ts and generate-array.ts, matching the observer method guards added in v1.0.20
+
+## 1.0.20
+
+### Patch Changes
+
+- [`b344816`](https://github.com/dashersw/gea/commit/b34481655167be8a14f55e977045f323606d666d) Thanks [@dashersw](https://github.com/dashersw)! - Rebuild dist with setAttribute/style.cssText/innerHTML equality guards that were missing from 1.0.19 due to stale build output; add prepublishOnly script to prevent future stale publishes
+
+## 1.0.19
+
+### Patch Changes
+
+- [`471c0c0`](https://github.com/dashersw/gea/commit/471c0c0f92a211af633a6038170c522cba6c23a2) Thanks [@dashersw](https://github.com/dashersw)! - Add equality guards for setAttribute, style.cssText, and innerHTML in compiled observer methods to skip redundant DOM writes when the value has not changed
+
+## 1.0.18
+
+### Patch Changes
+
+- [`e26895e`](https://github.com/dashersw/gea/commit/e26895ed528481dc3184296b5802fa24be5af1ac) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Fix ref binding causing infinite re-render loop**: The compiler incorrectly treated `ref={this.myTextarea}` as a reactive template binding, generating both a clone patch entry (setting `ref` as an HTML attribute) and a reactive observer on the ref target property. When `__setupRefs()` assigned the DOM element to `this.myTextarea`, the observer fired `__geaRequestRender()`, which cloned new DOM, called `__setupRefs()` again with a different element, triggering another change — creating an infinite re-render loop. Fixed by: (1) skipping `ref` in `collectClonePatchEntries` so it's not patched as an HTML attribute, (2) skipping `ref` in `analyzeAttributes` so it doesn't create a `propBinding`, and (3) skipping expressions inside `ref={...}` attributes in `collectAllStateAccesses` so the ref target property doesn't get a reactive observer.
+  - **Fix on-prefixed event names in clone patches**: Event attributes using the `on*` prefix (e.g. `onclick`, `oninput`) were not recognized as events in `collectClonePatchEntries`, causing them to be incorrectly set as HTML attributes in the clone template. Fixed by also checking the normalized form against `EVENT_NAMES`.
+
+## 1.0.17
+
+### Patch Changes
+
+- [`cd79b17`](https://github.com/dashersw/gea/commit/cd79b17277b9baf674d36c53542f7229e54bdf6e) Thanks [@dashersw](https://github.com/dashersw)! - Fix map event handler index resolution to use data identity instead of DOM sibling position
+  - Resolve the map index variable via `rawArray.indexOf(__el.__geaItem)` instead of `Array.prototype.indexOf.call(__el.parentNode.children, __el)`, which is fragile when non-item siblings or text nodes are present.
+  - Add a fast path that skips the `__getMapItemFromEvent` helper when only the index (not the item) is referenced in the handler body.
+  - Extract shared `buildArrayItemsExpr` and `buildGeaItemDomWalk` helpers to eliminate near-duplicate code across `ensureMapItemHelper` and `buildMapEventBody`.
+  - Apply consistent optional member access for local-state array paths, matching the existing safety pattern in the item-lookup helper.
+
+## 1.0.16
+
+### Patch Changes
+
+- [`dd2c34c`](https://github.com/dashersw/gea/commit/dd2c34c0508b9a4218cf512a5f40b1bd377eef5f) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (minor)
+  - **XSS prevention: escape dynamic text expressions**: The compiler now wraps dynamic text expressions in templates with `__escapeHtml(String(...))` to prevent script injection via `innerHTML` during initial render. Static strings continue to be escaped at compile time. Expressions that produce HTML (JSX children, `.map()` callbacks, conditional slots, `props.children`) are correctly excluded from escaping.
+  - **XSS prevention: sanitize dangerous URL protocols**: Dynamic attribute bindings for URL-bearing attributes (`href`, `src`, `action`, `formaction`, `data`, `cite`, `poster`, `background`) are now wrapped with `__sanitizeAttr()` to block `javascript:`, `vbscript:`, and non-image `data:` protocols.
+  - **XSS prevention: `dangerouslySetInnerHTML` prop**: Added support for `<div dangerouslySetInnerHTML={expr} />` to allow intentional raw HTML rendering without escaping. The prop is not rendered as a DOM attribute and supports reactive updates via `innerHTML`.
+
+  ### @geajs/core (minor)
+  - **XSS helper functions**: Added `__escapeHtml()` and `__sanitizeAttr()` standalone functions and static methods on `Component`. These are used by the compiler-generated code to prevent XSS at runtime.
+
 ## 1.0.15
 
 ### Patch Changes
