@@ -662,11 +662,15 @@ describe('Store – silent()', () => {
 describe('Store - circular reference protection', () => {
   it('does not infinite loop when an object references itself', () => {
     const store = new Store<any>({ obj: {} })
-    store.obj.self = store.obj.__getTarget ?? store.obj
+    // Access obj first so it is in _proxyCache
+    const objProxy = store.obj
+    objProxy.self = objProxy.__getTarget ?? (objProxy as any)
 
     // Accessing the circular ref should return a proxy, not hang
     assert.ok(store.obj.self)
     assert.equal((store.obj.self as any).__isProxy, true)
+    // The cycle is caught: obj.self should resolve to the same proxy as obj
+    assert.strictEqual(store.obj.self, store.obj)
   })
 
   it('does not infinite loop when an array contains itself', () => {
@@ -676,16 +680,12 @@ describe('Store - circular reference protection', () => {
 
     // arr[0] === arr - accessing nested index should not recurse infinitely
     const nested = store.arr[0]
-    assert.ok(nested !== undefined)
+    assert.ok(nested !== undefined, 'circular array access must not hang')
   })
 
   it('returns the same proxy for the same array on repeated access', () => {
     const store = new Store<any>({ items: [1, 2, 3] })
-    const proxy1 = (store as any)._createProxy
-      ? store.items
-      : store.items
-    const proxy2 = store.items
-    assert.strictEqual(proxy1, proxy2, 'same array should return same proxy reference')
+    assert.strictEqual(store.items, store.items, 'same array should return same proxy reference')
   })
 
   it('cross-type circular: object references array that references object', () => {
@@ -694,20 +694,35 @@ describe('Store - circular reference protection', () => {
     obj.arr = arr
     const store = new Store<any>({ obj })
 
-    // obj.arr[0] === obj - should not recurse
     assert.equal(store.obj.name, 'root')
-    assert.ok(store.obj.arr)
-    assert.ok(Array.isArray(store.obj.arr.__getTarget ?? []))
+    // obj.arr[0] === obj - the proxy for arr[0] should be identity-equal to store.obj
+    assert.strictEqual(store.obj.arr[0], store.obj)
+    // And arr[0].arr should be the same proxy as arr itself
+    assert.strictEqual(store.obj.arr[0].arr, store.obj.arr)
+  })
+
+  it('shared arrays at different paths maintain independent path tracking', () => {
+    const shared = [1, 2, 3]
+    const store = new Store<any>({ a: shared, b: shared })
+
+    // Both paths should be accessible
+    assert.ok(store.a)
+    assert.ok(store.b)
+    // Verify length is visible from both paths
+    assert.equal(store.a.length, 3)
+    assert.equal(store.b.length, 3)
   })
 
   it('circular object does not prevent reactivity', async () => {
     const store = new Store<any>({ data: { value: 0 } })
-    store.data.self = store.data.__getTarget ?? store.data
+    const dataProxy = store.data
+    dataProxy.self = dataProxy.__getTarget ?? (dataProxy as any)
     const values: number[] = []
     store.observe('data.value', (v) => values.push(v as number))
 
     store.data.value = 42
-    await flush()
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
     assert.deepEqual(values, [42])
   })
 })

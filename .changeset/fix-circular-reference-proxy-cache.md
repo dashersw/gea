@@ -4,4 +4,4 @@
 
 ### @geajs/core (patch)
 
-- **Circular reference protection**: `_createProxy` now checks `_proxyCache` for both plain objects and arrays. Previously arrays bypassed the cache check, causing infinite recursion when a store contained a self-referencing array or a cross-type circular structure (e.g. `obj.arr = [obj]`).
+- **Circular reference tests**: Added regression tests confirming that circular store data (self-referencing objects, self-referencing arrays, cross-type cycles) does not cause infinite recursion. The existing `_proxyCache` and `_arrayIndexProxyCache` mechanisms already prevent cycles; tests now make this contract explicit and guard against regressions.
