@@ -1189,10 +1189,9 @@ export class Store {
     // Return cached proxy if one already exists for this raw object.
     // This ensures stable references for computed getters that traverse
     // the same objects (e.g., store.activeConversation via .find()).
-    if (!Array.isArray(target)) {
-      const cached = this._proxyCache.get(target)
-      if (cached) return cached
-    }
+    // Also prevents infinite recursion for circular references (arrays included).
+    const cached = this._proxyCache.get(target)
+    if (cached) return cached
 
     const store = this // eslint-disable-line @typescript-eslint/no-this-alias
     const cachedArrayMeta = arrayMeta ?? store._getCachedArrayMeta(baseParts)
@@ -1497,9 +1496,8 @@ export class Store {
 
     // Cache the proxy so subsequent accesses (e.g., via .find() in computed
     // getters) return the same reference, enabling stable identity checks.
-    if (!Array.isArray(target)) {
-      this._proxyCache.set(target, proxy)
-    }
+    // Arrays are also cached to detect and short-circuit circular references.
+    this._proxyCache.set(target, proxy)
 
     return proxy
   }

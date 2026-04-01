@@ -658,3 +658,56 @@ describe('Store – silent()', () => {
     assert.equal(notified, false, 'observer must not fire for array mutations inside silent()')
   })
 })
+
+describe('Store - circular reference protection', () => {
+  it('does not infinite loop when an object references itself', () => {
+    const store = new Store<any>({ obj: {} })
+    store.obj.self = store.obj.__getTarget ?? store.obj
+
+    // Accessing the circular ref should return a proxy, not hang
+    assert.ok(store.obj.self)
+    assert.equal((store.obj.self as any).__isProxy, true)
+  })
+
+  it('does not infinite loop when an array contains itself', () => {
+    const arr: any[] = []
+    arr.push(arr)
+    const store = new Store<any>({ arr })
+
+    // arr[0] === arr - accessing nested index should not recurse infinitely
+    const nested = store.arr[0]
+    assert.ok(nested !== undefined)
+  })
+
+  it('returns the same proxy for the same array on repeated access', () => {
+    const store = new Store<any>({ items: [1, 2, 3] })
+    const proxy1 = (store as any)._createProxy
+      ? store.items
+      : store.items
+    const proxy2 = store.items
+    assert.strictEqual(proxy1, proxy2, 'same array should return same proxy reference')
+  })
+
+  it('cross-type circular: object references array that references object', () => {
+    const obj: any = { name: 'root' }
+    const arr: any[] = [obj]
+    obj.arr = arr
+    const store = new Store<any>({ obj })
+
+    // obj.arr[0] === obj - should not recurse
+    assert.equal(store.obj.name, 'root')
+    assert.ok(store.obj.arr)
+    assert.ok(Array.isArray(store.obj.arr.__getTarget ?? []))
+  })
+
+  it('circular object does not prevent reactivity', async () => {
+    const store = new Store<any>({ data: { value: 0 } })
+    store.data.self = store.data.__getTarget ?? store.data
+    const values: number[] = []
+    store.observe('data.value', (v) => values.push(v as number))
+
+    store.data.value = 42
+    await flush()
+    assert.deepEqual(values, [42])
+  })
+})
