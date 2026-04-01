@@ -27,6 +27,7 @@
   --radius-sm: calc(var(--radius) - 4px);
 }
 
+/* scan for compiled version of the components relative to the dist/ directory */
 @source "./**/*.mjs";
 
 :root {
