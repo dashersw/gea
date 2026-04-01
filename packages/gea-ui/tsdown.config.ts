@@ -33,10 +33,18 @@ export default defineConfig({
   hash: false,
   fixedExtension: true,
   onSuccess() {
-    const src = readFileSync('src/styles/theme.css', 'utf8')
+    const srcPath = resolve(__dirname, 'src/styles/theme.css')
+    const distPath = resolve(__dirname, 'dist/theme.css')
+    const search = '@source "../**/*.{ts,tsx}";'
+    const src = readFileSync(srcPath, 'utf8')
+
     // Replace source scan path from dev to prod
-    const dist = src.replace('@source "../**/*.{ts,tsx}";', '@source "./**/*.mjs";')
-    writeFileSync('dist/theme.css', dist)
+    if (!src.includes(search)) {
+      throw new Error(`Expected ${search} in ${srcPath}`)
+    }
+
+    const dist = src.replace(search, '@source "./**/*.mjs";')
+    writeFileSync(distPath, dist)
     console.log('Copied theme.css to dist/')
   },
 })

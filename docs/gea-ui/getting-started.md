@@ -48,8 +48,6 @@ If you need additional Tailwind utilities or custom styles, create a CSS file an
 
 ```css
 /* src/style.css */
-@import "tailwindcss";
-
 /* your custom theme extensions or utilities */
 ```
 
@@ -59,6 +57,8 @@ If you need additional Tailwind utilities or custom styles, create a CSS file an
 import '@geajs/ui/style.css'
 import './style.css'
 ```
+
+You don't have to `@import "tailwindcss";` in your CSS file, it is already loaded by the theme.
 
 ## Minimal Example
 

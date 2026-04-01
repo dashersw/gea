@@ -24,9 +24,14 @@
 
   3. **Remove the old `@geajs/ui` preset/PostCSS wiring** — delete `postcss.config.js` if it only existed for Tailwind v3, and only remove `tailwind.config.js` if it contained no project-specific configuration
 
-  4. **Remove `@tailwind` directives** from any CSS files you own (e.g. `@tailwind base; @tailwind components; @tailwind utilities;`). If you need Tailwind utilities in your own CSS, replace them with `@import "tailwindcss";`
+  4. **Remove `@tailwind` directives** from any CSS files you own (e.g. `@tailwind base; @tailwind components; @tailwind utilities;`). You don't have to `@import "tailwindcss";` in your own CSS, just make sure the theme file is imported first.
+    ```ts
+    // main.ts
+    import '@geajs/ui/style.css'
+    import './style.css' 
+    ```
 
-  5. **Remove manual CSS resets** — if your project has a global reset like `* { margin: 0; padding: 0; }` outside of a CSS layer, it will silently override Tailwind v4 utilities. In v4, all utilities live inside `@layer utilities`, and unlayered styles always win over layered styles regardless of specificity. Tailwind v4's Preflight already handles these resets inside `@layer base`, so the manual reset is redundant and should be removed
+  5. **Remove manual CSS resets** — if your project has a global reset like `* { margin: 0; padding: 0; }` outside a CSS layer, it will silently override Tailwind v4 utilities. In v4, all utilities live inside `@layer utilities`, and unlayered styles always win over layered styles regardless of specificity. Tailwind v4's Preflight already handles these resets inside `@layer base`, so the manual reset is redundant and should be removed
     ```css
     /* Remove this — Tailwind v4 Preflight already does it */
     * {

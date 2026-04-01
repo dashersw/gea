@@ -147,7 +147,7 @@ Styled components also apply semantic class names (`dialog-trigger`, `tabs-conte
 
 ## Border Radius
 
-The `--radius` variable controls the base radius. The Tailwind preset derives three tokens from it:
+The `--radius` variable controls the base radius. The theme derives three tokens from it:
 
 | Token | Value |
 | --- | --- |
