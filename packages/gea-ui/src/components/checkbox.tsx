@@ -55,7 +55,7 @@ export default class Checkbox extends ZagComponent {
         <input data-part="hidden-input" type="checkbox" class="sr-only" />
         <div
           data-part="control"
-          class="checkbox-control h-4 w-4 shrink-0 rounded-sm border border-primary shadow transition-colors data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
+          class="checkbox-control h-4 w-4 shrink-0 rounded-xs border border-primary shadow transition-colors data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
         >
           <span
             data-part="indicator"

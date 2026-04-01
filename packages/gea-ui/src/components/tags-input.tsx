@@ -79,7 +79,7 @@ export default class TagsInput extends ZagComponent {
         )}
         <div
           data-part="control"
-          class="tags-input-control flex flex-wrap gap-1.5 rounded-md border border-input bg-transparent px-3 py-2 shadow-sm focus-within:ring-1 focus-within:ring-ring"
+          class="tags-input-control flex flex-wrap gap-1.5 rounded-md border border-input bg-transparent px-3 py-2 shadow-xs focus-within:ring-1 focus-within:ring-ring"
         >
           {(this.value || []).map((tag: string, i: number) => (
             <span
@@ -93,7 +93,7 @@ export default class TagsInput extends ZagComponent {
                 data-part="item-preview"
                 data-index={String(i)}
                 data-value={tag}
-                class="inline-flex items-center gap-1 data-[highlighted]:ring-2 data-[highlighted]:ring-ring data-[highlighted]:rounded-sm"
+                class="inline-flex items-center gap-1 data-[highlighted]:ring-2 data-[highlighted]:ring-ring data-[highlighted]:rounded-xs"
               >
                 <span data-part="item-text" data-index={String(i)} data-value={tag}>
                   {tag}
@@ -111,7 +111,7 @@ export default class TagsInput extends ZagComponent {
           ))}
           <input
             data-part="input"
-            class="tags-input-input flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground min-w-[60px]"
+            class="tags-input-input flex-1 bg-transparent text-sm outline-hidden placeholder:text-muted-foreground min-w-[60px]"
           />
         </div>
         <input data-part="hidden-input" type="hidden" />
