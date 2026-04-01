@@ -29,5 +29,16 @@ export function renderToString(
       return options.onRenderError(err)
     }
     throw error
+  } finally {
+    // Remove observers registered by the temporary instance's constructor
+    // (createdHooks) to prevent polluting shared store observer trees.
+    // Only clean up observers — a full dispose() would also remove children
+    // from shared stores and potentially break the live hydrated app.
+    const removers = (instance as Record<string, unknown>).__observer_removers__
+    if (Array.isArray(removers)) {
+      for (const remover of removers) {
+        if (typeof remover === 'function') try { (remover as Function)() } catch { /* ignore */ }
+      }
+    }
   }
 }

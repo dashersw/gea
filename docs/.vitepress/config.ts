@@ -114,6 +114,21 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Gea SSR',
+        items: [
+          { text: 'Overview', link: '/gea-ssr/overview' },
+          { text: 'Getting Started', link: '/gea-ssr/getting-started' },
+          { text: 'Handle Request', link: '/gea-ssr/handle-request' },
+          { text: 'Streaming', link: '/gea-ssr/streaming' },
+          { text: 'Hydration', link: '/gea-ssr/hydration' },
+          { text: 'Store Isolation', link: '/gea-ssr/store-isolation' },
+          { text: 'Router Context', link: '/gea-ssr/router-context' },
+          { text: 'Server-Side Routing', link: '/gea-ssr/server-routing' },
+          { text: 'Node Integration', link: '/gea-ssr/node-integration' },
+          { text: 'Vite Plugin', link: '/gea-ssr/vite-plugin' },
+        ],
+      },
+      {
         text: 'Tooling',
         items: [
           { text: 'Vite Plugin', link: '/tooling/vite-plugin' },

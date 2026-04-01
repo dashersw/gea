@@ -1,3 +1,4 @@
+import '../../../flight-checkin/src/styles.css'
 import { hydrate } from '../../../../packages/gea-ssr/src/client'
 import App from '../../../flight-checkin/src/flight-checkin'
 import flightStore from '../../../flight-checkin/src/flight-store'
