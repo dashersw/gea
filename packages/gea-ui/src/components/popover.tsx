@@ -57,7 +57,7 @@ export default class Popover extends ZagComponent {
         <div data-part="positioner" class="popover-positioner">
           <div
             data-part="content"
-            class="popover-content z-50 w-72 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none"
+            class="popover-content z-50 w-72 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden"
           >
             {props.title && (
               <div data-part="title" class="popover-title font-medium leading-none mb-2">

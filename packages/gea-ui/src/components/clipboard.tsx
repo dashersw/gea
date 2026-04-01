@@ -53,11 +53,11 @@ export default class Clipboard extends ZagComponent {
         <div data-part="control" class="clipboard-control flex gap-2">
           <input
             data-part="input"
-            class="clipboard-input flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+            class="clipboard-input flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
           />
           <button
             data-part="trigger"
-            class="clipboard-trigger inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm shadow-sm hover:bg-accent"
+            class="clipboard-trigger inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm shadow-xs hover:bg-accent"
           >
             {this.copied ? (
               <span data-part="indicator-copied">&#x2713; Copied</span>
