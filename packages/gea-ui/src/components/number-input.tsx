@@ -74,7 +74,7 @@ export default class NumberInput extends ZagComponent {
           </button>
           <input
             data-part="input"
-            class="number-input-input h-9 w-full border border-input bg-transparent px-3 text-center text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            class="number-input-input h-9 w-full border border-input bg-transparent px-3 text-center text-sm focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
           />
           <button
             data-part="increment-trigger"
