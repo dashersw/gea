@@ -62,7 +62,7 @@ export default class App extends Component {
       <div class="docs-layout">
         <nav class="docs-sidebar">
           <div class="docs-sidebar-logo">gea-ui</div>
-          <div class="docs-sidebar-version">v0.2.0</div>
+          <div class="docs-sidebar-version">v0.1.0</div>
 
           <h4>General</h4>
           <a href="#button">Button</a>
@@ -2775,7 +2775,7 @@ ToastStore.loading({ title: 'Loading...', description: 'Wait.' })`}</div>
               padding: '2rem 0',
             }}
           >
-            gea-ui v0.2.0 — 35 components, fully accessible, keyboard navigable, and screen reader friendly.
+            gea-ui v0.1.0 — 35 components, fully accessible, keyboard navigable, and screen reader friendly.
           </p>
         </main>
         <Toaster />
