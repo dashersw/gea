@@ -102,7 +102,7 @@ export default class Select extends ZagComponent {
         <div data-part="control" class="select-control">
           <button
             data-part="trigger"
-            class="select-trigger flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            class="select-trigger flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span data-part="value-text" class="select-value-text">
               {this.valueAsString || props.placeholder || 'Select...'}

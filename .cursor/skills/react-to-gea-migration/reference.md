@@ -51,11 +51,13 @@ Complete side-by-side conversion reference with real examples from the Jira clon
   "type": "module",
   "dependencies": {
     "@geajs/core": "^1.0.0",
-    "@geajs/ui": "^0.1.0"
+    "@geajs/ui": "^0.2.0"
   },
   "devDependencies": {
     "@geajs/vite-plugin": "^1.0.0",
+    "@tailwindcss/vite": "^4.0.0",
     "vite": "^8.0.0",
+    "tailwindcss": "^4.0.0",
     "typescript": "~5.8.0"
   }
 }
@@ -92,6 +94,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { geaPlugin } from '@geajs/vite-plugin'
+import tailwindcss from '@tailwindcss/vite'
 import { mockApiMiddleware } from './mock-api.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -100,6 +103,7 @@ export default defineConfig({
   root: __dirname,
   plugins: [
     geaPlugin(),
+    tailwindcss(),
     {
       name: 'mock-api',
       configureServer(server) {
@@ -151,7 +155,7 @@ ReactDOM.render(<App />, document.getElementById('root'))
 
 ```ts
 import App from './App'
-import '../../../packages/gea-ui/src/styles/theme.css'
+import '@geajs/ui/style.css'
 import './styles.css'
 
 const root = document.getElementById('app')

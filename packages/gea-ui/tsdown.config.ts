@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsdown'
 import { geaPlugin } from '../vite-plugin-gea/src/index'
-import { copyFileSync, readdirSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, parse, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,7 +15,6 @@ const componentEntries = Object.fromEntries(
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
-    'tailwind-preset': 'src/tailwind-preset.ts',
     ...componentEntries,
   },
   plugins: [geaPlugin() as any],
@@ -34,7 +33,10 @@ export default defineConfig({
   hash: false,
   fixedExtension: true,
   onSuccess() {
-    copyFileSync('src/styles/theme.css', 'dist/theme.css')
+    const src = readFileSync('src/styles/theme.css', 'utf8')
+    // Replace source scan path from dev to prod
+    const dist = src.replace('@source "../**/*.{ts,tsx}";', '@source "./**/*.mjs";')
+    writeFileSync('dist/theme.css', dist)
     console.log('Copied theme.css to dist/')
   },
 })
