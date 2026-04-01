@@ -102,7 +102,7 @@ export default class Select extends ZagComponent {
         <div data-part="control" class="select-control">
           <button
             data-part="trigger"
-            class="select-trigger flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            class="select-trigger flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span data-part="value-text" class="select-value-text">
               {this.valueAsString || props.placeholder || 'Select...'}
@@ -124,7 +124,7 @@ export default class Select extends ZagComponent {
                   data-part="item"
                   data-value={item.value}
                   data-label={item.label}
-                  class="select-item relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                  class="select-item relative flex cursor-pointer select-none items-center rounded-xs px-2 py-1.5 text-sm outline-hidden data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
                 >
                   <span data-part="item-text" data-value={item.value} data-label={item.label}>
                     {item.label}
