@@ -43,6 +43,11 @@ const EVENT_TYPES = new Set([
   'drop',
 ])
 
+/** HTML parent tags where it is safe to insert an arbitrary placeholder child element. */
+const SAFE_CLONE_PARENTS = new Set([
+  'div', 'span', 'section', 'article', 'header', 'footer', 'main', 'nav', 'figure',
+])
+
 const VOID_ELEMENTS = new Set([
   'area',
   'base',
@@ -110,6 +115,11 @@ export type CloneIdentityPatch =
   | { kind: 'dataGeaEvent'; childPath: number[]; token: string }
   | { kind: 'attr'; childPath: number[]; expr: t.Expression; attrName: string }
 
+export type CloneComponentSlotPatch = {
+  childPath: number[]
+  instanceVar: string
+}
+
 function buildEventIdExpr(suffix?: string): t.Expression {
   if (!suffix) return t.memberExpression(t.thisExpression(), t.identifier('id'))
   return t.binaryExpression(
@@ -128,10 +138,14 @@ export function jsxToStaticHtml(
   refCounter: { value: number },
   elementPath: string[] = [],
   _isRoot = true,
+  parentTag?: string,
 ): string | null {
   const tagName = getJSXTagName(node.openingElement.name)
   const isComp = Boolean(tagName && isComponentTag(tagName))
-  if (isComp) return null
+  if (isComp) {
+    if (!parentTag || !SAFE_CLONE_PARENTS.has(parentTag)) return null
+    return `<${parentTag} data-gea-child-slot></${parentTag}>`
+  }
 
   const effectiveTag = tagName!
   let html = `<${effectiveTag}`
@@ -181,7 +195,7 @@ export function jsxToStaticHtml(
   }
 
   html += '>'
-  const childHtml = processStaticChildren(node.children, refCounter, elementPath)
+  const childHtml = processStaticChildren(node.children, refCounter, elementPath, undefined, undefined, effectiveTag)
   if (childHtml === null) return null
   return html + childHtml + `</${effectiveTag}>`
 }
@@ -192,6 +206,7 @@ function processStaticChildren(
   parentPath: string[],
   dcCursor?: { index: number },
   directChildren?: ReturnType<typeof getDirectChildElements>,
+  parentTag?: string,
 ): string | null {
   const cursor = dcCursor ?? { index: 0 }
   const dc = directChildren ?? getDirectChildElements(children as any)
@@ -204,11 +219,11 @@ function processStaticChildren(
       const seg = dc[cursor.index]?.selectorSegment
       cursor.index++
       const nextPath = seg ? [...parentPath, seg] : parentPath
-      const inner = jsxToStaticHtml(child, refCounter, nextPath, false)
+      const inner = jsxToStaticHtml(child, refCounter, nextPath, false, parentTag)
       if (inner === null) return null
       out += inner
     } else if (t.isJSXFragment(child)) {
-      const inner = processStaticChildren(child.children, refCounter, parentPath, cursor, dc)
+      const inner = processStaticChildren(child.children, refCounter, parentPath, cursor, dc, parentTag)
       if (inner === null) return null
       out += inner
     } else if (t.isJSXExpressionContainer(child) && !t.isJSXEmptyExpression(child.expression)) {
@@ -314,8 +329,8 @@ export function collectClonePatchEntries(
   const flattened = getDirectChildElements(node.children as any)
   flattened.forEach((dc, idx) => {
     const tag = getJSXTagName(dc.node.openingElement.name)
-    const isCompChild = Boolean(tag && isComponentTag(tag))
-    collectClonePatchEntries(dc.node, [...path, idx], entries, isCompChild)
+    if (tag && isComponentTag(tag)) return
+    collectClonePatchEntries(dc.node, [...path, idx], entries, false)
   })
 }
 
@@ -575,6 +590,34 @@ function collectIdentityPatchesForElement(
   })
 }
 
+function collectComponentSlotPatches(
+  node: t.JSXElement,
+  path: number[],
+  slots: CloneComponentSlotPatch[],
+  componentInstances: Map<string, import('./ir.ts').ChildComponent[]>,
+  instanceCursors: Map<string, number>,
+  consumeOnly = false,
+): void {
+  const flattened = getDirectChildElements(node.children as any)
+  flattened.forEach((dc, idx) => {
+    const tag = getJSXTagName(dc.node.openingElement.name)
+    if (tag && isComponentTag(tag)) {
+      const instances = componentInstances.get(tag)
+      const cursor = instanceCursors.get(tag) ?? 0
+      const instance = instances?.[cursor]
+      if (instance) {
+        instanceCursors.set(tag, cursor + 1)
+        if (!consumeOnly) {
+          slots.push({ childPath: [...path, idx], instanceVar: instance.instanceVar })
+        }
+      }
+      collectComponentSlotPatches(dc.node, [...path, idx], slots, componentInstances, instanceCursors, true)
+    } else {
+      collectComponentSlotPatches(dc.node, [...path, idx], slots, componentInstances, instanceCursors, consumeOnly)
+    }
+  })
+}
+
 export function generateCloneMembers(
   root: t.JSXElement,
   analysis: AnalysisResult,
@@ -658,7 +701,12 @@ export function generateCloneMembers(
     true,
   )
 
-  const cloneMethodBody = buildCloneTemplateBody(identityPatches, contentPatches, cloneCtx)
+  const componentSlotPatches: CloneComponentSlotPatch[] = []
+  if (cloneCtx.componentInstances && cloneCtx.componentInstances.size > 0) {
+    collectComponentSlotPatches(root, [], componentSlotPatches, cloneCtx.componentInstances, new Map())
+  }
+
+  const cloneMethodBody = buildCloneTemplateBody(identityPatches, contentPatches, componentSlotPatches, cloneCtx)
 
   const cloneMethod = t.classMethod('method', t.identifier('__cloneTemplate'), [], t.blockStatement(cloneMethodBody))
 
@@ -668,6 +716,7 @@ export function generateCloneMembers(
 function buildCloneTemplateBody(
   identityPatches: CloneIdentityPatch[],
   contentPatches: CloneContentPatch[],
+  componentSlotPatches: CloneComponentSlotPatch[],
   cloneCtx: Ctx,
 ): t.Statement[] {
   const rootVar = t.identifier('__root')
@@ -707,6 +756,7 @@ function buildCloneTemplateBody(
   const allChildPaths = new Set<string>()
   for (const p of identityPatches) allChildPaths.add(p.childPath.join('_'))
   for (const p of contentPatches) allChildPaths.add(p.childPath.join('_'))
+  for (const p of componentSlotPatches) allChildPaths.add(p.childPath.join('_'))
   for (const key of allChildPaths) {
     if (!key) continue
     const path = key.split('_').map((n) => parseInt(n, 10))
@@ -863,6 +913,27 @@ function buildCloneTemplateBody(
         break
       }
     }
+  }
+
+  for (const slot of componentSlotPatches) {
+    const nav = navFor(slot.childPath)
+    stmts.push(
+      t.expressionStatement(
+        t.callExpression(
+          t.memberExpression(
+            t.memberExpression(nav, t.identifier('parentNode')),
+            t.identifier('replaceChild'),
+          ),
+          [
+            t.memberExpression(
+              t.memberExpression(t.thisExpression(), t.identifier(slot.instanceVar)),
+              t.identifier('el'),
+            ),
+            nav,
+          ],
+        ),
+      ),
+    )
   }
 
   stmts.push(t.returnStatement(rootVar))

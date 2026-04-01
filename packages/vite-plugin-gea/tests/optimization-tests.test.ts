@@ -11,6 +11,7 @@ import { parseSource } from '../src/parse'
 import { transformComponentFile } from '../src/transform-component'
 import { geaPlugin } from '../src/index'
 import { __escapeHtml, __sanitizeAttr } from '../../gea/src/lib/base/component'
+import { compileJsxComponent, loadRuntimeModules } from './helpers/compile'
 
 const generate = 'default' in babelGenerator ? babelGenerator.default : babelGenerator
 
@@ -92,14 +93,6 @@ async function flushMicrotasks() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-async function loadRuntimeModules(seed: string) {
-  const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager.ts')
-  ComponentManager.instance = undefined
-  return Promise.all([
-    import(`../../gea/src/lib/base/component.tsx?${seed}`),
-    import(`../../gea/src/lib/store.ts?${seed}`),
-  ])
-}
 
 // --- Optimization #3: Prop patch methods (inlined into __onPropChange) ---
 test('compiler inlines prop text patches into __onPropChange', () => {
@@ -500,23 +493,6 @@ export default class MultiStore extends Store {
   }
 })
 
-async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
-  const allBindings = { __escapeHtml, __sanitizeAttr, ...bindings }
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-  const result = await transform?.call({} as never, source, id)
-  assert.ok(result)
-
-  const code = typeof result === 'string' ? result : result.code
-  const compiledSource = `${code
-    .replace(/^import .*;$/gm, '')
-    .replaceAll('import.meta.hot', 'undefined')
-    .replaceAll('import.meta.url', '""')
-    .replace(/export default class\s+/, 'class ')}
-return ${className};`
-
-  return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings))
-}
 
 // --- setAttribute equality guard ---
 
@@ -766,6 +742,166 @@ test('selecting a cell in a grid should only mutate the old and new selected cel
 
     for (const cell of cells) cell.dispose()
   } finally {
+    restoreDom()
+  }
+})
+
+// --- P1-PERF-6: Partial clone optimization for components with child components ---
+test('clone optimization: component with child components gets __tpl and __cloneTemplate', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Header from './Header'
+    export default class MyComp extends Component {
+      template() {
+        return (
+          <div class="wrapper">
+            <Header />
+            <p>static text</p>
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('__tpl'), 'should have __tpl static field')
+  assert.ok(code.includes('__cloneTemplate'), 'should have __cloneTemplate method')
+})
+
+test('clone optimization: __cloneTemplate replaces placeholder with child component el', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Header from './Header'
+    export default class MyComp extends Component {
+      template() {
+        return (
+          <div class="wrapper">
+            <Header />
+            <p>static text</p>
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('_header'), 'should reference header instance')
+  assert.ok(code.includes('.el'), 'should access child el')
+  assert.ok(code.includes('replaceChild'), 'should use replaceChild')
+})
+
+test('clone optimization: static html skeleton uses placeholder for child component', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Panel from './Panel'
+    export default class MyComp extends Component {
+      template() {
+        return (
+          <div>
+            <span>before</span>
+            <Panel />
+            <span>after</span>
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('data-gea-child-slot'), 'placeholder should be in static html')
+  assert.ok(code.includes('__tpl'), 'should have clone optimization')
+})
+
+test('clone optimization: component with dynamic class and child component', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Footer from './Footer'
+    export default class MyComp extends Component {
+      template({ active }) {
+        return (
+          <div class={active ? 'active' : 'inactive'}>
+            <Footer />
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('__tpl'), 'should have clone optimization even with dynamic class')
+  assert.ok(code.includes('__cloneTemplate'), 'should have __cloneTemplate')
+  assert.ok(code.includes('replaceChild'), 'should replace placeholder')
+})
+
+// --- P1-PERF-6 runtime: verify DOM behavior after mount ---
+test('clone optimization: runtime DOM - child slot placeholder is replaced after mount', async () => {
+  const restoreDom = installDom()
+  let app: { render: (el: HTMLElement) => void; dispose: () => void } | undefined
+  let root: HTMLElement | undefined
+
+  try {
+    const seed = `opt-runtime-${Date.now()}-${Math.random()}`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const headerSource = `
+      import { Component } from '@geajs/core'
+      export default function Header() {
+        return <header class="the-header">Hello</header>
+      }
+    `
+    const Header = await compileJsxComponent(
+      headerSource,
+      '/virtual/Header.jsx',
+      'Header',
+      { Component },
+    )
+
+    const parentSource = `
+      import { Component } from '@geajs/core'
+      import Header from './Header'
+      export default class ParentComp extends Component {
+        template() {
+          return (
+            <div class="wrapper">
+              <Header />
+              <p>static text</p>
+            </div>
+          )
+        }
+      }
+    `
+    const ParentComp = await compileJsxComponent(
+      parentSource,
+      '/virtual/ParentComp.jsx',
+      'ParentComp',
+      { Component, Header },
+    )
+
+    root = document.createElement('div')
+    document.body.appendChild(root)
+    app = new (ParentComp as new () => { render: (el: HTMLElement) => void; dispose: () => void })()
+    app.render(root)
+    await flushMicrotasks()
+
+    // Placeholder must be gone after mount
+    assert.equal(
+      root.querySelector('[data-gea-child-slot]'),
+      null,
+      'data-gea-child-slot placeholder should be removed after mount',
+    )
+
+    // The child component's element should be present in the DOM
+    assert.ok(
+      root.querySelector('.the-header') !== null,
+      'child component element (.the-header) should be inside root',
+    )
+
+    // The wrapper div should also be present
+    assert.ok(
+      root.querySelector('.wrapper') !== null,
+      'parent wrapper element should be in root',
+    )
+
+  } finally {
+    app?.dispose()
+    await flushMicrotasks()
+    root?.remove()
     restoreDom()
   }
 })
