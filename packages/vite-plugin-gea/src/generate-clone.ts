@@ -43,13 +43,9 @@ const EVENT_TYPES = new Set([
   'drop',
 ])
 
-/** HTML parent tags where inserting an arbitrary child element is invalid. */
-const RESTRICTED_CLONE_PARENTS = new Set([
-  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a',
-  'table', 'tbody', 'thead', 'tfoot', 'tr', 'colgroup',
-  'ul', 'ol', 'dl',
-  'select', 'optgroup',
-  'svg', 'g', 'defs', 'symbol', 'marker', 'clipPath', 'mask', 'pattern',
+/** HTML parent tags where it is safe to insert an arbitrary placeholder child element. */
+const SAFE_CLONE_PARENTS = new Set([
+  'div', 'span', 'section', 'article', 'header', 'footer', 'main', 'nav', 'figure',
 ])
 
 const VOID_ELEMENTS = new Set([
@@ -147,7 +143,7 @@ export function jsxToStaticHtml(
   const tagName = getJSXTagName(node.openingElement.name)
   const isComp = Boolean(tagName && isComponentTag(tagName))
   if (isComp) {
-    if (!parentTag || RESTRICTED_CLONE_PARENTS.has(parentTag)) return null
+    if (!parentTag || !SAFE_CLONE_PARENTS.has(parentTag)) return null
     return `<${parentTag} data-gea-child-slot></${parentTag}>`
   }
 
@@ -600,6 +596,7 @@ function collectComponentSlotPatches(
   slots: CloneComponentSlotPatch[],
   componentInstances: Map<string, import('./ir.ts').ChildComponent[]>,
   instanceCursors: Map<string, number>,
+  consumeOnly = false,
 ): void {
   const flattened = getDirectChildElements(node.children as any)
   flattened.forEach((dc, idx) => {
@@ -610,10 +607,13 @@ function collectComponentSlotPatches(
       const instance = instances?.[cursor]
       if (instance) {
         instanceCursors.set(tag, cursor + 1)
-        slots.push({ childPath: [...path, idx], instanceVar: instance.instanceVar })
+        if (!consumeOnly) {
+          slots.push({ childPath: [...path, idx], instanceVar: instance.instanceVar })
+        }
       }
+      collectComponentSlotPatches(dc.node, [...path, idx], slots, componentInstances, instanceCursors, true)
     } else {
-      collectComponentSlotPatches(dc.node, [...path, idx], slots, componentInstances, instanceCursors)
+      collectComponentSlotPatches(dc.node, [...path, idx], slots, componentInstances, instanceCursors, consumeOnly)
     }
   })
 }
