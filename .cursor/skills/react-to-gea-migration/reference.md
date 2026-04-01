@@ -51,11 +51,13 @@ Complete side-by-side conversion reference with real examples from the Jira clon
   "type": "module",
   "dependencies": {
     "@geajs/core": "^1.0.0",
-    "@geajs/ui": "^0.1.0"
+    "@geajs/ui": "^0.2.0"
   },
   "devDependencies": {
     "@geajs/vite-plugin": "^1.0.0",
+    "@tailwindcss/vite": "^4.0.0",
     "vite": "^8.0.0",
+    "tailwindcss": "^4.0.0",
     "typescript": "~5.8.0"
   }
 }
@@ -92,6 +94,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { geaPlugin } from '@geajs/vite-plugin'
+import tailwindcss from '@tailwindcss/vite'
 import { mockApiMiddleware } from './mock-api.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -100,6 +103,7 @@ export default defineConfig({
   root: __dirname,
   plugins: [
     geaPlugin(),
+    tailwindcss(),
     {
       name: 'mock-api',
       configureServer(server) {
@@ -151,7 +155,7 @@ ReactDOM.render(<App />, document.getElementById('root'))
 
 ```ts
 import App from './App'
-import '../../../packages/gea-ui/src/styles/theme.css'
+import '@geajs/ui/style.css'
 import './styles.css'
 
 const root = document.getElementById('app')
@@ -507,7 +511,7 @@ export default class Board extends Component {
                 class={`board-filters-avatar ${filtersStore.userIds.includes(user.id) ? 'active' : ''}`}
                 click={() => filtersStore.toggleUserId(user.id)}
               >
-                <Avatar src={user.avatarUrl} name={user.name} class="!h-8 !w-8" />
+                <Avatar src={user.avatarUrl} name={user.name} class="h-8! w-8!" />
               </div>
             ))}
           </div>
@@ -555,7 +559,7 @@ Key differences:
 - Store is imported directly — no prop drilling or context consumers.
 - `<Fragment>` replaced with a wrapper `<div>`.
 - Route-based modal replaced with route params check in the parent `Project` layout.
-- `@geajs/ui` `Avatar` replaces custom Avatar with `src`, `name`, and CSS override `class="!h-8 !w-8"`.
+- `@geajs/ui` `Avatar` replaces custom Avatar with `src`, `name`, and CSS override `class="h-8! w-8!"`.
 - **Filter function is pure** — defined outside the component, takes all parameters explicitly. Store values are passed in from `template()` to ensure the compiler tracks them.
 
 ### Gea: Project as a router layout with `page` prop
@@ -814,10 +818,10 @@ Important: `@geajs/ui` Select always uses array values. For single select, wrap 
 ```tsx
 import { Avatar } from '@geajs/ui'
 
-<Avatar src={user.avatarUrl} name={user.name} class="!h-8 !w-8" />
+<Avatar src={user.avatarUrl} name={user.name} class="h-8! w-8!" />
 ```
 
-Use CSS `!important` (or Tailwind's `!` prefix if using Tailwind) to override default Avatar dimensions.
+Use CSS `!important` (or Tailwind's `!` suffix if using Tailwind) to override default Avatar dimensions.
 
 ### Using Link with onNavigate
 
@@ -1103,10 +1107,10 @@ export const StyledButton = styled(Button)`
 .avatar-sm { width: 32px !important; height: 32px !important; }
 ```
 
-Or if using Tailwind, use the `!` prefix shorthand:
+Or if using Tailwind, use the `!` suffix shorthand:
 
 ```tsx
-<Avatar src={user.avatarUrl} name={user.name} class="!h-8 !w-8" />
+<Avatar src={user.avatarUrl} name={user.name} class="h-8! w-8!" />
 ```
 
 ---
@@ -1508,7 +1512,7 @@ export default class IssueCard extends Component {
           </div>
           <div class="issue-card-footer-right">
             {assignees.map((user: any) => (
-              <Avatar key={user.id} src={user.avatarUrl} name={user.name} class="!h-6 !w-6" />
+              <Avatar key={user.id} src={user.avatarUrl} name={user.name} class="h-6! w-6!" />
             ))}
           </div>
         </div>
@@ -1715,7 +1719,7 @@ export default class CommentCreate extends Component {
         {!this.isFormOpen && (
           <div class="comment-create-collapsed">
             <div class="comment-create-fake" click={() => this.openForm()}>
-              <Avatar src={user?.avatarUrl} name={user?.name || ''} class="!h-8 !w-8" />
+              <Avatar src={user?.avatarUrl} name={user?.name || ''} class="h-8! w-8!" />
               <span class="comment-create-placeholder">Add a comment...</span>
             </div>
             <p class="comment-pro-tip">
@@ -2093,7 +2097,7 @@ When porting styled-components to plain CSS, copy every value verbatim — `17px
 
 ### 13. Overriding `@geajs/ui` component dimensions
 
-`@geajs/ui` components have default dimensions. Override them with `!important` in your CSS, or with Tailwind's `!` prefix if using Tailwind:
+`@geajs/ui` components have default dimensions. Override them with `!important` in your CSS, or with Tailwind's `!` suffix if using Tailwind:
 
 ```css
 .avatar-sm { width: 32px !important; height: 32px !important; }

@@ -75,7 +75,7 @@ export default class PinInput extends ZagComponent {
               key={i}
               data-part="input"
               data-index={String(i)}
-              class="pin-input-field h-9 w-9 rounded-md border border-input bg-transparent text-center text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              class="pin-input-field h-9 w-9 rounded-md border border-input bg-transparent text-center text-sm shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
             />
           ))}
         </div>
