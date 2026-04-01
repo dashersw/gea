@@ -85,7 +85,7 @@ export function hydrate(
   // Attach reactivity bindings (observers, events)
   if (typeof app[GEA_ATTACH_BINDINGS] === 'function') app[GEA_ATTACH_BINDINGS]()
   if (typeof app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS] === 'function') app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]()
-  if (typeof (app as any).__adoptListItems === 'function') (app as any).__adoptListItems()
+  if (typeof app.__adoptListItems === 'function') app.__adoptListItems()
   if (typeof app[GEA_INSTANTIATE_CHILD_COMPONENTS] === 'function') app[GEA_INSTANTIATE_CHILD_COMPONENTS]()
   if (typeof app[GEA_SETUP_EVENT_DIRECTIVES] === 'function') app[GEA_SETUP_EVENT_DIRECTIVES]()
   if (typeof app.onAfterRender === 'function') app.onAfterRender()
