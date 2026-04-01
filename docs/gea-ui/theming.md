@@ -147,13 +147,14 @@ Styled components also apply semantic class names (`dialog-trigger`, `tabs-conte
 
 ## Border Radius
 
-The `--radius` variable controls the base radius. The theme derives three tokens from it:
+The `--radius` variable controls the base radius. The theme derives four tokens from it:
 
 | Token | Value |
 | --- | --- |
 | `rounded-lg` | `var(--radius)` |
 | `rounded-md` | `calc(var(--radius) - 2px)` |
 | `rounded-sm` | `calc(var(--radius) - 4px)` |
+| `rounded-xs` | `calc(var(--radius) - 6px)` |
 
 Change `--radius` once and all components update:
 

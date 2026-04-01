@@ -25,6 +25,7 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
+  --radius-xs: calc(var(--radius) - 6px);
 }
 
 /* scan for compiled version of the components relative to the dist/ directory */
