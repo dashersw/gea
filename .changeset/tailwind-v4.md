@@ -22,7 +22,7 @@
     })
     ```
 
-  3. **Delete `tailwind.config.js` and `postcss.config.js`** — or remove `@gea/ui`-related configuration if they contain project-related configuration
+  3. **Remove the old `@geajs/ui` preset/PostCSS wiring** — delete `postcss.config.js` if it only existed for Tailwind v3, and only remove `tailwind.config.js` if it contained no project-specific configuration
 
   4. **Remove `@tailwind` directives** from any CSS files you own (e.g. `@tailwind base; @tailwind components; @tailwind utilities;`). If you need Tailwind utilities in your own CSS, replace them with `@import "tailwindcss";`
 
