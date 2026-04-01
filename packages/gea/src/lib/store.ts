@@ -65,12 +65,35 @@ function proxyIterate(
   method: string,
   cb: Function,
   thisArg?: any,
+  cache?: WeakMap<any[], Map<number, any>>,
 ): any {
   const isMap = method === 'map'
   const result: any = isMap ? new Array(arr.length) : method === 'filter' ? [] : undefined
   for (let i = 0; i < arr.length; i++) {
-    const nextPath = basePath ? `${basePath}.${i}` : String(i)
-    const p = mkProxy(arr[i], nextPath, appendPathParts(baseParts, String(i)))
+    const item = arr[i]
+    let p: any
+    if (cache !== undefined && item !== null && typeof item === 'object') {
+      let indexCache = cache.get(arr)
+      if (indexCache !== undefined) {
+        p = indexCache.get(i)
+        // Validate cached proxy still wraps the current element
+        if (p !== undefined && p.__getTarget !== item) {
+          p = undefined
+        }
+      }
+      if (p === undefined) {
+        const nextPath = basePath ? `${basePath}.${i}` : String(i)
+        p = mkProxy(item, nextPath, appendPathParts(baseParts, String(i)))
+        if (indexCache === undefined) {
+          indexCache = new Map()
+          cache.set(arr, indexCache)
+        }
+        indexCache.set(i, p)
+      }
+    } else {
+      const nextPath = basePath ? `${basePath}.${i}` : String(i)
+      p = mkProxy(item, nextPath, appendPathParts(baseParts, String(i)))
+    }
     const v = cb.call(thisArg, p, i, arr)
     if (isMap) {
       result[i] = v
@@ -327,6 +350,7 @@ export class Store {
   private _observerRoot: ObserverNode = createObserverNode([])
   private _proxyCache = new WeakMap()
   private _arrayIndexProxyCache = new WeakMap()
+  private _iterateProxyCache = new WeakMap<any[], Map<number, any>>()
   private _internedArrayPaths = new Map<string, string[]>()
   private _topLevelProxies = new Map<string, [raw: any, proxy: any]>()
   private _pathPartsCache = new Map<string, string[]>()
@@ -554,7 +578,10 @@ export class Store {
   }
 
   private _clearArrayIndexCache(arr: any): void {
-    if (arr && typeof arr === 'object') this._arrayIndexProxyCache.delete(arr)
+    if (arr && typeof arr === 'object') {
+      this._arrayIndexProxyCache.delete(arr)
+      this._iterateProxyCache.delete(arr)
+    }
   }
 
   private _normalizeBatch(batch: StoreChange[]): StoreChange[] {
@@ -1099,6 +1126,7 @@ export class Store {
     basePath: string,
     baseParts: string[],
     mkProxy: (target: any, basePath: string, baseParts: string[]) => any,
+    cache?: WeakMap<any[], Map<number, any>>,
   ): Function | null {
     switch (method) {
       case 'indexOf':
@@ -1137,7 +1165,7 @@ export class Store {
       case 'map':
       case 'filter':
       case 'find':
-        return (cb: Function, thisArg?: any) => proxyIterate(arr, basePath, baseParts, mkProxy, method, cb, thisArg)
+        return (cb: Function, thisArg?: any) => proxyIterate(arr, basePath, baseParts, mkProxy, method, cb, thisArg, cache)
       case 'reduce':
         return function (cb: Function, init?: any) {
           let acc = arguments.length >= 2 ? init : arr[0]
@@ -1275,7 +1303,7 @@ export class Store {
           if (cached !== undefined) return cached
           cached =
             store._interceptArrayMethod(obj, prop, basePath, baseParts) ||
-            store._interceptArrayIterator(obj, prop, basePath, baseParts, createProxy) ||
+            store._interceptArrayIterator(obj, prop, basePath, baseParts, createProxy, store._iterateProxyCache) ||
             value.bind(obj)
           methodCache.set(prop, cached)
           return cached
@@ -1381,12 +1409,16 @@ export class Store {
         }
         if (prop === 'length' && Array.isArray(obj)) {
           store._arrayIndexProxyCache.delete(obj)
+          store._iterateProxyCache.delete(obj)
           obj[prop] = value
           return true
         }
 
         const isNew = !Object.prototype.hasOwnProperty.call(obj, prop)
-        if (Array.isArray(obj) && isNumericIndex(prop)) store._arrayIndexProxyCache.delete(obj)
+        if (Array.isArray(obj) && isNumericIndex(prop)) {
+          store._arrayIndexProxyCache.delete(obj)
+          store._iterateProxyCache.delete(obj)
+        }
         if (oldValue && typeof oldValue === 'object') {
           store._proxyCache.delete(oldValue)
           store._arrayIndexProxyCache.delete(oldValue)
@@ -1470,7 +1502,10 @@ export class Store {
           return true
         }
         const oldValue = obj[prop]
-        if (Array.isArray(obj) && isNumericIndex(prop)) store._arrayIndexProxyCache.delete(obj)
+        if (Array.isArray(obj) && isNumericIndex(prop)) {
+          store._arrayIndexProxyCache.delete(obj)
+          store._iterateProxyCache.delete(obj)
+        }
         if (oldValue && typeof oldValue === 'object') {
           store._proxyCache.delete(oldValue)
           store._arrayIndexProxyCache.delete(oldValue)
