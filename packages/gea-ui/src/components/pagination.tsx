@@ -59,13 +59,13 @@ export default class Pagination extends ZagComponent {
         <div class="flex items-center gap-1">
           <button
             data-part="prev-trigger"
-            class="pagination-prev inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm shadow-sm hover:bg-accent disabled:opacity-50"
+            class="pagination-prev inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm shadow-xs hover:bg-accent disabled:opacity-50"
           >
             &lsaquo; Prev
           </button>
           <button
             data-part="next-trigger"
-            class="pagination-next inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm shadow-sm hover:bg-accent disabled:opacity-50"
+            class="pagination-next inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm shadow-xs hover:bg-accent disabled:opacity-50"
           >
             Next &rsaquo;
           </button>
