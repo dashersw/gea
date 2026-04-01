@@ -858,6 +858,7 @@ test('clone optimization: component with dynamic class and child component', () 
 test('clone optimization: runtime DOM - child slot placeholder is replaced after mount', async () => {
   const restoreDom = installDom()
   let app: { dispose: () => void } | undefined
+  let root: HTMLElement | undefined
 
   try {
     const seed = `opt-runtime-${Date.now()}-${Math.random()}`
@@ -897,7 +898,7 @@ test('clone optimization: runtime DOM - child slot placeholder is replaced after
       { Component, Header },
     )
 
-    const root = document.createElement('div')
+    root = document.createElement('div')
     document.body.appendChild(root)
     app = new (ParentComp as new () => { render: (el: HTMLElement) => void; dispose: () => void })()
     app.render(root)
@@ -922,10 +923,10 @@ test('clone optimization: runtime DOM - child slot placeholder is replaced after
       'parent wrapper element should be in root',
     )
 
-    root.remove()
   } finally {
     app?.dispose()
     await flushMicrotasks()
+    root?.remove()
     restoreDom()
   }
 })

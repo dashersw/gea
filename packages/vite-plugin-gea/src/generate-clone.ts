@@ -45,7 +45,7 @@ const EVENT_TYPES = new Set([
 
 /** HTML parent tags where inserting an arbitrary child element is invalid. */
 const RESTRICTED_CLONE_PARENTS = new Set([
-  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'a', 'b', 'i', 'em', 'strong',
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a',
   'table', 'tbody', 'thead', 'tfoot', 'tr', 'colgroup',
   'ul', 'ol', 'dl',
   'select', 'optgroup',
