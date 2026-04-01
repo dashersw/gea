@@ -52,7 +52,7 @@ export default class Menu extends ZagComponent {
       <div class={props.class || ''}>
         <button
           data-part="trigger"
-          class="menu-trigger inline-flex items-center justify-center gap-1 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground"
+          class="menu-trigger inline-flex items-center justify-center gap-1 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium shadow-xs hover:bg-accent hover:text-accent-foreground"
         >
           {props.triggerLabel || 'Menu'}
         </button>
@@ -69,7 +69,7 @@ export default class Menu extends ZagComponent {
                   key={item.value}
                   data-part="item"
                   data-value={item.value}
-                  class="menu-item relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                  class="menu-item relative flex cursor-pointer select-none items-center rounded-xs px-2 py-1.5 text-sm outline-hidden data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
                 >
                   {item.label}
                 </div>
