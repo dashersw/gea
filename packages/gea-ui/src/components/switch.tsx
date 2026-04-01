@@ -52,7 +52,7 @@ export default class Switch extends ZagComponent {
         <input data-part="hidden-input" type="checkbox" />
         <span
           data-part="control"
-          class="switch-control inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-sm transition-colors data-[state=checked]:bg-primary data-[state=unchecked]:bg-input"
+          class="switch-control inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-xs transition-colors data-[state=checked]:bg-primary data-[state=unchecked]:bg-input"
         >
           <span
             data-part="thumb"

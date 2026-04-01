@@ -14,78 +14,51 @@ npm install @geajs/core
 
 ## Tailwind CSS Setup
 
-@geajs/ui uses [Tailwind CSS](https://tailwindcss.com/) **v3** for styling and ships a preset that defines the design token system (colors, border radius, etc.).
+@geajs/ui uses [Tailwind CSS](https://tailwindcss.com/) **v4** for styling. The theme CSS shipped with the library sets up Tailwind and all design tokens.
 
-::: warning
-Tailwind CSS v4 is **not yet supported**. Make sure you install Tailwind CSS v3.
-:::
-
-### 1. Install Tailwind CSS v3
+### 1. Install Tailwind and its Vite plugin
 
 ```bash
-npm install -D tailwindcss@3 postcss autoprefixer
+npm install -D tailwindcss @tailwindcss/vite
 ```
 
-Create a `postcss.config.js` in your project root:
+Add the plugin to your `vite.config.ts`:
 
-```js
-// postcss.config.js
-export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}
+```ts
+import tailwindcss from '@tailwindcss/vite'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [tailwindcss()],
+})
 ```
 
-### 2. Add the Tailwind Preset
+### 2. Import the Theme CSS
 
-```js
-// tailwind.config.js
-import geaPreset from '@geajs/ui/tailwind-preset'
-
-export default {
-  presets: [geaPreset],
-  content: [
-    './src/**/*.{tsx,ts,jsx,js}',
-    './node_modules/@geajs/ui/dist/**/*.mjs',
-  ],
-}
-```
-
-The preset configures:
-
-- **Semantic colors** — `primary`, `secondary`, `destructive`, `muted`, `accent`, `popover`, `card`, `border`, `input`, `ring`, `background`, `foreground` — all driven by CSS custom properties.
-- **Border radius** — `lg`, `md`, `sm` tokens tied to a single `--radius` variable.
-- **Dark mode** — enabled via the `dark` class strategy.
-
-### 3. Import the Theme CSS
-
-The theme stylesheet defines the CSS custom properties that the preset references. Import it once in your entry point:
+Import the theme stylesheet once in your entry point. It sets up Tailwind, all semantic color tokens, and dark mode support:
 
 ```ts
 // main.ts
 import '@geajs/ui/style.css'
 ```
 
-You also need a CSS file that includes Tailwind's directives. Create a `src/style.css` (or similar) and import it in your entry point:
+### 3. (Optional) Extend with Your Own CSS
+
+If you need additional Tailwind utilities or custom styles, create a CSS file and import it after the theme:
 
 ```css
 /* src/style.css */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* your custom theme extensions or utilities */
 ```
 
 ```ts
 // main.ts
+// make sure the theme is imported first
 import '@geajs/ui/style.css'
 import './style.css'
 ```
 
-### 4. Include @geajs/ui in Tailwind's Content Paths
-
-Make sure `node_modules/@geajs/ui/dist/**/*.mjs` is listed in your `content` array (shown above). This allows Tailwind to scan @geajs/ui's component source and include the utility classes they use.
+You don't have to `@import "tailwindcss";` in your CSS file, it is already loaded by the theme.
 
 ## Minimal Example
 

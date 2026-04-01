@@ -129,7 +129,7 @@ export default class Combobox extends ZagComponent {
         <div data-part="control" class="combobox-control flex">
           <input
             data-part="input"
-            class="combobox-input flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            class="combobox-input flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
           />
           <button
             data-part="trigger"
@@ -150,7 +150,7 @@ export default class Combobox extends ZagComponent {
                   data-part="item"
                   data-value={item.value}
                   data-label={item.label}
-                  class="combobox-item relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                  class="combobox-item relative flex cursor-pointer select-none items-center rounded-xs px-2 py-1.5 text-sm outline-hidden data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
                 >
                   <span data-part="item-text" data-value={item.value} data-label={item.label}>
                     {item.label}
