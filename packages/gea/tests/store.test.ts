@@ -658,3 +658,84 @@ describe('Store – silent()', () => {
     assert.equal(notified, false, 'observer must not fire for array mutations inside silent()')
   })
 })
+
+describe('Store – pathParts correctness after interning', () => {
+  it('splice delete emits correct pathParts', async () => {
+    const store = new Store({ items: [1, 2, 3] })
+    const changes: StoreChange[] = []
+    store.observe('items', (_v, c) => changes.push(...c))
+    store.items.splice(1, 1)
+    await flush()
+    const del = changes.find((c) => c.type === 'delete')
+    assert.ok(del, 'expected a delete change')
+    assert.deepEqual(del!.pathParts, ['items', '1'])
+  })
+
+  it('splice add emits correct pathParts', async () => {
+    const store = new Store({ items: [1, 2, 3] })
+    const changes: StoreChange[] = []
+    store.observe('items', (_v, c) => changes.push(...c))
+    store.items.splice(1, 0, 99)
+    await flush()
+    const add = changes.find((c) => c.type === 'add')
+    assert.ok(add, 'expected an add change')
+    assert.deepEqual(add!.pathParts, ['items', '1'])
+  })
+
+  it('pop emits correct pathParts', async () => {
+    const store = new Store({ items: [1, 2, 3] })
+    const changes: StoreChange[] = []
+    store.observe('items', (_v, c) => changes.push(...c))
+    store.items.pop()
+    await flush()
+    assert.deepEqual(changes[0].pathParts, ['items', '2'])
+  })
+
+  it('shift emits correct pathParts', async () => {
+    const store = new Store({ items: [1, 2, 3] })
+    const changes: StoreChange[] = []
+    store.observe('items', (_v, c) => changes.push(...c))
+    store.items.shift()
+    await flush()
+    assert.deepEqual(changes[0].pathParts, ['items', '0'])
+  })
+
+  it('unshift emits correct pathParts', async () => {
+    const store = new Store({ items: [1, 2, 3] })
+    const changes: StoreChange[] = []
+    store.observe('items', (_v, c) => changes.push(...c))
+    store.items.unshift(0)
+    await flush()
+    assert.deepEqual(changes[0].pathParts, ['items', '0'])
+  })
+
+  it('interned pathParts are referentially identical for repeated operations at the same index', async () => {
+    const store = new Store({ items: [1, 2, 3] })
+    const changes: StoreChange[] = []
+    store.observe('items', (_v, c) => changes.push(...c))
+    store.items.shift() // removes index 0 → pathParts = ['items', '0']
+    await flush()
+    store.items.shift() // removes new index 0 → same path 'items.0'
+    await flush()
+    assert.deepEqual(changes[0].pathParts, ['items', '0'])
+    assert.deepEqual(changes[1].pathParts, ['items', '0'])
+    assert.strictEqual(
+      changes[0].pathParts,
+      changes[1].pathParts,
+      'same baseParts + same segment must return the same cached array reference',
+    )
+  })
+
+  it('map proxy items produce correct pathParts on nested mutation', async () => {
+    const store = new Store({ items: [{ x: 1 }, { x: 2 }] })
+    const changes: StoreChange[] = []
+    store.observe('items.1.x', (_v, c) => changes.push(...c))
+    store.items.map((item: any) => {
+      item.x = 99
+      return item
+    })
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.deepEqual(changes[0].pathParts, ['items', '1', 'x'])
+  })
+})

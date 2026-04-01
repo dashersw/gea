@@ -48,6 +48,25 @@ function appendPathParts(pathParts: string[], propStr: string): string[] {
   return pathParts.length > 0 ? [...pathParts, propStr] : [propStr]
 }
 
+// Module-level WeakMap cache for appended path parts.
+// Key: baseParts array (already-interned); value: Map of segment → result array.
+// Self-GCing: entries are released when baseParts is no longer referenced.
+const _appendCache = new WeakMap<string[], Map<string, string[]>>()
+
+function internAppendPathPart(baseParts: string[], segment: string): string[] {
+  let inner = _appendCache.get(baseParts)
+  if (inner === undefined) {
+    inner = new Map()
+    _appendCache.set(baseParts, inner)
+  }
+  let result = inner.get(segment)
+  if (result === undefined) {
+    result = baseParts.length > 0 ? [...baseParts, segment] : [segment]
+    inner.set(segment, result)
+  }
+  return result
+}
+
 function getByPathParts(obj: any, pathParts: string[]): any {
   let current = obj
   for (let i = 0; i < pathParts.length; i++) {
@@ -70,7 +89,7 @@ function proxyIterate(
   const result: any = isMap ? new Array(arr.length) : method === 'filter' ? [] : undefined
   for (let i = 0; i < arr.length; i++) {
     const nextPath = basePath ? `${basePath}.${i}` : String(i)
-    const p = mkProxy(arr[i], nextPath, appendPathParts(baseParts, String(i)))
+    const p = mkProxy(arr[i], nextPath, internAppendPathPart(baseParts, String(i)))
     const v = cb.call(thisArg, p, i, arr)
     if (isMap) {
       result[i] = v
@@ -949,7 +968,7 @@ export class Store {
     }
   }
 
-  private _interceptArrayMethod(arr: any[], method: string, _basePath: string, baseParts: string[]): Function | null {
+  private _interceptArrayMethod(arr: any[], method: string, basePath: string, baseParts: string[]): Function | null {
     const store = this // eslint-disable-line @typescript-eslint/no-this-alias
     switch (method) {
       case 'splice':
@@ -978,20 +997,22 @@ export class Store {
           }
           const changes: StoreChange[] = []
           for (let i = 0; i < removed.length; i++) {
+            const idx = start + i
             changes.push({
               type: 'delete',
-              property: String(start + i),
+              property: String(idx),
               target: arr,
-              pathParts: appendPathParts(baseParts, String(start + i)),
+              pathParts: internAppendPathPart(baseParts, String(idx)),
               previousValue: removed[i],
             })
           }
           for (let i = 0; i < items.length; i++) {
+            const idx = start + i
             changes.push({
               type: 'add',
-              property: String(start + i),
+              property: String(idx),
               target: arr,
-              pathParts: appendPathParts(baseParts, String(start + i)),
+              pathParts: internAppendPathPart(baseParts, String(idx)),
               newValue: items[i],
             })
           }
@@ -1033,7 +1054,7 @@ export class Store {
               type: 'delete',
               property: String(idx),
               target: arr,
-              pathParts: appendPathParts(baseParts, String(idx)),
+              pathParts: internAppendPathPart(baseParts, String(idx)),
               previousValue: removed,
             },
           ])
@@ -1050,7 +1071,7 @@ export class Store {
               type: 'add',
               property: String(i),
               target: arr,
-              pathParts: appendPathParts(baseParts, String(i)),
+              pathParts: internAppendPathPart(baseParts, String(i)),
               newValue: rawItems[i],
             })
           }
@@ -1144,7 +1165,7 @@ export class Store {
           const start = arguments.length >= 2 ? 0 : 1
           for (let i = start; i < arr.length; i++) {
             const nextPath = basePath ? `${basePath}.${i}` : String(i)
-            const p = mkProxy(arr[i], nextPath, appendPathParts(baseParts, String(i)))
+            const p = mkProxy(arr[i], nextPath, internAppendPathPart(baseParts, String(i)))
             acc = cb(acc, p, i, arr)
           }
           return acc
