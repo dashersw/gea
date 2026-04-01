@@ -769,3 +769,86 @@ test('selecting a cell in a grid should only mutate the old and new selected cel
     restoreDom()
   }
 })
+
+// --- P1-PERF-6: Partial clone optimization for components with child components ---
+test('clone optimization: component with child components gets __tpl and __cloneTemplate', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Header from './Header'
+    export default class MyComp extends Component {
+      template() {
+        return (
+          <div class="wrapper">
+            <Header />
+            <p>static text</p>
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('__tpl'), 'should have __tpl static field')
+  assert.ok(code.includes('__cloneTemplate'), 'should have __cloneTemplate method')
+})
+
+test('clone optimization: __cloneTemplate replaces placeholder with child component el', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Header from './Header'
+    export default class MyComp extends Component {
+      template() {
+        return (
+          <div class="wrapper">
+            <Header />
+            <p>static text</p>
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('_header'), 'should reference header instance')
+  assert.ok(code.includes('.el'), 'should access child el')
+  assert.ok(code.includes('replaceChild'), 'should use replaceChild')
+})
+
+test('clone optimization: static html skeleton uses placeholder for child component', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Panel from './Panel'
+    export default class MyComp extends Component {
+      template() {
+        return (
+          <div>
+            <span>before</span>
+            <Panel />
+            <span>after</span>
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('data-gea-child-slot'), 'placeholder should be in static html')
+  assert.ok(code.includes('__tpl'), 'should have clone optimization')
+})
+
+test('clone optimization: component with dynamic class and child component', () => {
+  const source = `
+    import { Component } from '@geajs/core'
+    import Footer from './Footer'
+    export default class MyComp extends Component {
+      template({ active }) {
+        return (
+          <div class={active ? 'active' : 'inactive'}>
+            <Footer />
+          </div>
+        )
+      }
+    }
+  `
+  const code = transformComponentSource(source)
+  assert.ok(code.includes('__tpl'), 'should have clone optimization even with dynamic class')
+  assert.ok(code.includes('__cloneTemplate'), 'should have __cloneTemplate')
+  assert.ok(code.includes('replaceChild'), 'should replace placeholder')
+})
