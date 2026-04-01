@@ -27,8 +27,7 @@
   --radius-sm: calc(var(--radius) - 4px);
 }
 
-/* Scan source components in dev mode; replaced with prod path during build  */
-@source "../**/*.{ts,tsx}";
+@source "./**/*.mjs";
 
 :root {
   --background: 0 0% 100%;

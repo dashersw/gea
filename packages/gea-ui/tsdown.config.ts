@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsdown'
 import { geaPlugin } from '../vite-plugin-gea/src/index'
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, readdirSync } from 'node:fs'
 import { dirname, parse, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -33,18 +33,7 @@ export default defineConfig({
   hash: false,
   fixedExtension: true,
   onSuccess() {
-    const srcPath = resolve(__dirname, 'src/styles/theme.css')
-    const distPath = resolve(__dirname, 'dist/theme.css')
-    const search = '@source "../**/*.{ts,tsx}";'
-    const src = readFileSync(srcPath, 'utf8')
-
-    // Replace source scan path from dev to prod
-    if (!src.includes(search)) {
-      throw new Error(`Expected ${search} in ${srcPath}`)
-    }
-
-    const dist = src.replace(search, '@source "./**/*.mjs";')
-    writeFileSync(distPath, dist)
+    copyFileSync('src/styles/theme.css', 'dist/theme.css')
     console.log('Copied theme.css to dist/')
   },
 })
