@@ -27,20 +27,17 @@ import { collectExpressionDependencies } from '../analyze/binding-resolver.ts'
 import {
   generateRenderItemMethod,
   buildPopulateItemHandlersMethod,
-} from './gen-array-render.ts'
-import { generateCreateItemMethod, generatePatchItemMethod } from './gen-array-patch.ts'
-import {
+  generateCreateItemMethod,
+  generatePatchItemMethod,
   generateComponentArrayResult,
   getComponentArrayItemsName,
   getComponentArrayRefreshMethodName,
   isUnresolvedMapWithComponentChild,
-} from './gen-array-slot-sync.ts'
-import { getHoistableRootEventsForImport } from './event-helpers.ts'
-import { appendCompiledEventMethods } from './gen-events.ts'
-import {
   generateArrayHandlers,
   generateEnsureArrayConfigsMethod,
-} from './gen-array.ts'
+} from './array-compiler.ts'
+import { getHoistableRootEventsForImport } from './event-helpers.ts'
+import { appendCompiledEventMethods } from './gen-events.ts'
 import { generateUnresolvedRelationalObserver } from './gen-observer-wiring.ts'
 import {
   getArrayPropNameFromExpr,

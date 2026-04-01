@@ -42,7 +42,7 @@ import {
   generateArrayConditionalPatchObserver,
   generateArrayConditionalRerenderObserver,
   generateArrayRelationalObserver,
-} from './gen-array.ts'
+} from './array-compiler.ts'
 import { childHasNoProps } from './gen-children.ts'
 import { appendCompiledEventMethods } from './gen-events.ts'
 

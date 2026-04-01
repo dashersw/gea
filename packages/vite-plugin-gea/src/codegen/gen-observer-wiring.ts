@@ -27,7 +27,7 @@ import {
   replacePropRefsInExpression,
   replacePropRefsInStatements,
 } from './prop-ref-utils.ts'
-import { getComponentArrayItemsName } from './gen-array-slot-sync.ts'
+import { getComponentArrayItemsName } from './array-compiler.ts'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Private helpers

@@ -26,7 +26,7 @@ import {
   parseObserveKey,
   pathPartsToString,
 } from './member-chain.ts'
-import { buildValueUnwrapHelper } from './gen-array-render.ts'
+import { buildValueUnwrapHelper } from './array-compiler.ts'
 
 import type { ReactivityContext } from './reactivity-types.ts'
 
