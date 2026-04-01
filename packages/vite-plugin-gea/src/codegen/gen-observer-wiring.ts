@@ -279,26 +279,33 @@ export function generateLocalStateObserverSetup(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Observer generators
+// Unified observer factory
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function generateStoreInlinePatchObserver(
-  pathParts: PathParts,
-  storeVar: string | undefined,
-  patchStatements: t.Statement[],
-): t.ClassMethod {
-  const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
-  method.body.body.push(
-    js`if (this.rendered_) { ${t.blockStatement(patchStatements)} }`,
-  )
-  return method
+interface EmitObserverConfig {
+  pathParts: PathParts
+  storeVar?: string
+  methodName?: string
+  guard?: 'rendered' | 'none'
+  dedup?: 'value' | 'truthiness' | null
+  body: t.Statement[]
 }
 
-export function generateRerenderObserver(pathParts: PathParts, storeVar?: string, truthinessOnly?: boolean): t.ClassMethod {
-  const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
-  if (storeVar) {
-    const prevProp = `__geaPrev_${getObserveMethodName(pathParts, storeVar)}`
-    if (truthinessOnly) {
+function emitObserver(config: EmitObserverConfig): t.ClassMethod {
+  const {
+    pathParts,
+    storeVar,
+    methodName = getObserveMethodName(pathParts, storeVar),
+    guard = 'rendered',
+    dedup = null,
+    body,
+  } = config
+
+  const method = jsMethod`${id(methodName)}(value, change) {}`
+
+  if (dedup && storeVar) {
+    const prevProp = `__geaPrev_${methodName}`
+    if (dedup === 'truthiness') {
       method.body.body.push(
         ...jsBlockBody`
           if (!value === !this.${id(prevProp)}) return;
@@ -314,10 +321,37 @@ export function generateRerenderObserver(pathParts: PathParts, storeVar?: string
       )
     }
   }
-  method.body.body.push(
-    js`if (this.rendered_) { this.__geaRequestRender(); }`,
-  )
+
+  if (guard === 'rendered') {
+    method.body.body.push(
+      js`if (this.rendered_) { ${t.blockStatement(body)} }`,
+    )
+  } else {
+    method.body.body.push(...body)
+  }
+
   return method
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Observer generators (thin wrappers around emitObserver)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function generateStoreInlinePatchObserver(
+  pathParts: PathParts,
+  storeVar: string | undefined,
+  patchStatements: t.Statement[],
+): t.ClassMethod {
+  return emitObserver({ pathParts, storeVar, body: patchStatements })
+}
+
+export function generateRerenderObserver(pathParts: PathParts, storeVar?: string, truthinessOnly?: boolean): t.ClassMethod {
+  return emitObserver({
+    pathParts,
+    storeVar,
+    dedup: storeVar ? (truthinessOnly ? 'truthiness' : 'value') : null,
+    body: [js`this.__geaRequestRender();`],
+  })
 }
 
 export function generateConditionalSlotObserveMethod(
@@ -326,42 +360,31 @@ export function generateConditionalSlotObserveMethod(
   slotIndices: number[],
   emitEarlyReturn: boolean = true,
 ): t.ClassMethod {
-  const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
-
   const anyPatchedExpr = slotIndices
     .map((i) => jsExpr`this.${id(`__geaCondPatched_${i}`)}` as t.Expression)
     .reduce((acc, expr) => t.logicalExpression('||', acc, expr))
 
-  const patchStatements: t.Statement[] = []
+  const body: t.Statement[] = []
   if (slotIndices.length === 1) {
-    patchStatements.push(t.ifStatement(anyPatchedExpr, t.returnStatement()))
+    body.push(t.ifStatement(anyPatchedExpr, t.returnStatement()))
   }
   for (const slotIndex of slotIndices) {
-    patchStatements.push(
+    body.push(
       js`this.${id(`__geaCondPatched_${slotIndex}`)} = this.__geaPatchCond(${slotIndex});`,
     )
-    patchStatements.push(
+    body.push(
       js`if (this.${id(`__geaCondPatched_${slotIndex}`)}) { queueMicrotask(() => this.${id(`__geaCondPatched_${slotIndex}`)} = false); }`,
     )
   }
-
   if (emitEarlyReturn) {
-    patchStatements.push(t.ifStatement(anyPatchedExpr, t.returnStatement()))
+    body.push(t.ifStatement(anyPatchedExpr, t.returnStatement()))
   }
 
-  method.body.body.push(
-    js`if (this.rendered_) { ${t.blockStatement(patchStatements)} }`,
-  )
-
-  return method
+  return emitObserver({ pathParts, storeVar, body })
 }
 
 export function generateStateChildSwapObserver(pathParts: PathParts, storeVar: string | undefined): t.ClassMethod {
-  const method = jsMethod`${id(getObserveMethodName(pathParts, storeVar))}(value, change) {}`
-  method.body.body.push(
-    js`if (this.rendered_) { this.__geaSwapStateChildren(); }`,
-  )
-  return method
+  return emitObserver({ pathParts, storeVar, body: [js`this.__geaSwapStateChildren();`] })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
