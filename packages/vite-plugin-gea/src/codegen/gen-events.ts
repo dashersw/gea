@@ -1,4 +1,4 @@
-import { t } from '../utils/babel-interop.ts'
+import { t, generate } from '../utils/babel-interop.ts'
 import { getTemplateParamBinding } from '../analyze/template-param-utils.ts'
 import { id, jsBlockBody, jsExpr, jsMethod } from 'eszter'
 import type { EventHandler, StateRefMeta } from '../ir/types.ts'
@@ -13,6 +13,7 @@ import {
 } from './prop-ref-utils.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 import { collectTemplateSetupStatements } from '../analyze/binding-resolver.ts'
+import { rewriteItemVarInExpression } from './array-compiler.ts'
 
 const SKIP_BINDING: Record<string, Set<string>> = {
   VariableDeclarator: new Set(['id']),
@@ -92,27 +93,58 @@ function ensureMapItemHelper(
 
   const itemsExpr = buildArrayItemsExpr(ctx)
 
-  const optChain = ctx.itemIdProperty && ctx.itemIdProperty !== ITEM_IS_KEY
-    ? buildOptionalMemberChain(t.identifier('__candidate'), ctx.itemIdProperty)
-    : null
-  const findPredicate = optChain
-    ? jsExpr`(__candidate) => String(${optChain} ?? __candidate) === __itemId`
-    : ctx.itemIdProperty === ITEM_IS_KEY
-      ? jsExpr`(__candidate) => String(__candidate) === __itemId`
-      : jsExpr`(_, __i) => String(__i) === __itemId`
+  const findPredicate = ctx.keyExpression
+    ? t.arrowFunctionExpression(
+        [t.identifier('__candidate')],
+        t.binaryExpression(
+          '===',
+          t.callExpression(t.identifier('String'), [
+            rewriteItemVarInExpression(
+              t.cloneNode(ctx.keyExpression, true) as t.Expression,
+              ctx.itemVariable,
+              '__candidate',
+            ),
+          ]),
+          t.identifier('__itemId'),
+        ),
+      )
+    : ctx.itemIdProperty && ctx.itemIdProperty !== ITEM_IS_KEY
+      ? (() => {
+          const optChain = buildOptionalMemberChain(t.identifier('__candidate'), ctx.itemIdProperty)
+          return jsExpr`(__candidate) => String(${optChain} ?? __candidate) === __itemId`
+        })()
+      : ctx.itemIdProperty === ITEM_IS_KEY
+        ? jsExpr`(__candidate) => String(__candidate) === __itemId`
+        : jsExpr`(_, __i) => String(__i) === __itemId`
   const method = jsMethod`${id(helperName)}(e) {}`
-  method.body.body.push(
-    ...buildGeaItemDomWalk(),
-    ...jsBlockBody`
-      if (!__el) return null;
-      if (__el.__geaItem) return __el.__geaItem;
-      const __itemId = __el.__geaKey ?? (__el.getAttribute && __el.getAttribute('data-gea-item-id'));
-      if (__itemId == null) return null;
-      const __items = ${itemsExpr};
-      const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
-      return __arr.find(${findPredicate}) || __itemId;
-    `,
-  )
+  if (!ctx.keyExpression && ctx.itemIdProperty && ctx.itemIdProperty !== ITEM_IS_KEY) {
+    method.body.body.push(
+      ...buildGeaItemDomWalk(),
+      ...jsBlockBody`
+        if (!__el) return null;
+        if (__el[GEA_DOM_ITEM]) return __el[GEA_DOM_ITEM];
+        const __itemId = __el[GEA_DOM_KEY] ?? (__el.getAttribute && __el.getAttribute('data-gea-item-id'));
+        if (__itemId == null) return null;
+        const __items = ${itemsExpr};
+        const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
+        const __found = __arr.find(${findPredicate});
+        return __found !== undefined ? __found : __itemId;
+      `,
+    )
+  } else {
+    method.body.body.push(
+      ...buildGeaItemDomWalk(),
+      ...jsBlockBody`
+        if (!__el) return null;
+        if (__el[GEA_DOM_ITEM]) return __el[GEA_DOM_ITEM];
+        const __itemId = __el[GEA_DOM_KEY] ?? (__el.getAttribute && __el.getAttribute('data-gea-item-id'));
+        if (__itemId == null) return null;
+        const __items = ${itemsExpr};
+        const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
+        return __arr.find(${findPredicate}) || __itemId;
+      `,
+    )
+  }
   classBody.body.unshift(method)
 }
 
@@ -149,7 +181,8 @@ export function appendCompiledEventMethods(
   for (const h of mapHandlers) {
     const store = h.mapContext.storeVar || 'store'
     const path = h.mapContext.arrayPathParts.join('_')
-    const key = `${store}_${path}_${h.mapContext.itemIdProperty}`
+    const keyPart = h.mapContext.keyExpression ? `expr:${generate(h.mapContext.keyExpression).code}` : h.mapContext.itemIdProperty
+    const key = `${store}_${path}_${keyPart}`
     if (seenContexts.has(key)) continue
     seenContexts.add(key)
     ensureMapItemHelper(classBody, h.mapContext, `__getMapItemFromEvent_${store}_${path}`)
@@ -228,7 +261,13 @@ function appendEventsGetterHandlers(
     }
 
     const selectorMap = eventTypeProp.value as t.ObjectExpression
-    selectorMap.properties.push(t.objectProperty(selectorExpr, handlerRef, !handler.selector))
+    const selectorCode = generate(selectorExpr).code
+    const isDuplicate = selectorMap.properties.some(
+      (prop) => t.isObjectProperty(prop) && generate(prop.key).code === selectorCode,
+    )
+    if (!isDuplicate) {
+      selectorMap.properties.push(t.objectProperty(selectorExpr, handlerRef, !handler.selector))
+    }
   })
 }
 
@@ -324,11 +363,11 @@ function buildArrayItemsExpr(ctx: NonNullable<EventHandler['mapContext']>, opts:
   const unresolvedMatch = first?.match(/^__unresolved_(\d+)$/)
   if (unresolvedMatch) {
     const mapIdx = t.numericLiteral(Number(unresolvedMatch[1]))
-    return jsExpr`this.__geaMaps[${mapIdx}].getItems()`
+    return jsExpr`this[${id('GEA_MAPS')}][${mapIdx}].getItems()`
   }
   const base = ctx.isImportedState
     ? opts.raw
-      ? t.memberExpression(t.identifier(ctx.storeVar || 'store'), t.identifier('__raw'))
+      ? t.memberExpression(t.identifier(ctx.storeVar || 'store'), id('GEA_PROXY_RAW'), true)
       : t.identifier(ctx.storeVar || 'store')
     : t.thisExpression()
   if (ctx.arrayPathParts.length === 0) return base
@@ -343,7 +382,7 @@ function buildArrayItemsExpr(ctx: NonNullable<EventHandler['mapContext']>, opts:
 function buildGeaItemDomWalk(): t.Statement[] {
   return jsBlockBody`
     var __el = e.target;
-    while (__el && __el.__geaKey == null && (!__el.getAttribute || !__el.getAttribute('data-gea-item-id'))) __el = __el.parentElement;
+    while (__el && __el[GEA_DOM_KEY] == null && (!__el.getAttribute || !__el.getAttribute('data-gea-item-id'))) __el = __el.parentElement;
   `
 }
 
@@ -363,8 +402,8 @@ function buildMapEventBody(handler: EventHandler, paramContext: TemplateParamCon
     const preamble = [
       ...buildGeaItemDomWalk(),
       ...jsBlockBody`
-        if (!__el || !__el.__geaItem) return;
-        const ${id(ctx.indexVariable!)} = ${rawArrayExpr}.indexOf(__el.__geaItem);
+        if (!__el || !__el[GEA_DOM_ITEM]) return;
+        const ${id(ctx.indexVariable!)} = ${rawArrayExpr}.indexOf(__el[GEA_DOM_ITEM]);
       `,
     ]
     return [...preamble, ...handlerBody]
@@ -379,7 +418,7 @@ function buildMapEventBody(handler: EventHandler, paramContext: TemplateParamCon
     preamble.push(
       ...buildGeaItemDomWalk(),
       ...jsBlockBody`
-        const ${id(ctx.indexVariable!)} = __el ? ${rawArrayExpr}.indexOf(__el.__geaItem) : -1;
+        const ${id(ctx.indexVariable!)} = __el ? ${rawArrayExpr}.indexOf(__el[GEA_DOM_ITEM]) : -1;
       `,
     )
   }

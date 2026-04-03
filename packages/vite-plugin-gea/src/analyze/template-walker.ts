@@ -17,6 +17,7 @@ import {
   resolvePath,
 } from '../codegen/member-chain.ts'
 import { generateSelector } from '../codegen/jsx-utils.ts'
+import { callsJSXReturningProperty } from '../codegen/gen-template.ts'
 import {
   isEventAttribute,
   isMapCall,
@@ -37,6 +38,7 @@ import {
   hasRootUserIdAttribute,
   detectContainerSelector,
   hasExplicitItemKey,
+  extractKeyExpression,
   ITEM_IS_KEY,
 } from './helpers.ts'
 import { collectExpressionDependencies, collectTemplateSetupStatements } from './binding-resolver.ts'
@@ -359,6 +361,7 @@ export function analyzeChildren(
           onUnresolvedMap,
           classBody,
           templateSetupContext,
+          conditionalSlots != null ? conditionalSlots.length : undefined,
         )
       } else {
         // Collect nested maps first, then handle text binding (which may create a
@@ -400,6 +403,16 @@ export function analyzeChildren(
         // Determine if a conditional slot was created for this expression
         const slotCountAfter = conditionalSlots?.length ?? 0
         const slotId = slotCountAfter > slotCountBefore ? conditionalSlots![slotCountAfter - 1].slotId : undefined
+        if (slotCountAfter > slotCountBefore && conditionalSlots && conditionalSlotNodeMap && templateSetupContext) {
+          registerNestedConditionalsInBranches(
+            expr,
+            stateRefs,
+            templateSetupContext,
+            conditionalSlots,
+            conditionalSlotNodeMap,
+            classBody,
+          )
+        }
         nestedMapCalls.forEach(({ mapExpr, parentElement, containerPath }) => {
           let mapNode = node
           let mapElementPath = elementPath
@@ -503,6 +516,7 @@ function handleArrayMap(
   onUnresolvedMap: (info: UnresolvedMapInfo) => void,
   classBody?: t.ClassBody,
   templateSetupContext?: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
+  afterCondSlotIndex?: number,
 ) {
   const arrayExpr = (expr.callee as t.MemberExpression).object
   const normalizedArrayExpr = resolveHelperCallExpression(arrayExpr as t.Expression, classBody) || arrayExpr
@@ -563,6 +577,9 @@ function handleArrayMap(
         itemVariable: itemVar,
         ...(indexVar ? { indexVariable: indexVar } : {}),
         itemIdProperty: itemIdProp,
+        ...(!itemIdProp && hasExplicitItemKey(itemTemplate)
+          ? { keyExpression: t.cloneNode(extractKeyExpression(itemTemplate)!, true) }
+          : {}),
         rootHasUserId: hasRootUserIdAttribute(itemTemplate),
         computationExpr: t.cloneNode(normalizedArrayExpr, true),
         computationSetupStatements: computationSetupStatements.map((stmt) => t.cloneNode(stmt, true) as t.Statement),
@@ -570,6 +587,7 @@ function handleArrayMap(
         containerElementPath: [...elementPath],
         ...(cbBodyStmts.length > 0 ? { callbackBodyStatements: cbBodyStmts } : {}),
         ...(relationalClassBindings.length > 0 ? { relationalClassBindings } : {}),
+        ...(afterCondSlotIndex != null ? { afterCondSlotIndex } : {}),
       })
     }
     return
@@ -681,9 +699,11 @@ function handleArrayMap(
     isImportedState: result.isImportedState || false,
     isKeyed,
     itemIdProperty: itemIdProperty || (isKeyed ? undefined : 'id'),
+    ...(!itemIdProperty && isKeyed ? { keyExpression: t.cloneNode(extractKeyExpression(itemTemplate)!, true) } : {}),
     classToggleName,
     conditionalBindings,
     ...(cbBodyStmts.length > 0 ? { callbackBodyStatements: cbBodyStmts } : {}),
+    ...(afterCondSlotIndex != null ? { afterCondSlotIndex } : {}),
   })
 }
 
@@ -872,6 +892,7 @@ function handleTextBinding(
       const stateDeps = dependencies.filter((d) => d.storeVar || (d.pathParts.length > 0 && d.pathParts[0] !== 'props'))
       if (stateDeps.length > 0) {
         const selector = generateSelector(elementPath)
+        const isChildrenPropBinding = !t.isJSXEmptyExpression(expr) && callsJSXReturningProperty(expr as t.Expression, classBody)
         propBindings.push({
           propName: '__state__',
           selector,
@@ -881,6 +902,7 @@ function handleTextBinding(
           setupStatements: setupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
           stateOnly: true,
           ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
+          ...(isChildrenPropBinding ? { isChildrenProp: true } : {}),
         })
       }
     }
@@ -911,6 +933,7 @@ function handleTextBinding(
     selector: generateSelector(elementPath),
     elementPath: [...elementPath],
     ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
+    ...(!t.isJSXEmptyExpression(expr) && callsJSXReturningProperty(expr as t.Expression, classBody) ? { isChildrenProp: true } : {}),
   }
   applyImportedState(binding, result, stateProps)
   if (shouldBuildTextTemplate && textTemplate && !jsxInTextSiblingGroup) {
@@ -975,6 +998,102 @@ export function extractConditionalControlExpression(expr: t.Expression): t.Expre
     return expr.test
   }
   return null
+}
+
+function expressionContainsComponentJSX(node: t.Node): boolean {
+  if (t.isJSXElement(node)) {
+    const name = node.openingElement.name
+    if (t.isJSXIdentifier(name) && /^[A-Z]/.test(name.name)) return true
+    if (t.isJSXMemberExpression(name)) {
+      let cur: t.JSXIdentifier | t.JSXMemberExpression = name
+      while (t.isJSXMemberExpression(cur)) cur = cur.object as t.JSXIdentifier | t.JSXMemberExpression
+      if (t.isJSXIdentifier(cur) && /^[A-Z]/.test(cur.name)) return true
+    }
+    for (const c of node.children) {
+      if (expressionContainsComponentJSX(c)) return true
+    }
+    return false
+  }
+  if (t.isJSXExpressionContainer(node) && !t.isJSXEmptyExpression(node.expression)) {
+    return expressionContainsComponentJSX(node.expression)
+  }
+  if (t.isLogicalExpression(node)) {
+    return expressionContainsComponentJSX(node.left) || expressionContainsComponentJSX(node.right)
+  }
+  if (t.isConditionalExpression(node)) {
+    return expressionContainsComponentJSX(node.consequent) || expressionContainsComponentJSX(node.alternate)
+  }
+  if (t.isParenthesizedExpression(node)) {
+    return expressionContainsComponentJSX(node.expression)
+  }
+  if (t.isJSXFragment(node)) {
+    return node.children.some((c) => expressionContainsComponentJSX(c))
+  }
+  return false
+}
+
+export function registerNestedConditionalsInBranches(
+  expr: t.Expression,
+  stateRefs: Map<string, StateRefMeta>,
+  templateSetupContext: { params: Array<t.Identifier | t.Pattern | t.RestElement>; statements: t.Statement[] },
+  conditionalSlots: import('../ir').ConditionalSlot[],
+  conditionalSlotNodeMap: Map<t.Node, string>,
+  classBody?: t.ClassBody,
+): void {
+  function visitChildren(
+    children: readonly (t.JSXText | t.JSXExpressionContainer | t.JSXSpreadChild | t.JSXElement | t.JSXFragment)[],
+  ) {
+    for (const child of children) {
+      if (t.isJSXElement(child)) visitChildren(child.children)
+      else if (t.isJSXFragment(child)) visitChildren(child.children)
+      else if (t.isJSXExpressionContainer(child) && !t.isJSXEmptyExpression(child.expression)) {
+        const innerExpr = child.expression as t.Expression
+        if (!expressionMayProduceJSX(innerExpr)) continue
+        const conditionExpr = extractConditionalControlExpression(innerExpr)
+        if (!conditionExpr) continue
+        const condSetupStatements = collectTemplateSetupStatements(conditionExpr, templateSetupContext)
+        const fullSetupStatements = collectTemplateSetupStatements(innerExpr, templateSetupContext)
+        const allDeps = collectExpressionDependencies(conditionExpr, stateRefs, condSetupStatements)
+        if (allDeps.length === 0) continue
+        const slotId = `c${conditionalSlots.length}`
+        conditionalSlots.push({
+          slotId,
+          conditionExpr: t.cloneNode(conditionExpr, true) as t.Expression,
+          setupStatements: condSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
+          htmlSetupStatements: fullSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
+          dependentPropNames: [],
+          dependencies: allDeps.map((dep) => ({
+            observeKey: dep.observeKey,
+            pathParts: [...dep.pathParts],
+            ...(dep.storeVar ? { storeVar: dep.storeVar } : {}),
+          })),
+          originalExpr: t.cloneNode(innerExpr, true) as t.Expression,
+        })
+        conditionalSlotNodeMap.set(innerExpr, slotId)
+        registerNestedConditionalsInBranches(
+          innerExpr,
+          stateRefs,
+          templateSetupContext,
+          conditionalSlots,
+          conditionalSlotNodeMap,
+          classBody,
+        )
+      }
+    }
+  }
+
+  function visitBranch(node: t.Expression) {
+    if (t.isJSXElement(node)) visitChildren(node.children)
+    else if (t.isJSXFragment(node)) visitChildren(node.children)
+    else if (t.isParenthesizedExpression(node)) visitBranch(node.expression as t.Expression)
+  }
+
+  if (t.isConditionalExpression(expr)) {
+    visitBranch(expr.consequent as t.Expression)
+    visitBranch(expr.alternate as t.Expression)
+  } else if (t.isLogicalExpression(expr) && expr.operator === '&&') {
+    visitBranch(expr.right as t.Expression)
+  }
 }
 
 function buildDerivedPropBindings(

@@ -1,14 +1,4 @@
-import {
-  GEA_CHILD_COMPONENTS,
-  GEA_DOM_COMPONENT,
-  GEA_PARENT_COMPONENT,
-  GEA_PROXY_GET_RAW_TARGET,
-  stashComponentForTransfer,
-} from '@geajs/core'
-
-function engineThis(c: object): any {
-  return (c as any)[GEA_PROXY_GET_RAW_TARGET] ?? c
-}
+import { GEA_DOM_COMPONENT, GEA_PARENT_COMPONENT, GEA_PROXY_GET_RAW_TARGET, geaListItemsSymbol } from '@geajs/core'
 
 export interface DragResult {
   draggableId: string
@@ -19,6 +9,10 @@ export interface DragResult {
 const DRAG_THRESHOLD_SQ = 25
 const DRAGGABLE_SEL = '[data-draggable-id]'
 const DROPPABLE_SEL = '[data-droppable-id]'
+
+function _rawComp(comp: any): any {
+  return comp?.[GEA_PROXY_GET_RAW_TARGET] ?? comp
+}
 
 class DndManager {
   droppables = new Map<string, HTMLElement>()
@@ -311,8 +305,7 @@ class DndManager {
   private _getComponentFromElement(el: HTMLElement | null): any {
     let current: HTMLElement | null = el
     while (current) {
-      const anyEl = current as HTMLElement & { [GEA_DOM_COMPONENT]?: unknown }
-      const comp = anyEl[GEA_DOM_COMPONENT]
+      const comp = (current as any)[GEA_DOM_COMPONENT]
       if (comp) return comp
       current = current.parentElement
     }
@@ -351,7 +344,9 @@ class DndManager {
 
     const draggedComp = this._getComponentFromElement(sourceEl)
     if (!draggedComp) return
-    const sourceParent = (draggedComp as any)[GEA_PARENT_COMPONENT]
+
+    const rawDragged = _rawComp(draggedComp)
+    const sourceParent = rawDragged[GEA_PARENT_COMPONENT]
     if (!sourceParent) return
 
     const srcArr = this._findCompiledArray(sourceParent, draggedComp)
@@ -366,42 +361,20 @@ class DndManager {
       destArr.splice(destination.index, 0, draggedComp)
     }
 
-    const raw = (x: any) => (x && typeof x === 'object' ? ((x as any)[GEA_PROXY_GET_RAW_TARGET] ?? x) : x) ?? x
-    const rd = raw(draggedComp)
-    const srcChildren = sourceParent[GEA_CHILD_COMPONENTS]
-    if (Array.isArray(srcChildren)) {
-      const ci = srcChildren.findIndex((c: any) => raw(c) === rd)
-      if (ci !== -1) srcChildren.splice(ci, 1)
-    }
-    const destChildren = destParent[GEA_CHILD_COMPONENTS]
-    if (Array.isArray(destChildren) && !destChildren.some((c: any) => raw(c) === rd)) {
-      destChildren.push(draggedComp)
-    }
-    engineThis(draggedComp)[GEA_PARENT_COMPONENT] = destParent
+    // Update the parent component pointer on the raw instance (symbol-keyed, not string prop).
+    rawDragged[GEA_PARENT_COMPONENT] = destParent
   }
 
-  private _findCompiledArray(parent: any, child: any): { key: PropertyKey; arr: any[]; index: number } | null {
-    const raw = (x: any) => (x && typeof x === 'object' ? ((x as any)[GEA_PROXY_GET_RAW_TARGET] ?? x) : x) ?? x
-    const rc = raw(child)
-    const indexIn = (arr: any[]) => arr.findIndex((x) => raw(x) === rc)
-
-    // Use Reflect.ownKeys so non-enumerable `_*Items` and symbol keys are visible on proxies.
-    for (const key of Reflect.ownKeys(parent)) {
-      if (
-        typeof key === 'string' &&
-        key.startsWith('_') &&
-        key.endsWith('Items') &&
-        Array.isArray((parent as any)[key])
-      ) {
-        const arr = (parent as any)[key] as any[]
-        const idx = indexIn(arr)
-        if (idx !== -1) return { key, arr, index: idx }
-      }
-      if (typeof key === 'symbol' && String(key).includes('gea.listItems') && Array.isArray((parent as any)[key])) {
-        const arr = (parent as any)[key] as any[]
-        const idx = indexIn(arr)
-        if (idx !== -1) return { key, arr, index: idx }
-      }
+  private _findCompiledArray(parent: any, child: any): { key: symbol; arr: any[]; index: number } | null {
+    // Component array lists are stored under geaListItemsSymbol(arrayPropName) symbol keys.
+    // Walk the symbol keys of the parent to find which list contains the child.
+    for (const sym of Object.getOwnPropertySymbols(parent)) {
+      const desc = sym.description ?? ''
+      if (!desc.startsWith('gea.listItems.')) continue
+      const arr = parent[sym]
+      if (!Array.isArray(arr)) continue
+      const idx = arr.indexOf(child)
+      if (idx !== -1) return { key: sym, arr, index: idx }
     }
     return null
   }

@@ -10,15 +10,15 @@ import {
   GEA_MAP_CONFIG_TPL,
 } from '@geajs/core'
 import { JSDOM } from 'jsdom'
-import { generateArrayHandlers, generateEnsureArrayConfigsMethod, generatePatchItemMethod, generateCreateItemMethod } from '../../src/codegen/array-compiler.ts'
-export { generateObserveHandler } from '../../src/codegen/gen-observe-helpers.ts'
-import type { ArrayMapBinding } from '../../src/ir/types.ts'
+import { generateArrayHandlers, generateEnsureArrayConfigsMethod, generatePatchItemMethod, generateCreateItemMethod } from '../../src/codegen/array-compiler'
+export { generateObserveHandler } from '../../src/codegen/gen-observe-helpers'
+import type { ArrayMapBinding } from '../../src/ir/types'
 import { geaPlugin } from '../../src/index'
-import { parseSource } from '../../src/parse/parser.ts'
-import type { StateRefMeta } from '../../src/parse/state-refs.ts'
-import { transformComponentFile } from '../../src/codegen/generator.ts'
-import { getObserveMethodName } from '../../src/codegen/member-chain.ts'
-import { getJSXTagName } from '../../src/codegen/jsx-utils.ts'
+import { parseSource } from '../../src/parse/parser'
+import type { StateRefMeta } from '../../src/ir/types'
+import { transformComponentFile } from '../../src/codegen/generator'
+import { getObserveMethodName } from '../../src/codegen/member-chain'
+import { getJSXTagName } from '../../src/codegen/jsx-utils'
 import { applyListChanges } from '../../../gea/src/lib/base/list'
 
 /** Injected into `new Function` eval so generated harness code can use `this[GEA_*]()` / `el[GEA_DOM_KEY]`. */

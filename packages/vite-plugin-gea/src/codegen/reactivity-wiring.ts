@@ -85,6 +85,7 @@ export function wireObservers(
     containerBindingId?: string
     containerUserIdExpr?: t.Expression
     itemIdProperty?: string
+    afterCondSlotIndex?: number
   }>,
   staticArrayRefreshOnMount: string[],
   initialHtmlArrayRefreshOnMount: t.Statement[],
@@ -119,7 +120,7 @@ export function wireObservers(
   const ensureStoreGroup = (storeVar: string) => {
     if (!importedStores.has(storeVar)) {
       importedStores.set(storeVar, {
-        captureExpression: jsExpr`${id(storeVar)}.__store` as t.Expression,
+        captureExpression: t.memberExpression(id(storeVar), id('GEA_STORE_ROOT'), true) as t.Expression,
         observeHandlers: new Map<string, ObserverEntry>(),
       })
     }
@@ -253,17 +254,29 @@ export function wireObservers(
           }
         }
       } else if (parts.length === 1) {
-        const storeRef = stateRefs.get(sv)
-        if (storeRef?.getterDeps) {
-          for (const [getterName, depPaths] of storeRef.getterDeps) {
-            const isDepOfGetter = depPaths.some((dp) => dp.length === 1 && dp[0] === parts[0])
-            if (!isDepOfGetter) continue
-            const guardKey = buildObserveKey([getterName], sv)
-            if (!guardStateKeys.has(guardKey)) continue
-            if (t.isBlockStatement(method.body)) {
-              method.body.body.unshift(js`if (${id(sv)}.${id(getterName)} == null) return;`)
+        // When the observer key IS the guard key itself and the method body has
+        // GEA_UPDATE_PROPS calls (child prop updates that read nested properties
+        // of the observed value), inject a null guard before those calls.
+        if (guardStateKeys.has(observeKey) && t.isBlockStatement(method.body)) {
+          const hasChildPropUpdate = method.body.body.some(
+            (stmt) => generate(stmt).code.includes('GEA_UPDATE_PROPS'),
+          )
+          if (hasChildPropUpdate) {
+            method.body.body.unshift(js`if (${id(sv)}.${id(parts[0])} == null) return;`)
+          }
+        } else {
+          const storeRef = stateRefs.get(sv)
+          if (storeRef?.getterDeps) {
+            for (const [getterName, depPaths] of storeRef.getterDeps) {
+              const isDepOfGetter = depPaths.some((dp) => dp.length === 1 && dp[0] === parts[0])
+              if (!isDepOfGetter) continue
+              const guardKey = buildObserveKey([getterName], sv)
+              if (!guardStateKeys.has(guardKey)) continue
+              if (t.isBlockStatement(method.body)) {
+                method.body.body.unshift(js`if (${id(sv)}.${id(getterName)} == null) return;`)
+              }
+              break
             }
-            break
           }
         }
       }
@@ -318,7 +331,14 @@ export function wireObservers(
   }
 
   // ── Emit createdHooks, local observers, after-render hooks ──
-  if (importedStores.size > 0 || localObserveHandlers.size > 0 || mapRegistrations.length > 0) {
+
+  // Ensure store groups exist for observeList configs so __observeList
+  // calls are generated even when there are no other observe handlers
+  for (const olc of observeListConfigs) {
+    ensureStoreGroup(olc.storeVar)
+  }
+
+  if (importedStores.size > 0 || localObserveHandlers.size > 0 || mapRegistrations.length > 0 || observeListConfigs.length > 0) {
     const storeConfigs = Array.from(importedStores.entries()).map(([storeVar, config]) => ({
       storeVar,
       captureExpression: config.captureExpression,
@@ -333,10 +353,6 @@ export function wireObservers(
         }),
       ),
     }))
-
-    for (const olc of observeListConfigs) {
-      ensureStoreGroup(olc.storeVar)
-    }
 
     if (storeConfigs.length > 0 || mapRegistrations.length > 0 || observeListConfigs.length > 0) {
       const createdHooksMethod = generateCreatedHooks(

@@ -3,6 +3,7 @@
  * events getter caching, and logging catch clause.
  */
 import { t } from '../utils/babel-interop.ts'
+import { id } from 'eszter'
 
 export {
   collectValueSubpaths,
@@ -78,7 +79,8 @@ export function wrapEventsGetterWithCache(getter: t.ClassMethod): void {
   )
   const elementProp = t.memberExpression(
     t.thisExpression(),
-    t.identifier('element_'),
+    id('GEA_ELEMENT'),
+    true,
   )
   const tmpId = t.identifier('__geaEvtsResult')
   const objectExpr = returnStmt.argument as t.Expression

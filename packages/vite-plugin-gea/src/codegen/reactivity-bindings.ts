@@ -9,6 +9,7 @@
 
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
+import { id } from 'eszter'
 
 import type { PathParts, PropBinding } from '../ir/types.ts'
 import type { StateRefMeta } from '../parse/state-refs.ts'
@@ -76,7 +77,7 @@ export function buildPropBindingPatches(
             ),
           )
         : pb.selector === ':scope'
-          ? t.memberExpression(t.thisExpression(), t.identifier('element_'))
+          ? t.memberExpression(t.thisExpression(), id('GEA_ELEMENT'), true)
           : t.callExpression(t.memberExpression(t.thisExpression(), t.identifier('$')), [
               t.stringLiteral(pb.selector),
             ])
@@ -87,7 +88,7 @@ export function buildPropBindingPatches(
     const isObjectClass = pb.type === 'class' && pb.expression && t.isObjectExpression(pb.expression)
     const emitterOpts: import('../emit/types.ts').EmitterOpts = {
       textNodeIndex: (pb as any).textNodeIndex,
-      isChildrenProp: pb.propName === 'children',
+      isChildrenProp: pb.propName === 'children' || !!pb.isChildrenProp,
       attributeName: pb.attributeName,
       isObjectClass: !!isObjectClass,
       canSkipClassCoercion:

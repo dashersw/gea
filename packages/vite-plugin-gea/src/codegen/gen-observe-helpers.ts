@@ -77,7 +77,7 @@ export function buildValueExpression(textExpr: TextExpression, stateRefs: Map<st
   }
   if (textExpr.isImportedState && textExpr.storeVar) {
     return buildMemberChainFromParts(
-      t.memberExpression(t.identifier(textExpr.storeVar), t.identifier('__store')),
+      t.memberExpression(t.identifier(textExpr.storeVar), id('GEA_STORE_ROOT'), true),
       textExpr.pathParts,
     )
   }
@@ -109,7 +109,7 @@ function rewriteStateRefs(expr: t.Expression, stateRefs: Map<string, StateRefMet
       } else if ((ref.kind === 'imported-destructured' || ref.kind === 'store-alias') && ref.storeVar && ref.propName) {
         path.replaceWith(
           t.memberExpression(
-            t.memberExpression(t.identifier(ref.storeVar), t.identifier('__store')),
+            t.memberExpression(t.identifier(ref.storeVar), id('GEA_STORE_ROOT'), true),
             t.identifier(ref.propName),
           ),
         )
@@ -120,7 +120,7 @@ function rewriteStateRefs(expr: t.Expression, stateRefs: Map<string, StateRefMet
         path.replaceWith(t.memberExpression(t.thisExpression(), t.identifier(ref.propName)))
         path.skip()
       } else {
-        path.replaceWith(t.memberExpression(t.identifier(path.node.name), t.identifier('__store')))
+        path.replaceWith(t.memberExpression(t.identifier(path.node.name), id('GEA_STORE_ROOT'), true))
         path.skip()
       }
     },
@@ -167,7 +167,7 @@ export function buildSimpleUpdate(
   // __updateText shortcut for text bindings with a known bindingId
   if (binding.type === 'text' && binding.textNodeIndex === undefined && binding.bindingId && binding.bindingId !== '' && !binding.userIdExpr) {
     const suffix = t.stringLiteral(binding.bindingId)
-    return js`${jsExpr`this.__updateText(${suffix}, ${valueExpr})`};`
+    return js`${jsExpr`this[${id('GEA_UPDATE_TEXT')}](${suffix}, ${valueExpr})`};`
   }
 
   const emitterOpts = {

@@ -212,7 +212,7 @@ test('fragments as .map() item roots throw a compile error (key validation catch
 })
 
 test('fragment root in generateRenderItemMethod throws fragment-specific error', async () => {
-  const { generateRenderItemMethod } = await import('../../src/codegen/array-compiler.ts')
+  const { generateRenderItemMethod } = await import('../../src/codegen/array-compiler')
   const fragmentTemplate = t.jsxFragment(t.jsxOpeningFragment(), t.jsxClosingFragment(), [
     t.jsxElement(t.jsxOpeningElement(t.jsxIdentifier('dt'), []), t.jsxClosingElement(t.jsxIdentifier('dt')), []),
   ])

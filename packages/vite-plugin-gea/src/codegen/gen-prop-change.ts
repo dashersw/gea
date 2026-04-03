@@ -125,7 +125,7 @@ export function ensureOnPropChangeMethod(
   unresolvedMapPropRefreshDeps: Array<{ mapIdx: number; propNames: string[] }> = [],
 ): void {
   const existing = classBody.body.find(
-    (member) => t.isClassMethod(member) && t.isIdentifier(member.key) && member.key.name === '__onPropChange',
+    (member) => t.isClassMethod(member) && member.computed && t.isIdentifier(member.key) && member.key.name === 'GEA_ON_PROP_CHANGE',
   ) as t.ClassMethod | undefined
   if (existing) return
 
@@ -144,7 +144,7 @@ export function ensureOnPropChangeMethod(
         directForwardCalls.push(
           t.ifStatement(
             guard,
-            js`this.${id(child.instanceVar)}.__geaUpdateProps({[key]: value});` as t.ExpressionStatement,
+            js`this.${id(child.instanceVar)}[${id('GEA_UPDATE_PROPS')}]({[key]: value});` as t.ExpressionStatement,
           ),
         )
       } else {
@@ -152,7 +152,7 @@ export function ensureOnPropChangeMethod(
           directForwardCalls.push(
             t.ifStatement(
               t.binaryExpression('===', id('key'), t.stringLiteral(m.parentPropName)),
-              js`this.${id(child.instanceVar)}.__geaUpdateProps({${id(m.childPropName)}: value});` as t.ExpressionStatement,
+              js`this.${id(child.instanceVar)}[${id('GEA_UPDATE_PROPS')}]({${id(m.childPropName)}: value});` as t.ExpressionStatement,
             ),
           )
         }
@@ -184,7 +184,7 @@ export function ensureOnPropChangeMethod(
 
   const childRefreshCalls: t.Statement[] = childRefreshEntries.map(({ child, depProps }) => {
     const buildPropsName = `__buildProps_${child.instanceVar.replace(/^_/, '')}`
-    const call = js`this.${id(child.instanceVar)}.__geaUpdateProps(this.${id(buildPropsName)}());` as t.ExpressionStatement
+    const call = js`this.${id(child.instanceVar)}[${id('GEA_UPDATE_PROPS')}](this.${id(buildPropsName)}());` as t.ExpressionStatement
     if (depProps.size > 0) {
       const guard = Array.from(depProps).reduce<t.Expression>((acc, prop) => {
         const test = t.binaryExpression('===', id('key'), t.stringLiteral(prop))
@@ -214,7 +214,7 @@ export function ensureOnPropChangeMethod(
   if (conditionalSlots.length > 0) {
     for (let i = 0; i < conditionalSlots.length; i++) {
       const slot = conditionalSlots[i]
-      const call = js`this.__geaPatchCond(${t.numericLiteral(i)});` as t.ExpressionStatement
+      const call = js`this[${id('GEA_PATCH_COND')}](${t.numericLiteral(i)});` as t.ExpressionStatement
       if (slot.dependentPropNames.length > 0) {
         const guard = slot.dependentPropNames.reduce<t.Expression>((acc, prop) => {
           const test = t.binaryExpression('===', id('key'), t.stringLiteral(prop))
@@ -235,7 +235,7 @@ export function ensureOnPropChangeMethod(
   )
 
   const unresolvedMapRefreshCalls: t.Statement[] = unresolvedMapPropRefreshDeps.map((dep) => {
-    const call = js`this.__geaSyncMap(${t.numericLiteral(dep.mapIdx)});` as t.ExpressionStatement
+    const call = js`this[${id('GEA_SYNC_MAP')}](${t.numericLiteral(dep.mapIdx)});` as t.ExpressionStatement
     if (dep.propNames.length > 0) {
       const guard = dep.propNames.reduce<t.Expression>((acc, prop) => {
         const test = t.binaryExpression('===', id('key'), t.stringLiteral(prop))
@@ -258,5 +258,5 @@ export function ensureOnPropChangeMethod(
 
   const merged = mergeKeyGuards(allKeyGuarded)
 
-  classBody.body.push(appendToBody(jsMethod`${id('__onPropChange')}(key, value) {}`, ...merged))
+  classBody.body.push(appendToBody(jsMethod`[${id('GEA_ON_PROP_CHANGE')}](key, value) {}`, ...merged))
 }

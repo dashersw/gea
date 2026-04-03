@@ -4,10 +4,17 @@ export const VOID_ELEMENTS = new Set([
 ])
 
 export const EVENT_TYPES = new Set([
-  'click', 'dblclick', 'change', 'input', 'keydown', 'keyup',
-  'blur', 'focus', 'mousedown', 'mouseup', 'submit',
+  'click', 'dblclick', 'change', 'input', 'keydown', 'keyup', 'keypress',
+  'blur', 'focus', 'mousedown', 'mouseup', 'mouseover', 'mouseout', 'mousemove',
+  'mouseenter', 'mouseleave', 'contextmenu',
+  'submit', 'scroll', 'resize', 'reset', 'wheel',
+  'touchstart', 'touchmove', 'touchend',
   'tap', 'longTap', 'swipeRight', 'swipeUp', 'swipeLeft', 'swipeDown',
   'dragstart', 'dragend', 'dragover', 'dragleave', 'drop',
+  'pointerdown', 'pointerup', 'pointermove', 'pointerenter', 'pointerleave',
+  'pointerover', 'pointerout', 'pointercancel',
+  'animationstart', 'animationend', 'animationiteration',
+  'transitionstart', 'transitionend', 'transitionrun', 'transitioncancel',
 ])
 
 export const URL_ATTRIBUTES = new Set(['href', 'src', 'action'])

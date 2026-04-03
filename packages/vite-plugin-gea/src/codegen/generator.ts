@@ -212,6 +212,7 @@ export function transformComponentFile(
         stateChildSlotCounter: { value: 0 },
         refBindings,
         refCounter: { value: 0 },
+        classBody,
       }
 
       let cloneRoot: t.JSXElement | null = null
@@ -326,20 +327,20 @@ export function transformComponentFile(
         if (classPath) {
           const refStatements: t.Statement[] = refBindings.flatMap((ref) => {
             const target = ref.targetExpr as t.LVal
-            const q = jsExpr`this.element_.querySelector(${`[data-gea-ref="${ref.refId}"]`})`
+            const q = jsExpr`this[${id('GEA_ELEMENT')}].querySelector(${`[data-gea-ref="${ref.refId}"]`})`
             return [
               t.expressionStatement(t.assignmentExpression('=', target, t.nullLiteral())),
               t.expressionStatement(t.assignmentExpression('=', target, q)),
             ]
           })
           const existingSetup = classPath.node.body.body.find(
-            (m) => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === '__setupRefs',
+            (m) => t.isClassMethod(m) && m.computed && t.isIdentifier(m.key) && m.key.name === 'GEA_SETUP_REFS',
           )
           if (existingSetup && t.isClassMethod(existingSetup)) {
             existingSetup.body.body.push(...refStatements)
           } else {
             classPath.node.body.body.push(
-              appendToBody(jsMethod`${id('__setupRefs')}() {}`, ...refStatements),
+              appendToBody(jsMethod`[${id('GEA_SETUP_REFS')}]() {}`, ...refStatements),
             )
           }
           transformed = true
@@ -466,10 +467,11 @@ export function transformComponentFile(
           const name = t.isIdentifier(member.key) ? member.key.name : null
           if (!name) continue
           const isCompilerGenerated =
-            name === 'template' || (name === 'events' && member.kind === 'get') || name.startsWith('__')
+            name === 'template' || (name === 'events' && member.kind === 'get') || name.startsWith('__') ||
+            (member.computed && name === 'GEA_ON_PROP_CHANGE')
           if (isCompilerGenerated) cacheThisIdInMethod(member)
           if (name === 'events' && member.kind === 'get') wrapEventsGetterWithCache(member)
-          if (name === '__onPropChange') wrapSubpathCacheGuards(member, subpathPcCounter, path.node.body)
+          if (member.computed && name === 'GEA_ON_PROP_CHANGE') wrapSubpathCacheGuards(member, subpathPcCounter, path.node.body)
         }
         path.stop()
       },

@@ -171,7 +171,7 @@ function containsPropRefreshCall(node: t.Node): boolean {
     if (
       t.isMemberExpression(n) &&
       t.isIdentifier(n.property) &&
-      (n.property.name === '__geaUpdateProps' ||
+      (n.property.name === 'GEA_UPDATE_PROPS' ||
         n.property.name.startsWith('__refresh'))
     )
       found = true

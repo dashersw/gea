@@ -104,9 +104,10 @@ export function generateConditionalPatchMethods(
   )
   const condAssignments: t.Statement[] = []
   for (let i = 0; i < slots.length; i++) {
-    const condField = id(`__geaCond_${i}`)
+    const condSymbol = t.callExpression(id('geaCondValueSymbol'), [t.numericLiteral(i)])
+    const thisCondField = t.memberExpression(t.thisExpression(), condSymbol, true)
     condAssignments.push(
-      js`this.${condField} = !!${rewrittenCondExprsSafe[i]};`,
+      t.expressionStatement(t.assignmentExpression('=', thisCondField, t.unaryExpression('!', t.unaryExpression('!', t.cloneNode(rewrittenCondExprsSafe[i], true))))),
     )
   }
 
@@ -145,7 +146,7 @@ export function generateConditionalPatchMethods(
 
     registerCondCalls.push(
       t.expressionStatement(
-        t.callExpression(jsExpr`this.__geaRegisterCond`, [
+        t.callExpression(jsExpr`this[${id('GEA_REGISTER_COND')}]`, [
           t.numericLiteral(i),
           t.stringLiteral(slot.slotId),
           t.arrowFunctionExpression([], t.blockStatement(getCondBody)),
@@ -177,7 +178,7 @@ export function generateStateChildSwapMethod(
   }>,
 ): void {
   const existing = classBody.body.find(
-    (member) => t.isClassMethod(member) && t.isIdentifier(member.key) && member.key.name === '__geaSwapStateChildren',
+    (member) => t.isClassMethod(member) && member.computed && t.isIdentifier(member.key) && member.key.name === 'GEA_SWAP_STATE_CHILDREN',
   )
   if (existing) return
 
@@ -202,14 +203,14 @@ export function generateStateChildSwapMethod(
         (m) => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === buildPropsName,
       )
       if (!hasBuildProps) return null!
-      return js`this.${id(slot.childInstanceVar)}.__geaUpdateProps(this.${id(buildPropsName)}());` as t.Statement
+      return js`this.${id(slot.childInstanceVar)}[${id('GEA_UPDATE_PROPS')}](this.${id(buildPropsName)}());` as t.Statement
     })
     .filter(Boolean)
 
   const swapCalls = stateChildSlots.map((slot) => {
     const guardClone = t.cloneNode(slot.guardExpr, true)
     return t.expressionStatement(
-      t.callExpression(jsExpr`this.__geaSwapChild`, [
+      t.callExpression(jsExpr`this[${id('GEA_SWAP_CHILD')}]`, [
         t.stringLiteral(slot.markerId),
         t.logicalExpression('&&', guardClone, jsExpr`this.${id(slot.childInstanceVar)}`),
       ]),
@@ -220,9 +221,10 @@ export function generateStateChildSwapMethod(
 
   const method = t.classMethod(
     'method',
-    id('__geaSwapStateChildren'),
+    id('GEA_SWAP_STATE_CHILDREN'),
     [],
     t.blockStatement([...filteredSetup, ...propsUpdateCalls, ...swapCalls]),
+    true, // computed key: [GEA_SWAP_STATE_CHILDREN]()
   )
   classBody.body.push(method)
 }

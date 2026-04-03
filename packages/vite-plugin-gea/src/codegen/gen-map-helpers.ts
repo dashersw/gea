@@ -10,7 +10,7 @@ import type { StateRefMeta } from '../parse/state-refs.ts'
 import { ITEM_IS_KEY } from '../analyze/helpers.ts'
 
 import {
-  buildObserveKey, buildOptionalMemberChain, pathPartsToString, resolvePath,
+  buildObserveKey, buildOptionalMemberChain, buildListItemsSymbol, buildThisListItems, pathPartsToString, resolvePath,
 } from './member-chain.ts'
 import {
   replacePropRefsInExpression, replacePropRefsInStatements,
@@ -200,10 +200,30 @@ export function generateMapRegistration(
     t.arrowFunctionExpression([], t.blockStatement([...prunedSetup, js`return ${arrExpr};`])),
     createArrow,
   ]
-  if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY)
+  if (unresolvedMap.keyExpression) {
+    // Complex key expression (e.g. template literal) — pass a key function
+    const keyExpr = t.cloneNode(unresolvedMap.keyExpression, true)
+    // Rewrite item variable (and index variable if present) for the key function parameters
+    const itemVar = unresolvedMap.itemVariable
+    const idxVar = unresolvedMap.indexVariable
+    traverse(t.program([t.expressionStatement(keyExpr)]), {
+      noScope: true,
+      Identifier(path: NodePath<t.Identifier>) {
+        if (path.node.name === itemVar) path.node.name = '__k'
+        else if (idxVar && path.node.name === idxVar) path.node.name = '__ki'
+      },
+    })
+    registerArgs.push(
+      t.arrowFunctionExpression(
+        idxVar ? [id('__k'), id('__ki')] : [id('__k')],
+        t.callExpression(id('String'), [keyExpr]),
+      ),
+    )
+  } else if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
     registerArgs.push(str(arrayMap.itemIdProperty))
+  }
 
-  return t.expressionStatement(t.callExpression(jsExpr`this.__geaRegisterMap`, registerArgs))
+  return t.expressionStatement(t.callExpression(jsExpr`this[${id('GEA_REGISTER_MAP')}]`, registerArgs))
 }
 
 // Unresolved dependency collection
@@ -273,7 +293,7 @@ export function collectUnresolvedDependencies(
 
 export function replaceMapWithComponentArrayItems(
   templateMethod: t.ClassMethod, arrayExpr: t.Expression | undefined,
-  itemsName: string, opts?: { slotBranch?: boolean },
+  arrayPropName: string, opts?: { slotBranch?: boolean },
 ): boolean {
   if (!arrayExpr || !t.isBlockStatement(templateMethod.body)) return false
   let replaced = false
@@ -291,7 +311,15 @@ export function replaceMapWithComponentArrayItems(
           t.isIdentifier(arrayExpr.property) && mapObj.name === arrayExpr.property.name)
       if (!matches) return
       const toReplace = getJoinChainPath(path) || path
-      toReplace.replaceWith(opts?.slotBranch ? t.stringLiteral('') : jsExpr`this.${id(itemsName)}.join("")`)
+      if (opts?.slotBranch) {
+        toReplace.replaceWith(t.stringLiteral(''))
+      } else {
+        const joinCall = t.callExpression(
+          t.memberExpression(buildThisListItems(arrayPropName), id('join')),
+          [t.stringLiteral('')],
+        )
+        toReplace.replaceWith(joinCall)
+      }
       replaced = true
     },
   })
@@ -299,7 +327,7 @@ export function replaceMapWithComponentArrayItems(
 }
 
 export function replaceMapWithComponentArrayItemsInConditionalSlots(
-  slots: ConditionalSlot[], arrayExpr: t.Expression | undefined, itemsName: string,
+  slots: ConditionalSlot[], arrayExpr: t.Expression | undefined, arrayPropName: string,
 ): void {
   if (!arrayExpr || slots.length === 0) return
   for (const slot of slots) {
@@ -307,7 +335,7 @@ export function replaceMapWithComponentArrayItemsInConditionalSlots(
       const expr = slot[key]
       if (!expr) continue
       const fakeMethod = jsMethod`${id('__tmpSlotMapReplace')}(__p) { return ${t.cloneNode(expr, true)}; }`
-      replaceMapWithComponentArrayItems(fakeMethod, arrayExpr, itemsName, { slotBranch: true })
+      replaceMapWithComponentArrayItems(fakeMethod, arrayExpr, arrayPropName, { slotBranch: true })
       const ret = fakeMethod.body.body[0]
       if (t.isReturnStatement(ret) && ret.argument) slot[key] = ret.argument
     }
@@ -327,9 +355,11 @@ export function inlineIntoConstructor(classBody: t.ClassBody, statements: t.Stat
 }
 
 export function ensureDisposeCalls(classBody: t.ClassBody, targets: string[]): void {
-  const stmts = targets.map(
-    (t_) => js`this.${id(t_)}?.forEach?.(item => item?.dispose?.());` as t.ExpressionStatement,
-  )
+  // targets are raw arrayPropNames; access via geaListItemsSymbol computed property
+  const stmts = targets.map((arrayPropName) => {
+    const sym = buildListItemsSymbol(arrayPropName)
+    return js`this[${sym}]?.forEach?.(item => item?.dispose?.());` as t.ExpressionStatement
+  })
   const existing = classBody.body.find(
     (m) => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === 'dispose',
   ) as t.ClassMethod | undefined
@@ -339,7 +369,7 @@ export function ensureDisposeCalls(classBody: t.ClassBody, targets: string[]): v
 
 export function injectMapItemAttrsIntoTemplate(
   templateMethod: t.ClassMethod,
-  mapInfos: Array<{ itemVariable: string; itemIdProperty?: string; containerBindingId?: string; eventToken?: string }>,
+  mapInfos: Array<{ itemVariable: string; itemIdProperty?: string; keyExpression?: t.Expression; containerBindingId?: string; eventToken?: string }>,
 ): void {
   if (mapInfos.length === 0) return
   const infoQueueByVar = new Map<string, typeof mapInfos>()
@@ -383,9 +413,11 @@ export function injectMapItemAttrsIntoTemplate(
       const tagPart = tagMatch[1], remainder = first.substring(tagPart.length)
       const tagName = tagPart.slice(1).toLowerCase()
       const eventAttr = info.eventToken && !tagName.includes('-') ? ` data-gea-event="${info.eventToken}"` : ''
-      const itemIdExpr = info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
-        ? t.logicalExpression('??', buildOptionalMemberChain(id(info.itemVariable), info.itemIdProperty), id(info.itemVariable))
-        : jsExpr`String(${id(info.itemVariable)})`
+      const itemIdExpr = info.keyExpression
+        ? t.callExpression(id('String'), [t.cloneNode(info.keyExpression, true)])
+        : info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY
+          ? t.logicalExpression('??', buildOptionalMemberChain(id(info.itemVariable), info.itemIdProperty), id(info.itemVariable))
+          : jsExpr`String(${id(info.itemVariable)})`
 
       rootTL.quasis = [
         t.templateElement({ raw: `${tagPart} data-gea-item-id="`, cooked: `${tagPart} data-gea-item-id="` }),
@@ -405,11 +437,22 @@ export function addJoinToUnresolvedMapCalls(templateMethod: t.ClassMethod, _unre
       if (!path.node.arguments[0] || !t.isArrowFunctionExpression(path.node.arguments[0])) return
       const joinPath = getJoinChainPath(path)
       if (joinPath) {
-        joinPath.replaceWith(jsExpr`${t.cloneNode(joinPath.node, true)} + '<!---->'`)
+        joinPath.replaceWith(
+          t.binaryExpression('+', t.cloneNode(joinPath.node, true) as t.Expression, t.stringLiteral('<!---->'))
+        )
         joinPath.skip()
         return
       }
-      path.replaceWith(jsExpr`${path.node}.join('') + '<!---->'`)
+      path.replaceWith(
+        t.binaryExpression(
+          '+',
+          t.callExpression(
+            t.memberExpression(t.cloneNode(path.node, true) as t.Expression, t.identifier('join')),
+            [t.stringLiteral('')]
+          ),
+          t.stringLiteral('<!---->')
+        )
+      )
     },
   })
 }

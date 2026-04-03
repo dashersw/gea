@@ -45,6 +45,8 @@ import { camelToKebab } from '../utils/html.ts'
 import {
   buildOptionalMemberChain,
   buildMemberChain,
+  buildListItemsSymbol,
+  buildThisListItems,
   normalizePathParts,
   pathPartsToString,
 } from './member-chain.ts'
@@ -150,7 +152,7 @@ export function collectPatchEntries(arrayMap: ArrayMapBinding): PatchPlan {
   return { entries, requiresRerender }
 }
 
-/** Detect whether a template requires full rerender (conditional JSX branches). */
+/** Detect whether a template requires full rerender (conditional JSX branches or item method calls). */
 export function templateRequiresRerender(file: t.File): boolean {
   let requiresRerender = false
   traverse(file, {
@@ -163,6 +165,14 @@ export function templateRequiresRerender(file: t.File): boolean {
     },
     LogicalExpression(path: NodePath<t.LogicalExpression>) {
       if (branchContainsJSX(path.node.left) || branchContainsJSX(path.node.right)) {
+        requiresRerender = true
+        path.stop()
+      }
+    },
+    CallExpression(path: NodePath<t.CallExpression>) {
+      // item.method() calls may return HTML/JSX — force full rerender
+      const callee = path.node.callee
+      if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.object, { name: 'item' })) {
         requiresRerender = true
         path.stop()
       }
@@ -361,7 +371,32 @@ function applyPropRefs(entries: PatchEntry[], templatePropNames?: Set<string>, w
 // Item ID expression helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-function buildItemIdExpr(itemIdProperty: string | undefined): t.Expression {
+/** Rewrite occurrences of variable names in a cloned expression (for key expressions). */
+export function rewriteItemVarInExpression(
+  expr: t.Expression,
+  fromVar: string,
+  toVar: string,
+  renames?: Map<string, string>,
+): t.Expression {
+  const renameMap = new Map(renames || [])
+  renameMap.set(fromVar, toVar)
+  const cloned = t.cloneNode(expr, true)
+  traverse(t.program([t.expressionStatement(cloned)]), {
+    noScope: true,
+    Identifier(path: NodePath<t.Identifier>) {
+      const replacement = renameMap.get(path.node.name)
+      if (replacement) path.node.name = replacement
+    },
+  })
+  return cloned
+}
+
+function buildItemIdExpr(itemIdProperty: string | undefined, keyExpression?: t.Expression, itemVariable?: string, indexVariable?: string): t.Expression {
+  if (keyExpression) {
+    const keyRenames = indexVariable ? new Map([[indexVariable, '__idx']]) : undefined
+    const rawExpr = rewriteItemVarInExpression(keyExpression, itemVariable || 'item', 'item', keyRenames)
+    return jsExpr`String(${rawExpr})`
+  }
   const rawExpr = itemIdProperty && itemIdProperty !== ITEM_IS_KEY
     ? t.logicalExpression('??', buildOptionalMemberChain(id('item'), itemIdProperty), id('item'))
     : id('item')
@@ -428,18 +463,18 @@ function hoistStoreReads(
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface DummyPropTree {
-  [key: string]: DummyPropTree | true
+  [key: string]: DummyPropTree | true | '__fn__'
 }
 
-function walkDummyTree(tree: DummyPropTree, parts: string[], write: boolean): void {
+function walkDummyTree(tree: DummyPropTree, parts: string[], write: boolean, leafValue: true | '__fn__' = true): void {
   let cursor = tree
   for (let i = 0; i < parts.length; i++) {
     const key = parts[i]
     if (i === parts.length - 1) {
-      if (write && !(key in cursor)) cursor[key] = true
+      if (write && !(key in cursor)) cursor[key] = leafValue
       return
     }
-    if (!(key in cursor) || cursor[key] === true) cursor[key] = {}
+    if (!(key in cursor) || cursor[key] === true || cursor[key] === '__fn__') cursor[key] = {}
     cursor = cursor[key] as DummyPropTree
   }
 }
@@ -454,7 +489,22 @@ function collectItemTemplatePropTree(template: t.JSXElement | t.JSXFragment, ite
   const program = t.program([t.expressionStatement(t.cloneNode(template, true))])
   traverse(program, {
     noScope: true,
+    CallExpression(path: NodePath<t.CallExpression>) {
+      // Detect item.method() calls and mark the leaf as a function
+      const callee = path.node.callee
+      if (!t.isMemberExpression(callee)) return
+      const chain: string[] = []
+      let node: t.Expression = callee
+      while (t.isMemberExpression(node) && !node.computed && t.isIdentifier(node.property)) {
+        chain.unshift(node.property.name)
+        node = node.object
+      }
+      if (!t.isIdentifier(node, { name: itemVar }) || chain.length === 0) return
+      walkDummyTree(tree, chain, true, '__fn__')
+    },
     MemberExpression(path: NodePath<t.MemberExpression>) {
+      // Skip if this member expression is the callee of a call expression (handled above)
+      if (t.isCallExpression(path.parent) && path.parent.callee === path.node) return
       const chain: string[] = []
       let node: t.Expression = path.node
       while (t.isMemberExpression(node) && !node.computed && t.isIdentifier(node.property)) {
@@ -475,10 +525,12 @@ function buildDummyFromTree(tree: DummyPropTree, keyPathParts: string[] | null):
     const val = matchesKey && keyPathParts!.length === 1
       ? t.numericLiteral(0)
       : matchesKey
-        ? buildDummyFromTree(value === true ? {} : value, keyPathParts!.slice(1))
-        : value === true
-          ? t.stringLiteral(' ')
-          : buildDummyFromTree(value, null)
+        ? buildDummyFromTree(value === true || value === '__fn__' ? {} : value, keyPathParts!.slice(1))
+        : value === '__fn__'
+          ? t.arrowFunctionExpression([], t.stringLiteral(''))
+          : value === true
+            ? t.stringLiteral(' ')
+            : buildDummyFromTree(value, null)
     props.push(t.objectProperty(id(key), val))
   }
   return t.objectExpression(props)
@@ -863,9 +915,9 @@ function buildElsLookup(
           js`const ${ch} = ${t.cloneNode(ctr, true)}.children[${t.cloneNode(i, true)}];`,
           t.ifStatement(
             t.logicalExpression('||',
-              jsExpr`${ch}.__geaKey == ${t.cloneNode(idExpr, true)}`,
+              jsExpr`${ch}[${id('GEA_DOM_KEY')}] == ${t.cloneNode(idExpr, true)}`,
               t.logicalExpression('&&',
-                jsExpr`${ch}.__geaKey == null`,
+                jsExpr`${ch}[${id('GEA_DOM_KEY')}] == null`,
                 t.binaryExpression('==',
                   t.optionalCallExpression(
                     t.optionalMemberExpression(t.cloneNode(ch, true), id('getAttribute'), false, true),
@@ -940,7 +992,7 @@ export function generateEnsureArrayConfigsMethod(arrayMaps: ArrayMapBinding[]): 
     }`
   })
 
-  return appendToBody(jsMethod`${id('__ensureArrayConfigs')}() {}`, ...body)
+  return appendToBody(jsMethod`[${id('GEA_ENSURE_ARRAY_CONFIGS')}]() {}`, ...body)
 }
 
 
@@ -1010,7 +1062,7 @@ export function generateArrayConditionalPatchObserver(
   const containerRef = thisProp(containerName)
   const proxiedArr = arrayMap.isImportedState
     ? buildMemberChain(
-        jsExpr`${id(arrayMap.storeVar || 'store')}.__store`,
+        jsExpr`${id(arrayMap.storeVar || 'store')}[${id('GEA_STORE_ROOT')}]`,
         arrayPath,
       )
     : buildMemberChain(t.thisExpression(), arrayPath)
@@ -1065,7 +1117,7 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
   const configRef = thisProp(getArrayConfigPropName(arrayMap))
   const proxiedArr = arrayMap.isImportedState
     ? buildMemberChain(
-        jsExpr`${id(arrayMap.storeVar || 'store')}.__store`,
+        jsExpr`${id(arrayMap.storeVar || 'store')}[${id('GEA_STORE_ROOT')}]`,
         arrayPath,
       )
     : buildMemberChain(t.thisExpression(), arrayPath)
@@ -1095,9 +1147,9 @@ export function generateArrayConditionalRerenderObserver(arrayMap: ArrayMapBindi
       t.ifStatement(
         jsExpr`!__skipArrayConditionalRerender`,
         t.blockStatement([
-          js`this.__ensureArrayConfigs();`,
+          js`this[${id('GEA_ENSURE_ARRAY_CONFIGS')}]();`,
           ...jsAll`const __arr = Array.isArray(${rawArrExpr}) ? ${rawArrExpr} : [];`,
-          js`this.__applyListChanges(${containerRef}, __arr, null, ${configRef});`,
+          js`this[${id('GEA_APPLY_LIST_CHANGES')}](${containerRef}, __arr, null, ${configRef});`,
         ]),
       ),
     ]),
@@ -1135,8 +1187,8 @@ export function generateArrayHandlers(
         t.returnStatement(),
       ]),
     ),
-    js`this.__ensureArrayConfigs();`,
-    js`this.__applyListChanges(${containerRef}, ${id(paramName)}, change, ${configRef});`,
+    js`this[${id('GEA_ENSURE_ARRAY_CONFIGS')}]();`,
+    js`this[${id('GEA_APPLY_LIST_CHANGES')}](${containerRef}, ${id(paramName)}, change, ${configRef});`,
   ]
 
   const method = appendToBody(jsMethod`${id(methodName)}(${id(paramName)}, change) {}`, ...body)
@@ -1172,15 +1224,15 @@ export function generatePatchItemMethod(
   for (const hoist of hoists) body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
   body.push(...buildRefCacheAndApply(patchedEntries, elVar, true))
 
-  const itemIdExpr = buildItemIdExpr(arrayMap.itemIdProperty)
-  body.push(js`${elVar}.__geaKey = ${itemIdExpr};`)
+  const itemIdExpr = buildItemIdExpr(arrayMap.itemIdProperty, arrayMap.keyExpression, arrayMap.itemVariable, arrayMap.indexVariable)
+  body.push(js`${elVar}[${id('GEA_DOM_KEY')}] = ${itemIdExpr};`)
 
   const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? 'list'}`
   const privateElsRef = thisPrivate(rowElsProp)
   body.push(
     js`(${t.cloneNode(privateElsRef, true)} || (${t.cloneNode(privateElsRef, true)} = {}))[${t.cloneNode(itemIdExpr, true)}] = ${elVar};`,
   )
-  body.push(js`${elVar}.__geaItem = item;`)
+  body.push(js`${elVar}[${id('GEA_DOM_ITEM')}] = item;`)
 
   const params: t.Identifier[] = [id('row'), id('item'), id('__prevItem')]
   if (arrayMap.indexVariable) params.push(id('__idx'))
@@ -1245,7 +1297,7 @@ export function generateCreateItemMethod(
             }
           }
         }
-        rerenderBody.push(js`el.__geaProps = ${t.objectExpression(propsProperties)};`)
+        rerenderBody.push(js`el[${id('GEA_DOM_PROPS')}] = ${t.objectExpression(propsProperties)};`)
       }
     }
 
@@ -1268,19 +1320,23 @@ export function generateCreateItemMethod(
 
   const propTree = collectItemTemplatePropTree(arrayMap.itemTemplate!, arrayMap.itemVariable)
   const containerRef = jsExpr`this.${id(containerProp)}`
-  const privateDcField = thisPrivate('__dc')
+  // Each .map() needs its own template-cache field; sharing `#__dc` makes the second map reuse the
+  // first map's container ref and corrupt DOM (e.g. two tabs.map() in one component).
+  const dcFieldSuffix = arrayMap.containerBindingId ?? arrayPath.replace(/\./g, '_')
+  const dcPrivateName = `__dc_${dcFieldSuffix}`
+  const privateDcField = thisPrivate(dcPrivateName)
   const cVar = id('__c')
   const elVar = id('el')
   const body: t.Statement[] = []
 
   if (useRawStoreCache) {
     const privateRsField = thisPrivate('__rs')
-    body.push(js`var __rs = ${t.cloneNode(privateRsField, true)} || (${t.cloneNode(privateRsField, true)} = ${id(arrayMap.storeVar!)}.__raw);`)
+    body.push(js`var __rs = ${t.cloneNode(privateRsField, true)} || (${t.cloneNode(privateRsField, true)} = ${id(arrayMap.storeVar!)}[${id('GEA_PROXY_RAW')}]);`)
   }
 
   body.push(js`var ${cVar} = ${t.cloneNode(privateDcField, true)} || (${t.cloneNode(privateDcField, true)} = ${containerRef});`)
 
-  const isPrimitiveKey = !itemIdProperty || itemIdProperty === ITEM_IS_KEY
+  const isPrimitiveKey = (!itemIdProperty || itemIdProperty === ITEM_IS_KEY) && !arrayMap.keyExpression
   const dummyItem: t.Expression = isPrimitiveKey
     ? t.stringLiteral('__dummy__')
     : (() => {
@@ -1328,13 +1384,13 @@ export function generateCreateItemMethod(
   for (const hoist of hoists) body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`)
   body.push(...buildRefCacheAndApply(patchedEntries, elVar, false))
 
-  const patchItemIdExpr = buildItemIdExpr(itemIdProperty)
-  body.push(js`${elVar}.__geaKey = ${patchItemIdExpr};`)
-  body.push(js`${elVar}.__geaItem = item;`)
+  const patchItemIdExpr = buildItemIdExpr(itemIdProperty, arrayMap.keyExpression, arrayMap.itemVariable, arrayMap.indexVariable)
+  body.push(js`${elVar}[${id('GEA_DOM_KEY')}] = ${patchItemIdExpr};`)
+  body.push(js`${elVar}[${id('GEA_DOM_ITEM')}] = item;`)
 
   if (itemTemplateRootIsComponent && t.isJSXElement(arrayMap.itemTemplate)) {
     const propsProperties = collectComponentProps(arrayMap, propNames, wholeParamName)
-    if (propsProperties.length > 0) body.push(js`${elVar}.__geaProps = ${t.objectExpression(propsProperties)};`)
+    if (propsProperties.length > 0) body.push(js`${elVar}[${id('GEA_DOM_PROPS')}] = ${t.objectExpression(propsProperties)};`)
   }
 
   body.push(js`return ${elVar};`)
@@ -1344,7 +1400,7 @@ export function generateCreateItemMethod(
   return {
     method: t.classMethod('method', id(methodName), createParams, t.blockStatement(body)),
     needsRawStoreCache: useRawStoreCache,
-    privateFields: ['__dc'],
+    privateFields: [dcPrivateName],
   }
 }
 
@@ -1499,7 +1555,7 @@ export function generateRenderItemMethod(
 
   const privateRsField = t.memberExpression(t.thisExpression(), t.privateName(id('__rs')))
   const rawStoreCacheStmts: t.Statement[] = needsRawStoreCache && arrayMap.storeVar
-    ? [js`const __rs = ${t.cloneNode(privateRsField)} || (${t.cloneNode(privateRsField)} = ${id(arrayMap.storeVar)}.__raw);`]
+    ? [js`const __rs = ${t.cloneNode(privateRsField)} || (${t.cloneNode(privateRsField)} = ${id(arrayMap.storeVar)}[${id('GEA_PROXY_RAW')}]);`]
     : []
 
   const method = appendToBody(
@@ -1512,12 +1568,12 @@ export function generateRenderItemMethod(
   )
 
   if (handlerPropsInMap.length > 0 && classBody) {
-    const handleItemHandler = jsMethod`__handleItemHandler(itemId, e) {
+    const handleItemHandler = jsMethod`[${id('GEA_HANDLE_ITEM_HANDLER')}](itemId, e) {
     const fn = this.__itemHandlers_?.[itemId];
     if (fn) fn(e);
   }` as t.ClassMethod
     if (
-      !classBody.body.some((m) => t.isClassMethod(m) && t.isIdentifier(m.key) && m.key.name === '__handleItemHandler')
+      !classBody.body.some((m) => t.isClassMethod(m) && m.computed && t.isIdentifier(m.key) && m.key.name === 'GEA_HANDLE_ITEM_HANDLER')
     ) {
       classBody.body.unshift(handleItemHandler)
     }
@@ -1527,6 +1583,7 @@ export function generateRenderItemMethod(
     h.mapContext = {
       arrayPathParts: arrayMap.arrayPathParts || normalizePathParts((arrayMap as any).arrayPath || ''),
       itemIdProperty: arrayMap.itemIdProperty || 'id',
+      ...(arrayMap.keyExpression ? { keyExpression: t.cloneNode(arrayMap.keyExpression, true) } : {}),
       itemVariable: arrayMap.itemVariable,
       indexVariable: arrayMap.indexVariable,
       isImportedState: arrayMap.isImportedState || false,
@@ -1744,8 +1801,6 @@ export function generateComponentArrayResult(
     finalPropsExpr = cloned
   }
 
-  const itemsName = getComponentArrayItemsName(arrayPropName)
-
   let arrAccessExpr: t.Expression
   let arrSetupStatements: t.Statement[] = []
   if (storeArrayAccess) {
@@ -1791,7 +1846,7 @@ export function generateComponentArrayResult(
       if (!t.isVariableDeclaration(stmt)) continue
       for (const decl of stmt.declarations) {
         if (t.isIdentifier(decl.init) && storeVarNames.has(decl.init.name)) {
-          decl.init = jsExpr`${id(decl.init.name)}.__raw`
+          decl.init = jsExpr`${id(decl.init.name)}[${id('GEA_PROXY_RAW')}]`
         }
       }
     }
@@ -1813,12 +1868,14 @@ export function generateComponentArrayResult(
 
   const mapParams: t.Identifier[] = [id('opt')]
   if (indexVar || !itemIdProp) mapParams.push(id('__k'))
-  const childCall = jsExpr`this.__child(${id(comp.componentTag)}, ${t.cloneNode(itemPropsCall, true)}, ${t.cloneNode(keyExpr, true)})`
+  const childCall = jsExpr`this[${id('GEA_CHILD')}](${id(comp.componentTag)}, ${t.cloneNode(itemPropsCall, true)}, ${t.cloneNode(keyExpr, true)})`
   const mapCallback = t.arrowFunctionExpression(mapParams, childCall)
   const nullishCoalesce = t.logicalExpression('??', t.cloneNode(arrAccessExpr, true), t.arrayExpression([]))
   const parenthesized = t.parenthesizedExpression ? t.parenthesizedExpression(nullishCoalesce) : nullishCoalesce
   const mapCallExpr = jsExpr`${parenthesized}.map(${mapCallback})`
-  const constructorInit = js`this.${id(itemsName)} = ${mapCallExpr};`
+  const constructorInit = t.expressionStatement(
+    t.assignmentExpression('=', buildThisListItems(arrayPropName), mapCallExpr as t.Expression),
+  )
 
   return {
     itemPropsMethod,

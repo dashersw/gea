@@ -225,7 +225,7 @@ function extractGetterDeps(method: t.ClassMethod): string[][] {
     MemberExpression(path: NodePath<t.MemberExpression>) {
       if (!t.isThisExpression(path.node.object) || !t.isIdentifier(path.node.property)) return
       const name = path.node.property.name
-      if (!isPrivateName(name) && !paths.has(name)) {
+      if (!paths.has(name)) {
         paths.set(name, [name])
       }
     },
@@ -235,7 +235,7 @@ function extractGetterDeps(method: t.ClassMethod): string[][] {
       for (const prop of path.node.id.properties) {
         if (!t.isObjectProperty(prop) || !t.isIdentifier(prop.key)) continue
         const name = prop.key.name
-        if (!isPrivateName(name) && !paths.has(name)) {
+        if (!paths.has(name)) {
           paths.set(name, [name])
         }
       }

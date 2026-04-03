@@ -78,6 +78,90 @@ export function ensureImport(
   return false
 }
 
+// ─── GEA Symbol helpers ─────────────────────────────────────────────
+
+/** `this[GEA_*]` — compiler output; identifier imported from `@geajs/core`. */
+export function buildThisGeaMember(symExportName: string): t.MemberExpression {
+  return t.memberExpression(t.thisExpression(), id(symExportName), true)
+}
+
+export function buildThisGeaCall(symExportName: string, args: t.Expression[] = []): t.CallExpression {
+  return t.callExpression(buildThisGeaMember(symExportName), args)
+}
+
+/** `expr[GEA_*]` (e.g. `el[GEA_DOM_KEY]`). */
+export function buildExprGeaMember(expr: t.Expression, symExportName: string): t.MemberExpression {
+  return t.memberExpression(expr, id(symExportName), true)
+}
+
+/** `geaListItemsSymbol(arrayPropName)` — the call expression for the items Symbol. */
+export function buildListItemsSymbol(arrayPropName: string): t.CallExpression {
+  return t.callExpression(t.identifier('geaListItemsSymbol'), [t.stringLiteral(arrayPropName)])
+}
+
+/** `this[geaListItemsSymbol(arrayPropName)]` — computed member access for the items array. */
+export function buildThisListItems(arrayPropName: string): t.MemberExpression {
+  return t.memberExpression(t.thisExpression(), buildListItemsSymbol(arrayPropName), true)
+}
+
+const GEA_COMPILER_SYMBOL_IMPORTS = [
+  'GEA_RENDERED',
+  'GEA_PARENT_COMPONENT',
+  'GEA_ELEMENT',
+  'GEA_MAPS',
+  'GEA_CONDS',
+  'GEA_RESET_ELS',
+  'GEA_OBSERVE',
+  'GEA_OBSERVE_LIST',
+  'GEA_EL',
+  'GEA_UPDATE_TEXT',
+  'GEA_REQUEST_RENDER',
+  'GEA_UPDATE_PROPS',
+  'GEA_SYNC_MAP',
+  'GEA_REGISTER_MAP',
+  'GEA_PATCH_COND',
+  'GEA_PATCH_NODE',
+  'GEA_REGISTER_COND',
+  'GEA_REFRESH_LIST',
+  'GEA_RECONCILE_LIST',
+  'GEA_ENSURE_ARRAY_CONFIGS',
+  'GEA_APPLY_LIST_CHANGES',
+  'GEA_INSTANTIATE_CHILD_COMPONENTS',
+  'GEA_MOUNT_COMPILED_CHILD_COMPONENTS',
+  'GEA_SWAP_CHILD',
+  'GEA_SWAP_STATE_CHILDREN',
+  'GEA_CHILD',
+  'GEA_LIST_CONFIG_REFRESHING',
+  'GEA_DOM_KEY',
+  'GEA_DOM_ITEM',
+  'GEA_DOM_PROPS',
+  'GEA_HANDLE_ITEM_HANDLER',
+  'GEA_MAP_CONFIG_TPL',
+  'GEA_MAP_CONFIG_PREV',
+  'GEA_MAP_CONFIG_COUNT',
+  'GEA_CLONE_ITEM',
+  'GEA_ON_PROP_CHANGE',
+  'GEA_SETUP_LOCAL_STATE_OBSERVERS',
+  'GEA_SETUP_REFS',
+  'GEA_SYNC_DOM_REFS',
+  'GEA_CTOR_TAG_NAME',
+  'GEA_PROXY_RAW',
+  'GEA_PROXY_GET_TARGET',
+  'GEA_STORE_ROOT',
+  'geaCondPatchedSymbol',
+  'geaCondValueSymbol',
+  'geaPrevGuardSymbol',
+  'geaSanitizeAttr',
+  'geaEscapeHtml',
+  'geaListItemsSymbol',
+] as const
+
+export function ensureGeaCompilerSymbolImports(ast: t.File): void {
+  for (const name of GEA_COMPILER_SYMBOL_IMPORTS) {
+    ensureImport(ast, '@geajs/core', name)
+  }
+}
+
 // ─── Member-chain builders ──────────────────────────────────────────
 
 export function buildMemberChain(

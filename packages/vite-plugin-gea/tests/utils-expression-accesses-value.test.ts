@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { parse } from '@babel/parser'
 import * as t from '@babel/types'
 import test from 'node:test'
-import { expressionAccessesValueProperties } from '../src/codegen/prop-ref-utils.ts'
+import { expressionAccessesValueProperties } from '../src/codegen/prop-ref-utils'
 
 function parseExpr(src: string): t.Expression {
   const file = parse(src, { sourceType: 'module', plugins: ['typescript', 'jsx'] })

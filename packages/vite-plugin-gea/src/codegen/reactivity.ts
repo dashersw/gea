@@ -315,10 +315,7 @@ export function applyStaticReactivity(
               const propPath = entry.pathParts
               const parsed = JSON.parse(entry.observeKey)
               const storeVarName = parsed.storeVar || undefined
-              const methodNameStr = getObserveMethodName(propPath, storeVarName)
-              const prevProp = `__geaPrev_guard_${methodNameStr}`
-              const rerenderMethod = jsMethod`${id(methodNameStr)}(__v, __c) { if (!__v === !this.${id(prevProp)}) return; this.${id(prevProp)} = __v; this.__geaRequestRender(); }`
-              _merge(entry.observeKey, rerenderMethod)
+              _merge(entry.observeKey, generateRerenderObserver(propPath, storeVarName, true))
               if (!stateProps.has(entry.observeKey)) {
                 stateProps.set(entry.observeKey, entry.pathParts)
               }
@@ -452,7 +449,7 @@ export function applyStaticReactivity(
           }
 
           const hasOnPropChange = classPath.node.body.body.some(
-            (member) => t.isClassMethod(member) && t.isIdentifier(member.key) && member.key.name === '__onPropChange',
+            (member) => t.isClassMethod(member) && member.computed && t.isIdentifier(member.key) && member.key.name === 'GEA_ON_PROP_CHANGE',
           )
 
           // ── Child observe groups ──────────────────────────────────────
@@ -835,7 +832,7 @@ export function applyStaticReactivity(
                 })
                 .map((child) => {
                   const buildPropsName = `__buildProps_${child.instanceVar.replace(/^_/, '')}`
-                  const updateExpr = js`this.${id(child.instanceVar)}.__geaUpdateProps(this.${id(buildPropsName)}());`
+                  const updateExpr = js`this.${id(child.instanceVar)}[${id('GEA_UPDATE_PROPS')}](this.${id(buildPropsName)}());`
                   if (!child.lazy) return updateExpr
                   const backingField = `__lazy${child.instanceVar}`
                   return js`if (this.${id(backingField)}) { ${updateExpr} }`

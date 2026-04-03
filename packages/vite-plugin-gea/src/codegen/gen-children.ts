@@ -97,7 +97,7 @@ export function injectChildComponents(
           id(child.instanceVar),
           [],
           t.blockStatement([
-            js`if (!this.${id(backingField)}) { this.${id(backingField)} = this.__child(${id(child.tagName)}, ${propsArg}); }`,
+            js`if (!this.${id(backingField)}) { this.${id(backingField)} = this[${id('GEA_CHILD')}](${id(child.tagName)}, ${propsArg}); }`,
             js`return this.${id(backingField)};`,
           ]),
         )
@@ -170,7 +170,7 @@ function buildInstanceStatements(
     }
 
     stmts.push(
-      js`this.${id(child.instanceVar)} = this.__child(${id(child.tagName)}, ${propsArg});` as t.ExpressionStatement,
+      js`this.${id(child.instanceVar)} = this[${id('GEA_CHILD')}](${id(child.tagName)}, ${propsArg});` as t.ExpressionStatement,
     )
   })
   return stmts

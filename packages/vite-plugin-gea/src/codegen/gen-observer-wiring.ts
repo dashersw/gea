@@ -27,7 +27,7 @@ import {
   replacePropRefsInExpression,
   replacePropRefsInStatements,
 } from './prop-ref-utils.ts'
-import { getComponentArrayItemsName } from './array-compiler.ts'
+import { buildListItemsSymbol, buildThisListItems } from './member-chain.ts'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Private helpers
@@ -84,12 +84,13 @@ export function generateCreatedHooks(
     containerBindingId?: string
     containerUserIdExpr?: t.Expression
     itemIdProperty?: string
+    afterCondSlotIndex?: number
   }> = [],
 ): t.ClassMethod {
   const body: t.Statement[] = []
 
   if (hasArrayConfigs) {
-    body.push(js`this.__ensureArrayConfigs();`)
+    body.push(js`this[${id('GEA_ENSURE_ARRAY_CONFIGS')}]();`)
   }
 
   const observeListPathKeys = new Set<string>()
@@ -126,7 +127,7 @@ export function generateCreatedHooks(
 
       if (handlers.length === 1 && !handlers[0].isVia) {
         body.push(
-          js`this.__observe(${storeVarExpr}, ${pathArray}, this.${id(handlers[0].methodName)});`,
+          js`this[${id('GEA_OBSERVE')}](${storeVarExpr}, ${pathArray}, this.${id(handlers[0].methodName)});`,
         )
       } else {
         const vParam = id('__v')
@@ -179,7 +180,7 @@ export function generateCreatedHooks(
           }
         }
         body.push(
-          js`this.__observe(${storeVarExpr}, ${pathArray}, ${jsExpr`(${vParam}, ${cParam}) => { ${t.blockStatement(callStmts)} }`});`,
+          js`this[${id('GEA_OBSERVE')}](${storeVarExpr}, ${pathArray}, ${jsExpr`(${vParam}, ${cParam}) => { ${t.blockStatement(callStmts)} }`});`,
         )
       }
     }
@@ -187,13 +188,12 @@ export function generateCreatedHooks(
     // Generate __observeList calls for component array slots on this store
     for (const config of observeListConfigs.filter((c) => c.storeVar === store.storeVar)) {
       const pathArray = t.arrayExpression(config.pathParts.map((part) => t.stringLiteral(part)))
-      const itemsName = getComponentArrayItemsName(config.arrayPropName)
       const itemPropsMethodName = `__itemProps_${config.arrayPropName}`
 
       const containerExpr = config.containerUserIdExpr
         ? jsExpr`document.getElementById(${t.cloneNode(config.containerUserIdExpr, true) as t.Expression})`
         : config.containerBindingId
-          ? jsExpr`this.__el(${config.containerBindingId})`
+          ? jsExpr`this[${id('GEA_EL')}](${config.containerBindingId})`
           : jsExpr`this.$(":scope")`
 
       const containerArrow = jsExpr`() => ${containerExpr}`
@@ -212,14 +212,22 @@ export function generateCreatedHooks(
         keyArrow = jsExpr`(opt, __k) => '__idx_' + __k`
       }
 
+      const listItemsSym = buildListItemsSymbol(config.arrayPropName)
+      const thisItems = buildThisListItems(config.arrayPropName)
       const configObj = jsObjectExpr`{
-        items: this.${id(itemsName)},
-        itemsKey: ${itemsName},
+        items: ${thisItems},
+        itemsKey: ${listItemsSym},
         container: ${containerArrow},
         Ctor: ${id(config.componentTag)},
         props: ${propsArrow},
         key: ${keyArrow}
       }`
+
+      if (config.afterCondSlotIndex != null) {
+        configObj.properties.push(
+          t.objectProperty(id('afterCondSlotIndex'), t.numericLiteral(config.afterCondSlotIndex)),
+        )
+      }
 
       // Merge any scalar observers on the same path into the onchange callback
       const samePathHandlers: Array<{ methodName: string; isVia?: boolean; rereadExpr?: t.Expression }> = []
@@ -242,7 +250,7 @@ export function generateCreatedHooks(
       }
 
       body.push(
-        js`this.__observeList(${storeVarExpr}, ${pathArray}, ${configObj});`,
+        js`this[${id('GEA_OBSERVE_LIST')}](${storeVarExpr}, ${pathArray}, ${configObj});`,
       )
     }
   }
@@ -262,18 +270,18 @@ export function generateLocalStateObserverSetup(
 ): t.ClassMethod {
   const body: t.Statement[] = []
   if (hasArrayConfigs) {
-    body.push(js`this.__ensureArrayConfigs();`)
+    body.push(js`this[${id('GEA_ENSURE_ARRAY_CONFIGS')}]();`)
   }
-  body.push(js`if (!this.__store) { return; }`)
+  body.push(js`if (!this[${id('GEA_STORE_ROOT')}]) { return; }`)
 
   for (const observeHandler of observeHandlers) {
     const pathArray = t.arrayExpression(observeHandler.pathParts.map((part) => t.stringLiteral(part)))
     body.push(
-      js`this.__observe(this, ${pathArray}, this.${id(observeHandler.methodName)});`,
+      js`this[${id('GEA_OBSERVE')}](this, ${pathArray}, this.${id(observeHandler.methodName)});`,
     )
   }
 
-  const method = jsMethod`${id('__setupLocalStateObservers')}() {}`
+  const method = jsMethod`[${id('GEA_SETUP_LOCAL_STATE_OBSERVERS')}]() {}`
   method.body.body.push(...body)
   return method
 }
@@ -304,27 +312,42 @@ function emitObserver(config: EmitObserverConfig): t.ClassMethod {
   const method = jsMethod`${id(methodName)}(value, change) {}`
 
   if (dedup && storeVar) {
-    const prevProp = `__geaPrev_${methodName}`
+    const prevSymbol = t.callExpression(id('geaPrevGuardSymbol'), [t.stringLiteral(methodName)])
+    const prevSymbol2 = t.callExpression(id('geaPrevGuardSymbol'), [t.stringLiteral(methodName)])
+    const prevSymbol3 = t.callExpression(id('geaPrevGuardSymbol'), [t.stringLiteral(methodName)])
+    const prevSymbol4 = t.callExpression(id('geaPrevGuardSymbol'), [t.stringLiteral(methodName)])
+    const prevSymbol5 = t.callExpression(id('geaPrevGuardSymbol'), [t.stringLiteral(methodName)])
+    const thisPrev = t.memberExpression(t.thisExpression(), prevSymbol, true)
+    const thisPrev2 = t.memberExpression(t.thisExpression(), prevSymbol2, true)
+    const thisPrev3 = t.memberExpression(t.thisExpression(), prevSymbol3, true)
+    const thisPrev4 = t.memberExpression(t.thisExpression(), prevSymbol4, true)
+    const thisPrev_check = t.memberExpression(t.thisExpression(), prevSymbol5, true)
     if (dedup === 'truthiness') {
       method.body.body.push(
-        ...jsBlockBody`
-          if (!value === !this.${id(prevProp)}) return;
-          this.${id(prevProp)} = value;
-        `,
+        t.ifStatement(
+          t.logicalExpression(
+            '&&',
+            t.binaryExpression('!==', thisPrev_check, id('undefined')),
+            t.binaryExpression('===', t.unaryExpression('!', id('value')), t.unaryExpression('!', thisPrev)),
+          ),
+          t.returnStatement(),
+        ),
+        t.expressionStatement(t.assignmentExpression('=', thisPrev2, id('value'))),
       )
     } else {
       method.body.body.push(
-        ...jsBlockBody`
-          if (value === this.${id(prevProp)}) return;
-          this.${id(prevProp)} = value;
-        `,
+        t.ifStatement(
+          t.binaryExpression('===', id('value'), thisPrev3),
+          t.returnStatement(),
+        ),
+        t.expressionStatement(t.assignmentExpression('=', thisPrev4, id('value'))),
       )
     }
   }
 
   if (guard === 'rendered') {
     method.body.body.push(
-      js`if (this.rendered_) { ${t.blockStatement(body)} }`,
+      js`if (this[${id('GEA_RENDERED')}]) { ${t.blockStatement(body)} }`,
     )
   } else {
     method.body.body.push(...body)
@@ -350,7 +373,7 @@ export function generateRerenderObserver(pathParts: PathParts, storeVar?: string
     pathParts,
     storeVar,
     dedup: storeVar ? (truthinessOnly ? 'truthiness' : 'value') : null,
-    body: [js`this.__geaRequestRender();`],
+    body: [js`this[${id('GEA_REQUEST_RENDER')}]();`],
   })
 }
 
@@ -360,8 +383,10 @@ export function generateConditionalSlotObserveMethod(
   slotIndices: number[],
   emitEarlyReturn: boolean = true,
 ): t.ClassMethod {
+  const condPatchedKey = (i: number) =>
+    t.callExpression(id('geaCondPatchedSymbol'), [t.numericLiteral(i)])
   const anyPatchedExpr = slotIndices
-    .map((i) => jsExpr`this.${id(`__geaCondPatched_${i}`)}` as t.Expression)
+    .map((i) => t.memberExpression(t.thisExpression(), condPatchedKey(i), true) as t.Expression)
     .reduce((acc, expr) => t.logicalExpression('||', acc, expr))
 
   const body: t.Statement[] = []
@@ -369,11 +394,31 @@ export function generateConditionalSlotObserveMethod(
     body.push(t.ifStatement(anyPatchedExpr, t.returnStatement()))
   }
   for (const slotIndex of slotIndices) {
+    const keyExpr = condPatchedKey(slotIndex)
+    const keyExpr2 = condPatchedKey(slotIndex)
+    const keyExpr3 = condPatchedKey(slotIndex)
+    const thisCondPatched = t.memberExpression(t.thisExpression(), keyExpr, true)
+    const thisCondPatched2 = t.memberExpression(t.thisExpression(), keyExpr2, true)
+    const thisCondPatched3 = t.memberExpression(t.thisExpression(), keyExpr3, true)
     body.push(
-      js`this.${id(`__geaCondPatched_${slotIndex}`)} = this.__geaPatchCond(${slotIndex});`,
+      t.expressionStatement(
+        t.assignmentExpression('=', thisCondPatched, jsExpr`this[${id('GEA_PATCH_COND')}](${slotIndex})` as t.Expression),
+      ),
     )
     body.push(
-      js`if (this.${id(`__geaCondPatched_${slotIndex}`)}) { queueMicrotask(() => this.${id(`__geaCondPatched_${slotIndex}`)} = false); }`,
+      t.ifStatement(
+        thisCondPatched2,
+        t.blockStatement([
+          t.expressionStatement(
+            t.callExpression(id('queueMicrotask'), [
+              t.arrowFunctionExpression(
+                [],
+                t.assignmentExpression('=', thisCondPatched3, t.booleanLiteral(false)),
+              ),
+            ]),
+          ),
+        ]),
+      ),
     )
   }
   if (emitEarlyReturn) {
@@ -384,7 +429,7 @@ export function generateConditionalSlotObserveMethod(
 }
 
 export function generateStateChildSwapObserver(pathParts: PathParts, storeVar: string | undefined): t.ClassMethod {
-  return emitObserver({ pathParts, storeVar, body: [js`this.__geaSwapStateChildren();`] })
+  return emitObserver({ pathParts, storeVar, body: [js`this[${id('GEA_SWAP_STATE_CHILDREN')}]();`] })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -437,7 +482,7 @@ export function generateUnresolvedRelationalObserver(
     : (jsExpr`__arr[__i]` as t.Expression)
 
   const commonPreamble: t.Statement[] = [
-    js`if (!this.rendered_) return;`,
+    js`if (!this[${id('GEA_RENDERED')}]) return;`,
     lazyInit(containerName, containerLookup),
     ...jsBlockBody`if (!${containerRef}) return;`,
     ...setupStatements,

@@ -30,7 +30,6 @@ import {
   generateCreateItemMethod,
   generatePatchItemMethod,
   generateComponentArrayResult,
-  getComponentArrayItemsName,
   getComponentArrayRefreshMethodName,
   isUnresolvedMapWithComponentChild,
   generateArrayHandlers,
@@ -58,6 +57,8 @@ import {
 import {
   buildMemberChainFromParts,
   buildObserveKey,
+  buildListItemsSymbol,
+  buildThisListItems,
   getObserveMethodName,
   pathPartsToString,
   resolvePath,
@@ -96,12 +97,14 @@ export interface UnresolvedMapsResult {
     containerBindingId?: string
     containerUserIdExpr?: t.Expression
     itemIdProperty?: string
+    afterCondSlotIndex?: number
   }>
   staticArrayRefreshOnMount: string[]
   initialHtmlArrayRefreshOnMount: t.Statement[]
   mapItemAttrInfos: Array<{
     itemVariable: string
     itemIdProperty?: string
+    keyExpression?: t.Expression
     containerBindingId?: string
     eventToken?: string
   }>
@@ -146,12 +149,14 @@ export function processUnresolvedMaps(
     containerBindingId?: string
     containerUserIdExpr?: t.Expression
     itemIdProperty?: string
+    afterCondSlotIndex?: number
   }> = []
   const staticArrayRefreshOnMount: string[] = []
   const initialHtmlArrayRefreshOnMount: t.Statement[] = []
   const mapItemAttrInfos: Array<{
     itemVariable: string
     itemIdProperty?: string
+    keyExpression?: t.Expression
     containerBindingId?: string
     eventToken?: string
   }> = []
@@ -224,19 +229,19 @@ export function processUnresolvedMaps(
             containerBindingId: arrayResult.containerBindingId,
             containerUserIdExpr: arrayResult.containerUserIdExpr,
             itemIdProperty: arrayResult.itemIdProperty,
+            afterCondSlotIndex: um.afterCondSlotIndex,
           })
         } else {
           const computedDeps = (
             um.dependencies || collectUnresolvedDependencies([um], stateRefs, classPath.node.body)
           ).filter((dep) => dep.storeVar || dep.pathParts[0] !== 'props')
           const refreshMethodName = getComponentArrayRefreshMethodName(arrayPropName)
-          const itemsName = getComponentArrayItemsName(arrayPropName)
           const itemPropsMethodNameRef = `__itemProps_${arrayPropName}`
           const containerSuffix = arrayResult.containerBindingId
           const containerExpr = arrayResult.containerUserIdExpr
             ? (jsExpr`document.getElementById(${t.cloneNode(arrayResult.containerUserIdExpr, true) as t.Expression})` as t.Expression)
             : containerSuffix
-              ? (jsExpr`this.__el(${containerSuffix})` as t.Expression)
+              ? (jsExpr`this[${id('GEA_EL')}](${containerSuffix})` as t.Expression)
               : (jsExpr`this.$(":scope")` as t.Expression)
 
           const itemIdProp = arrayResult.itemIdProperty
@@ -247,13 +252,31 @@ export function processUnresolvedMaps(
                 ? (jsExpr`(opt) => opt` as t.Expression)
                 : (jsExpr`(opt, __k) => ${'__idx_'} + __k` as t.Expression)
 
+          const thisItems = buildThisListItems(arrayPropName)
+          const reconcileCall = t.callExpression(
+            t.memberExpression(t.thisExpression(), id('GEA_RECONCILE_LIST'), true),
+            [
+              t.cloneNode(thisItems, true) as t.Expression,
+              id('__arr'),
+              t.cloneNode(containerExpr, true) as t.Expression,
+              id(arrayResult.componentTag),
+              jsExpr`(opt) => this.${id(itemPropsMethodNameRef)}(opt)` as t.Expression,
+              t.cloneNode(keyFn, true) as t.Expression,
+            ],
+          )
           const refreshMethod = appendToBody(
             jsMethod`${id(refreshMethodName)}() {}`,
             ...arrayResult.arrSetupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
             js`const __arr = ${t.cloneNode(arrayResult.arrAccessExpr, true)} ?? [];`,
-            js`const __new = this.__reconcileList(this.${id(itemsName)}, __arr, ${t.cloneNode(containerExpr, true)}, ${id(arrayResult.componentTag)}, (opt) => this.${id(itemPropsMethodNameRef)}(opt), ${t.cloneNode(keyFn, true)});`,
-            js`this.${id(itemsName)}.length = 0;`,
-            js`this.${id(itemsName)}.push(...__new);`,
+            t.variableDeclaration('const', [t.variableDeclarator(id('__new'), reconcileCall)]),
+            t.expressionStatement(t.assignmentExpression('=',
+              t.memberExpression(t.cloneNode(thisItems, true) as t.Expression, id('length')),
+              t.numericLiteral(0),
+            )),
+            t.expressionStatement(t.callExpression(
+              t.memberExpression(t.cloneNode(thisItems, true) as t.Expression, id('push')),
+              [t.spreadElement(id('__new'))],
+            )),
           )
           classPath.node.body.body.push(refreshMethod)
 
@@ -309,11 +332,11 @@ export function processUnresolvedMaps(
             propNames: allStoreManaged ? [...itemTemplateProps] : [arrayPropName, ...itemTemplateProps],
           })
         }
-        componentArrayDisposeTargets.push(getComponentArrayItemsName(arrayPropName))
+        componentArrayDisposeTargets.push(arrayPropName)
         const wasReplacedInTemplate = replaceMapWithComponentArrayItems(
           templateMethod,
           um.computationExpr,
-          getComponentArrayItemsName(arrayPropName),
+          arrayPropName,
         )
         if (!wasReplacedInTemplate && !storeArrayAccess) {
           staticArrayRefreshOnMount.push(getComponentArrayRefreshMethodName(arrayPropName))
@@ -334,6 +357,7 @@ export function processUnresolvedMaps(
       itemTemplate: um.itemTemplate,
       isImportedState: false,
       itemIdProperty: um.itemIdProperty,
+      ...(um.keyExpression ? { keyExpression: um.keyExpression } : {}),
       ...(um.callbackBodyStatements?.length ? { callbackBodyStatements: um.callbackBodyStatements } : {}),
     }
     unresolvedBindings.push({ info: um, binding: syntheticBinding })
@@ -353,6 +377,7 @@ export function processUnresolvedMaps(
     mapItemAttrInfos.push({
       itemVariable: um.itemVariable,
       itemIdProperty: um.itemIdProperty,
+      ...(um.keyExpression ? { keyExpression: um.keyExpression } : {}),
       containerBindingId: um.containerBindingId,
       eventToken: tokenMatch ? tokenMatch[1] : undefined,
     })
@@ -453,7 +478,7 @@ export function processUnresolvedMapDeps(
       mergeObserveMethod(
         ctx,
         dep.observeKey,
-        jsMethod`${id(getObserveMethodName(dep.pathParts, dep.storeVar))}(value, change) { this.__geaSyncMap(${mapIdx}); }`,
+        jsMethod`${id(getObserveMethodName(dep.pathParts, dep.storeVar))}(value, change) { this[${id('GEA_SYNC_MAP')}](${mapIdx}); }`,
       )
       if (!stateProps.has(dep.observeKey)) stateProps.set(dep.observeKey, dep.pathParts)
     }
@@ -467,6 +492,15 @@ export function processUnresolvedMapDeps(
     ]
     if (info.computationExpr) {
       scanNodes.push(t.expressionStatement(t.cloneNode(info.computationExpr, true) as t.Expression))
+    }
+    // Also scan the item template and callback body for prop references
+    if (info.itemTemplate) {
+      scanNodes.push(t.expressionStatement(t.cloneNode(info.itemTemplate, true) as t.Expression))
+    }
+    if (info.callbackBodyStatements) {
+      for (const stmt of info.callbackBodyStatements) {
+        scanNodes.push(t.cloneNode(stmt, true) as t.Statement)
+      }
     }
     if (scanNodes.length > 0) {
       const prog = t.program(scanNodes)
@@ -548,7 +582,7 @@ export function processMapRegistrations(
           classPath.node.body.body.push(
             appendToBody(
               jsMethod`${id(delegateName)}() {}`,
-              js`this.__geaSyncMap(${mapIdx});`,
+              js`this[${id('GEA_SYNC_MAP')}](${mapIdx});`,
             ),
           )
           delegateEmitted = true
@@ -562,7 +596,7 @@ export function processMapRegistrations(
         mergeObserveMethod(
           ctx,
           dep.observeKey,
-          jsMethod`${id(getObserveMethodName(dep.pathParts))}(__v, __c) { this.__geaSyncMap(${mapIdx}); }`,
+          jsMethod`${id(getObserveMethodName(dep.pathParts))}(__v, __c) { this[${id('GEA_SYNC_MAP')}](${mapIdx}); }`,
         )
       }
     })
@@ -712,18 +746,18 @@ export function processResolvedArrayMaps(
           containerBindingId: arrayResult.containerBindingId,
           containerUserIdExpr: arrayResult.containerUserIdExpr,
           itemIdProperty: arrayResult.itemIdProperty,
+          afterCondSlotIndex: arrayMap.afterCondSlotIndex,
         })
       }
-      componentArrayDisposeTargets.push(getComponentArrayItemsName(arrayPropName))
+      componentArrayDisposeTargets.push(arrayPropName)
       const mapReplaceExpr = storeArrayAccess
         ? (jsExpr`${id(storeArrayAccess.storeVar)}.${id(storeArrayAccess.propName)}` as t.Expression)
         : computationExpr
-      const itemsArrName = getComponentArrayItemsName(arrayPropName)
-      const wasReplaced = replaceMapWithComponentArrayItems(templateMethod, mapReplaceExpr, itemsArrName)
+      const wasReplaced = replaceMapWithComponentArrayItems(templateMethod, mapReplaceExpr, arrayPropName)
       replaceMapWithComponentArrayItemsInConditionalSlots(
         analysis.conditionalSlots || [],
         mapReplaceExpr,
-        itemsArrName,
+        arrayPropName,
       )
       if (!wasReplaced && !arrayMap.storeVar) {
         staticArrayRefreshOnMount.push(getComponentArrayRefreshMethodName(arrayPropName))
@@ -743,7 +777,7 @@ export function processResolvedArrayMaps(
     for (const depPath of getterDepPaths) {
       const depObserveKey = buildObserveKey(depPath, arrayMap.storeVar)
       const depMethodName = getObserveMethodName(depPath, arrayMap.storeVar)
-      const refreshStmt = js`this.__refreshList(${pathKey});`
+      const refreshStmt = js`this[${id('GEA_REFRESH_LIST')}](${pathKey});`
       const existing = ctx.addedMethods.get(depObserveKey)
       if (existing && t.isBlockStatement(existing.body)) {
         const renderedGuardIdx = existing.body.body.findIndex(
@@ -759,7 +793,7 @@ export function processResolvedArrayMaps(
           existing.body.body.push(refreshStmt)
         }
       } else {
-        mergeObserveMethod(ctx, depObserveKey, jsMethod`${id(depMethodName)}(__v, __c) { this.__refreshList(${pathKey}); }`)
+        mergeObserveMethod(ctx, depObserveKey, jsMethod`${id(depMethodName)}(__v, __c) { this[${id('GEA_REFRESH_LIST')}](${pathKey}); }`)
       }
     }
   }
@@ -800,7 +834,7 @@ export function processResolvedArrayMaps(
       MemberExpression(mePath: NodePath<t.MemberExpression>) {
         const resolved = resolvePath(mePath.node, stateRefs)
         if (!resolved?.parts?.length || !resolved.isImportedState) return
-        if (resolved.parts.some((p) => p === '__raw')) return
+        if (resolved.parts.some((p) => p === '__raw' || p === 'GEA_PROXY_RAW')) return
         const depKey = buildObserveKey(resolved.parts, resolved.storeVar)
         if (!getterDepKeys.has(depKey) && !externalDeps.has(depKey)) {
           externalDeps.set(depKey, { parts: [...resolved.parts], storeVar: resolved.storeVar })
@@ -811,7 +845,7 @@ export function processResolvedArrayMaps(
     for (const [depKey, dep] of externalDeps) {
       const depMethodName = getObserveMethodName(dep.parts, dep.storeVar)
       if (!stateProps.has(depKey)) stateProps.set(depKey, dep.parts)
-      mergeObserveMethod(ctx, depKey, jsMethod`${id(depMethodName)}(__v, __c) { this.__refreshList(${pathKey}); }`)
+      mergeObserveMethod(ctx, depKey, jsMethod`${id(depMethodName)}(__v, __c) { this[${id('GEA_REFRESH_LIST')}](${pathKey}); }`)
     }
   }
 

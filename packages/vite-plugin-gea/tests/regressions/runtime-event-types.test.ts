@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { transformComponentSource } from './plugin-helpers'
-import { toGeaEventType, EVENT_NAMES } from '../../src/component-event-helpers'
+import { toGeaEventType, EVENT_NAMES } from '../../src/codegen/event-helpers'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
 

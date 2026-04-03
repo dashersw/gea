@@ -21,6 +21,8 @@ export interface ReactiveBinding {
   textExpressions?: TextExpression[]
   childPath?: number[]
   expression?: t.Expression
+  /** When true, the binding value contains HTML and must update via innerHTML (not textContent). */
+  isChildrenProp?: boolean
 }
 
 export interface TextExpression {
@@ -48,6 +50,8 @@ export interface EventHandler {
   mapContext?: {
     arrayPathParts: PathParts
     itemIdProperty: string
+    /** When the map uses a non-trivial `key` (e.g. template literal), use this for DOM-item lookup. */
+    keyExpression?: t.Expression
     itemVariable: string
     indexVariable?: string
     isImportedState: boolean
@@ -98,7 +102,11 @@ export interface ArrayMapBinding {
   isImportedState?: boolean
   isKeyed?: boolean
   itemIdProperty?: string
+  /** Full key expression AST when key is not a simple item.prop (e.g. template literals, concatenation) */
+  keyExpression?: t.Expression
   classToggleName?: string
+  /** Index of the first conditional slot that follows this map in JSX source order. */
+  afterCondSlotIndex?: number
   conditionalBindings?: ConditionalMapBinding[]
 }
 
@@ -131,6 +139,8 @@ export interface PropBinding {
   userIdExpr?: t.Expression
   /** When true, the binding depends solely on local/imported state, not on props */
   stateOnly?: boolean
+  /** When true, the binding value contains HTML and must update via innerHTML (not textContent). */
+  isChildrenProp?: boolean
 }
 
 export interface ConditionalSlot {
@@ -163,6 +173,8 @@ export interface UnresolvedMapInfo {
   itemVariable: string
   indexVariable?: string
   itemIdProperty?: string
+  /** Full key expression AST when key is not a simple item.prop (e.g. template literals, concatenation) */
+  keyExpression?: t.Expression
   computationExpr?: t.Expression
   /** Expression that appears as the map's object in the template (for replacement matching). When computationExpr is inlined from const x = y, this stays as identifier x. */
   mapObjectExpr?: t.Expression
@@ -176,6 +188,10 @@ export interface UnresolvedMapInfo {
   callbackBodyStatements?: t.Statement[]
   /** Per-item class toggles that can be patched surgically without full list rebuild */
   relationalClassBindings?: UnresolvedRelationalClassBinding[]
+  /** Index of the first conditional slot that follows this map in JSX source order.
+   *  The runtime uses this to insert list items before `<!--{id}-c{N}-->` instead of
+   *  blindly using the first conditional marker (which may precede the map). */
+  afterCondSlotIndex?: number
 }
 
 // ─── State Refs ─────────────────────────────────────────────────────────────

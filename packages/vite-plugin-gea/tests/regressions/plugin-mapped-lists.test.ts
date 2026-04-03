@@ -14,7 +14,7 @@ import {
   t,
 } from './plugin-helpers'
 import type { ArrayMapBinding } from './plugin-helpers'
-import { generateCreateItemMethod, generateEnsureArrayConfigsMethod } from '../../src/codegen/array-compiler.ts'
+import { generateCreateItemMethod, generateEnsureArrayConfigsMethod } from '../../src/codegen/array-compiler'
 
 test('array observer preserves DOM order for unshift insertions', () => {
   withDom(() => {
@@ -159,13 +159,13 @@ export default function OptionStep({ options, onSelect }) {
     assert.ok(output)
     assert.match(
       output,
-      /this\[_gea_options_items\]\s*=\s*\(this\.props\.options\s*\?\?\s*\[\]\)\.map/,
+      /this\[geaListItemsSymbol\("options"\)\]\s*=\s*\(this\.props\.options\s*\?\?\s*\[\]\)\.map/,
       'constructor should init options list array with [GEA_CHILD]()',
     )
     assert.match(output, /this\[GEA_CHILD\]\(OptionItem/, 'constructor init should use [GEA_CHILD]()')
     assert.doesNotMatch(output, /_buildOptionsItems/, 'build method should not exist')
     assert.doesNotMatch(output, /__mountOptionsItems/, 'mount method should not exist')
-    assert.match(output, /this\[_gea_options_items\]\.join\(""\)/, 'template should use .join("")')
+    assert.match(output, /this\[geaListItemsSymbol\("options"\)\]\.join\(""\)/, 'template should use .join("")')
     assert.match(output, /this\.props\.onSelect/)
   } finally {
     await rm(dir, { recursive: true, force: true })

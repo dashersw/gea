@@ -100,6 +100,8 @@ export interface Ctx {
   refCounter?: { value: number }
   /** Prefix prepended to element path keys when looking up binding IDs inside conditional slots */
   elementPathPrefix?: string
+  /** Class body for JSX-returning property detection (render props) */
+  classBody?: t.ClassBody
 }
 
 // ─── Internal template-part representation ─────────────────────────
@@ -178,6 +180,46 @@ function buildStyleObjectExpression(expr: t.Expression): t.Expression {
 
 // ─── Conditional / expression analysis ─────────────────────────────
 
+function unwrapExpression(expr: t.Expression): t.Expression {
+  let e = expr
+  while (t.isParenthesizedExpression(e)) {
+    e = e.expression as t.Expression
+  }
+  return e
+}
+
+/**
+ * Extract truthy/falsy HTML from the **raw** (pre-transform) conditional expression.
+ * This preserves nested ternary structure that `extractHtmlTemplatesFromConditional` would
+ * otherwise lose after `transformJSXExpression` flattens the branches.
+ */
+function extractHtmlTemplatesFromRawConditional(
+  rawExpr: t.Expression,
+  ctx: Ctx,
+  slotId: string,
+): { truthyHtmlExpr?: t.Expression; falsyHtmlExpr?: t.Expression } | null {
+  const childCtx = { ...ctx, elementPathPrefix: '__cs_' + slotId }
+  const top = unwrapExpression(rawExpr)
+  if (t.isLogicalExpression(top) && top.operator === '&&') {
+    return extractHtmlTemplatesFromRawConditional(top.right as t.Expression, ctx, slotId)
+  }
+  if (t.isConditionalExpression(top)) {
+    const truthyHtmlExpr = transformJSXExpression(top.consequent as t.Expression, childCtx)
+    const alt = unwrapExpression(top.alternate as t.Expression)
+    if (t.isConditionalExpression(alt)) {
+      return {
+        truthyHtmlExpr,
+        falsyHtmlExpr: transformJSXExpression(top.alternate as t.Expression, childCtx),
+      }
+    }
+    return {
+      truthyHtmlExpr,
+      falsyHtmlExpr: transformJSXExpression(top.alternate as t.Expression, childCtx),
+    }
+  }
+  return null
+}
+
 function extractHtmlTemplatesFromConditional(expr: t.Expression): {
   truthyHtmlExpr?: t.Expression
   falsyHtmlExpr?: t.Expression
@@ -208,7 +250,12 @@ function extractHtmlTemplatesFromConditional(expr: t.Expression): {
   }
   if (t.isConditionalExpression(expr)) {
     const truthy = extractHtmlTemplatesFromConditional(expr.consequent as t.Expression).truthyHtmlExpr
-    const falsy = extractHtmlTemplatesFromConditional(expr.alternate as t.Expression).truthyHtmlExpr
+    const alternate = expr.alternate as t.Expression
+    // When the alternate is itself a conditional, preserve the full expression
+    // so the runtime can evaluate the nested ternary dynamically.
+    const falsy = t.isConditionalExpression(alternate)
+      ? alternate
+      : extractHtmlTemplatesFromConditional(alternate).truthyHtmlExpr
     return { truthyHtmlExpr: truthy, falsyHtmlExpr: falsy }
   }
   if (t.isParenthesizedExpression(expr)) {
@@ -269,10 +316,47 @@ function expressionContainsJSX(expr: t.Expression): boolean {
 }
 
 /**
+ * True if expr is a call expression like `foo.bar()` where `bar` is a property
+ * in the class body whose arrow function value contains JSX (a render prop).
+ */
+export function callsJSXReturningProperty(expr: t.Expression, classBody?: t.ClassBody): boolean {
+  if (!classBody || !t.isCallExpression(expr)) return false
+  let propName: string | undefined
+  if (t.isMemberExpression(expr.callee) && t.isIdentifier(expr.callee.property) && !expr.callee.computed) {
+    propName = expr.callee.property.name
+  }
+  if (!propName) return false
+  for (const member of classBody.body) {
+    if (!t.isClassProperty(member) || !member.value) continue
+    const scanValue = (node: t.Node): boolean => {
+      if (t.isObjectExpression(node)) {
+        for (const prop of node.properties) {
+          if (
+            t.isObjectProperty(prop) &&
+            t.isIdentifier(prop.key) &&
+            prop.key.name === propName &&
+            (t.isArrowFunctionExpression(prop.value) || t.isFunctionExpression(prop.value))
+          ) {
+            return expressionContainsJSX(prop.value as t.Expression)
+          }
+        }
+      }
+      if (t.isArrayExpression(node)) {
+        return node.elements.some((el) => el && scanValue(el))
+      }
+      return false
+    }
+    if (scanValue(member.value)) return true
+  }
+  return false
+}
+
+/**
  * True if expression accesses `props.children` or `this.props.children`.
  * The `children` prop contains compiler-generated HTML from the parent and must not be escaped.
  */
 function isChildrenPropAccess(expr: t.Expression): boolean {
+  if (t.isIdentifier(expr) && expr.name === 'children') return true
   if (
     t.isMemberExpression(expr) &&
     t.isIdentifier(expr.property) &&
@@ -346,7 +430,7 @@ const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'data', 'cite'
 
 function wrapWithSanitizeAttr(attrName: string, expr: t.Expression): t.Expression {
   if (!URL_ATTRS.has(attrName)) return expr
-  return jsExpr`__sanitizeAttr(${attrName}, String(${expr}))`
+  return jsExpr`geaSanitizeAttr(${attrName}, String(${expr}))`
 }
 
 // ─── Static string extraction ──────────────────────────────────────
@@ -1148,8 +1232,18 @@ function processChildren(
         })
         appendString(parts, `-->`)
         pushString(parts, '')
-        let condExpr = transformJSXExpression(rawExpr, { ...ctx, elementPathPrefix: '__cs_' + slot.slotId })
-        const extracted = extractHtmlTemplatesFromConditional(condExpr)
+        const slotCtx = { ...ctx, elementPathPrefix: '__cs_' + slot.slotId }
+        const eventIdBefore = ctx.eventIdCounter?.value ?? 0
+        let condExpr = transformJSXExpression(rawExpr, slotCtx)
+        const extractCtx: Ctx = {
+          ...ctx,
+          isRoot: false,
+          eventHandlers: ctx.eventHandlers ? [] : undefined,
+          eventIdCounter: ctx.eventIdCounter ? { value: eventIdBefore } : undefined,
+        }
+        const extracted =
+          extractHtmlTemplatesFromRawConditional(rawExpr, extractCtx, slot.slotId) ??
+          extractHtmlTemplatesFromConditional(condExpr)
         slot.truthyHtmlExpr = extracted.truthyHtmlExpr
         slot.falsyHtmlExpr = extracted.falsyHtmlExpr
         if (expressionMayBeFalsy(rawExpr)) {
@@ -1205,10 +1299,10 @@ function processChildren(
         // - Map callback expressions: item properties may hold component instances
         //   whose toString() returns HTML (e.g. {item.content} in Tabs)
         const skipEscape =
-          childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback
+          childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback || callsJSXReturningProperty(rawExpr, ctx.classBody)
         const safeExpr = skipEscape
           ? expr
-          : jsExpr`__escapeHtml(String(${expr}))`
+          : jsExpr`geaEscapeHtml(String(${expr}))`
         parts.push({ type: 'expression', value: safeExpr })
       }
     }

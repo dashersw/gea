@@ -46,7 +46,7 @@ import { parseSource } from './parse/parser.ts'
 import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
 import { transformComponentFile, transformNonComponentJSX } from './codegen/generator.ts'
 import { injectHMR } from './postprocess/hmr.ts'
-import { ensureImport } from './codegen/member-chain.ts'
+import { ensureImport, ensureGeaCompilerSymbolImports } from './codegen/member-chain.ts'
 import { isComponentTag } from './codegen/jsx-utils.ts'
 import { pascalToKebabCase } from './codegen/gen-template.ts'
 
@@ -237,9 +237,8 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
 
     if (!transformed) return null
 
-    // ── XSS import injection ──────────────────────────────────────────
-    ensureImport(ast, '@geajs/core', '__escapeHtml')
-    ensureImport(ast, '@geajs/core', '__sanitizeAttr')
+    // ── GEA symbol + XSS import injection ──────────────────────────────
+    ensureGeaCompilerSymbolImports(ast)
 
     // ── Emit ──────────────────────────────────────────────────────────
     const output = generate(ast, { sourceMaps: true, sourceFileName: sourceFile }, code)

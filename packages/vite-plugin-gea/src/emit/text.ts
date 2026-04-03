@@ -1,4 +1,4 @@
-import { js, jsExpr } from 'eszter'
+import { id, js, jsExpr } from 'eszter'
 import { t } from '../utils/babel-interop.ts'
 import { setTextContent, setFirstChildNodeValue } from '../codegen/dom-update.ts'
 import type { EmitContext, EmitterOpts, PatchEmitter } from './types.ts'
@@ -28,9 +28,21 @@ function emitTextNodeIndex(el: t.Expression, value: t.Expression, idx: number): 
 function emitInnerHTML(el: t.Expression, value: t.Expression, ctx: EmitContext): t.Statement[] {
   const assign = js`${el}.innerHTML = ${value};`
   if (!ctx.guard) return [assign]
-  return [js`if (${t.cloneNode(el, true)}.innerHTML !== ${t.cloneNode(value, true)}) {
-    ${t.cloneNode(el, true)}.innerHTML = ${t.cloneNode(value, true)};
-    this.instantiateChildComponents_();
-    if (this.parentComponent) this.parentComponent.mountCompiledChildComponents_();
+  // Use GEA_PATCH_NODE for diff-based children updates so:
+  // 1. Existing DOM node references stay valid (no stale refs after update)
+  // 2. Runtime-added attributes (e.g. data-state) are preserved
+  // Fall back to innerHTML when structure differs (multi-root or mismatched tag).
+  return [js`{
+    const __tw = document.createElement('template');
+    __tw.innerHTML = ${t.cloneNode(value, true)};
+    const __newEl = __tw.content.firstElementChild;
+    const __existEl = ${t.cloneNode(el, true)}.firstElementChild;
+    if (__newEl && __existEl && __tw.content.childNodes.length === 1) {
+      this.constructor[${id('GEA_PATCH_NODE')}](__existEl, __newEl, true);
+    } else if (${t.cloneNode(el, true)}.innerHTML !== ${t.cloneNode(value, true)}) {
+      ${t.cloneNode(el, true)}.innerHTML = ${t.cloneNode(value, true)};
+      this[${id('GEA_INSTANTIATE_CHILD_COMPONENTS')}]();
+      if (this.parentComponent) this.parentComponent[${id('GEA_MOUNT_COMPILED_CHILD_COMPONENTS')}]();
+    }
   }`]
 }
