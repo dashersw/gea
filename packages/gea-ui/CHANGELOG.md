@@ -1,5 +1,14 @@
 # @geajs/ui
 
+## 0.2.1
+
+### Patch Changes
+
+- [#48](https://github.com/dashersw/gea/pull/48) [`ec4c323`](https://github.com/dashersw/gea/commit/ec4c32319a03102a405e5c02808d375221190906) Thanks [@kraus-milan](https://github.com/kraus-milan)! - ### @geajs/ui (patch)
+  - Improved Dialog styling in dark theme
+    - Replaced fixed colors with theme-aware alternatives
+    - Added CSS variable `--dialog-background` to enable customization
+
 ## 0.2.0
 
 ### Minor Changes

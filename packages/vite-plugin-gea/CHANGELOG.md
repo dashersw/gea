@@ -1,5 +1,11 @@
 # @geajs/vite-plugin
 
+## 1.1.2
+
+### Patch Changes
+
+- [`d75459b`](https://github.com/dashersw/gea/commit/d75459b8bf2f94518b8a73bedeb1ccb4cb68489d) Thanks [@dashersw](https://github.com/dashersw)! - Fix event delegation for elements inside conditional branches: the compiler no longer generates duplicate handler selectors that overwrite root-element event handlers. Also fix nested conditional expressions (e.g. `store.x && <Component/>` inside a ternary branch) not being tracked reactively — they are now registered as separate conditional slots with independent observers.
+
 ## 1.1.0
 
 ### Minor Changes

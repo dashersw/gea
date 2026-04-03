@@ -1,7 +1,7 @@
 {
   "name": "@geajs/core",
   "type": "module",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "A lightweight, reactive JavaScript UI framework with compile-time JSX and proxy-based stores",
   "main": "./dist/index.mjs",
   "module": "./dist/index.mjs",
