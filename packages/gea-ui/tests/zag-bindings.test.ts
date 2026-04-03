@@ -726,6 +726,284 @@ test('Combobox: clearing value syncs back to parent', async () => {
   }
 })
 
+// ── DatePicker ────────────────────────────────────────────────────────────
+
+test('DatePicker: renders day grid, onValueChange updates parent, view switching works', async () => {
+  const restoreDom = installDom()
+  try {
+    const seed = `zag-real-${Date.now()}-datepicker`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+    const ZagComponent = await loadZagComponent(Component)
+    const zagMod = await import('@zag-js/date-picker')
+    const { normalizeProps, spreadProps } = await import('@zag-js/vanilla')
+    const { CalendarDate } = await import('@internationalized/date')
+
+    const DatePicker = await loadRealComponent('date-picker.tsx', 'DatePicker', ZagComponent, {
+      datepicker: zagMod,
+      normalizeProps,
+      spreadProps,
+    })
+
+    const Parent = await compileSource(
+      `
+      import { Component } from '@geajs/core'
+      import DatePicker from './DatePicker'
+      export default class Parent extends Component {
+        dateVal = ''
+        template() {
+          return (
+            <div>
+              <DatePicker
+                label="Select date"
+                defaultFocusedValue={this.props.focusedDate}
+                onValueChange={(d) => { this.dateVal = d.valueAsString[0] || '' }}
+              />
+              <span class="display">{this.dateVal || '(none)'}</span>
+            </div>
+          )
+        }
+      }
+      `,
+      '/virtual/Parent.jsx',
+      'Parent',
+      { Component, DatePicker },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const view = new Parent({ focusedDate: new CalendarDate(2025, 6, 1) })
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.equal(view.el?.querySelector('.display')?.textContent, '(none)', 'initial display is (none)')
+
+    const child = (view as any)._datePicker
+    assert.ok(child, 'DatePicker child instance exists')
+    assert.ok(child._api, 'Zag API is connected')
+
+    // Day grid must be rendered inside [data-part="content"]
+    let content = view.el?.querySelector('[data-part="content"]') as HTMLElement
+    assert.ok(content, 'content element found')
+    const dayTable = content.querySelector('table')
+    assert.ok(dayTable, 'day view table is rendered')
+
+    // Trigger value change via Zag API
+    child._api.setValue([new CalendarDate(2025, 6, 15)])
+    await flushMicrotasks()
+
+    assert.ok(child.valueAsString?.[0]?.includes('2025'), 'child.valueAsString contains 2025')
+    assert.ok((view as any).dateVal?.includes('2025'), 'parent dateVal updated')
+    assert.ok(view.el?.querySelector('.display')?.textContent?.includes('2025'), 'parent DOM updated')
+
+    // Switching to month view must re-render content
+    child._api.setView('month')
+    await flushMicrotasks()
+
+    assert.equal(child._api.view, 'month', 'view is month')
+    content = view.el?.querySelector('[data-part="content"]') as HTMLElement
+    assert.ok(content, 'content element found after month switch')
+    const monthTable = content.querySelector('table')
+    assert.ok(monthTable, 'month view table is rendered')
+
+    // Switching to year view
+    child._api.setView('year')
+    await flushMicrotasks()
+
+    assert.equal(child._api.view, 'year', 'view is year')
+    content = view.el?.querySelector('[data-part="content"]') as HTMLElement
+    assert.ok(content, 'content element found after year switch')
+    const yearTable = content.querySelector('table')
+    assert.ok(yearTable, 'year view table is rendered')
+
+    // dispose must not throw (verifies cleanup lifecycle)
+    assert.doesNotThrow(() => view.dispose(), 'dispose does not throw')
+  } finally {
+    restoreDom()
+  }
+})
+
+test('DatePicker: selecting a date updates data-selected on the correct day trigger', async () => {
+  const restoreDom = installDom()
+  try {
+    const seed = `zag-real-${Date.now()}-datepicker-select`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+    const ZagComponent = await loadZagComponent(Component)
+    const zagMod = await import('@zag-js/date-picker')
+    const { normalizeProps, spreadProps } = await import('@zag-js/vanilla')
+    const { CalendarDate } = await import('@internationalized/date')
+
+    const DatePicker = await loadRealComponent('date-picker.tsx', 'DatePicker', ZagComponent, {
+      datepicker: zagMod,
+      normalizeProps,
+      spreadProps,
+    })
+
+    // Pin the calendar to June 2025 so the grid is deterministic
+    const Parent = await compileSource(
+      `
+      import { Component } from '@geajs/core'
+      import DatePicker from './DatePicker'
+      export default class Parent extends Component {
+        dateVal = ''
+        template() {
+          return (
+            <div>
+              <DatePicker
+                label="Pick a date"
+                defaultFocusedValue={this.props.focusedDate}
+                onValueChange={(d) => { this.dateVal = d.valueAsString[0] || '' }}
+              />
+              <span class="display">{this.dateVal || '(none)'}</span>
+            </div>
+          )
+        }
+      }
+      `,
+      '/virtual/Parent.jsx',
+      'Parent',
+      { Component, DatePicker },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const view = new Parent({ focusedDate: new CalendarDate(2025, 6, 1) })
+    view.render(root)
+    await flushMicrotasks()
+
+    const child = (view as any)._datePicker
+    assert.ok(child._api, 'Zag API is connected')
+
+    // Select June 15 — same view and visible range, only selection state changes
+    const targetDate = new CalendarDate(2025, 6, 15)
+    child._api.setValue([targetDate])
+    await flushMicrotasks()
+
+    // Find the day trigger for June 15 by its data-value attribute
+    const content = view.el?.querySelector('[data-part="content"]') as HTMLElement
+    assert.ok(content, 'content found')
+
+    const targetTrigger = content.querySelector(
+      `[data-part="table-cell-trigger"][data-value="${targetDate.toString()}"]`,
+    ) as HTMLElement
+    assert.ok(targetTrigger, 'day trigger for 2025-06-15 found')
+    assert.equal(
+      targetTrigger.getAttribute('data-selected'),
+      '',
+      'day trigger for June 15 must have data-selected',
+    )
+
+    // A non-selected day must NOT have data-selected
+    const otherDate = new CalendarDate(2025, 6, 10)
+    const otherTrigger = content.querySelector(
+      `[data-part="table-cell-trigger"][data-value="${otherDate.toString()}"]`,
+    ) as HTMLElement
+    assert.ok(otherTrigger, 'day trigger for 2025-06-10 found')
+    assert.equal(
+      otherTrigger.hasAttribute('data-selected'),
+      false,
+      'day trigger for June 10 must NOT have data-selected',
+    )
+
+    // Parent callback state must also be correct
+    assert.ok((view as any).dateVal?.includes('2025'), 'parent dateVal updated via callback')
+
+    view.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('DatePicker: moving focus within the same month updates data-focus and tabindex', async () => {
+  const restoreDom = installDom()
+  try {
+    const seed = `zag-real-${Date.now()}-datepicker-focus`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+    const ZagComponent = await loadZagComponent(Component)
+    const zagMod = await import('@zag-js/date-picker')
+    const { normalizeProps, spreadProps } = await import('@zag-js/vanilla')
+    const { CalendarDate } = await import('@internationalized/date')
+
+    const DatePicker = await loadRealComponent('date-picker.tsx', 'DatePicker', ZagComponent, {
+      datepicker: zagMod,
+      normalizeProps,
+      spreadProps,
+    })
+
+    // Pin the calendar to June 2025; focus starts on June 1
+    const Parent = await compileSource(
+      `
+      import { Component } from '@geajs/core'
+      import DatePicker from './DatePicker'
+      export default class Parent extends Component {
+        template() {
+          return (
+            <div>
+              <DatePicker
+                label="Focus test"
+                defaultFocusedValue={this.props.focusedDate}
+              />
+            </div>
+          )
+        }
+      }
+      `,
+      '/virtual/Parent.jsx',
+      'Parent',
+      { Component, DatePicker },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const initialFocus = new CalendarDate(2025, 6, 1)
+    const view = new Parent({ focusedDate: initialFocus })
+    view.render(root)
+    await flushMicrotasks()
+
+    const child = (view as any)._datePicker
+    assert.ok(child._api, 'Zag API is connected')
+
+    const content = view.el?.querySelector('[data-part="content"]') as HTMLElement
+    assert.ok(content, 'content found')
+
+    // Verify initial focus is on June 1
+    const june1Trigger = content.querySelector(
+      `[data-part="table-cell-trigger"][data-value="${initialFocus.toString()}"]`,
+    ) as HTMLElement
+    assert.ok(june1Trigger, 'June 1 trigger found')
+    assert.equal(june1Trigger.getAttribute('data-focus'), '', 'June 1 initially has data-focus')
+    assert.equal(june1Trigger.getAttribute('tabindex'), '0', 'June 1 initially has tabindex=0')
+
+    // Move focus to June 20 — same view, same visible range
+    const nextFocus = new CalendarDate(2025, 6, 20)
+    child._api.setFocusedValue(nextFocus)
+    await flushMicrotasks()
+
+    // June 20 must now have focus attributes
+    const june20Trigger = content.querySelector(
+      `[data-part="table-cell-trigger"][data-value="${nextFocus.toString()}"]`,
+    ) as HTMLElement
+    assert.ok(june20Trigger, 'June 20 trigger found')
+    assert.equal(june20Trigger.getAttribute('data-focus'), '', 'June 20 now has data-focus')
+    assert.equal(june20Trigger.getAttribute('tabindex'), '0', 'June 20 now has tabindex=0')
+
+    // June 1 must have lost focus attributes
+    const june1After = content.querySelector(
+      `[data-part="table-cell-trigger"][data-value="${initialFocus.toString()}"]`,
+    ) as HTMLElement
+    assert.ok(june1After, 'June 1 trigger still in DOM')
+    assert.equal(
+      june1After.hasAttribute('data-focus'),
+      false,
+      'June 1 must NOT have data-focus after focus moved',
+    )
+    assert.equal(june1After.getAttribute('tabindex'), '-1', 'June 1 must have tabindex=-1 after focus moved')
+
+    view.dispose()
+  } finally {
+    restoreDom()
+  }
+})
+
 // ── Rapid changes ────────────────────────────────────────────────────────
 
 test('RadioGroup: rapid setValue calls keep parent and Zag in sync', async () => {
