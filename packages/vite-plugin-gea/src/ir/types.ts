@@ -148,6 +148,7 @@ export interface PropBinding {
   stateOnly?: boolean
   /** When true, the binding value contains HTML and must update via innerHTML (not textContent). */
   isChildrenProp?: boolean
+  /** Index of the text node within its parent when the binding targets a specific text node */
   textNodeIndex?: number
 }
 
