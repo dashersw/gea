@@ -63,6 +63,7 @@ export default class Select extends ZagComponent {
       '[data-part="indicator"]': 'getIndicatorProps',
       '[data-part="clear-trigger"]': 'getClearTriggerProps',
       '[data-part="value-text"]': 'getValueTextProps',
+      '[data-part="hidden-select"]': 'getHiddenSelectProps',
       '[data-part="positioner"]': 'getPositionerProps',
       '[data-part="content"]': 'getContentProps',
       '[data-part="list"]': 'getListProps',
@@ -112,6 +113,7 @@ export default class Select extends ZagComponent {
             </span>
           </button>
         </div>
+        <select data-part="hidden-select" class="select-hidden-select"></select>
         <div data-part="positioner" class="select-positioner">
           <div
             data-part="content"
