@@ -74,6 +74,11 @@ test.describe('showcase component gallery', () => {
     await expect(page.locator('[data-scope="select"]').first()).toBeVisible()
   })
 
+  test('select component uses placeholder passed in props', async ({ page }) => {
+    const select = page.locator('[data-scope="select"]').first()
+    await expect(select.locator('[data-part="value-text"]')).toHaveText('Pick one...')
+  })
+
   test('switch toggles are visible', async ({ page }) => {
     const switches = page.locator('[data-scope="switch"]')
     const count = await switches.count()

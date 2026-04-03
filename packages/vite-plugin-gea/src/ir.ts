@@ -137,6 +137,8 @@ export interface PropBinding {
   userIdExpr?: t.Expression
   /** When true, the binding depends solely on local/imported state, not on props */
   stateOnly?: boolean
+  /** Index of the text node within its parent when the binding targets a specific text node */
+  textNodeIndex?: number
 }
 
 export interface ConditionalSlot {

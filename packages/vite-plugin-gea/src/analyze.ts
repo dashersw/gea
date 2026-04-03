@@ -40,7 +40,7 @@ import {
   detectContainerSelector,
   hasExplicitItemKey,
 } from './analyze-helpers.ts'
-import { collectExpressionDependencies, collectTemplateSetupStatements } from './transform-attributes.ts'
+import { collectExpressionDependencies, collectTemplateSetupStatements, isStateDep } from './transform-attributes.ts'
 import type { StateRefMeta } from './parse.ts'
 import { createRequire } from 'module'
 
@@ -684,9 +684,7 @@ function analyzeAttributes(
       if (templateSetupContext && !t.isJSXEmptyExpression(expr)) {
         const setupStatements = collectTemplateSetupStatements(expr, templateSetupContext)
         const dependencies = collectExpressionDependencies(expr, stateRefs, setupStatements)
-        const stateDeps = dependencies.filter(
-          (d) => d.storeVar || (d.pathParts.length > 0 && d.pathParts[0] !== 'props'),
-        )
+        const stateDeps = dependencies.filter(isStateDep)
         if (stateDeps.length > 0) {
           const selector = generateSelector(elementPath)
           propBindings.push({
@@ -748,7 +746,7 @@ function analyzeAttributes(
     if (isNativeElement && templateSetupContext && !t.isJSXEmptyExpression(expr)) {
       const setupStatements = collectTemplateSetupStatements(expr, templateSetupContext)
       const dependencies = collectExpressionDependencies(expr, stateRefs, setupStatements)
-      const stateDeps = dependencies.filter((d) => d.storeVar || (d.pathParts.length > 0 && d.pathParts[0] !== 'props'))
+      const stateDeps = dependencies.filter(isStateDep)
       if (stateDeps.length > 0) {
         const selector = generateSelector(elementPath)
         propBindings.push({
@@ -1462,6 +1460,21 @@ function handleTextBinding(
             ...(textNodeIndex !== undefined ? { textNodeIndex } : {}),
           })),
         )
+        const templateStateDeps = collectExpressionDependencies(derivedTemplateExpr, stateRefs, setupStatements)
+          .filter(isStateDep)
+        if (templateStateDeps.length > 0) {
+          const stateOnlyBinding: PropBinding = {
+            propName: '__state__',
+            selector,
+            type: 'text',
+            elementPath: [...elementPath],
+            expression: t.cloneNode(derivedTemplateExpr, true) as t.Expression,
+            setupStatements: setupStatements.map((s) => t.cloneNode(s, true) as t.Statement),
+            stateOnly: true,
+          }
+          if (textNodeIndex !== undefined) stateOnlyBinding.textNodeIndex = textNodeIndex
+          propBindings.push(stateOnlyBinding)
+        }
         return
       }
     }
@@ -1480,6 +1493,25 @@ function handleTextBinding(
         for (const d of derived) d.textNodeIndex = textNodeIndex
       }
       propBindings.push(...derived)
+      // When the expression also has state deps, add a stateOnly binding so the state
+      // observer reads this.props.X live rather than inheriting `value` from the prop
+      // binding's patch body (where `value` is the incoming prop value, not the new state).
+      const setupStatements = derived[0].setupStatements
+      const stateDeps = collectExpressionDependencies(expr as t.Expression, stateRefs, setupStatements ?? [])
+        .filter(isStateDep)
+      if (stateDeps.length > 0) {
+        const stateOnlyBinding: PropBinding = {
+          propName: '__state__',
+          selector: generateSelector(elementPath),
+          type: 'text',
+          elementPath: [...elementPath],
+          expression: t.cloneNode(expr, true) as t.Expression,
+          setupStatements,
+          stateOnly: true,
+        }
+        if (textNodeIndex !== undefined) stateOnlyBinding.textNodeIndex = textNodeIndex
+        propBindings.push(stateOnlyBinding)
+      }
       return
     }
   }
@@ -1546,7 +1578,7 @@ function handleTextBinding(
           : expr
       const setupStatements = collectTemplateSetupStatements(exprToUse, templateSetupContext)
       const dependencies = collectExpressionDependencies(exprToUse, stateRefs, setupStatements)
-      const stateDeps = dependencies.filter((d) => d.storeVar || (d.pathParts.length > 0 && d.pathParts[0] !== 'props'))
+      const stateDeps = dependencies.filter(isStateDep)
       if (stateDeps.length > 0) {
         const selector = generateSelector(elementPath)
         propBindings.push({
