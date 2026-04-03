@@ -1395,11 +1395,18 @@ export function applyStaticReactivity(
                 t.identifier(methodNameStr),
                 [t.identifier('__v'), t.identifier('__c')],
                 t.blockStatement([
+                  // Skip only when we've seen a prior value and truthiness is unchanged.
+                  // If prev is undefined and __v is false, !__v and !prev are both true — without this
+                  // guard the first delivery after mount would skip rerender (auth early-return repro).
                   t.ifStatement(
-                    t.binaryExpression(
-                      '===',
-                      t.unaryExpression('!', t.identifier('__v')),
-                      t.unaryExpression('!', prevGuardMem),
+                    t.logicalExpression(
+                      '&&',
+                      t.binaryExpression('!==', prevGuardMem, t.identifier('undefined')),
+                      t.binaryExpression(
+                        '===',
+                        t.unaryExpression('!', t.identifier('__v')),
+                        t.unaryExpression('!', prevGuardMem),
+                      ),
                     ),
                     t.returnStatement(),
                   ),
@@ -4946,12 +4953,18 @@ function generateRerenderObserver(pathParts: PathParts, storeVar?: string, truth
     if (truthinessOnly) {
       // For early-return guard keys, only re-render when truthiness flips (null<->non-null).
       // Reference equality fails for computed getters that return new proxy wrappers.
+      // Do not treat undefined prev as falsy: !undefined and !false are both true, which would
+      // skip the first meaningful notification (e.g. isLoading true→false without a prior emit).
       method.body.body.push(
         t.ifStatement(
-          t.binaryExpression(
-            '===',
-            t.unaryExpression('!', t.identifier('value')),
-            t.unaryExpression('!', observePrevMem),
+          t.logicalExpression(
+            '&&',
+            t.binaryExpression('!==', observePrevMem, t.identifier('undefined')),
+            t.binaryExpression(
+              '===',
+              t.unaryExpression('!', t.identifier('value')),
+              t.unaryExpression('!', observePrevMem),
+            ),
           ),
           t.returnStatement(),
         ),

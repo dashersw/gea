@@ -265,6 +265,48 @@ function toHtmlAttrName(attrName: string, isComponent: boolean): string {
   return attrName
 }
 
+/** Strip redundant parens so nested ternaries match `t.isConditionalExpression`. */
+function unwrapExpression(expr: t.Expression): t.Expression {
+  let e = expr
+  while (t.isParenthesizedExpression(e)) {
+    e = e.expression as t.Expression
+  }
+  return e
+}
+
+/**
+ * Build truthy/falsy HTML expressions from the *source* conditional tree before the full-expression
+ * JSX transform. `transformJSXExpression` on the whole nested ternary can rewrite the AST so the
+ * inner `ConditionalExpression` is no longer visible to {@link extractHtmlTemplatesFromConditional},
+ * and the outer falsy branch would incorrectly collapse to only the inner consequent.
+ */
+function extractHtmlTemplatesFromRawConditional(
+  rawExpr: t.Expression,
+  ctx: Ctx,
+  slotId: string,
+): { truthyHtmlExpr?: t.Expression; falsyHtmlExpr?: t.Expression } | null {
+  const childCtx = { ...ctx, elementPathPrefix: '__cs_' + slotId }
+  const top = unwrapExpression(rawExpr)
+  if (t.isLogicalExpression(top) && top.operator === '&&') {
+    return extractHtmlTemplatesFromRawConditional(top.right as t.Expression, ctx, slotId)
+  }
+  if (t.isConditionalExpression(top)) {
+    const truthyHtmlExpr = transformJSXExpression(top.consequent as t.Expression, childCtx)
+    const alt = unwrapExpression(top.alternate as t.Expression)
+    if (t.isConditionalExpression(alt)) {
+      return {
+        truthyHtmlExpr,
+        falsyHtmlExpr: transformJSXExpression(top.alternate as t.Expression, childCtx),
+      }
+    }
+    return {
+      truthyHtmlExpr,
+      falsyHtmlExpr: transformJSXExpression(top.alternate as t.Expression, childCtx),
+    }
+  }
+  return null
+}
+
 function extractHtmlTemplatesFromConditional(expr: t.Expression): {
   truthyHtmlExpr?: t.Expression
   falsyHtmlExpr?: t.Expression
@@ -295,7 +337,13 @@ function extractHtmlTemplatesFromConditional(expr: t.Expression): {
   }
   if (t.isConditionalExpression(expr)) {
     const truthy = extractHtmlTemplatesFromConditional(expr.consequent as t.Expression).truthyHtmlExpr
-    const falsy = extractHtmlTemplatesFromConditional(expr.alternate as t.Expression).truthyHtmlExpr
+    const alt = unwrapExpression(expr.alternate as t.Expression)
+    // Nested ternary: `a ? b : c ? d : e` — the outer falsy branch must be the *entire* inner
+    // conditional, not `extract(inner).truthyHtmlExpr` (which would be only `d`, dropping `e`).
+    if (t.isConditionalExpression(alt)) {
+      return { truthyHtmlExpr: truthy, falsyHtmlExpr: normalizeHtmlExpression(alt) }
+    }
+    const falsy = extractHtmlTemplatesFromConditional(alt).truthyHtmlExpr
     return { truthyHtmlExpr: truthy, falsyHtmlExpr: falsy }
   }
   if (t.isParenthesizedExpression(expr)) {
@@ -1454,8 +1502,11 @@ function processChildren(
         })
         appendString(parts, `-->`)
         pushString(parts, '')
-        let condExpr = transformJSXExpression(rawExpr, { ...ctx, elementPathPrefix: '__cs_' + slot.slotId })
-        const extracted = extractHtmlTemplatesFromConditional(condExpr)
+        const slotCtx = { ...ctx, elementPathPrefix: '__cs_' + slot.slotId }
+        let condExpr = transformJSXExpression(rawExpr, slotCtx)
+        const extracted =
+          extractHtmlTemplatesFromRawConditional(rawExpr, ctx, slot.slotId) ??
+          extractHtmlTemplatesFromConditional(condExpr)
         slot.truthyHtmlExpr = extracted.truthyHtmlExpr
         slot.falsyHtmlExpr = extracted.falsyHtmlExpr
         if (expressionMayBeFalsy(rawExpr)) {

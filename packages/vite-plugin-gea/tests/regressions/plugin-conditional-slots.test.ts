@@ -307,6 +307,38 @@ export default class T extends Component {
   )
 })
 
+test('nested JSX ternary: outer falsy HTML keeps full inner conditional (compiler extractHtmlTemplatesFromConditional)', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import authStore from './store'
+    export default class C extends Component {
+      template() {
+        return (
+          <div>
+            {authStore.isLoading ? (
+              <p>Loading</p>
+            ) : authStore.isAuthenticated ? (
+              <p>Authenticated branch</p>
+            ) : (
+              <p>Not authenticated branch</p>
+            )}
+          </div>
+        )
+      }
+    }
+  `)
+  const slotIdx = output.indexOf('[GEA_REGISTER_COND](0')
+  assert.ok(slotIdx >= 0, 'expected one conditional slot')
+  const slotRegion = output.slice(slotIdx, slotIdx + 5000)
+  assert.match(
+    slotRegion,
+    /authStore\.isAuthenticated\s*\?/,
+    'outer falsy branch must be the entire inner ternary, not only the inner consequent HTML',
+  )
+  assert.match(slotRegion, /Not authenticated branch/, 'inner falsy branch must appear in slot HTML')
+  assert.match(slotRegion, /Authenticated branch/, 'inner truthy branch must appear in slot HTML')
+})
+
 test('conditional slot analyze order matches transform (nested ternary before sibling &&)', async () => {
   const plugin = geaPlugin()
   const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
