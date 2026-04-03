@@ -4,6 +4,7 @@ import { parseSource } from './parse/parser.ts'
 import { transformComponentFile, transformNonComponentJSX } from './codegen/generator.ts'
 import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
 import { isComponentTag } from './codegen/jsx-utils.ts'
+import { ensureGeaCompilerSymbolImports } from './codegen/member-chain.ts'
 import { clearCaches as clearStoreCaches } from './parse/store-analysis.ts'
 import { clearCaches as clearEventCaches } from './codegen/event-helpers.ts'
 
@@ -168,6 +169,7 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
       }
 
       if (transformed) {
+        ensureGeaCompilerSymbolImports(ast)
         const output = generate(ast)
         compiledModules[filename] = output.code
       } else {

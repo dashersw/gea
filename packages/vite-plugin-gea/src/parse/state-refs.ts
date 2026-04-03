@@ -1,4 +1,4 @@
-import { traverse, generate, t } from '../utils/babel-interop.ts'
+import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
 import type { StateRefMeta } from '../ir/types.ts'
 
@@ -9,10 +9,7 @@ import type { StateRefMeta } from '../ir/types.ts'
  * variable relates to reactive state (imported store, destructured store
  * field, destructured `this` property, store alias, or derived).
  */
-export function collectStateReferences(
-  ast: t.File,
-  storeImports: Map<string, string>,
-): Map<string, StateRefMeta> {
+export function collectStateReferences(ast: t.File, storeImports: Map<string, string>): Map<string, StateRefMeta> {
   const stateRefs = new Map<string, StateRefMeta>()
 
   // Seed with known store imports
@@ -101,7 +98,7 @@ export function collectStateReferences(
       if (expressionReferencesAny(init, stateRefs)) {
         stateRefs.set(name, {
           kind: 'derived',
-          initExpression: generate(t.expressionStatement(init)).code.replace(/;$/, ''),
+          initExpression: t.cloneNode(init, true),
         })
         candidates.delete(name)
         changed = true

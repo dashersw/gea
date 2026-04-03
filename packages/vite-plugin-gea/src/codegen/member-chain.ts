@@ -5,18 +5,11 @@ import type { StateRefMeta } from '../parse/state-refs.ts'
 
 // ─── Import management ──────────────────────────────────────────────
 
-export function ensureImport(
-  ast: t.File,
-  source: string,
-  specifier: string,
-  isDefault = false,
-): boolean {
+export function ensureImport(ast: t.File, source: string, specifier: string, isDefault = false): boolean {
   const program = ast.program
 
   const buildSpecifier = () =>
-    isDefault
-      ? t.importDefaultSpecifier(id(specifier))
-      : t.importSpecifier(id(specifier), id(specifier))
+    isDefault ? t.importDefaultSpecifier(id(specifier)) : t.importSpecifier(id(specifier), id(specifier))
 
   if (isDefault) {
     const alreadyHasDefault = program.body.some(
@@ -28,46 +21,33 @@ export function ensureImport(
     if (alreadyHasDefault) return false
     const insertIndex = Math.max(
       0,
-      program.body.reduce(
-        (idx, node, i) => (t.isImportDeclaration(node) ? i + 1 : idx),
-        0,
-      ),
+      program.body.reduce((idx, node, i) => (t.isImportDeclaration(node) ? i + 1 : idx), 0),
     )
     program.body.splice(
       insertIndex,
       0,
       isDefault
-        ? (jsImport`import ${id(specifier)} from ${source};`)
-        : (jsImport`import { ${id(specifier)} } from ${source};`),
+        ? jsImport`import ${id(specifier)} from ${source};`
+        : jsImport`import { ${id(specifier)} } from ${source};`,
     )
     return true
   }
 
-  const declaration = program.body.find(
-    (node) => t.isImportDeclaration(node) && node.source.value === source,
-  ) as t.ImportDeclaration | undefined
+  const declaration = program.body.find((node) => t.isImportDeclaration(node) && node.source.value === source) as
+    | t.ImportDeclaration
+    | undefined
 
   if (!declaration) {
     const insertIndex = Math.max(
       0,
-      program.body.reduce(
-        (idx, node, i) => (t.isImportDeclaration(node) ? i + 1 : idx),
-        0,
-      ),
+      program.body.reduce((idx, node, i) => (t.isImportDeclaration(node) ? i + 1 : idx), 0),
     )
-    program.body.splice(
-      insertIndex,
-      0,
-      jsImport`import { ${id(specifier)} } from ${source};`,
-    )
+    program.body.splice(insertIndex, 0, jsImport`import { ${id(specifier)} } from ${source};`)
     return true
   }
 
   const exists = declaration.specifiers.some(
-    (s) =>
-      t.isImportSpecifier(s) &&
-      t.isIdentifier(s.local) &&
-      s.local.name === specifier,
+    (s) => t.isImportSpecifier(s) && t.isIdentifier(s.local) && s.local.name === specifier,
   )
 
   if (!exists) {
@@ -140,6 +120,7 @@ const GEA_COMPILER_SYMBOL_IMPORTS = [
   'GEA_MAP_CONFIG_PREV',
   'GEA_MAP_CONFIG_COUNT',
   'GEA_CLONE_ITEM',
+  'GEA_CLONE_TEMPLATE',
   'GEA_ON_PROP_CHANGE',
   'GEA_SETUP_LOCAL_STATE_OBSERVERS',
   'GEA_SETUP_REFS',
@@ -164,48 +145,27 @@ export function ensureGeaCompilerSymbolImports(ast: t.File): void {
 
 // ─── Member-chain builders ──────────────────────────────────────────
 
-export function buildMemberChain(
-  base: t.Expression,
-  path: string,
-): t.Expression {
+export function buildMemberChain(base: t.Expression, path: string): t.Expression {
   return buildMemberChainFromParts(base, path ? path.split('.') : [])
 }
 
-export function buildMemberChainFromParts(
-  base: t.Expression,
-  parts: PathParts,
-): t.Expression {
+export function buildMemberChainFromParts(base: t.Expression, parts: PathParts): t.Expression {
   if (parts.length === 0) return base
   return parts.reduce<t.Expression>((acc, prop) => {
     const isIndex = /^\d+$/.test(prop)
-    return t.memberExpression(
-      acc,
-      isIndex ? t.numericLiteral(Number(prop)) : id(prop),
-      isIndex,
-    )
+    return t.memberExpression(acc, isIndex ? t.numericLiteral(Number(prop)) : id(prop), isIndex)
   }, base)
 }
 
-export function buildOptionalMemberChain(
-  base: t.Expression,
-  path: string,
-): t.Expression {
+export function buildOptionalMemberChain(base: t.Expression, path: string): t.Expression {
   return buildOptionalMemberChainFromParts(base, path ? path.split('.') : [])
 }
 
-export function buildOptionalMemberChainFromParts(
-  base: t.Expression,
-  parts: PathParts,
-): t.Expression {
+export function buildOptionalMemberChainFromParts(base: t.Expression, parts: PathParts): t.Expression {
   if (parts.length === 0) return base
   return parts.reduce<t.Expression>((acc, prop) => {
     const isIndex = /^\d+$/.test(prop)
-    return t.optionalMemberExpression(
-      acc,
-      isIndex ? t.numericLiteral(Number(prop)) : id(prop),
-      isIndex,
-      true,
-    )
+    return t.optionalMemberExpression(acc, isIndex ? t.numericLiteral(Number(prop)) : id(prop), isIndex, true)
   }, base)
 }
 
@@ -223,19 +183,14 @@ export function pathPartsToString(parts: string | PathParts): string {
   return normalizePathParts(parts).join('.')
 }
 
-export function buildObserveKey(
-  parts: string | PathParts,
-  storeVar?: string,
-): string {
+export function buildObserveKey(parts: string | PathParts, storeVar?: string): string {
   return JSON.stringify({
     storeVar: storeVar || null,
     parts: normalizePathParts(parts),
   })
 }
 
-export function parseObserveKey(
-  key: string,
-): { parts: PathParts; storeVar?: string } {
+export function parseObserveKey(key: string): { parts: PathParts; storeVar?: string } {
   const parsed = JSON.parse(key) as {
     storeVar: string | null
     parts: PathParts
@@ -246,26 +201,17 @@ export function parseObserveKey(
   }
 }
 
-export function getObserveMethodName(
-  parts: string | PathParts,
-  storeVar?: string,
-): string {
+export function getObserveMethodName(parts: string | PathParts, storeVar?: string): string {
   const owner = sanitizeObserveName(storeVar || 'local')
   const normalized = normalizePathParts(parts)
-  const observePath = sanitizeObserveName(
-    normalized.length > 0 ? normalized.join('__') : 'root',
-  )
+  const observePath = sanitizeObserveName(normalized.length > 0 ? normalized.join('__') : 'root')
   return `__observe_${owner}_${observePath}`
 }
 
 // ─── Path resolution ────────────────────────────────────────────────
 
 export function resolvePath(
-  expr:
-    | t.MemberExpression
-    | t.Identifier
-    | t.ThisExpression
-    | t.CallExpression,
+  expr: t.MemberExpression | t.Identifier | t.ThisExpression | t.CallExpression,
   stateRefs: Map<string, StateRefMeta>,
   context: { inMap?: boolean; mapItemVar?: string } = {},
 ): {
@@ -290,11 +236,7 @@ export function resolvePath(
           storeVar: ref.storeVar,
         }
       }
-      if (
-        ref.kind === 'imported-destructured' &&
-        ref.storeVar &&
-        ref.propName
-      ) {
+      if (ref.kind === 'imported-destructured' && ref.storeVar && ref.propName) {
         return {
           parts: [ref.propName],
           isImportedState: true,
@@ -313,14 +255,7 @@ export function resolvePath(
   if (t.isThisExpression(expr)) return { parts: [] }
 
   if (t.isCallExpression(expr) && t.isMemberExpression(expr.callee)) {
-    return resolvePath(
-      expr.callee.object as
-        | t.MemberExpression
-        | t.Identifier
-        | t.ThisExpression,
-      stateRefs,
-      context,
-    )
+    return resolvePath(expr.callee.object as t.MemberExpression | t.Identifier | t.ThisExpression, stateRefs, context)
   }
 
   if (t.isMemberExpression(expr)) {
@@ -330,11 +265,7 @@ export function resolvePath(
       context,
     )
     if (!objectResult || !objectResult.parts) {
-      if (
-        context.inMap &&
-        t.isIdentifier(expr.object) &&
-        expr.object.name === context.mapItemVar
-      ) {
+      if (context.inMap && t.isIdentifier(expr.object) && expr.object.name === context.mapItemVar) {
         if (t.isIdentifier(expr.property)) {
           return { parts: [expr.property.name] }
         }
@@ -351,10 +282,7 @@ export function resolvePath(
       const ref = stateRefs.get(objectResult.storeVar)
       const propName = expr.property.name
       if (ref?.reactiveFields) {
-        if (
-          ref.reactiveFields.has(propName) ||
-          ref.getterDeps?.has(propName)
-        ) {
+        if (ref.reactiveFields.has(propName) || ref.getterDeps?.has(propName)) {
           return {
             parts: [propName],
             isImportedState: true,

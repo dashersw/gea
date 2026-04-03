@@ -211,5 +211,5 @@ export interface StateRefMeta {
   propName?: string
   getterDeps?: Map<string, string[][]>
   reactiveFields?: Set<string>
-  initExpression?: string
+  initExpression?: t.Expression
 }
