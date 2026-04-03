@@ -88,6 +88,8 @@ const GEA_PROP_BINDING_ATTR_PREFIX = "gea:p:";
 const GEA_DOM_PARENT_CHAIN = Symbol.for("gea.dom.parentChain");
 const GEA_ID = Symbol.for("gea.id");
 const GEA_ELEMENT = Symbol.for("gea.element");
+/** Parent component link for compiled children / router / DnD (engine-only). */
+const GEA_PARENT_COMPONENT = Symbol.for("gea.component.parentComponent");
 const GEA_RENDERED = Symbol.for("gea.rendered");
 const GEA_RAW_PROPS = Symbol("gea.rawProps");
 const GEA_BINDINGS = Symbol("gea.bindings");
@@ -327,16 +329,11 @@ function findPropertyDescriptor(obj, prop) {
 }
 /**
 * Top-level string keys that must not be wrapped in reactive proxies at the store root.
-* Engine state for components lives in a WeakMap / symbols — not listed here.
+* Engine state for components lives in WeakMaps / symbol keys; symbol keys are never wrapped.
 */
 const SKIP_REACTIVE_WRAP_AT_ROOT = new Set([
 	"props",
-	"actions",
-	"parentComponent",
 	"events",
-	"id_",
-	"element_",
-	"rendered_",
 	"compiledItems",
 	"_routerDepth",
 	"_router",
@@ -1480,6 +1477,9 @@ function rootDeleteProperty(t, prop) {
 }
 //#endregion
 //#region src/lib/base/component-manager.ts
+function engineThis$3(c) {
+	return c[GEA_PROXY_GET_RAW_TARGET] ?? c;
+}
 const RESERVED_HTML_TAG_NAMES = new Set([
 	"a",
 	"abbr",
@@ -1643,7 +1643,7 @@ var ComponentManager = class ComponentManager {
 				rootSteps[i] = void 0;
 				continue;
 			}
-			const root = c.element_ ?? (typeof document !== "undefined" ? document.getElementById(c.id) : null);
+			const root = engineThis$3(c)[GEA_ELEMENT] ?? (typeof document !== "undefined" ? document.getElementById(c.id) : null);
 			rootSteps[i] = root ? bubbleStepMap.get(root) : void 0;
 		}
 		let broken = false;
@@ -1801,7 +1801,7 @@ var ComponentManager = class ComponentManager {
 		const targetEl = e.targetEl;
 		if (!targetEl) return true;
 		let itemEl = targetEl;
-		const root = comp.element_ ?? comp.el;
+		const root = engineThis$3(comp)[GEA_ELEMENT] ?? comp.el;
 		while (itemEl && itemEl !== root) {
 			if (itemEl[GEA_DOM_KEY] != null || itemEl.getAttribute?.("data-gea-item-id")) break;
 			itemEl = itemEl.parentElement;
@@ -2120,6 +2120,10 @@ function applyListChanges(container, array, changes, config) {
 }
 //#endregion
 //#region src/lib/base/component.tsx
+/** Raw component instance (bypasses Store root proxy) for symbol-backed engine fields. */
+function engineThis$2(c) {
+	return c[GEA_PROXY_GET_RAW_TARGET] ?? c;
+}
 const _componentClassesMap = /* @__PURE__ */ new Map();
 const _URL_ATTRS = new Set([
 	"href",
@@ -2135,8 +2139,60 @@ const _URL_ATTRS = new Set([
 function sameComponentIdentity(a, b) {
 	return (a && typeof a === "object" ? a[GEA_PROXY_GET_RAW_TARGET] ?? a : a) === (b && typeof b === "object" ? b[GEA_PROXY_GET_RAW_TARGET] ?? b : b);
 }
+const _transferByKey = /* @__PURE__ */ new Map();
+const _inTransfer = /* @__PURE__ */ new WeakSet();
+/**
+* Find the conditional-slot comment marker at a specific slot index.
+* The compiler tells each list which slot index immediately follows it in JSX
+* source order via `afterCondSlotIndex`.  We look for `<!--{id}-c{N}-->`.
+* Returns null when no such marker exists (map is last, or no conditionals follow).
+*/
+function _findCondMarkerByIndex(container, componentId, slotIndex) {
+	if (slotIndex == null) return null;
+	const target = `${componentId}-c${slotIndex}`;
+	for (let node = container.firstChild; node; node = node.nextSibling) if (node.nodeType === 8 && node.data === target) return node;
+	return null;
+}
+/**
+* Mark a keyed list-item component for cross-list transfer.
+* Call this *before* firing the store update that triggers reconciliation.
+* Unclaimed entries are auto-disposed after the current task (setTimeout 0),
+* which guarantees all render microtasks have already run.
+*/
+function stashComponentForTransfer(comp) {
+	const key = comp[GEA_ITEM_KEY];
+	if (key == null) return;
+	const raw = engineThis$2(comp);
+	_inTransfer.add(raw);
+	_transferByKey.set(key, comp);
+	setTimeout(() => {
+		if (_transferByKey.get(key) === comp) {
+			_transferByKey.delete(key);
+			_inTransfer.delete(raw);
+			comp.dispose?.();
+		}
+	}, 0);
+}
+function _claimTransfer(key) {
+	const comp = _transferByKey.get(key);
+	if (!comp) return void 0;
+	_transferByKey.delete(key);
+	return comp;
+}
+function _isInTransfer(comp) {
+	return _inTransfer.has(engineThis$2(comp));
+}
 function __escapeHtml(str) {
 	return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+/** Ensures static template HTML from list `items.join('')` survives GEA_PATCH_COND empty reinjection. */
+function injectDataGeaItemIdOnFirstOpenTag(html, key) {
+	const m = html.match(/^<([A-Za-z][\w:-]*)([^>]*)>/);
+	if (!m) return html;
+	const full = m[0];
+	if (/\sdata-gea-item-id\s*=/.test(full)) return html;
+	const esc = __escapeHtml(key);
+	return `<${m[1]}${m[2]} data-gea-item-id="${esc}">` + html.slice(full.length);
 }
 function __sanitizeAttr(name, value) {
 	if (_URL_ATTRS.has(name)) {
@@ -2157,13 +2213,14 @@ var Component = class Component extends Store {
 	constructor(props = {}, _unusedReactContext) {
 		super();
 		getComponentInternals(this);
-		this.id_ = ComponentManager.getInstance().getUid();
-		this.element_ = null;
-		this.actions = void 0;
+		const eng = engineThis$2(this);
+		eng[GEA_ID] = ComponentManager.getInstance().getUid();
+		eng[GEA_ELEMENT] = null;
+		eng[GEA_PARENT_COMPONENT] = void 0;
 		const Ctor = this.constructor;
 		ComponentManager.getInstance().registerComponentClass(Ctor);
 		_componentClassesMap.set(Ctor.name, Ctor);
-		this.rendered_ = false;
+		this[GEA_RENDERED] = false;
 		let _rawProps = props || {};
 		let _propsProxy = this[GEA_CREATE_PROPS_PROXY](_rawProps);
 		getComponentInternals(this).rawProps = _rawProps;
@@ -2185,21 +2242,23 @@ var Component = class Component extends Store {
 	created(_props) {}
 	createdHooks(_props) {}
 	get id() {
-		return this.id_;
+		return engineThis$2(this)[GEA_ID];
 	}
 	get el() {
-		if (!this.element_) {
+		const eng = engineThis$2(this);
+		if (!eng[GEA_ELEMENT]) {
 			const cloneFn = this[GEA_CLONE_TEMPLATE];
-			if (typeof cloneFn === "function") this.element_ = cloneFn.call(this);
+			if (typeof cloneFn === "function") eng[GEA_ELEMENT] = cloneFn.call(this);
 			else {
-				const existing = document.getElementById(this.id_);
-				if (existing) this.element_ = existing;
-				else this.element_ = ComponentManager.getInstance().createElement(String(this.template(this.props)).trim());
+				let existing = document.getElementById(eng[GEA_ID]);
+				if (existing && existing.id === "app" && !existing.classList.contains("store-layout")) existing = null;
+				if (existing) eng[GEA_ELEMENT] = existing;
+				else eng[GEA_ELEMENT] = ComponentManager.getInstance().createElement(String(this.template(this.props)).trim());
 			}
-			if (this.element_) Component[GEA_SYNC_VALUE_PROPS](this.element_);
+			if (eng[GEA_ELEMENT]) Component[GEA_SYNC_VALUE_PROPS](eng[GEA_ELEMENT]);
 		}
-		if (this.element_) this.element_[GEA_DOM_COMPONENT] = this;
-		return this.element_;
+		if (eng[GEA_ELEMENT]) eng[GEA_ELEMENT][GEA_DOM_COMPONENT] = this;
+		return eng[GEA_ELEMENT];
 	}
 	$$(selector) {
 		let rv = [];
@@ -2210,7 +2269,7 @@ var Component = class Component extends Store {
 	}
 	$(selector) {
 		let rv = null;
-		const el = this.element_;
+		const el = engineThis$2(this)[GEA_ELEMENT];
 		if (el) rv = selector == void 0 || selector === ":scope" ? el : el.querySelector(selector);
 		return rv;
 	}
@@ -2224,23 +2283,26 @@ var Component = class Component extends Store {
 		if (container.childElementCount !== prevCount || config.hasComponentItems) this[GEA_INSTANTIATE_CHILD_COMPONENTS]();
 	}
 	render(rootEl, opt_index = Infinity) {
-		if (this.rendered_) return true;
-		this.element_ = this.el;
+		if (this[GEA_RENDERED]) return true;
+		const eng = engineThis$2(this);
+		eng[GEA_ELEMENT] = this.el;
 		if (rootEl) {
 			if (opt_index < 0) opt_index = Infinity;
-			if (rootEl != this.element_.parentElement) rootEl.insertBefore(this.element_, rootEl.children[opt_index]);
-			else {
+			if (rootEl != eng[GEA_ELEMENT].parentElement) {
+				if (!rootEl.contains(eng[GEA_ELEMENT])) rootEl.insertBefore(eng[GEA_ELEMENT], rootEl.children[opt_index]);
+			} else {
 				let newIndex = opt_index;
 				let elementIndex = 0;
-				let t = this.element_;
+				let t = eng[GEA_ELEMENT];
 				while (t = t.previousElementSibling) elementIndex++;
 				if (elementIndex < newIndex) newIndex++;
-				if (!(elementIndex == newIndex || newIndex >= rootEl.childElementCount && this.element_ == rootEl.lastElementChild)) rootEl.insertBefore(this.element_, rootEl.children[newIndex]);
+				if (!(elementIndex == newIndex || newIndex >= rootEl.childElementCount && eng[GEA_ELEMENT] == rootEl.lastElementChild)) rootEl.insertBefore(eng[GEA_ELEMENT], rootEl.children[newIndex]);
 			}
 		}
-		this.rendered_ = true;
-		if (this.element_) this.element_[GEA_DOM_COMPONENT] = this;
+		this[GEA_RENDERED] = true;
+		if (eng[GEA_ELEMENT]) eng[GEA_ELEMENT][GEA_DOM_COMPONENT] = this;
 		ComponentManager.getInstance().markComponentRendered(this);
+		this[GEA_SYNC_UNRENDERED_LIST_ITEMS]();
 		this[GEA_ATTACH_BINDINGS]();
 		this[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]();
 		this[GEA_INSTANTIATE_CHILD_COMPONENTS]();
@@ -2254,7 +2316,7 @@ var Component = class Component extends Store {
 		return true;
 	}
 	get rendered() {
-		return this.rendered_;
+		return this[GEA_RENDERED];
 	}
 	onAfterRender() {}
 	onAfterRenderAsync() {}
@@ -2269,9 +2331,16 @@ var Component = class Component extends Store {
 			if (!c.items?.length) continue;
 			const container = c.container();
 			if (!container) continue;
+			const condRef = _findCondMarkerByIndex(container, engineThis$2(this)[GEA_ID], c.afterCondSlotIndex);
 			for (const item of c.items) {
 				if (!item) continue;
-				if (!item.rendered_) item.render(container);
+				if (!item[GEA_RENDERED]) {
+					item.render(container);
+					if (condRef) {
+						const el = engineThis$2(item)[GEA_ELEMENT];
+						if (el && el.parentNode === container) container.insertBefore(el, condRef);
+					}
+				}
 			}
 		}
 	}
@@ -2300,11 +2369,24 @@ var Component = class Component extends Store {
 		return obj;
 	}
 	[GEA_UPDATE_PROPS](nextProps) {
-		if (!this.rendered_) {
-			const el = document.getElementById(this.id_);
+		const eng = engineThis$2(this);
+		if (!this[GEA_RENDERED]) {
+			const el = document.getElementById(eng[GEA_ID]);
 			if (el) {
-				this.element_ = el;
-				this.rendered_ = true;
+				eng[GEA_ELEMENT] = el;
+				el[GEA_DOM_COMPONENT] = this;
+				this[GEA_RENDERED] = true;
+				ComponentManager.getInstance().markComponentRendered(this);
+				this[GEA_SYNC_UNRENDERED_LIST_ITEMS]();
+				this[GEA_ATTACH_BINDINGS]();
+				this[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]();
+				this[GEA_INSTANTIATE_CHILD_COMPONENTS]();
+				this[GEA_SETUP_EVENT_DIRECTIVES]();
+				const setupRefs = this[GEA_SETUP_REFS];
+				if (typeof setupRefs === "function") setupRefs.call(this);
+				this.onAfterRender();
+				this.onAfterRenderHooks();
+				this[GEA_SYNC_UNRENDERED_LIST_ITEMS]();
 			}
 		}
 		const onProp = this[GEA_ON_PROP_CHANGE];
@@ -2322,7 +2404,10 @@ var Component = class Component extends Store {
 		}
 	}
 	toString() {
-		return String(this.template(this.props)).trim();
+		let html = String(this.template(this.props)).trim();
+		const key = this[GEA_ITEM_KEY];
+		if (key != null && html.length > 0) html = injectDataGeaItemIdOnFirstOpenTag(html, key);
+		return html;
 	}
 	/**
 	* Prefer `template({ a, b } = this.props)` so TypeScript infers bindings from `declare props`
@@ -2333,9 +2418,18 @@ var Component = class Component extends Store {
 	}
 	dispose() {
 		ComponentManager.getInstance().removeComponent(this);
-		if (this.element_) this.element_[GEA_DOM_COMPONENT] = void 0;
-		this.element_ && this.element_.parentNode && this.element_.parentNode.removeChild(this.element_);
-		this.element_ = null;
+		const eng = engineThis$2(this);
+		if (!eng[GEA_ELEMENT]) {
+			const orphan = document.getElementById(eng[GEA_ID]);
+			if (orphan) {
+				orphan[GEA_DOM_COMPONENT] = void 0;
+				orphan.parentNode?.removeChild(orphan);
+			}
+		} else {
+			eng[GEA_ELEMENT][GEA_DOM_COMPONENT] = void 0;
+			if (eng[GEA_ELEMENT].parentNode) eng[GEA_ELEMENT].parentNode.removeChild(eng[GEA_ELEMENT]);
+		}
+		eng[GEA_ELEMENT] = null;
 		if (getComponentInternals(this).observerRemovers) {
 			getComponentInternals(this).observerRemovers.forEach((fn) => fn());
 			getComponentInternals(this).observerRemovers = [];
@@ -2346,12 +2440,13 @@ var Component = class Component extends Store {
 		getComponentInternals(this).childComponents = [];
 	}
 	[GEA_REQUEST_RENDER]() {
-		if (!this.element_ || !this.element_.parentNode) return;
-		const parent = this.element_.parentNode;
+		const eng = engineThis$2(this);
+		if (!eng[GEA_ELEMENT] || !eng[GEA_ELEMENT].parentNode) return;
+		const parent = eng[GEA_ELEMENT].parentNode;
 		const activeElement = document.activeElement;
-		const shouldRestoreFocus = Boolean(activeElement && this.element_.contains(activeElement));
+		const shouldRestoreFocus = Boolean(activeElement && eng[GEA_ELEMENT].contains(activeElement));
 		const focusedId = shouldRestoreFocus ? activeElement?.id || null : null;
-		const restoreRootFocus = Boolean(shouldRestoreFocus && activeElement === this.element_);
+		const restoreRootFocus = Boolean(shouldRestoreFocus && activeElement === eng[GEA_ELEMENT]);
 		const selectionStart = shouldRestoreFocus && activeElement && "selectionStart" in activeElement ? activeElement.selectionStart ?? null : null;
 		const selectionEnd = shouldRestoreFocus && activeElement && "selectionEnd" in activeElement ? activeElement.selectionEnd ?? null : null;
 		const focusedValue = shouldRestoreFocus && activeElement && "value" in activeElement ? String(activeElement.value ?? "") : null;
@@ -2361,8 +2456,8 @@ var Component = class Component extends Store {
 			getComponentInternals(this).childComponents.forEach((child) => {
 				if (!child) return;
 				if (child[GEA_COMPILED_CHILD]) {
-					child.rendered_ = false;
-					child.element_ = null;
+					child[GEA_RENDERED] = false;
+					engineThis$2(child)[GEA_ELEMENT] = null;
 					this[GEA_RESET_CHILD_TREE](child);
 					return;
 				}
@@ -2374,7 +2469,7 @@ var Component = class Component extends Store {
 		this[GEA_RESET_ELS]?.();
 		const placeholder = document.createComment("");
 		try {
-			if (this.element_.parentNode === parent) this.element_.replaceWith(placeholder);
+			if (eng[GEA_ELEMENT].parentNode === parent) eng[GEA_ELEMENT].replaceWith(placeholder);
 			else parent.appendChild(placeholder);
 		} catch {
 			if (!placeholder.parentNode) parent.appendChild(placeholder);
@@ -2383,14 +2478,14 @@ var Component = class Component extends Store {
 		const cloneFn = this[GEA_CLONE_TEMPLATE];
 		const newElement = typeof cloneFn === "function" ? cloneFn.call(this) : manager.createElement(String(this.template(this.props)).trim());
 		if (!newElement) {
-			this.element_ = placeholder;
-			this.rendered_ = true;
+			eng[GEA_ELEMENT] = placeholder;
+			this[GEA_RENDERED] = true;
 			return;
 		}
 		Component[GEA_SYNC_VALUE_PROPS](newElement);
 		parent.replaceChild(newElement, placeholder);
-		this.element_ = newElement;
-		this.rendered_ = true;
+		eng[GEA_ELEMENT] = newElement;
+		this[GEA_RENDERED] = true;
 		manager.markComponentRendered(this);
 		this[GEA_ATTACH_BINDINGS]();
 		this[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]();
@@ -2422,12 +2517,19 @@ var Component = class Component extends Store {
 			c.items.push(...next);
 			const container = c.container();
 			if (container) {
-				for (const item of next) if (!item.rendered_) item.render(container);
+				const condRef = _findCondMarkerByIndex(container, engineThis$2(this)[GEA_ID], c.afterCondSlotIndex);
+				for (const item of next) if (!item[GEA_RENDERED]) {
+					item.render(container);
+					if (condRef) {
+						const el = engineThis$2(item)[GEA_ELEMENT];
+						if (el && el.parentNode === container) container.insertBefore(el, condRef);
+					}
+				}
 			}
 		}
 		if (shouldRestoreFocus) {
-			const focusTarget = (focusedId ? document.getElementById(focusedId) || null : null) || (restoreRootFocus ? this.element_ : null);
-			if (focusTarget && this.element_.contains(focusTarget) && typeof focusTarget.focus === "function") {
+			const focusTarget = (focusedId ? document.getElementById(focusedId) || null : null) || (restoreRootFocus ? eng[GEA_ELEMENT] : null);
+			if (focusTarget && eng[GEA_ELEMENT].contains(focusTarget) && typeof focusTarget.focus === "function") {
 				focusTarget.focus();
 				if (selectionStart !== null && selectionEnd !== null && "setSelectionRange" in focusTarget && typeof focusTarget.setSelectionRange === "function") {
 					const textTarget = focusTarget;
@@ -2447,8 +2549,8 @@ var Component = class Component extends Store {
 		if (!getComponentInternals(comp).childComponents?.length) return;
 		getComponentInternals(comp).childComponents.forEach((c) => {
 			if (!c) return;
-			c.rendered_ = false;
-			c.element_ = null;
+			c[GEA_RENDERED] = false;
+			engineThis$2(c)[GEA_ELEMENT] = null;
 			this[GEA_RESET_CHILD_TREE](c);
 		});
 	}
@@ -2466,11 +2568,12 @@ var Component = class Component extends Store {
 		}
 	}
 	[GEA_INSTANTIATE_CHILD_COMPONENTS]() {
-		if (!this.element_) return;
+		const eng = engineThis$2(this);
+		if (!eng[GEA_ELEMENT]) return;
 		const manager = ComponentManager.getInstance();
 		const selectors = manager.getComponentSelectors();
 		let elements = [];
-		if (selectors.length > 0) elements = Array.from(this.element_.querySelectorAll(selectors.join(",")));
+		if (selectors.length > 0) elements = Array.from(eng[GEA_ELEMENT].querySelectorAll(selectors.join(",")));
 		elements.forEach((el) => {
 			if (el.getAttribute("data-gea-component-mounted")) return;
 			if (el[GEA_DOM_COMPILED_CHILD_ROOT]) return;
@@ -2487,7 +2590,7 @@ var Component = class Component extends Store {
 			const props = this[GEA_EXTRACT_COMPONENT_PROPS](el);
 			const itemId = el.getAttribute("data-prop-item-id");
 			const child = new Ctor(props);
-			child.parentComponent = this[GEA_SELF_PROXY] ?? this;
+			engineThis$2(child)[GEA_PARENT_COMPONENT] = this[GEA_SELF_PROXY] ?? this;
 			getComponentInternals(this).childComponents.push(child);
 			const parent = el.parentElement;
 			if (!parent) return;
@@ -2512,24 +2615,22 @@ var Component = class Component extends Store {
 				value.forEach(collect);
 				return;
 			}
-			if (value && typeof value === "object" && value[GEA_COMPILED_CHILD] && sameComponentIdentity(value.parentComponent, this)) {
+			if (value && typeof value === "object" && value[GEA_COMPILED_CHILD] && sameComponentIdentity(engineThis$2(value)[GEA_PARENT_COMPONENT], this)) {
 				if (!seen.has(value)) {
 					seen.add(value);
 					if (!getComponentInternals(this).childComponents.includes(value)) getComponentInternals(this).childComponents.push(value);
 				}
 			}
 		};
-		Object.keys(this).forEach((key) => {
-			collect(this[key]);
-		});
+		for (const key of Reflect.ownKeys(this)) collect(this[key]);
 		seen.forEach((child) => {
 			const existing = document.getElementById(child.id);
 			if (!existing) return;
-			if (child.rendered_ && child.element_ === existing) return;
+			if (child[GEA_RENDERED] && engineThis$2(child)[GEA_ELEMENT] === existing) return;
 			existing[GEA_DOM_COMPILED_CHILD_ROOT] = true;
-			child.element_ = existing;
+			engineThis$2(child)[GEA_ELEMENT] = existing;
 			existing[GEA_DOM_COMPONENT] = child;
-			child.rendered_ = true;
+			child[GEA_RENDERED] = true;
 			manager.markComponentRendered(child);
 			child[GEA_ATTACH_BINDINGS]();
 			child[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]();
@@ -2545,16 +2646,21 @@ var Component = class Component extends Store {
 	}
 	[GEA_CHILD](Ctor, props, key) {
 		const child = new Ctor(props);
-		child.parentComponent = this[GEA_SELF_PROXY] ?? this;
+		engineThis$2(child)[GEA_PARENT_COMPONENT] = this[GEA_SELF_PROXY] ?? this;
 		child[GEA_COMPILED_CHILD] = true;
 		if (key !== void 0) child[GEA_ITEM_KEY] = String(key);
 		if (!getComponentInternals(this).childComponents.includes(child)) getComponentInternals(this).childComponents.push(child);
 		return child;
 	}
 	[GEA_EL](suffix) {
+		const eng = engineThis$2(this);
 		let el = getComponentInternals(this).elCache.get(suffix) ?? null;
 		if (!el || !el.isConnected) {
-			el = document.getElementById(this.id_ + "-" + suffix);
+			const id = eng[GEA_ID] + "-" + suffix;
+			const root = eng[GEA_ELEMENT];
+			const bySelector = (r) => r.querySelector(`#${CSS.escape(id)}`);
+			if (root) el = root.isConnected ? document.getElementById(id) ?? bySelector(root) : bySelector(root);
+			else el = document.getElementById(id);
 			if (el) getComponentInternals(this).elCache.set(suffix, el);
 			else getComponentInternals(this).elCache.delete(suffix);
 		}
@@ -2574,30 +2680,34 @@ var Component = class Component extends Store {
 		const remover = store[GEA_STORE_ROOT].observe(path, handler.bind(this));
 		getComponentInternals(this).observerRemovers.push(remover);
 	}
-	[GEA_REORDER_CHILDREN](container, items) {
-		if (!container || !this.rendered_) return;
-		for (const item of items) if (!item.rendered_) {
+	[GEA_REORDER_CHILDREN](container, items, afterCondSlotIndex) {
+		if (!container || !this[GEA_RENDERED]) return;
+		for (const item of items) if (!item[GEA_RENDERED]) {
 			if (!getComponentInternals(this).childComponents.includes(item)) getComponentInternals(this).childComponents.push(item);
 			item.render(container);
 		}
 		const ordered = [];
 		for (const item of items) {
-			let el = item.element_;
+			let el = engineThis$2(item)[GEA_ELEMENT];
 			if (!el) continue;
 			while (el.parentElement && el.parentElement !== container) el = el.parentElement;
 			ordered.push(el);
 		}
 		if (ordered.length === 0) return;
-		const itemSet = new Set(ordered);
-		let cursor = container.firstChild;
-		while (cursor && !itemSet.has(cursor)) cursor = cursor.nextSibling;
-		for (const el of ordered) if (el !== cursor) container.insertBefore(el, cursor || null);
+		const condRef = _findCondMarkerByIndex(container, engineThis$2(this)[GEA_ID], afterCondSlotIndex);
+		if (condRef) for (const el of ordered) container.insertBefore(el, condRef);
 		else {
-			cursor = cursor.nextSibling;
+			const itemSet = new Set(ordered);
+			let cursor = container.firstChild;
 			while (cursor && !itemSet.has(cursor)) cursor = cursor.nextSibling;
+			for (const el of ordered) if (el !== cursor) container.insertBefore(el, cursor || null);
+			else {
+				cursor = cursor.nextSibling;
+				while (cursor && !itemSet.has(cursor)) cursor = cursor.nextSibling;
+			}
 		}
 	}
-	[GEA_RECONCILE_LIST](oldItems, newData, container, Ctor, propsFactory, keyExtractor) {
+	[GEA_RECONCILE_LIST](oldItems, newData, container, Ctor, propsFactory, keyExtractor, afterCondSlotIndex) {
 		const oldByKey = /* @__PURE__ */ new Map();
 		for (const item of oldItems) {
 			if (!item) continue;
@@ -2612,7 +2722,7 @@ var Component = class Component extends Store {
 					oldByKey.set(c[GEA_ITEM_KEY], c);
 					break;
 				}
-				c = c.parentComponent;
+				c = engineThis$2(c)[GEA_PARENT_COMPONENT];
 			}
 		}
 		if (oldItems.length === 0 && newData.length > 0 && container && oldByKey.size === 0) while (container.firstElementChild) container.removeChild(container.firstElementChild);
@@ -2624,15 +2734,25 @@ var Component = class Component extends Store {
 				oldByKey.delete(key);
 				return existing;
 			}
+			const transferred = _claimTransfer(key);
+			if (transferred) {
+				transferred[GEA_UPDATE_PROPS](propsFactory(data, idx));
+				engineThis$2(transferred)[GEA_PARENT_COMPONENT] = this;
+				if (!getComponentInternals(this).childComponents.includes(transferred)) getComponentInternals(this).childComponents.push(transferred);
+				return transferred;
+			}
 			return this[GEA_CHILD](Ctor, propsFactory(data, idx), key);
 		});
-		for (const removed of oldByKey.values()) removed.dispose?.();
-		this[GEA_REORDER_CHILDREN](container, next);
+		for (const removed of oldByKey.values()) {
+			if (_isInTransfer(removed)) continue;
+			removed.dispose?.();
+		}
+		this[GEA_REORDER_CHILDREN](container, next, afterCondSlotIndex);
 		if (container && next.length > 0) {
 			const rootSet = /* @__PURE__ */ new Set();
 			for (const item of next) {
-				if (!item?.element_) continue;
-				let el = item.element_;
+				if (!engineThis$2(item)?.[GEA_ELEMENT]) continue;
+				let el = engineThis$2(item)[GEA_ELEMENT];
 				while (el.parentElement && el.parentElement !== container) el = el.parentElement;
 				if (el && el.parentElement === container) rootSet.add(el);
 			}
@@ -2646,7 +2766,7 @@ var Component = class Component extends Store {
 							keyedAncestor = c;
 							break;
 						}
-						c = c.parentComponent;
+						c = engineThis$2(c)[GEA_PARENT_COMPONENT];
 					}
 					if (keyedAncestor) {
 						keyedAncestor.dispose?.();
@@ -2677,17 +2797,24 @@ var Component = class Component extends Store {
 					const item = config.items[c.arrayIndex];
 					if (item) item[GEA_UPDATE_PROPS](config.props(arr[c.arrayIndex], c.arrayIndex));
 				}
-				else if (changes.length === 1 && changes[0].type === "append") {
+				else if (changes.length === 1 && changes[0].type === "append" && changes[0].pathParts.length === path.length && changes[0].pathParts.every((p, i) => p === path[i])) {
 					const { start, count } = changes[0];
 					const container = config.container();
+					const condRef = container ? _findCondMarkerByIndex(container, engineThis$2(this)[GEA_ID], config.afterCondSlotIndex) : null;
 					for (let i = 0; i < count; i++) {
 						const data = arr[start + i];
 						const item = this[GEA_CHILD](config.Ctor, config.props(data, start + i), config.key(data, start + i));
 						config.items.push(item);
-						if (this.rendered_ && container) item.render(container);
+						if (this[GEA_RENDERED] && container) {
+							item.render(container);
+							if (condRef) {
+								const el = engineThis$2(item)[GEA_ELEMENT];
+								if (el && el.parentNode === container) container.insertBefore(el, condRef);
+							}
+						}
 					}
 				} else {
-					const newItems = this[GEA_RECONCILE_LIST](config.items, arr, config.container(), config.Ctor, config.props, config.key);
+					const newItems = this[GEA_RECONCILE_LIST](config.items, arr, config.container(), config.Ctor, config.props, config.key, config.afterCondSlotIndex);
 					config.items.length = 0;
 					config.items.push(...newItems);
 				}
@@ -2714,7 +2841,7 @@ var Component = class Component extends Store {
 			c[GEA_LIST_CONFIG_REFRESHING] = true;
 			try {
 				const arr = p.reduce((obj, key) => obj?.[key], s) ?? [];
-				const newItems = this[GEA_RECONCILE_LIST](c.items, arr, c.container(), c.Ctor, c.props, c.key);
+				const newItems = this[GEA_RECONCILE_LIST](c.items, arr, c.container(), c.Ctor, c.props, c.key, c.afterCondSlotIndex);
 				c.items.length = 0;
 				c.items.push(...newItems);
 				c.onchange?.();
@@ -2724,15 +2851,16 @@ var Component = class Component extends Store {
 		}
 	}
 	[GEA_SWAP_CHILD](markerId, newChild) {
-		const marker = document.getElementById(this.id_ + "-" + markerId);
+		const eng = engineThis$2(this);
+		const marker = document.getElementById(eng[GEA_ID] + "-" + markerId);
 		if (!marker) return;
 		const oldEl = marker.nextElementSibling;
-		if (newChild && newChild.rendered_ && newChild.element_ === oldEl) return;
+		if (newChild && newChild[GEA_RENDERED] && engineThis$2(newChild)[GEA_ELEMENT] === oldEl) return;
 		if (oldEl && oldEl.tagName !== "TEMPLATE") {
-			const oldChild = getComponentInternals(this).childComponents.find((c) => c.element_ === oldEl);
+			const oldChild = getComponentInternals(this).childComponents.find((c) => engineThis$2(c)[GEA_ELEMENT] === oldEl);
 			if (oldChild) {
-				oldChild.rendered_ = false;
-				oldChild.element_ = null;
+				oldChild[GEA_RENDERED] = false;
+				engineThis$2(oldChild)[GEA_ELEMENT] = null;
 			}
 			oldEl.remove();
 		}
@@ -2741,8 +2869,8 @@ var Component = class Component extends Store {
 		marker.insertAdjacentHTML("afterend", html);
 		const newEl = marker.nextElementSibling;
 		if (!newEl) return;
-		newChild.element_ = newEl;
-		newChild.rendered_ = true;
+		engineThis$2(newChild)[GEA_ELEMENT] = newEl;
+		newChild[GEA_RENDERED] = true;
 		if (!getComponentInternals(this).childComponents.includes(newChild)) getComponentInternals(this).childComponents.push(newChild);
 		ComponentManager.getInstance().markComponentRendered(newChild);
 		newChild[GEA_ATTACH_BINDINGS]();
@@ -2808,7 +2936,7 @@ var Component = class Component extends Store {
 		};
 	}
 	[GEA_SYNC_MAP](idx) {
-		if (!this.rendered_) return;
+		if (!this[GEA_RENDERED]) return;
 		const map = getComponentInternals(this).geaMaps?.[idx];
 		if (!map) return;
 		let container = map.getContainer();
@@ -2841,9 +2969,12 @@ var Component = class Component extends Store {
 				if (nested?.parentElement && nested.parentElement !== container) container = nested.parentElement;
 				else if (!nested) {
 					let insideCondSlot = false;
-					for (let s = container.firstChild; s; s = s.nextSibling) if (s.nodeType === 8 && s.data && /-c\d+$/.test(s.data)) {
-						insideCondSlot = true;
-						break;
+					for (let s = container.firstChild; s; s = s.nextSibling) {
+						if (s.nodeType === 8 && !s.data) break;
+						if (s.nodeType === 8 && s.data && /-c\d+$/.test(s.data)) {
+							insideCondSlot = true;
+							break;
+						}
 					}
 					if (insideCondSlot) return;
 				}
@@ -3011,6 +3142,12 @@ var Component = class Component extends Store {
 			getTruthyHtml,
 			getFalsyHtml
 		};
+		if (!this[GEA_RENDERED]) {
+			if (!getComponentInternals(this).condPatchPrev) getComponentInternals(this).condPatchPrev = {};
+			try {
+				getComponentInternals(this).condPatchPrev[idx] = !!getCond();
+			} catch {}
+		}
 	}
 	/**
 	* Re-run compiler-generated setup after incremental DOM updates (e.g. conditional slots) so
@@ -3034,9 +3171,10 @@ var Component = class Component extends Store {
 		if (!condPatchPrev) getComponentInternals(this).condPatchPrev = condPatchPrev = {};
 		const prev = condPatchPrev[idx];
 		const needsPatch = cond !== prev;
-		const root = this.element_ || document.getElementById(this.id_);
+		const eng = engineThis$2(this);
+		const root = eng[GEA_ELEMENT] || document.getElementById(eng[GEA_ID]);
 		if (!root) return false;
-		const markerText = this.id_ + "-" + conf.slotId;
+		const markerText = eng[GEA_ID] + "-" + conf.slotId;
 		const endMarkerText = markerText + "-end";
 		const findMarker = (value) => {
 			const walker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
@@ -3050,15 +3188,17 @@ var Component = class Component extends Store {
 		const marker = findMarker(markerText);
 		const endMarker = findMarker(endMarkerText);
 		const parent = endMarker && endMarker.parentNode;
-		if (!marker || !endMarker || !parent) return false;
-		condPatchPrev[idx] = cond;
+		if (!marker || !endMarker || !parent) {
+			condPatchPrev[idx] = void 0;
+			return false;
+		}
 		const stripTrailingKeyedRowsAfterSlot = () => {
 			let node = endMarker.nextSibling;
 			while (node && node.nodeType === 1) {
 				const el = node;
 				const next = node.nextSibling;
 				if (el.hasAttribute("data-email-id")) {
-					for (const child of getComponentInternals(this).childComponents) if (child[GEA_COMPILED_CHILD] && child.element_ && (child.element_ === el || el.contains(child.element_))) {
+					for (const child of getComponentInternals(this).childComponents) if (child[GEA_COMPILED_CHILD] && engineThis$2(child)[GEA_ELEMENT] && (engineThis$2(child)[GEA_ELEMENT] === el || el.contains(engineThis$2(child)[GEA_ELEMENT]))) {
 						child.dispose();
 						getComponentInternals(this).childComponents = getComponentInternals(this).childComponents.filter((c) => c !== child);
 						break;
@@ -3087,6 +3227,18 @@ var Component = class Component extends Store {
 			}
 			const html = htmlFn();
 			if (html === "") {
+				if (!cond && prev === true) {
+					let node = marker.nextSibling;
+					while (node && node !== endMarker) {
+						const next = node.nextSibling;
+						if (!node.parentNode) break;
+						try {
+							node.remove();
+						} catch {}
+						node = next;
+					}
+					return;
+				}
 				let node = marker.nextSibling;
 				while (node && node !== endMarker) {
 					const next = node.nextSibling;
@@ -3125,30 +3277,32 @@ var Component = class Component extends Store {
 		};
 		if (needsPatch) {
 			if (!cond) {
-				const disposed = /* @__PURE__ */ new Set();
-				let node = marker.nextSibling;
-				while (node && node !== endMarker) {
-					if (node.nodeType === 1) {
-						const el = node;
-						for (const child of getComponentInternals(this).childComponents) if (child[GEA_COMPILED_CHILD] && child.element_ && (child.element_ === el || el.contains(child.element_))) disposed.add(child);
+				if (prev === true) {
+					const disposed = /* @__PURE__ */ new Set();
+					let node = marker.nextSibling;
+					while (node && node !== endMarker) {
+						if (node.nodeType === 1) {
+							const el = node;
+							for (const child of getComponentInternals(this).childComponents) if (child[GEA_COMPILED_CHILD] && engineThis$2(child)[GEA_ELEMENT] && (engineThis$2(child)[GEA_ELEMENT] === el || el.contains(engineThis$2(child)[GEA_ELEMENT]))) disposed.add(child);
+						}
+						node = node.nextSibling;
 					}
-					node = node.nextSibling;
-				}
-				for (const child of disposed) {
-					child.dispose();
-					for (const key of Object.keys(this)) if (this[key] === child) {
-						this[key] = null;
-						break;
+					for (const child of disposed) {
+						child.dispose();
+						for (const key of Object.keys(this)) if (this[key] === child) {
+							this[key] = null;
+							break;
+						}
 					}
+					if (disposed.size > 0) getComponentInternals(this).childComponents = getComponentInternals(this).childComponents.filter((c) => !disposed.has(c));
 				}
-				if (disposed.size > 0) getComponentInternals(this).childComponents = getComponentInternals(this).childComponents.filter((c) => !disposed.has(c));
-			} else {
+			} else if (prev === false) {
 				const disposedTruthy = /* @__PURE__ */ new Set();
 				let n = marker.nextSibling;
 				while (n && n !== endMarker) {
 					if (n.nodeType === 1) {
 						const el = n;
-						for (const child of getComponentInternals(this).childComponents) if (child[GEA_COMPILED_CHILD] && child.element_ && (child.element_ === el || el.contains(child.element_))) disposedTruthy.add(child);
+						for (const child of getComponentInternals(this).childComponents) if (child[GEA_COMPILED_CHILD] && engineThis$2(child)[GEA_ELEMENT] && (engineThis$2(child)[GEA_ELEMENT] === el || el.contains(engineThis$2(child)[GEA_ELEMENT]))) disposedTruthy.add(child);
 					}
 					n = n.nextSibling;
 				}
@@ -3169,10 +3323,12 @@ var Component = class Component extends Store {
 				this[GEA_SETUP_EVENT_DIRECTIVES]();
 				Component[GEA_SYNC_AUTOFOCUS](marker, endMarker);
 			}
+			condPatchPrev[idx] = cond;
 		} else if (cond && conf.getTruthyHtml) {
 			const existingNode = marker.nextSibling;
 			if (existingNode && existingNode !== endMarker && existingNode.nodeType === 1) {
 				if (existingNode[GEA_DOM_COMPILED_CHILD_ROOT]) return needsPatch;
+				for (const child of getComponentInternals(this).childComponents) if (child[GEA_COMPILED_CHILD] && engineThis$2(child)[GEA_ELEMENT] && (engineThis$2(child)[GEA_ELEMENT] === existingNode || existingNode.contains(engineThis$2(child)[GEA_ELEMENT]))) return needsPatch;
 				const newHtml = conf.getTruthyHtml();
 				const tpl = document.createElement("template");
 				tpl.innerHTML = newHtml;
@@ -3222,14 +3378,15 @@ var Component = class Component extends Store {
 			node = node.nextSibling;
 		}
 	}
-	static [GEA_PATCH_NODE](existing, desired) {
+	static [GEA_PATCH_NODE](existing, desired, preserveExtraAttrs) {
+		if (existing[GEA_DOM_COMPILED_CHILD_ROOT]) return;
 		if (existing.tagName !== desired.tagName) {
 			existing.replaceWith(desired.cloneNode(true));
 			return;
 		}
 		const oldAttrs = existing.attributes;
 		const newAttrs = desired.attributes;
-		for (let i = oldAttrs.length - 1; i >= 0; i--) {
+		if (!preserveExtraAttrs) for (let i = oldAttrs.length - 1; i >= 0; i--) {
 			const name = oldAttrs[i].name;
 			if (!desired.hasAttribute(name)) existing.removeAttribute(name);
 		}
@@ -3252,7 +3409,7 @@ var Component = class Component extends Store {
 				if (oldChild.nodeType !== newChild.nodeType) oldChild.replaceWith(newChild.cloneNode(true));
 				else if (oldChild.nodeType === 3) {
 					if (oldChild.textContent !== newChild.textContent) oldChild.textContent = newChild.textContent;
-				} else if (oldChild.nodeType === 1) Component[GEA_PATCH_NODE](oldChild, newChild);
+				} else if (oldChild.nodeType === 1) Component[GEA_PATCH_NODE](oldChild, newChild, preserveExtraAttrs);
 			}
 		}
 	}
@@ -3264,33 +3421,6 @@ var Component = class Component extends Store {
 Object.defineProperty(Component, GEA_COMPONENT_CLASSES, {
 	get() {
 		return _componentClassesMap;
-	},
-	configurable: true,
-	enumerable: false
-});
-Object.defineProperty(Component.prototype, GEA_ID, {
-	get() {
-		return this.id_;
-	},
-	configurable: true,
-	enumerable: false
-});
-Object.defineProperty(Component.prototype, GEA_ELEMENT, {
-	get() {
-		return this.element_;
-	},
-	set(v) {
-		this.element_ = v;
-	},
-	configurable: true,
-	enumerable: false
-});
-Object.defineProperty(Component.prototype, GEA_RENDERED, {
-	get() {
-		return this.rendered_;
-	},
-	set(v) {
-		this.rendered_ = v;
 	},
 	configurable: true,
 	enumerable: false
@@ -3714,6 +3844,9 @@ var Link = class Link extends Component {
 };
 //#endregion
 //#region src/lib/router/outlet.ts
+function engineThis$1(c) {
+	return c[GEA_PROXY_GET_RAW_TARGET] ?? c;
+}
 var Outlet = class Outlet extends Component {
 	constructor(..._args) {
 		super(..._args);
@@ -3733,14 +3866,14 @@ var Outlet = class Outlet extends Component {
 	_computeDepthAndRouter() {
 		let depth = 0;
 		let router = null;
-		let parent = this.parentComponent;
+		let parent = engineThis$1(this)[GEA_PARENT_COMPONENT];
 		while (parent) {
 			if (parent[GEA_IS_ROUTER_OUTLET]) {
 				depth = parent._routerDepth + 1;
 				router = parent._router ?? parent.props?.router ?? null;
 				break;
 			}
-			parent = parent.parentComponent;
+			parent = engineThis$1(parent)[GEA_PARENT_COMPONENT];
 		}
 		if (!router) router = Outlet._router;
 		return {
@@ -3790,7 +3923,7 @@ var Outlet = class Outlet extends Component {
 		if (!this.el) return;
 		const router = this._getRouter();
 		if (!router) return;
-		if (this._currentChild && (!this._currentChild.element_ || !this.el.contains(this._currentChild.element_))) this._clearCurrent();
+		if (this._currentChild && (!engineThis$1(this._currentChild)[GEA_ELEMENT] || !this.el.contains(engineThis$1(this._currentChild)[GEA_ELEMENT]))) this._clearCurrent();
 		const depth = this._routerDepth;
 		const item = router.getComponentAtDepth(depth);
 		if (!item) {
@@ -3810,9 +3943,9 @@ var Outlet = class Outlet extends Component {
 		this._clearCurrent();
 		if (this._isClassComponent(item.component)) {
 			const child = new item.component(item.props);
-			child.parentComponent = this;
+			engineThis$1(child)[GEA_PARENT_COMPONENT] = this;
 			child.render(this.el);
-			if (child.element_) child.element_[GEA_DOM_COMPILED_CHILD_ROOT] = true;
+			if (engineThis$1(child)[GEA_ELEMENT]) engineThis$1(child)[GEA_ELEMENT][GEA_DOM_COMPILED_CHILD_ROOT] = true;
 			this._currentChild = child;
 			this._currentComponentClass = item.component;
 			this[GEA_CHILD_COMPONENTS] = [child];
@@ -4105,6 +4238,9 @@ var Router = class extends Store {
 };
 //#endregion
 //#region src/lib/router/router-view.ts
+function engineThis(c) {
+	return c[GEA_PROXY_GET_RAW_TARGET] ?? c;
+}
 var RouterView = class extends Component {
 	constructor(..._args) {
 		super(..._args);
@@ -4164,7 +4300,7 @@ var RouterView = class extends Component {
 		if (!this.el) return;
 		const router = this._getRouter();
 		if (!router) return;
-		if (this._currentChild && (!this._currentChild.element_ || !this.el.contains(this._currentChild.element_))) this._clearCurrent();
+		if (this._currentChild && (!engineThis(this._currentChild)[GEA_ELEMENT] || !this.el.contains(engineThis(this._currentChild)[GEA_ELEMENT]))) this._clearCurrent();
 		const item = router.getComponentAtDepth(0);
 		if (!item) {
 			this._clearCurrent();
@@ -4180,7 +4316,7 @@ var RouterView = class extends Component {
 		while (this.el.firstChild) this.el.removeChild(this.el.firstChild);
 		if (this._isClassComponent(item.component)) {
 			const child = new item.component(item.props);
-			child.parentComponent = this;
+			engineThis(child)[GEA_PARENT_COMPONENT] = this;
 			child.render(this.el);
 			this._currentChild = child;
 			this._currentComponentClass = item.component;
@@ -4233,6 +4369,6 @@ const gea = {
 	h
 };
 //#endregion
-export { Component, ComponentManager, GEA_APPLY_LIST_CHANGES, GEA_ATTACH_BINDINGS, GEA_ATTR_BINDINGS, GEA_BINDINGS, GEA_CHILD, GEA_CHILD_COMPONENTS, GEA_CLEANUP_BINDINGS, GEA_CLONE_ITEM, GEA_CLONE_TEMPLATE, GEA_COERCE_STATIC_PROP_VALUE, GEA_COMPILED_CHILD, GEA_COMPONENT_CLASSES, GEA_CONDS, GEA_CREATE_PROPS_PROXY, GEA_CTOR_AUTO_REGISTERED, GEA_CTOR_TAG_NAME, GEA_CURRENT_COMP_CLASS, GEA_DEPENDENCIES, GEA_DOM_COMPILED_CHILD_ROOT, GEA_DOM_COMPONENT, GEA_DOM_EVENT_HINT, GEA_DOM_ITEM, GEA_DOM_KEY, GEA_DOM_PARENT_CHAIN, GEA_DOM_PROPS, GEA_EL, GEA_ELEMENT, GEA_EL_CACHE, GEA_ENSURE_ARRAY_CONFIGS, GEA_EVENT_BINDINGS, GEA_EXTRACT_COMPONENT_PROPS, GEA_HANDLE_ITEM_HANDLER, GEA_ID, GEA_INSTANTIATE_CHILD_COMPONENTS, GEA_IS_ROUTER_OUTLET, GEA_ITEM_KEY, GEA_LAYOUTS, GEA_LIST_CONFIGS, GEA_LIST_CONFIG_REFRESHING, GEA_MAPS, GEA_MAP_CONFIG_COUNT, GEA_MAP_CONFIG_PREV, GEA_MAP_CONFIG_TPL, GEA_MOUNT_COMPILED_CHILD_COMPONENTS, GEA_NORMALIZE_PROP_NAME, GEA_OBSERVE, GEA_OBSERVER_REMOVERS, GEA_OBSERVE_LIST, GEA_ON_PROP_CHANGE, GEA_PATCH_COND, GEA_PATCH_NODE, GEA_PROP_BINDINGS, GEA_PROP_BINDING_ATTR_PREFIX, GEA_PROXY_GET_PATH, GEA_PROXY_GET_RAW_TARGET, GEA_PROXY_GET_TARGET, GEA_PROXY_IS_PROXY, GEA_PROXY_RAW, GEA_RAW_PROPS, GEA_REACTIVE_PROPS, GEA_RECONCILE_LIST, GEA_REFRESH_LIST, GEA_REGISTER_COND, GEA_REGISTER_MAP, GEA_RENDERED, GEA_REORDER_CHILDREN, GEA_REQUEST_RENDER, GEA_RESET_CHILD_TREE, GEA_RESET_ELS, GEA_ROUTER, GEA_ROUTER_DEPTH, GEA_ROUTES_APPLIED, GEA_SELF_LISTENERS, GEA_SELF_PROXY, GEA_SETUP_EVENT_DIRECTIVES, GEA_SETUP_LOCAL_STATE_OBSERVERS, GEA_SETUP_REFS, GEA_SKIP_ITEM_HANDLER, GEA_STATIC_ESCAPE_HTML, GEA_STATIC_SANITIZE_ATTR, GEA_STORE_ADD_DESCENDANTS_FOR_OBJECT_REPLACEMENT, GEA_STORE_ADD_OBSERVER, GEA_STORE_CLEAR_ARRAY_INDEX_CACHE, GEA_STORE_COLLECT_DESCENDANT_OBSERVER_NODES, GEA_STORE_COLLECT_MATCHING_OBSERVER_NODES, GEA_STORE_COLLECT_MATCHING_OBSERVER_NODES_FROM_NODE, GEA_STORE_CREATE_PROXY, GEA_STORE_DELIVER_ARRAY_ITEM_PROP_BATCH, GEA_STORE_DELIVER_KNOWN_ARRAY_ITEM_PROP_BATCH, GEA_STORE_DELIVER_TOP_LEVEL_BATCH, GEA_STORE_EMIT_CHANGES, GEA_STORE_FLUSH_CHANGES, GEA_STORE_GET_BROWSER_ROOT_PROXY_HANDLER_FOR_TESTS, GEA_STORE_GET_CACHED_ARRAY_META, GEA_STORE_GET_DIRECT_TOP_LEVEL_OBSERVED_VALUE, GEA_STORE_GET_OBSERVER_NODE, GEA_STORE_GET_TOP_LEVEL_OBSERVED_VALUE, GEA_STORE_INTERCEPT_ARRAY_ITERATOR, GEA_STORE_INTERCEPT_ARRAY_METHOD, GEA_STORE_NORMALIZE_BATCH, GEA_STORE_NOTIFY_HANDLERS, GEA_STORE_NOTIFY_HANDLERS_WITH_VALUE, GEA_STORE_QUEUE_CHANGE, GEA_STORE_QUEUE_DIRECT_ARRAY_ITEM_PRIMITIVE_CHANGE, GEA_STORE_ROOT, GEA_STORE_SCHEDULE_FLUSH, GEA_STORE_TRACK_PENDING_CHANGE, GEA_SWAP_CHILD, GEA_SWAP_STATE_CHILDREN, GEA_SYNC_AUTOFOCUS, GEA_SYNC_DOM_REFS, GEA_SYNC_ITEMS, GEA_SYNC_MAP, GEA_SYNC_UNRENDERED_LIST_ITEMS, GEA_SYNC_VALUE_PROPS, GEA_TEARDOWN_SELF_LISTENERS, GEA_UPDATE_PROPS, GEA_UPDATE_TEXT, Link, Outlet, Router, RouterView, Store, applyListChanges, clearUidProvider, createRouter, gea as default, findPropertyDescriptor, geaCondPatchedSymbol, geaCondValueSymbol, __escapeHtml as geaEscapeHtml, geaListItemsSymbol, geaObservePrevSymbol, geaPrevGuardSymbol, __sanitizeAttr as geaSanitizeAttr, h, isClassConstructorValue, matchRoute, resetUidCounter, rootDeleteProperty, rootGetValue, rootSetValue, router, setUidProvider };
+export { Component, ComponentManager, GEA_APPLY_LIST_CHANGES, GEA_ATTACH_BINDINGS, GEA_ATTR_BINDINGS, GEA_BINDINGS, GEA_CHILD, GEA_CHILD_COMPONENTS, GEA_CLEANUP_BINDINGS, GEA_CLONE_ITEM, GEA_CLONE_TEMPLATE, GEA_COERCE_STATIC_PROP_VALUE, GEA_COMPILED_CHILD, GEA_COMPONENT_CLASSES, GEA_CONDS, GEA_CREATE_PROPS_PROXY, GEA_CTOR_AUTO_REGISTERED, GEA_CTOR_TAG_NAME, GEA_CURRENT_COMP_CLASS, GEA_DEPENDENCIES, GEA_DOM_COMPILED_CHILD_ROOT, GEA_DOM_COMPONENT, GEA_DOM_EVENT_HINT, GEA_DOM_ITEM, GEA_DOM_KEY, GEA_DOM_PARENT_CHAIN, GEA_DOM_PROPS, GEA_EL, GEA_ELEMENT, GEA_EL_CACHE, GEA_ENSURE_ARRAY_CONFIGS, GEA_EVENT_BINDINGS, GEA_EXTRACT_COMPONENT_PROPS, GEA_HANDLE_ITEM_HANDLER, GEA_ID, GEA_INSTANTIATE_CHILD_COMPONENTS, GEA_IS_ROUTER_OUTLET, GEA_ITEM_KEY, GEA_LAYOUTS, GEA_LIST_CONFIGS, GEA_LIST_CONFIG_REFRESHING, GEA_MAPS, GEA_MAP_CONFIG_COUNT, GEA_MAP_CONFIG_PREV, GEA_MAP_CONFIG_TPL, GEA_MOUNT_COMPILED_CHILD_COMPONENTS, GEA_NORMALIZE_PROP_NAME, GEA_OBSERVE, GEA_OBSERVER_REMOVERS, GEA_OBSERVE_LIST, GEA_ON_PROP_CHANGE, GEA_PARENT_COMPONENT, GEA_PATCH_COND, GEA_PATCH_NODE, GEA_PROP_BINDINGS, GEA_PROP_BINDING_ATTR_PREFIX, GEA_PROXY_GET_PATH, GEA_PROXY_GET_RAW_TARGET, GEA_PROXY_GET_TARGET, GEA_PROXY_IS_PROXY, GEA_PROXY_RAW, GEA_RAW_PROPS, GEA_REACTIVE_PROPS, GEA_RECONCILE_LIST, GEA_REFRESH_LIST, GEA_REGISTER_COND, GEA_REGISTER_MAP, GEA_RENDERED, GEA_REORDER_CHILDREN, GEA_REQUEST_RENDER, GEA_RESET_CHILD_TREE, GEA_RESET_ELS, GEA_ROUTER, GEA_ROUTER_DEPTH, GEA_ROUTES_APPLIED, GEA_SELF_LISTENERS, GEA_SELF_PROXY, GEA_SETUP_EVENT_DIRECTIVES, GEA_SETUP_LOCAL_STATE_OBSERVERS, GEA_SETUP_REFS, GEA_SKIP_ITEM_HANDLER, GEA_STATIC_ESCAPE_HTML, GEA_STATIC_SANITIZE_ATTR, GEA_STORE_ADD_DESCENDANTS_FOR_OBJECT_REPLACEMENT, GEA_STORE_ADD_OBSERVER, GEA_STORE_CLEAR_ARRAY_INDEX_CACHE, GEA_STORE_COLLECT_DESCENDANT_OBSERVER_NODES, GEA_STORE_COLLECT_MATCHING_OBSERVER_NODES, GEA_STORE_COLLECT_MATCHING_OBSERVER_NODES_FROM_NODE, GEA_STORE_CREATE_PROXY, GEA_STORE_DELIVER_ARRAY_ITEM_PROP_BATCH, GEA_STORE_DELIVER_KNOWN_ARRAY_ITEM_PROP_BATCH, GEA_STORE_DELIVER_TOP_LEVEL_BATCH, GEA_STORE_EMIT_CHANGES, GEA_STORE_FLUSH_CHANGES, GEA_STORE_GET_BROWSER_ROOT_PROXY_HANDLER_FOR_TESTS, GEA_STORE_GET_CACHED_ARRAY_META, GEA_STORE_GET_DIRECT_TOP_LEVEL_OBSERVED_VALUE, GEA_STORE_GET_OBSERVER_NODE, GEA_STORE_GET_TOP_LEVEL_OBSERVED_VALUE, GEA_STORE_INTERCEPT_ARRAY_ITERATOR, GEA_STORE_INTERCEPT_ARRAY_METHOD, GEA_STORE_NORMALIZE_BATCH, GEA_STORE_NOTIFY_HANDLERS, GEA_STORE_NOTIFY_HANDLERS_WITH_VALUE, GEA_STORE_QUEUE_CHANGE, GEA_STORE_QUEUE_DIRECT_ARRAY_ITEM_PRIMITIVE_CHANGE, GEA_STORE_ROOT, GEA_STORE_SCHEDULE_FLUSH, GEA_STORE_TRACK_PENDING_CHANGE, GEA_SWAP_CHILD, GEA_SWAP_STATE_CHILDREN, GEA_SYNC_AUTOFOCUS, GEA_SYNC_DOM_REFS, GEA_SYNC_ITEMS, GEA_SYNC_MAP, GEA_SYNC_UNRENDERED_LIST_ITEMS, GEA_SYNC_VALUE_PROPS, GEA_TEARDOWN_SELF_LISTENERS, GEA_UPDATE_PROPS, GEA_UPDATE_TEXT, Link, Outlet, Router, RouterView, Store, applyListChanges, clearUidProvider, createRouter, gea as default, findPropertyDescriptor, geaCondPatchedSymbol, geaCondValueSymbol, __escapeHtml as geaEscapeHtml, geaListItemsSymbol, geaObservePrevSymbol, geaPrevGuardSymbol, __sanitizeAttr as geaSanitizeAttr, h, isClassConstructorValue, matchRoute, resetUidCounter, rootDeleteProperty, rootGetValue, rootSetValue, router, setUidProvider, stashComponentForTransfer };
 
 //# sourceMappingURL=index.mjs.map
