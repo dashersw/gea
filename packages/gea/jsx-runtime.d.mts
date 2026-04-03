@@ -1,11 +1,11 @@
-import type { DetailedHTMLProps, JSX as ReactJSX, Ref, SVGProps } from 'react'
+import type { CSSProperties, DetailedHTMLProps, JSX as ReactJSX, Ref, SVGProps } from 'react'
 
-/** Gea: `ref={this.field}` assigns the node to an instance field; the field may be typed `T | null`. */
+/** Widen `ref` (Gea assigns nodes to instance fields) and `style` (Gea accepts plain CSS strings). */
 type GeaWidenRef<P> =
   P extends DetailedHTMLProps<infer _E, infer T>
-    ? Omit<P, 'ref'> & { ref?: Ref<T> | (T | null) | undefined }
+    ? Omit<P, 'ref' | 'style'> & { ref?: Ref<T> | (T | null) | undefined; style?: CSSProperties | string | undefined }
     : P extends SVGProps<infer T>
-      ? Omit<P, 'ref'> & { ref?: Ref<T> | (T | null) | undefined }
+      ? Omit<P, 'ref' | 'style'> & { ref?: Ref<T> | (T | null) | undefined; style?: CSSProperties | string | undefined }
       : P
 
 type GeaIntrinsicElements = {
