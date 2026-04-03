@@ -208,7 +208,13 @@ Dark mode activates with the `dark` class on `<html>`:
 <html class="dark">
 ```
 
-Key CSS variables: `--background`, `--foreground`, `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, `--radius`, `--card`, `--popover` (each with a `-foreground` counterpart).
+Base color CSS variables: `--background`, `--foreground`.
+
+Color CSS variables related to elements containing text (styled with `-foreground` counterpart): `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--card`, `--popover`.
+
+Color CSS variables related to elements without text: `--border`, `--input` (input field borders), `--ring` (focus ring color), `--dialog-background`.
+
+Other CSS variables: `--radius` (base border radius).
 
 ## Styling components
 

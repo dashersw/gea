@@ -35,6 +35,7 @@ The theme stylesheet (`@geajs/ui/style.css`) defines variables in HSL format on 
   --border: 214 32% 91%;
   --input: 214 32% 91%;
   --ring: 222 47% 11%;
+  --dialog-background: var(--background);
 
   --radius: 0.5rem;
 }
@@ -58,6 +59,7 @@ Each variable holds the HSL values without the `hsl()` wrapper. The theme CSS ma
 | `--input` | Input field borders |
 | `--ring` | Focus ring color |
 | `--radius` | Base border radius (components derive `lg`, `md`, `sm` from this) |
+| `--dialog-background` | Dialog content background, useful mainly for dark theme |
 
 ## Dark Mode
 
@@ -98,6 +100,7 @@ Then define dark-mode overrides:
   --border: 217 33% 17%;
   --input: 217 33% 17%;
   --ring: 212 27% 84%;
+  --dialog-background: 344.35 7.21% 9.8%;
 }
 ```
 
