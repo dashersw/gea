@@ -1260,18 +1260,17 @@ export class Store {
           store[GEA_STORE_CLEAR_ARRAY_INDEX_CACHE](arr)
           const previousOrder = arr.slice()
           Array.prototype[method].apply(arr, args)
-          const used = new Array(previousOrder.length).fill(false)
+          const indexLookup = new Map<any, { indices: number[]; next: number }>()
+          for (let i = 0; i < previousOrder.length; i++) {
+            const v = previousOrder[i]
+            const bucket = indexLookup.get(v)
+            if (bucket) bucket.indices.push(i)
+            else indexLookup.set(v, { indices: [i], next: 0 })
+          }
           const permutation = new Array(arr.length)
           for (let i = 0; i < arr.length; i++) {
-            let previousIndex = -1
-            for (let j = 0; j < previousOrder.length; j++) {
-              if (used[j]) continue
-              if (previousOrder[j] !== arr[i]) continue
-              previousIndex = j
-              used[j] = true
-              break
-            }
-            permutation[i] = previousIndex === -1 ? i : previousIndex
+            const bucket = indexLookup.get(arr[i])
+            permutation[i] = bucket ? bucket.indices[bucket.next++] : i
           }
           store[GEA_STORE_EMIT_CHANGES]([
             {
