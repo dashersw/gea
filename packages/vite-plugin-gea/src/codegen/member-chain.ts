@@ -138,8 +138,34 @@ const GEA_COMPILER_SYMBOL_IMPORTS = [
 ] as const
 
 export function ensureGeaCompilerSymbolImports(ast: t.File): void {
-  for (const name of GEA_COMPILER_SYMBOL_IMPORTS) {
+  const symbolSet: ReadonlySet<string> = new Set(GEA_COMPILER_SYMBOL_IMPORTS)
+  const used = new Set<string>()
+
+  for (const node of ast.program.body) {
+    collectReferencedSymbols(node, symbolSet, used)
+  }
+
+  for (const name of used) {
     ensureImport(ast, '@geajs/core', name)
+  }
+}
+
+function collectReferencedSymbols(node: any, symbols: ReadonlySet<string>, out: Set<string>): void {
+  if (node == null || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const child of node) collectReferencedSymbols(child, symbols, out)
+    return
+  }
+
+  if (node.type === 'ImportDeclaration') return
+
+  if (node.type === 'Identifier' && symbols.has(node.name)) {
+    out.add(node.name)
+  }
+
+  for (const key of Object.keys(node)) {
+    if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' || key === 'leadingComments' || key === 'trailingComments' || key === 'innerComments') continue
+    collectReferencedSymbols(node[key], symbols, out)
   }
 }
 
