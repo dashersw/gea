@@ -1,4 +1,9 @@
-import { GEA_DOM_COMPONENT, GEA_PARENT_COMPONENT, GEA_PROXY_GET_RAW_TARGET, geaListItemsSymbol } from '@geajs/core'
+import {
+  GEA_DOM_COMPONENT,
+  GEA_PARENT_COMPONENT,
+  GEA_PROXY_GET_RAW_TARGET,
+  stashComponentForTransfer,
+} from '@geajs/core'
 
 export interface DragResult {
   draggableId: string
