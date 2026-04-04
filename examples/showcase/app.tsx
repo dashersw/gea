@@ -392,7 +392,7 @@ export default class App extends Component {
                 <p>Drag-and-drop or click to upload files.</p>
               </div>
               <div class="component-card-body">
-                <FileUpload maxFiles={3} multiple />
+                <FileUpload maxFiles={3} />
               </div>
             </div>
 

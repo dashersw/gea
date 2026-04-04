@@ -172,7 +172,7 @@ export default class App extends Component {
             <CardDescription>Upload identity documents for verification.</CardDescription>
           </CardHeader>
           <CardContent>
-            <FileUpload label="Upload Files" maxFiles={3} multiple />
+            <FileUpload label="Upload Files" maxFiles={3} />
           </CardContent>
         </Card>
 

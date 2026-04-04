@@ -382,14 +382,32 @@ Drag-and-drop file upload area.
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
-| `label` | `string` | — | Label text |
-| `accept` | `string \| Record<string, string[]>` | — | Accepted file types |
+| `label` | `JSXNode` | — | Label text |
+| `accept` | `string \| string[] \| Record<string, string[]>` | — | Accepted file types |
 | `maxFiles` | `number` | — | Maximum number of files |
-| `multiple` | `boolean` | — | Allow multiple files |
-| `onFileChange` | `(details) => void` | — | Files changed |
+| `minFileSize` | `number` | — | Minimum file size in bytes |
+| `maxFileSize` | `number` | — | Maximum file size in bytes |
+| `allowDrop` | `boolean` | `true` | Allow drag&drop selection |
+| `preventDocumentDrop` | `boolean` | `true` | Prevent dropping file outside the dropzone |
+| `name` | `string` | — | Input name (for usage in form) |
+| `class` | `string` | — | Class name(s) added to the root element |
+| `disabled` | `boolean` | `false` | Disable interaction |
+| `formatFileSize` | `(bytes: number) => string` | localized, 2 decimal points, suffix | Function formatting file size in the file list |
+| `onFileChange` | `(details: { acceptedFiles: File[], rejectedFiles: { file: File, errors: string[] }[] }) => void` | — | Called when files are selected  |
+| `translations` | `Partial<FileUploadTranslations>` | see Translations | Override UI strings |
+
+#### Translations
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `dropzone` | `string` | Drag and drop files here | Default dropzone text |
+| `dropzoneButton` | `string` | Choose Files | Button triggering file selection |
+| `dropzoneActive` | `string` | Drop your files here | Dropzone text while files are being dragged |
+| `deleteFile` | `(file: File) => string` | ``(file: File) => `Remove file ${file.name}` `` | Button removing single file from the list |
+| `clearAllButton` | `string` | Clear all | Button removing all files from the list |
 
 ```tsx
-<FileUpload label="Upload images" accept="image/*" maxFiles={3} multiple />
+<FileUpload label="Upload images" accept="image/*" maxFiles={3} />
 ```
 
 ### HoverCard
