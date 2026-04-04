@@ -195,6 +195,17 @@ function tryResolveEntry(
     return childResult
   }
 
+  // --- SSG route config: { component, ... } ---
+  if (
+    typeof entry === 'object' &&
+    entry !== null &&
+    'component' in entry &&
+    !('children' in entry) &&
+    !('redirect' in entry)
+  ) {
+    return tryResolveEntry(pattern, (entry as any).component, path, search, result)
+  }
+
   // --- Leaf: function or component ---
   const match = matchRoute(pattern, path)
   if (!match) return null

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "emitDeclarationOnly": true,
+    "lib": ["ES2020"],
+    "types": ["node"],
+    "declaration": true,
+    "strict": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true
+  },
+  "include": ["./src/**/*.ts", "./tests/**/*.ts"]
+}

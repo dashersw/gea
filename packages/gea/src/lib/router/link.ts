@@ -18,6 +18,7 @@ export interface LinkProps {
 
 export default class Link extends Component<LinkProps> {
   static _router: any = null
+  static _ssgCurrentPath: string | null = null
 
   private _clickHandler: ((e: MouseEvent) => void) | null = null
   private _observerRemover: (() => void) | null = null
@@ -27,7 +28,20 @@ export default class Link extends Component<LinkProps> {
     const target = props.target ? ` target="${escapeAttr(props.target)}"` : ''
     const rel = props.rel ? ` rel="${escapeAttr(props.rel)}"` : ''
     const content = props.children ?? props.label ?? ''
-    return `<a id="${this.id}" href="${escapeAttr(props.to)}"${cls}${target}${rel}>${content}</a>` as any
+
+    let activeAttr = ''
+    const ssgPath = Link._ssgCurrentPath
+    if (ssgPath !== null) {
+      const to = props.to
+      const active = props.exact
+        ? ssgPath === to
+        : to === '/'
+          ? ssgPath === '/'
+          : ssgPath === to || ssgPath.startsWith(to + '/')
+      if (active) activeAttr = ' data-active'
+    }
+
+    return `<a id="${this.id}" href="${escapeAttr(props.to)}"${cls}${target}${rel}${activeAttr}>${content}</a>` as any
   }
 
   onAfterRender() {

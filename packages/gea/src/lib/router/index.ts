@@ -32,10 +32,13 @@ export { Link }
 export { Outlet }
 export { RouterView }
 export { matchRoute } from './match'
+export { resolveRoute } from './resolve'
 export type {
   RouteMap,
   RouteEntry,
   RouteGroupConfig,
+  SSGRouteConfig,
+  ResolvedRoute,
   RouterOptions,
   GuardFn,
   GuardResult,

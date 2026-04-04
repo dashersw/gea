@@ -24,10 +24,7 @@ export function resetUidCounter(seed: number = 0): void {
 /** Register a context-scoped UID provider (called by SSR package).
  *  Provider returns next UID string, or null to fall back to global counter.
  *  Reset returns true if it handled the reset, false to fall through. */
-export function setUidProvider(
-  provider: () => string | null,
-  reset: (seed: number) => boolean,
-): void {
+export function setUidProvider(provider: () => string | null, reset: (seed: number) => boolean): void {
   uidProvider = provider
   resetProvider = reset
 }

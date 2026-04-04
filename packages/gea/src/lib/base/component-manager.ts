@@ -155,6 +155,10 @@ interface ComponentLike {
 }
 
 const createElement = (() => {
+  if (typeof document === 'undefined') {
+    return (htmlString: string): HTMLElement => htmlString as any
+  }
+
   let template: HTMLTemplateElement | null = null
 
   return (htmlString: string): HTMLElement => {

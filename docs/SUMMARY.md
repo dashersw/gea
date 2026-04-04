@@ -46,6 +46,7 @@
 ## Tooling
 
 - [Vite Plugin](tooling/vite-plugin.md)
+- [Static Site Generation](tooling/ssg.md)
 - [create-gea](tooling/create-gea.md)
 - [VS Code Extension](tooling/vscode-extension.md)
 

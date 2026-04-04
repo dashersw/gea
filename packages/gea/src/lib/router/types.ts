@@ -31,11 +31,18 @@ export interface RouteGroupConfig {
   children: RouteMap
 }
 
+export interface SSGRouteConfig {
+  component: ComponentOrLazy
+  content?: string
+  paths?: Array<{ params: Record<string, string> }>
+}
+
 export type RouteEntry =
   | ComponentOrLazy // direct component or lazy
   | string // static redirect
   | RedirectConfig // full redirect control
   | RouteGroupConfig // nested group with layout/guard/children
+  | SSGRouteConfig // SSG static generation config
 
 // Note: dynamic redirects (functions returning strings) are expressed as RedirectConfig
 // with redirect as a function, NOT as bare functions. This avoids ambiguity with LazyComponent.

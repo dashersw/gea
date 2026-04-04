@@ -202,6 +202,7 @@ export default class Component<P = Record<string, any>> extends Store {
   declare state: unknown
   declare setState: (...args: any[]) => void
   declare forceUpdate: (...args: any[]) => void
+  static _ssgMode = false
 
   declare props: P
 
@@ -234,11 +235,13 @@ export default class Component<P = Record<string, any>> extends Store {
 
     ComponentManager.getInstance().setComponent(this)
 
-    this.created(this.props)
-    this.createdHooks(this.props)
+    if (!Component._ssgMode) {
+      this.created(this.props)
+      this.createdHooks(this.props)
 
-    if (typeof (this as any)[GEA_SETUP_LOCAL_STATE_OBSERVERS] === 'function') {
-      ;(this as any)[GEA_SETUP_LOCAL_STATE_OBSERVERS]()
+      if (typeof (this as any)[GEA_SETUP_LOCAL_STATE_OBSERVERS] === 'function') {
+        ;(this as any)[GEA_SETUP_LOCAL_STATE_OBSERVERS]()
+      }
     }
   }
 
