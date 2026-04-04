@@ -164,7 +164,16 @@ function collectReferencedSymbols(node: any, symbols: ReadonlySet<string>, out: 
   }
 
   for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' || key === 'leadingComments' || key === 'trailingComments' || key === 'innerComments') continue
+    if (
+      key === 'type' ||
+      key === 'start' ||
+      key === 'end' ||
+      key === 'loc' ||
+      key === 'leadingComments' ||
+      key === 'trailingComments' ||
+      key === 'innerComments'
+    )
+      continue
     collectReferencedSymbols(node[key], symbols, out)
   }
 }
