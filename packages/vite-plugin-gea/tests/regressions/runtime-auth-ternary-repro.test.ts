@@ -3,13 +3,13 @@ import test from 'node:test'
 import { installDom } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
 
-/** Matches repro `setTimeout(..., 1000)` — wait past the async boundary. */
-async function sleepAuthDelay(): Promise<void> {
-  await new Promise<void>((r) => setTimeout(r, 2000))
-}
-
-async function pause(): Promise<void> {
-  await new Promise<void>((r) => setTimeout(r, 500))
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out after ' + timeoutMs + 'ms')
+    await new Promise<void>((r) => setTimeout(r, 50))
+  }
+  await new Promise<void>((r) => setTimeout(r, 50))
 }
 
 /**
@@ -41,6 +41,7 @@ type ReproMount = {
     init: () => void
     signIn: () => void
     signOut: () => void
+    destroy: () => void
   }
 }
 
@@ -55,29 +56,40 @@ async function mountRepro(seed: string): Promise<ReproMount> {
   class AuthStore extends Store {
     isAuthenticated = false
     isLoading = true
+    private _timers: ReturnType<typeof setTimeout>[] = []
 
     init() {
-      // Simulate async session check (like getUser() returning null)
-      setTimeout(() => {
-        this.isAuthenticated = false
-        this.isLoading = false
-      }, 1000)
+      this._timers.push(
+        setTimeout(() => {
+          this.isAuthenticated = false
+          this.isLoading = false
+        }, 1000),
+      )
     }
 
     signIn() {
       this.isLoading = true
-      setTimeout(() => {
-        this.isAuthenticated = true
-        this.isLoading = false
-      }, 1000)
+      this._timers.push(
+        setTimeout(() => {
+          this.isAuthenticated = true
+          this.isLoading = false
+        }, 1000),
+      )
     }
 
     signOut() {
       this.isLoading = true
-      setTimeout(() => {
-        this.isAuthenticated = false
-        this.isLoading = false
-      }, 1000)
+      this._timers.push(
+        setTimeout(() => {
+          this.isAuthenticated = false
+          this.isLoading = false
+        }, 1000),
+      )
+    }
+
+    destroy() {
+      for (const t of this._timers) clearTimeout(t)
+      this._timers.length = 0
     }
   }
 
@@ -212,7 +224,7 @@ test('repro: DetailsEarlyReturn column tracks auth store (init, sign in, sign ou
 
     assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Loading...')
 
-    await sleepAuthDelay()
+    await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isLoading, false)
     assert.equal(authStore.isAuthenticated, false)
@@ -222,20 +234,20 @@ test('repro: DetailsEarlyReturn column tracks auth store (init, sign in, sign ou
     )
 
     authStore.signIn()
-    await pause()
+    await waitFor(() => authStore.isLoading)
     assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Loading...')
 
-    await sleepAuthDelay()
+    await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isAuthenticated, true)
     assert.equal(authStore.isLoading, false)
     assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Authenticated content here')
 
     authStore.signOut()
-    await pause()
+    await waitFor(() => authStore.isLoading)
     assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Loading...')
 
-    await sleepAuthDelay()
+    await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isAuthenticated, false)
     assert.equal(authStore.isLoading, false)
@@ -244,6 +256,7 @@ test('repro: DetailsEarlyReturn column tracks auth store (init, sign in, sign ou
       'Not authenticated - sign in required',
     )
 
+    authStore.destroy()
     app.dispose()
   } finally {
     restoreDom()
@@ -263,7 +276,7 @@ test('repro: Details ternary column tracks auth store (init, sign in, sign out)'
 
     assert.equal(conditionalParagraphText(detailsUnderTernaryColumn(app.el)), 'Loading...')
 
-    await sleepAuthDelay()
+    await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isLoading, false)
     assert.equal(authStore.isAuthenticated, false)
@@ -274,25 +287,26 @@ test('repro: Details ternary column tracks auth store (init, sign in, sign out)'
     )
 
     authStore.signIn()
-    await pause()
+    await waitFor(() => authStore.isLoading)
     assert.equal(conditionalParagraphText(detailsUnderTernaryColumn(app.el)), 'Loading...')
 
-    await sleepAuthDelay()
+    await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isAuthenticated, true)
     assert.equal(authStore.isLoading, false)
     assert.equal(conditionalParagraphText(detailsUnderTernaryColumn(app.el)), 'Authenticated content here')
 
     authStore.signOut()
-    await pause()
+    await waitFor(() => authStore.isLoading)
     assert.equal(conditionalParagraphText(detailsUnderTernaryColumn(app.el)), 'Loading...')
 
-    await sleepAuthDelay()
+    await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isAuthenticated, false)
     assert.equal(authStore.isLoading, false)
     assert.equal(conditionalParagraphText(detailsUnderTernaryColumn(app.el)), 'Not authenticated - sign in required')
 
+    authStore.destroy()
     app.dispose()
   } finally {
     restoreDom()
