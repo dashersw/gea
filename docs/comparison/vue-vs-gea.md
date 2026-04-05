@@ -394,9 +394,9 @@ No `emit`, no `v-model`, no `defineModel`. The child mutates the shared proxy di
 | --- | --- | --- |
 | Vue 3.5 | ~33 kb | Rendering only |
 | Vue 3.5 + Vue Router 5 + Pinia 3 | **~35 kb** | Rendering + state + routing |
-| Gea | **~13 kb** | Rendering + state + routing |
+| Gea | **~19 kb** | Rendering + state + routing |
 
-Vue includes a template compiler, virtual DOM runtime, reactivity system, and component runtime — but not a router or state manager. With Vue Router and Pinia, the total comes to ~35 kb gzipped. Gea moves most work to build time, ships state management and routing out of the box, and still comes in at ~13 kb — **2.7x smaller** than a comparable Vue stack.
+Vue includes a template compiler, virtual DOM runtime, reactivity system, and component runtime — but not a router or state manager. With Vue Router and Pinia, the total comes to ~35 kb gzipped. Gea moves most work to build time, ships state management and routing out of the box, and still comes in at ~19 kb — **1.8x smaller** than a comparable Vue stack.
 
 ## Directives vs Plain JavaScript
 

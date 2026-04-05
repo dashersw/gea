@@ -15,7 +15,7 @@ The "magic" is invisible and lives entirely in the build step. The Vite plugin a
 ## Key Features
 
 - **Batteries included** — state management and routing are built in, solving the biggest pain points of modern frontend development out of the box
-- **~13 kb gzipped** with the router, ~10 kb without — zero runtime dependencies
+- **~19 kb gzipped** with the router, ~15 kb without — zero runtime dependencies
 - **Compile-time JSX** — the Vite plugin transforms JSX into HTML strings and generates targeted DOM patches
 - **Proxy-based reactivity** — mutate state directly and the framework handles updates automatically
 - **Class and function components** — use classes for stateful logic, functions for presentational UI

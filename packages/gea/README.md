@@ -5,7 +5,7 @@
 
 # Gea
 
-A batteries-included, reactive JavaScript UI framework with compile-time JSX and proxy-based stores. No virtual DOM — the Vite plugin analyzes your JSX at build time and generates surgical DOM patches that update only what changed. ~13 kb gzipped with the built-in router, ~10 kb without. Zero runtime dependencies.
+A batteries-included, reactive JavaScript UI framework with compile-time JSX and proxy-based stores. No virtual DOM — the Vite plugin analyzes your JSX at build time and generates surgical DOM patches that update only what changed. ~19 kb gzipped with the built-in router, ~15 kb without. Zero runtime dependencies.
 
 ## Philosophy
 

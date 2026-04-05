@@ -2,7 +2,7 @@
 
 Gea can be used directly in the browser without any build tools, bundlers, or package managers. Load the runtime from a CDN and start writing components in a plain `<script>` tag.
 
-The browser bundle is **13 KB gzipped** and includes everything: `Store`, `Component`, `Router`, event delegation, and list reconciliation.
+The browser bundle is **20 KB gzipped** and includes everything: `Store`, `Component`, `Router`, event delegation, and list reconciliation.
 
 ## Quick Start
 
@@ -235,7 +235,7 @@ Babel Standalone adds **~200 KB gzipped** to the page. This is fine for prototyp
 
 | | Browser (no build) | Browser + Babel | Vite (compiled) |
 |---|---|---|---|
-| Bundle size | 13 KB | ~213 KB | 13 KB + your app |
+| Bundle size | 20 KB | ~220 KB | ~15 KB + your app |
 | JSX | No (template literals) | Yes | Yes |
 | Automatic reactivity | No (manual `observe()`) | No (manual `observe()`) | Yes (compiler-generated) |
 | Build step | None | None | Vite |

@@ -5,7 +5,7 @@
 
 # Gea
 
-A batteries-included, reactive JavaScript UI framework. No virtual DOM. Compile-time JSX transforms. Proxy-based stores. Surgical DOM patching. Built-in state management and routing. ~13 kb gzipped with the router, ~10 kb without.
+A batteries-included, reactive JavaScript UI framework. No virtual DOM. Compile-time JSX transforms. Proxy-based stores. Surgical DOM patching. Built-in state management and routing. ~19 kb gzipped with the router, ~15 kb without.
 
 Gea compiles your JSX into efficient HTML string templates at build time, tracks state changes through deep proxies, and patches only the DOM nodes that actually depend on the changed data — no diffing, no reconciliation overhead.
 
@@ -86,7 +86,7 @@ Gea is built on the philosophy of the beautifully simple [erste.js](https://gith
 - **No virtual DOM.** The Vite plugin analyzes your JSX at build time and generates targeted DOM patches. Updates touch only the elements that changed.
 - **Proxy-based reactivity.** Mutate state directly — `this.count++` — and the framework handles the rest. The compile-time analysis makes your regular JS fully reactive without you conforming to arbitrary rules.
 - **Batteries included.** State management and routing are built in — no decision fatigue, no extra packages. Gea ships a default solution for the biggest pain points of modern frontend development.
-- **Tiny footprint.** ~13 kb gzipped with the full router, ~10 kb without. Zero runtime dependencies.
+- **Tiny footprint.** ~19 kb gzipped with the full router, ~15 kb without. Zero runtime dependencies.
 - **Familiar JSX.** Write JSX with `class` instead of `className` and lowercase event attributes (`click`, `input`, `change`) instead of `onClick`.
 - **Props that follow JavaScript.** Objects and arrays passed as props are the parent's reactive proxy — the child can mutate them and both update. Primitives are copies, just like function arguments in JS. No `emit`, no `v-model`, no callback wiring.
 - **Class and function components.** Use class components for stateful logic and lifecycle hooks, function components for presentational UI. The Vite plugin converts function components to classes at build time.
@@ -99,7 +99,7 @@ Gea is the fastest compiled UI framework — closer to hand-written vanilla Java
 
 | | Gea | React | Vue |
 | --- | --- | --- | --- |
-| Bundle size (min+gz) | **~13 kb** | ~74 kb | ~35 kb |
+| Bundle size (min+gz) | **~19 kb** | ~74 kb | ~35 kb |
 | What's included | Rendering + state + routing | + React Router + Zustand | + Vue Router + Pinia |
 | Virtual DOM | No | Yes | Yes |
 | Reactivity | Proxy-based, automatic | Explicit (`setState`, hooks) | Proxy-based (`ref`/`reactive`) |
