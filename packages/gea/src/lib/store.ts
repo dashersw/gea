@@ -661,6 +661,7 @@ let _globalFlushScheduled = false
 
 function _flushAllPending(): void {
   _globalFlushScheduled = false
+  let firstError: unknown
   while (_pendingStores.size > 0) {
     const batch = [..._pendingStores]
     _pendingStores.clear()
@@ -668,12 +669,17 @@ function _flushAllPending(): void {
       const raw = batch[i]
       const p = storeInstancePrivate.get(raw)!
       if (p.pendingChanges.length > 0) {
-        _flushChanges(raw, p)
+        try {
+          _flushChanges(raw, p)
+        } catch (e) {
+          if (!firstError) firstError = e
+        }
       } else {
         p.flushScheduled = false
       }
     }
   }
+  if (firstError) throw firstError
 }
 
 function _scheduleFlush(p: StoreInstancePrivate, raw: Store): void {
@@ -1042,6 +1048,7 @@ export class Store {
   static flushAll(): void {
     if (_flushing) return
     _flushing = true
+    let firstError: unknown
     try {
       while (_pendingStores.size > 0) {
         const batch = [..._pendingStores]
@@ -1050,7 +1057,11 @@ export class Store {
           const raw = batch[i]
           const p = storeInstancePrivate.get(raw)!
           if (p.pendingChanges.length > 0) {
-            _flushChanges(raw, p)
+            try {
+              _flushChanges(raw, p)
+            } catch (e) {
+              if (!firstError) firstError = e
+            }
           } else {
             p.flushScheduled = false
           }
@@ -1059,6 +1070,7 @@ export class Store {
     } finally {
       _flushing = false
     }
+    if (firstError) throw firstError
   }
 
   static rootGetValue(t: Store, prop: string, receiver: any): any {
