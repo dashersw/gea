@@ -49392,8 +49392,7 @@ function walk(node, fn) {
   for (const key of keys) {
     const child = node[key];
     if (Array.isArray(child)) {
-      for (const c of child)
-        if (c?.type) walk(c, fn);
+      for (const c of child) if (c?.type) walk(c, fn);
     } else if (child?.type) walk(child, fn);
   }
 }
@@ -49485,8 +49484,11 @@ function hoistDuplicateValueSubprops(block) {
 function containsPropRefreshCall(node) {
   let found = false;
   walk(node, (n) => {
-    if (libExports.isMemberExpression(n) && libExports.isIdentifier(n.property) && (n.property.name === "GEA_UPDATE_PROPS" || n.property.name.startsWith("__refresh")))
-      found = true;
+    if (libExports.isMemberExpression(n) && libExports.isIdentifier(n.property)) {
+      const name = n.property.name;
+      if (name === "GEA_UPDATE_PROPS" || name === "GEA_SYNC_MAP" || name === "GEA_PATCH_COND" || name.startsWith("__refresh"))
+        found = true;
+    }
   });
   return found;
 }
@@ -49551,7 +49553,8 @@ function isPure(e) {
     return isPure(e.object) && (!e.computed || isPure(e.property));
   if (libExports.isConditionalExpression(e))
     return isPure(e.test) && isPure(e.consequent) && isPure(e.alternate);
-  if (libExports.isBinaryExpression(e) || libExports.isLogicalExpression(e)) return isPure(e.left) && isPure(e.right);
+  if (libExports.isBinaryExpression(e) || libExports.isLogicalExpression(e))
+    return isPure(e.left) && isPure(e.right);
   if (libExports.isUnaryExpression(e)) return isPure(e.argument);
   if (libExports.isArrayExpression(e)) return e.elements.every((el) => el == null || libExports.isExpression(el) && isPure(el));
   if (libExports.isObjectExpression(e))
@@ -50171,6 +50174,21 @@ function buildRefCacheAndApply(entries, elVar, lazyCache) {
   }
   for (const entry of entries) {
     const navExpr = entry.childPath.length > 0 ? refMap.get(entry.childPath.join("_")) || buildElementNavExpr(elVar, entry.childPath) : elVar;
+    if (!lazyCache && entry.type === "className" && libExports.isConditionalExpression(entry.expression) && libExports.isStringLiteral(entry.expression.alternate) && entry.expression.alternate.value === "") {
+      stmts.push(
+        libExports.ifStatement(
+          libExports.cloneNode(entry.expression.test, true),
+          libExports.expressionStatement(
+            libExports.assignmentExpression(
+              "=",
+              libExports.memberExpression(navExpr, libExports.identifier("className")),
+              buildTrimmedClassValueExpression(libExports.cloneNode(entry.expression.consequent, true))
+            )
+          )
+        )
+      );
+      continue;
+    }
     const emitType = entry.type === "className" ? "class" : entry.type;
     stmts.push(...emitPatch(emitType, navExpr, entry.expression, { attributeName: entry.attributeName }));
   }

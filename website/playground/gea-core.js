@@ -55,6 +55,9 @@ const GEA_PROXY_GET_TARGET = /* @__PURE__ */ Symbol.for("gea.proxy.getTarget");
 const GEA_PROXY_GET_PATH = /* @__PURE__ */ Symbol.for("gea.proxy.getPath");
 /** Router: Outlet / RouterView marker (avoid string keys on component instances). */
 const GEA_IS_ROUTER_OUTLET = /* @__PURE__ */ Symbol.for("gea.router.isOutlet");
+/** Router internals shared between RouterView and Outlet (cross-instance). */
+const GEA_ROUTER_DEPTH = /* @__PURE__ */ Symbol.for("gea.router.depth");
+const GEA_ROUTER_REF = /* @__PURE__ */ Symbol.for("gea.router.ref");
 /**
 * Serialized `data-prop-*` attribute values that reference `GEA_PROP_BINDINGS` map keys.
 * DOM cannot store symbols; this prefix marks engine-owned binding tokens (not user strings).
@@ -232,10 +235,10 @@ function _mkAppend(property, target, pathParts, start, count, newValue) {
 		newValue
 	};
 }
-function _commitObjSet(store, isNew, prop, obj, objPathParts, val, old, unwrapAppend, aMeta, leafFn) {
+function _commitObjSet(store, isNew, prop, obj, objPathParts, val, old, unwrapAppend, p, aMeta, leafFn) {
 	const c = _isArr(old) && _isArr(val) && val.length > old.length && _isAppend(old, val, unwrapAppend) ? _mkAppend(prop, obj, objPathParts, old.length, val.length - old.length, val.slice(old.length)) : _mkChange(isNew ? "add" : "update", prop, obj, objPathParts, val, old);
 	if (aMeta && leafFn) _tagArrayItem(c, aMeta, leafFn(prop));
-	_pushAndSchedule(store, c);
+	_pushAndSchedule(store, c, p);
 }
 function shouldWrapNestedReactiveValue(value) {
 	return value != null && typeof value === "object" && _isPlain(value);
@@ -302,16 +305,20 @@ function findPropertyDescriptor(obj, prop) {
 		if (d) return d;
 	}
 }
-const _skipRx = /^(props|events|compiledItems|routeConfig|_\w)/;
+const _skipRx = /^(props|events|compiledItems|routeConfig)\b/;
 function shouldSkipReactiveWrapForPath(basePath) {
-	return _skipRx.test(basePath);
+	if (_skipRx.test(basePath)) return true;
+	const dot = basePath.indexOf(".");
+	const head = dot === -1 ? basePath : basePath.slice(0, dot);
+	if (head === "_items" || /^_[a-zA-Z][a-zA-Z0-9]*Items$/.test(head)) return true;
+	return false;
 }
 const _pendingStores = /* @__PURE__ */ new Set();
 const _emptyArr = [];
 let _flushing = false;
 let _browserRootProxyHandler;
-function _rootPathPartsCache(t, prop) {
-	const m = getPriv(t).pathPartsCache;
+function _rootPathPartsCache(priv, prop) {
+	const m = priv.pathPartsCache;
 	let p = m.get(prop);
 	if (!p) m.set(prop, p = [prop]);
 	return p;
@@ -384,9 +391,9 @@ function _addObserver(store, pathParts, handler) {
 		}
 	};
 }
-function _collectMatchingNodes(store, pathParts) {
+function _collectMatchingNodes(root, pathParts) {
 	const matches = [];
-	let node = getPriv(store).observerRoot;
+	let node = root;
 	if (node.handlers.size > 0) matches.push(node);
 	for (let i = 0; i < pathParts.length; i++) {
 		node = node.children.get(pathParts[i]);
@@ -403,32 +410,34 @@ function _collectDescendantNodes(node, matches) {
 }
 /** When a property is replaced with a new object, descendant observers
 *  must be notified because their nested values may have changed. */
-function _getObserverNode(store, pathParts) {
-	let node = getPriv(store).observerRoot;
+function _getObserverNode(root, pathParts) {
+	let node = root;
 	for (let i = 0; i < pathParts.length; i++) {
 		node = node.children.get(pathParts[i]);
 		if (!node) return null;
 	}
 	return node;
 }
-function _notify(store, node, relevant, value) {
-	const v = arguments.length > 3 ? value : getByPathParts(storeRaw(store), node.pathParts);
+function _notify(raw, node, relevant, value) {
+	const v = arguments.length > 3 ? value : getByPathParts(raw, node.pathParts);
 	for (const handler of node.handlers) handler(v, relevant);
 }
-function _topProxy(store, prop, value) {
-	const p = getPriv(store);
-	const entry = p.topLevelProxies.get(prop);
-	if (entry && entry[0] === value) return entry[1];
-	const proxy = _createProxy(store, value, prop, [prop]);
+function _topProxy(store, prop, value, p) {
+	if (!p) {
+		p = getPriv(store);
+		const entry = p.topLevelProxies.get(prop);
+		if (entry && entry[0] === value) return entry[1];
+	}
+	const proxy = _createProxy(store, value, prop, [prop], void 0, p);
 	p.topLevelProxies.set(prop, [value, proxy]);
 	return proxy;
 }
-function _getTopLevelValue(store, change) {
+function _getTopLevelValue(raw, change) {
 	if (change.type === "delete") return void 0;
-	const value = store[change.property];
+	const value = raw[change.property];
 	if (value == null || typeof value !== "object") return value;
 	if (!_isPlain(value)) return value;
-	return _topProxy(store, change.property, value);
+	return _topProxy(raw, change.property, value);
 }
 function _tagArrayItem(c, m, leafParts) {
 	c.arrayPathParts = m.arrayPathParts;
@@ -443,10 +452,10 @@ function _dropCaches(p, v) {
 function _dropOld(p, old) {
 	if (old && typeof old === "object") _dropCaches(p, old);
 }
-function _clearArrayIndexCache(store, arr) {
-	getPriv(store).arrayIndexProxyCache.delete(arr);
+function _clearArrayIndexCache(p, arr) {
+	p.arrayIndexProxyCache.delete(arr);
 }
-function _normalizeBatch(store, batch) {
+function _normalizeBatch(p, batch) {
 	if (batch.length < 2) return batch;
 	for (let i = 0; i < batch.length; i++) {
 		const change = batch[i];
@@ -454,7 +463,7 @@ function _normalizeBatch(store, batch) {
 		for (let j = i + 1; j < batch.length; j++) {
 			const candidate = batch[j];
 			if (candidate.opId || !isReciprocalSwap(change, candidate)) continue;
-			const opId = `swap:${getPriv(store).nextArrayOpId++}`;
+			const opId = `swap:${p.nextArrayOpId++}`;
 			change.arrayPathParts = candidate.arrayPathParts = change.pathParts.slice(0, -1);
 			change.arrayOp = candidate.arrayOp = "swap";
 			change.otherIndex = Number(candidate.property);
@@ -465,7 +474,7 @@ function _normalizeBatch(store, batch) {
 	}
 	return batch;
 }
-function _deliverArrayBatch(store, batch, knownArrayPathParts) {
+function _deliverArrayBatch(raw, p, batch, knownArrayPathParts) {
 	let arrayPathParts = knownArrayPathParts;
 	if (!arrayPathParts) {
 		if (!batch[0]?.isArrayItemPropUpdate) return false;
@@ -475,13 +484,14 @@ function _deliverArrayBatch(store, batch, knownArrayPathParts) {
 			if (!change.isArrayItemPropUpdate || change.arrayPathParts !== arrayPathParts && !samePathParts(change.arrayPathParts, arrayPathParts)) return false;
 		}
 	}
-	const arrayNode = _getObserverNode(store, arrayPathParts);
-	if (getPriv(store).observerRoot.handlers.size === 0 && arrayNode && arrayNode.children.size === 0 && arrayNode.handlers.size > 0) {
-		_notify(store, arrayNode, batch);
+	const root = p.observerRoot;
+	const arrayNode = _getObserverNode(root, arrayPathParts);
+	if (root.handlers.size === 0 && arrayNode && arrayNode.children.size === 0 && arrayNode.handlers.size > 0) {
+		_notify(raw, arrayNode, batch);
 		return true;
 	}
-	const commonMatches = _collectMatchingNodes(store, arrayPathParts);
-	for (let i = 0; i < commonMatches.length; i++) _notify(store, commonMatches[i], batch);
+	const commonMatches = _collectMatchingNodes(root, arrayPathParts);
+	for (let i = 0; i < commonMatches.length; i++) _notify(raw, commonMatches[i], batch);
 	if (!arrayNode || arrayNode.children.size === 0) return true;
 	const deliveries = /* @__PURE__ */ new Map();
 	const suffixOffset = arrayPathParts.length;
@@ -498,13 +508,22 @@ function _deliverArrayBatch(store, batch, knownArrayPathParts) {
 			}
 		}
 	}
-	for (const [node, relevant] of deliveries) _notify(store, node, relevant);
+	for (const [node, relevant] of deliveries) _notify(raw, node, relevant);
 	return true;
 }
-function _deliverTopLevelBatch(store, batch) {
-	const raw = storeRaw(store);
-	const root = getPriv(store).observerRoot;
+function _deliverTopLevelBatch(raw, p, batch) {
+	const root = p.observerRoot;
 	if (root.handlers.size > 0) return false;
+	if (batch.length === 1) {
+		const change = batch[0];
+		if (change.target !== raw || change.pathParts.length !== 1) return false;
+		const node = root.children.get(change.property);
+		if (!node || node.handlers.size === 0) return true;
+		if (node.children.size > 0) return false;
+		const nv = change.newValue;
+		_notify(raw, node, batch, _isArr(nv) && nv.length === 0 ? nv : _getTopLevelValue(raw, change));
+		return true;
+	}
 	const deliveries = /* @__PURE__ */ new Map();
 	for (let i = 0; i < batch.length; i++) {
 		const change = batch[i];
@@ -517,18 +536,16 @@ function _deliverTopLevelBatch(store, batch) {
 		if (!delivery) {
 			const nv = change.newValue;
 			deliveries.set(node, delivery = {
-				value: _isArr(nv) && nv.length === 0 ? nv : _getTopLevelValue(store, change),
+				value: _isArr(nv) && nv.length === 0 ? nv : _getTopLevelValue(raw, change),
 				relevant: []
 			});
 		}
 		delivery.relevant.push(change);
 	}
-	for (const [node, delivery] of deliveries) _notify(store, node, delivery.relevant, delivery.value);
+	for (const [node, delivery] of deliveries) _notify(raw, node, delivery.relevant, delivery.value);
 	return true;
 }
-function _flushChanges(store) {
-	const raw = storeRaw(store);
-	const p = getPriv(store);
+function _flushChanges(raw, p) {
 	p.flushScheduled = false;
 	_pendingStores.delete(raw);
 	const pendingBatch = p.pendingChanges;
@@ -540,16 +557,17 @@ function _flushChanges(store) {
 	p.pendingBatchKind = 0;
 	p.pendingBatchArrayPathParts = null;
 	if (pendingBatch.length === 0) return;
-	if (pendingBatchKind === 1 && pendingBatchArrayPathParts && _deliverArrayBatch(store, pendingBatch, pendingBatchArrayPathParts)) return;
-	if (_deliverTopLevelBatch(store, pendingBatch)) return;
-	const batch = _normalizeBatch(store, pendingBatch);
-	if (_deliverArrayBatch(store, batch)) return;
+	if (pendingBatchKind === 1 && pendingBatchArrayPathParts && _deliverArrayBatch(raw, p, pendingBatch, pendingBatchArrayPathParts)) return;
+	if (_deliverTopLevelBatch(raw, p, pendingBatch)) return;
+	const batch = _normalizeBatch(p, pendingBatch);
+	if (_deliverArrayBatch(raw, p, batch)) return;
+	const root = p.observerRoot;
 	const deliveries = /* @__PURE__ */ new Map();
 	for (let i = 0; i < batch.length; i++) {
 		const change = batch[i];
-		const matches = _collectMatchingNodes(store, change.pathParts);
+		const matches = _collectMatchingNodes(root, change.pathParts);
 		if ((change.type === "update" || change.type === "add") && change.newValue && typeof change.newValue === "object") {
-			const node = _getObserverNode(store, change.pathParts);
+			const node = _getObserverNode(root, change.pathParts);
 			if (node && node.children.size > 0) _collectDescendantNodes(node, matches);
 		}
 		for (let j = 0; j < matches.length; j++) {
@@ -559,17 +577,16 @@ function _flushChanges(store) {
 			relevant.push(change);
 		}
 	}
-	for (const [node, relevant] of deliveries) _notify(store, node, relevant);
+	for (const [node, relevant] of deliveries) _notify(raw, node, relevant);
 }
-function _pushAndSchedule(store, changes) {
-	const p = getPriv(store);
+function _pushAndSchedule(raw, changes, p) {
 	if (_isArr(changes)) for (const c of changes) p.pendingChanges.push(c);
 	else p.pendingChanges.push(changes);
 	if (p.pendingBatchKind !== 2) {
 		p.pendingBatchKind = 2;
 		p.pendingBatchArrayPathParts = null;
 	}
-	_scheduleFlush(store);
+	if (!p.flushScheduled) _scheduleFlush(p, raw);
 }
 function _isAppend(oldArr, newArr, unwrap) {
 	for (let i = 0; i < oldArr.length; i++) {
@@ -582,13 +599,12 @@ function _isAppend(oldArr, newArr, unwrap) {
 	}
 	return true;
 }
-function _queueChange(store, change) {
-	getPriv(store).pendingChanges.push(change);
-	_trackPendingChange(store, change);
-	_scheduleFlush(store);
+function _queueChange(raw, change, p) {
+	p.pendingChanges.push(change);
+	if (p.pendingBatchKind !== 2 && !(p.pendingBatchKind === 1 && p.pendingBatchArrayPathParts === change.arrayPathParts)) _trackPendingChange(p, change);
+	if (!p.flushScheduled) _scheduleFlush(p, raw);
 }
-function _trackPendingChange(store, change) {
-	const p = getPriv(store);
+function _trackPendingChange(p, change) {
 	if (p.pendingBatchKind === 2) return;
 	if (!change.isArrayItemPropUpdate || !change.arrayPathParts) {
 		p.pendingBatchKind = 2;
@@ -606,19 +622,38 @@ function _trackPendingChange(store, change) {
 		p.pendingBatchArrayPathParts = null;
 	}
 }
-function _scheduleFlush(store) {
-	const raw = storeRaw(store);
-	const p = getPriv(store);
-	if (!p.flushScheduled) {
-		p.flushScheduled = true;
-		_pendingStores.add(raw);
-		queueMicrotask(() => _flushChanges(store));
+let _globalFlushScheduled = false;
+function _flushAllPending() {
+	_globalFlushScheduled = false;
+	let firstError;
+	while (_pendingStores.size > 0) {
+		const batch = [..._pendingStores];
+		_pendingStores.clear();
+		for (let i = 0; i < batch.length; i++) {
+			const raw = batch[i];
+			const p = storeInstancePrivate.get(raw);
+			if (p.pendingChanges.length > 0) try {
+				_flushChanges(raw, p);
+			} catch (e) {
+				if (!firstError) firstError = e;
+			}
+			else p.flushScheduled = false;
+		}
+	}
+	if (firstError) throw firstError;
+}
+function _scheduleFlush(p, raw) {
+	p.flushScheduled = true;
+	_pendingStores.add(raw);
+	if (!_globalFlushScheduled) {
+		_globalFlushScheduled = true;
+		queueMicrotask(_flushAllPending);
 	}
 }
-function _interceptArray(store, arr, method, basePath, baseParts) {
+function _interceptArray(store, arr, method, basePath, baseParts, p) {
 	switch (method) {
 		case "splice": return function(...args) {
-			_clearArrayIndexCache(store, arr);
+			_clearArrayIndexCache(p, arr);
 			const len = arr.length;
 			const rawStart = args[0] ?? 0;
 			const start = rawStart < 0 ? Math.max(len + rawStart, 0) : Math.min(rawStart, len);
@@ -629,7 +664,7 @@ function _interceptArray(store, arr, method, basePath, baseParts) {
 			if (hasInserts) Array.prototype.splice.call(arr, start, deleteCount, ...items);
 			else Array.prototype.splice.call(arr, start, deleteCount);
 			if (deleteCount === 0 && items.length > 0 && start === len) {
-				_pushAndSchedule(store, [_mkAppend(String(start), arr, baseParts, start, items.length, items)]);
+				_pushAndSchedule(store, [_mkAppend(String(start), arr, baseParts, start, items.length, items)], p);
 				return removed;
 			}
 			const changes = [];
@@ -641,37 +676,37 @@ function _interceptArray(store, arr, method, basePath, baseParts) {
 				const idx = String(start + i);
 				changes.push(_mkChange("add", idx, arr, appendPathParts(baseParts, idx), items[i]));
 			}
-			if (changes.length > 0) _pushAndSchedule(store, changes);
+			if (changes.length > 0) _pushAndSchedule(store, changes, p);
 			return removed;
 		};
 		case "push":
 		case "unshift": return function(...items) {
-			_clearArrayIndexCache(store, arr);
+			_clearArrayIndexCache(p, arr);
 			const rawItems = items.map((v) => unwrapNestedProxyValue(v));
 			if (rawItems.length === 0) return arr.length;
 			const start = method === "push" ? arr.length : 0;
 			Array.prototype[method].apply(arr, rawItems);
-			if (method === "push") _pushAndSchedule(store, [_mkAppend(String(start), arr, baseParts, start, rawItems.length, rawItems)]);
+			if (method === "push") _pushAndSchedule(store, [_mkAppend(String(start), arr, baseParts, start, rawItems.length, rawItems)], p);
 			else {
 				const changes = [];
 				for (let i = 0; i < rawItems.length; i++) changes.push(_mkChange("add", String(i), arr, appendPathParts(baseParts, String(i)), rawItems[i]));
-				_pushAndSchedule(store, changes);
+				_pushAndSchedule(store, changes, p);
 			}
 			return arr.length;
 		};
 		case "pop":
 		case "shift": return function() {
 			if (arr.length === 0) return void 0;
-			_clearArrayIndexCache(store, arr);
+			_clearArrayIndexCache(p, arr);
 			const idx = method === "pop" ? arr.length - 1 : 0;
 			const removed = arr[idx];
 			Array.prototype[method].call(arr);
-			_pushAndSchedule(store, [_mkChange("delete", String(idx), arr, appendPathParts(baseParts, String(idx)), void 0, removed)]);
+			_pushAndSchedule(store, [_mkChange("delete", String(idx), arr, appendPathParts(baseParts, String(idx)), void 0, removed)], p);
 			return removed;
 		};
 		case "sort":
 		case "reverse": return function(...args) {
-			_clearArrayIndexCache(store, arr);
+			_clearArrayIndexCache(p, arr);
 			const prev = arr.slice();
 			Array.prototype[method].apply(arr, args);
 			const idxMap = /* @__PURE__ */ new Map();
@@ -684,7 +719,7 @@ function _interceptArray(store, arr, method, basePath, baseParts) {
 				const a = idxMap.get(v);
 				return a?.length ? a.shift() : i;
 			});
-			_pushAndSchedule(store, [ch]);
+			_pushAndSchedule(store, [ch], p);
 			return arr;
 		};
 		case "indexOf":
@@ -707,8 +742,8 @@ function _interceptArray(store, arr, method, basePath, baseParts) {
 		default: return null;
 	}
 }
-function _getCachedArrayMeta(store, baseParts) {
-	const map = getPriv(store).internedArrayPaths;
+function _getCachedArrayMeta(p, baseParts) {
+	const map = p.internedArrayPaths;
 	for (let i = baseParts.length - 1; i >= 0; i--) {
 		if (!isNumericIndex(baseParts[i])) continue;
 		const internKey = i === 1 ? baseParts[0] : baseParts.slice(0, i).join("\0");
@@ -736,15 +771,16 @@ function _makePathCache(base) {
 		return v;
 	};
 }
-function _createProxy(store, target, basePath, baseParts = [], arrayMeta) {
+function _createProxy(store, target, basePath, baseParts = [], arrayMeta, existingP) {
 	if (!target || typeof target !== "object") return target;
-	const _p = getPriv(store);
+	const _p = existingP || getPriv(store);
 	if (!_isArr(target)) {
 		const cached = _p.proxyCache.get(target);
 		if (cached) return cached;
 	}
-	const cachedArrayMeta = arrayMeta ?? _getCachedArrayMeta(store, baseParts);
+	const cachedArrayMeta = arrayMeta ?? _getCachedArrayMeta(_p, baseParts);
 	let methodCache;
+	const skipReactive = shouldSkipReactiveWrapForPath(basePath);
 	const getCachedPathParts = _makePathCache(baseParts);
 	const getCachedLeafPathParts = _makePathCache(cachedArrayMeta?.baseTail ?? []);
 	const proxy = new Proxy(target, {
@@ -764,20 +800,30 @@ function _createProxy(store, target, basePath, baseParts = [], arrayMeta) {
 					if (!methodCache) methodCache = /* @__PURE__ */ new Map();
 					let cached = methodCache.get(prop);
 					if (cached !== void 0) return cached;
-					cached = _interceptArray(store, obj, prop, basePath, baseParts) || value.bind(obj);
+					cached = _interceptArray(store, obj, prop, basePath, baseParts, _p) || value.bind(obj);
 					methodCache.set(prop, cached);
 					return cached;
 				}
-				if (shouldSkipReactiveWrapForPath(basePath)) return value;
+				if (skipReactive) return value;
 				return value.bind(obj);
 			}
-			if (shouldSkipReactiveWrapForPath(basePath)) return value;
+			if (skipReactive) return value;
 			const isArrIdx = _isArr(obj) && isNumericIndex(prop);
 			if (isArrIdx) {
 				const indexCache = _p.arrayIndexProxyCache.get(obj);
 				if (indexCache) {
 					const cached = indexCache.get(prop);
 					if (cached) return cached;
+				}
+				const proxyCached = _p.proxyCache.get(value);
+				if (proxyCached) {
+					let ic = indexCache || _p.arrayIndexProxyCache.get(obj);
+					if (!ic) {
+						ic = /* @__PURE__ */ new Map();
+						_p.arrayIndexProxyCache.set(obj, ic);
+					}
+					ic.set(prop, proxyCached);
+					return proxyCached;
 				}
 			} else {
 				const cached = _p.proxyCache.get(value);
@@ -795,11 +841,11 @@ function _createProxy(store, target, basePath, baseParts = [], arrayMeta) {
 					arrayPathParts: baseParts,
 					arrayIndex: Number(propStr),
 					baseTail: []
-				});
+				}, _p);
 				indexCache.set(prop, created);
 				return created;
 			}
-			const created = _createProxy(store, value, joinPath(basePath, prop), getCachedPathParts(prop));
+			const created = _createProxy(store, value, joinPath(basePath, prop), getCachedPathParts(prop), void 0, _p);
 			_p.proxyCache.set(value, created);
 			return created;
 		},
@@ -816,7 +862,7 @@ function _createProxy(store, target, basePath, baseParts = [], arrayMeta) {
 				obj[prop] = value;
 				const change = _mkChange(isNew ? "add" : "update", prop, obj, getCachedPathParts(prop), value, oldValue);
 				if (cachedArrayMeta) _tagArrayItem(change, cachedArrayMeta, getCachedLeafPathParts(prop));
-				_queueChange(store, change);
+				_queueChange(store, change, _p);
 				return true;
 			}
 			value = unwrapNestedProxyValue(value);
@@ -826,10 +872,13 @@ function _createProxy(store, target, basePath, baseParts = [], arrayMeta) {
 				return true;
 			}
 			const isNew = !_hasOwn.call(obj, prop);
-			if (_isArr(obj) && isNumericIndex(prop)) _p.arrayIndexProxyCache.delete(obj);
+			if (_isArr(obj) && isNumericIndex(prop)) {
+				const ic = _p.arrayIndexProxyCache.get(obj);
+				if (ic) ic.delete(prop);
+			}
 			_dropOld(_p, oldValue);
 			obj[prop] = value;
-			_commitObjSet(store, isNew, prop, obj, getCachedPathParts(prop), value, oldValue, true, cachedArrayMeta, getCachedLeafPathParts);
+			_commitObjSet(store, isNew, prop, obj, getCachedPathParts(prop), value, oldValue, true, _p, cachedArrayMeta, getCachedLeafPathParts);
 			return true;
 		},
 		deleteProperty(obj, prop) {
@@ -838,12 +887,15 @@ function _createProxy(store, target, basePath, baseParts = [], arrayMeta) {
 				return true;
 			}
 			const oldValue = obj[prop];
-			if (_isArr(obj) && isNumericIndex(prop)) _p.arrayIndexProxyCache.delete(obj);
+			if (_isArr(obj) && isNumericIndex(prop)) {
+				const ic = _p.arrayIndexProxyCache.get(obj);
+				if (ic) ic.delete(prop);
+			}
 			_dropOld(_p, oldValue);
 			delete obj[prop];
 			const change = _mkChange("delete", prop, obj, getCachedPathParts(prop), void 0, oldValue);
 			if (cachedArrayMeta) _tagArrayItem(change, cachedArrayMeta, getCachedLeafPathParts(prop));
-			_queueChange(store, change);
+			_queueChange(store, change, _p);
 			return true;
 		}
 	});
@@ -868,12 +920,26 @@ var Store = class Store {
 	static flushAll() {
 		if (_flushing) return;
 		_flushing = true;
+		let firstError;
 		try {
-			for (const store of _pendingStores) store.flushSync();
-			_pendingStores.clear();
+			while (_pendingStores.size > 0) {
+				const batch = [..._pendingStores];
+				_pendingStores.clear();
+				for (let i = 0; i < batch.length; i++) {
+					const raw = batch[i];
+					const p = storeInstancePrivate.get(raw);
+					if (p.pendingChanges.length > 0) try {
+						_flushChanges(raw, p);
+					} catch (e) {
+						if (!firstError) firstError = e;
+					}
+					else p.flushScheduled = false;
+				}
+			}
 		} finally {
 			_flushing = false;
 		}
+		if (firstError) throw firstError;
 	}
 	static rootGetValue(t, prop, receiver) {
 		if (!_hasOwn.call(t, prop)) return Reflect.get(t, prop, receiver);
@@ -882,7 +948,10 @@ var Store = class Store {
 		if (value != null && typeof value === "object") {
 			if (!_isPlain(value)) return value;
 			if (shouldSkipReactiveWrapForPath(prop)) return value;
-			return _topProxy(t, prop, value);
+			const p = storeInstancePrivate.get(t);
+			const entry = p.topLevelProxies.get(prop);
+			if (entry && entry[0] === value) return entry[1];
+			return _topProxy(t, prop, value, p);
 		}
 		return value;
 	}
@@ -891,39 +960,38 @@ var Store = class Store {
 			t[prop] = value;
 			return true;
 		}
-		const pathParts = _rootPathPartsCache(t, prop);
+		const p = storeInstancePrivate.get(t);
+		const pathParts = _rootPathPartsCache(p, prop);
 		if (value == null || typeof value !== "object") {
 			const oldValue = t[prop];
 			if (oldValue === value && prop in t) return true;
 			const hadProp = prop in t;
 			if (oldValue && typeof oldValue === "object") {
-				const pt = getPriv(t);
-				_dropCaches(pt, oldValue);
-				pt.topLevelProxies.delete(prop);
+				_dropCaches(p, oldValue);
+				p.topLevelProxies.delete(prop);
 			}
 			t[prop] = value;
-			_pushAndSchedule(t, _mkChange(hadProp ? "update" : "add", prop, t, pathParts, value, oldValue));
+			_pushAndSchedule(t, _mkChange(hadProp ? "update" : "add", prop, t, pathParts, value, oldValue), p);
 			return true;
 		}
 		value = unwrapNestedProxyValue(value);
 		const hadProp = _hasOwn.call(t, prop);
 		const oldValue = hadProp ? t[prop] : void 0;
 		if (hadProp && oldValue === value) return true;
-		const pt2 = getPriv(t);
-		_dropOld(pt2, oldValue);
-		pt2.topLevelProxies.delete(prop);
+		_dropOld(p, oldValue);
+		p.topLevelProxies.delete(prop);
 		t[prop] = value;
-		_commitObjSet(t, !hadProp, prop, t, pathParts, value, oldValue, false);
+		_commitObjSet(t, !hadProp, prop, t, pathParts, value, oldValue, false, p);
 		return true;
 	}
 	static rootDeleteProperty(t, prop) {
 		if (!_hasOwn.call(t, prop)) return true;
 		const oldValue = t[prop];
-		const dp = getPriv(t);
+		const dp = storeInstancePrivate.get(t);
 		_dropOld(dp, oldValue);
 		dp.topLevelProxies.delete(prop);
 		delete t[prop];
-		_pushAndSchedule(t, [_mkChange("delete", prop, t, _rootPathPartsCache(t, prop), void 0, oldValue)]);
+		_pushAndSchedule(t, [_mkChange("delete", prop, t, _rootPathPartsCache(dp, prop), void 0, oldValue)], dp);
 		return true;
 	}
 	constructor(initialData) {
@@ -960,7 +1028,9 @@ var Store = class Store {
 		return this;
 	}
 	flushSync() {
-		if (getPriv(this).pendingChanges.length > 0) _flushChanges(this);
+		const raw = storeRaw(this);
+		const p = storeInstancePrivate.get(raw);
+		if (p.pendingChanges.length > 0) _flushChanges(raw, p);
 	}
 	silent(fn) {
 		try {
@@ -2895,12 +2965,23 @@ function parseQuery(search) {
 function escapeAttr(value) {
 	return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
-var Link = class Link extends Component {
-	constructor(..._args) {
-		super(..._args);
-		this._clickHandler = null;
-		this._observerRemover = null;
+const _lp = /* @__PURE__ */ new WeakMap();
+function rawLink(l) {
+	return l[GEA_PROXY_RAW] ?? l;
+}
+function lp(link) {
+	const key = rawLink(link);
+	let p = _lp.get(key);
+	if (!p) {
+		p = {
+			clickHandler: null,
+			observerRemover: null
+		};
+		_lp.set(key, p);
 	}
+	return p;
+}
+var Link = class Link extends Component {
 	static {
 		this._router = null;
 	}
@@ -2914,13 +2995,14 @@ var Link = class Link extends Component {
 	onAfterRender() {
 		const el = this.el;
 		if (!el) return;
+		const p = lp(this);
 		const prev = el.__geaLinkHandler;
 		if (prev) el.removeEventListener("click", prev);
-		if (this._observerRemover) {
-			this._observerRemover();
-			this._observerRemover = null;
+		if (p.observerRemover) {
+			p.observerRemover();
+			p.observerRemover = null;
 		}
-		this._clickHandler = (e) => {
+		p.clickHandler = (e) => {
 			const to = this.props.to;
 			if (!to) return;
 			if (to.startsWith("http://") || to.startsWith("https://")) return;
@@ -2930,25 +3012,13 @@ var Link = class Link extends Component {
 			const router = Link._router;
 			if (router) this.props.replace ? router.replace(to) : router.push(to);
 		};
-		el.__geaLinkHandler = this._clickHandler;
-		el.addEventListener("click", this._clickHandler);
+		el.__geaLinkHandler = p.clickHandler;
+		el.addEventListener("click", p.clickHandler);
 		const router = Link._router;
 		if (router) {
-			this._updateActive(router);
-			this._observerRemover = router.observe("path", () => this._updateActive(router));
+			_updateActive(this, router);
+			p.observerRemover = router.observe("path", () => _updateActive(this, router));
 		}
-	}
-	_updateActive(router) {
-		const el = this.el;
-		if (!el) return;
-		const to = this.props.to;
-		const active = this.props.exact ? router.isExact(to) : router.isActive(to);
-		if (active) el.setAttribute("data-active", "");
-		else el.removeAttribute("data-active");
-		const base = (el.getAttribute("class") ?? "").replace(/\bactive\b/g, "").replace(/\s+/g, " ").trim();
-		const nextClass = active ? base ? `${base} active` : "active" : base;
-		if (nextClass) el.setAttribute("class", nextClass);
-		else el.removeAttribute("class");
 	}
 	dispose() {
 		const el = this.el;
@@ -2959,25 +3029,53 @@ var Link = class Link extends Component {
 				delete el.__geaLinkHandler;
 			}
 		}
-		this._clickHandler = null;
-		if (this._observerRemover) {
-			this._observerRemover();
-			this._observerRemover = null;
+		const p = lp(this);
+		p.clickHandler = null;
+		if (p.observerRemover) {
+			p.observerRemover();
+			p.observerRemover = null;
 		}
 		super.dispose();
 	}
 };
+function _updateActive(link, router) {
+	const el = link.el;
+	if (!el) return;
+	const to = link.props.to;
+	const active = link.props.exact ? router.isExact(to) : router.isActive(to);
+	if (active) el.setAttribute("data-active", "");
+	else el.removeAttribute("data-active");
+	const base = (el.getAttribute("class") ?? "").replace(/\bactive\b/g, "").replace(/\s+/g, " ").trim();
+	const nextClass = active ? base ? `${base} active` : "active" : base;
+	if (nextClass) el.setAttribute("class", nextClass);
+	else el.removeAttribute("class");
+}
 //#endregion
 //#region src/lib/router/outlet.ts
-var Outlet = class Outlet extends Component {
+const _op = /* @__PURE__ */ new WeakMap();
+function rawOutlet(o) {
+	return o[GEA_PROXY_RAW] ?? o;
+}
+function op(outlet) {
+	const key = rawOutlet(outlet);
+	let p = _op.get(key);
+	if (!p) {
+		p = {
+			currentChild: null,
+			currentComponentClass: null,
+			lastCacheKey: null,
+			lastPath: void 0,
+			observerRemovers: []
+		};
+		_op.set(key, p);
+	}
+	return p;
+}
+var Outlet = class extends Component {
 	constructor(..._args) {
 		super(..._args);
-		this._routerDepth = -1;
-		this._router = null;
-		this._currentChild = null;
-		this._currentComponentClass = null;
-		this._lastCacheKey = null;
-		this._observerRemovers = [];
+		this[GEA_ROUTER_DEPTH] = -1;
+		this[GEA_ROUTER_REF] = null;
 	}
 	static {
 		this._router = null;
@@ -2985,100 +3083,29 @@ var Outlet = class Outlet extends Component {
 	template() {
 		return `<div id="${this.id}"></div>`;
 	}
-	_computeDepthAndRouter() {
-		let depth = 0;
-		let router = null;
-		let parent = engineThis(this)[GEA_PARENT_COMPONENT];
-		while (parent) {
-			if (parent[GEA_IS_ROUTER_OUTLET]) {
-				depth = parent._routerDepth + 1;
-				router = parent._router ?? parent.props?.router ?? null;
-				break;
-			}
-			parent = engineThis(parent)[GEA_PARENT_COMPONENT];
-		}
-		if (!router) router = Outlet._router;
-		return {
-			depth,
-			router
-		};
-	}
 	onAfterRender() {
-		const { depth, router } = this._computeDepthAndRouter();
-		this._routerDepth = depth;
-		if (router && router !== this._router) {
-			for (const remove of this._observerRemovers) remove();
-			this._observerRemovers = [];
-			this._router = router;
+		const p = op(this);
+		const { depth, router } = _computeDepthAndRouter(this);
+		this[GEA_ROUTER_DEPTH] = depth;
+		if (router && router !== this[GEA_ROUTER_REF]) {
+			for (const remove of p.observerRemovers) remove();
+			p.observerRemovers = [];
+			this[GEA_ROUTER_REF] = router;
 		}
-		if (this._observerRemovers.length === 0 && this._router) {
-			const r = this._router;
-			const removePath = r.observe("path", () => this._updateView());
-			const removeError = r.observe("error", () => this._updateView());
-			const removeQuery = r.observe("query", () => this._updateView());
-			this._observerRemovers.push(removePath, removeError, removeQuery);
+		if (p.observerRemovers.length === 0 && this[GEA_ROUTER_REF]) {
+			const r = this[GEA_ROUTER_REF];
+			const removePath = r.observe("path", () => _updateView$1(this, op(this)));
+			const removeError = r.observe("error", () => _updateView$1(this, op(this)));
+			const removeQuery = r.observe("query", () => _updateView$1(this, op(this)));
+			p.observerRemovers.push(removePath, removeError, removeQuery);
 		}
-		this._updateView();
-	}
-	_getRouter() {
-		return this._router ?? this.props?.router ?? Outlet._router;
-	}
-	_clearCurrent() {
-		if (this._currentChild) {
-			this._currentChild.dispose();
-			this._currentChild = null;
-			this[GEA_CHILD_COMPONENTS] = [];
-		}
-		this._currentComponentClass = null;
-		this._lastCacheKey = null;
-	}
-	_isClassComponent(comp) {
-		if (!comp || typeof comp !== "function") return false;
-		let proto = comp.prototype;
-		while (proto) {
-			if (proto === Component.prototype) return true;
-			proto = Object.getPrototypeOf(proto);
-		}
-		return false;
-	}
-	_updateView() {
-		if (!this.el) return;
-		const router = this._getRouter();
-		if (!router) return;
-		if (this._currentChild && (!engineThis(this._currentChild)[GEA_ELEMENT] || !this.el.contains(engineThis(this._currentChild)[GEA_ELEMENT]))) this._clearCurrent();
-		const depth = this._routerDepth;
-		const item = router.getComponentAtDepth(depth);
-		if (!item) {
-			this._clearCurrent();
-			return;
-		}
-		const isLeaf = depth >= router.layoutCount;
-		const isSameComponent = this._currentComponentClass === item.component;
-		if (isSameComponent && !isLeaf) {
-			if (item.cacheKey === null || item.cacheKey === this._lastCacheKey) return;
-		}
-		if (isSameComponent && isLeaf) {
-			this._lastCacheKey = item.cacheKey;
-			this._lastPath = router.path;
-			return;
-		}
-		this._clearCurrent();
-		if (this._isClassComponent(item.component)) {
-			const child = new item.component(item.props);
-			engineThis(child)[GEA_PARENT_COMPONENT] = this;
-			child.render(this.el);
-			if (engineThis(child)[GEA_ELEMENT]) engineThis(child)[GEA_ELEMENT][GEA_DOM_COMPILED_CHILD_ROOT] = true;
-			this._currentChild = child;
-			this._currentComponentClass = item.component;
-			this[GEA_CHILD_COMPONENTS] = [child];
-		}
-		this._lastCacheKey = item.cacheKey;
-		this._lastPath = router.path;
+		_updateView$1(this, p);
 	}
 	dispose() {
-		for (const remove of this._observerRemovers) remove();
-		this._observerRemovers = [];
-		this._clearCurrent();
+		const p = op(this);
+		for (const remove of p.observerRemovers) remove();
+		p.observerRemovers = [];
+		_clearCurrent$1(this, p);
 		super.dispose();
 	}
 };
@@ -3087,6 +3114,76 @@ Object.defineProperty(Outlet.prototype, GEA_IS_ROUTER_OUTLET, {
 	enumerable: false,
 	configurable: true
 });
+function _computeDepthAndRouter(outlet) {
+	let depth = 0;
+	let router = null;
+	let parent = engineThis(outlet)[GEA_PARENT_COMPONENT];
+	while (parent) {
+		if (parent[GEA_IS_ROUTER_OUTLET]) {
+			depth = parent[GEA_ROUTER_DEPTH] + 1;
+			router = parent[GEA_ROUTER_REF] ?? parent.props?.router ?? null;
+			break;
+		}
+		parent = engineThis(parent)[GEA_PARENT_COMPONENT];
+	}
+	if (!router) router = Outlet._router;
+	return {
+		depth,
+		router
+	};
+}
+function _clearCurrent$1(outlet, p) {
+	if (p.currentChild) {
+		p.currentChild.dispose();
+		p.currentChild = null;
+		outlet[GEA_CHILD_COMPONENTS] = [];
+	}
+	p.currentComponentClass = null;
+	p.lastCacheKey = null;
+}
+function _isClassComponent$1(comp) {
+	if (!comp || typeof comp !== "function") return false;
+	let proto = comp.prototype;
+	while (proto) {
+		if (proto === Component.prototype) return true;
+		proto = Object.getPrototypeOf(proto);
+	}
+	return false;
+}
+function _updateView$1(outlet, p) {
+	if (!outlet.el) return;
+	const router = outlet[GEA_ROUTER_REF] ?? outlet.props?.router ?? Outlet._router;
+	if (!router) return;
+	if (p.currentChild && (!engineThis(p.currentChild)[GEA_ELEMENT] || !outlet.el.contains(engineThis(p.currentChild)[GEA_ELEMENT]))) _clearCurrent$1(outlet, p);
+	const depth = outlet[GEA_ROUTER_DEPTH];
+	const item = router.getComponentAtDepth(depth);
+	if (!item) {
+		_clearCurrent$1(outlet, p);
+		return;
+	}
+	const isLeaf = depth >= router.layoutCount;
+	const isSameComponent = p.currentComponentClass === item.component;
+	if (isSameComponent && !isLeaf) {
+		if (item.cacheKey === null || item.cacheKey === p.lastCacheKey) return;
+	}
+	if (isSameComponent && isLeaf) {
+		p.lastCacheKey = item.cacheKey;
+		p.lastPath = router.path;
+		return;
+	}
+	_clearCurrent$1(outlet, p);
+	if (_isClassComponent$1(item.component)) {
+		const child = new item.component(item.props);
+		engineThis(child)[GEA_PARENT_COMPONENT] = outlet;
+		child.render(outlet.el);
+		if (engineThis(child)[GEA_ELEMENT]) engineThis(child)[GEA_ELEMENT][GEA_DOM_COMPILED_CHILD_ROOT] = true;
+		p.currentChild = child;
+		p.currentComponentClass = item.component;
+		outlet[GEA_CHILD_COMPONENTS] = [child];
+	}
+	p.lastCacheKey = item.cacheKey;
+	p.lastPath = router.path;
+}
 //#endregion
 //#region src/lib/router/router.ts
 function stripQueryHash(path) {
@@ -3131,6 +3228,13 @@ function buildUrl(target) {
 		hash
 	};
 }
+const _rp = /* @__PURE__ */ new WeakMap();
+function raw(r) {
+	return r[GEA_PROXY_RAW] ?? r;
+}
+function rp(router) {
+	return _rp.get(raw(router));
+}
 var Router = class extends Store {
 	static {
 		this._ssrRouterResolver = null;
@@ -3144,28 +3248,31 @@ var Router = class extends Store {
 		this.hash = "";
 		this.matches = [];
 		this.error = null;
-		this._currentComponent = null;
-		this._guardComponent = null;
-		this._guardProceed = null;
-		this._popstateHandler = null;
-		this._clickHandler = null;
-		this._scrollPositions = /* @__PURE__ */ new Map();
-		this._historyIndex = 0;
-		this._queryModes = /* @__PURE__ */ new Map();
-		this._layouts = [];
 		this.routeConfig = routes ?? {};
-		this._routes = routes ?? {};
-		this._options = {
-			base: options?.base ?? "",
-			scroll: options?.scroll ?? false
+		const p = {
+			routes: routes ?? {},
+			options: {
+				base: options?.base ?? "",
+				scroll: options?.scroll ?? false
+			},
+			currentComponent: null,
+			guardComponent: null,
+			guardProceed: null,
+			popstateHandler: null,
+			clickHandler: null,
+			scrollPositions: /* @__PURE__ */ new Map(),
+			historyIndex: 0,
+			queryModes: /* @__PURE__ */ new Map(),
+			layouts: []
 		};
+		_rp.set(raw(this), p);
 		Link._router = this;
 		Outlet._router = this;
-		this._popstateHandler = (_e) => {
-			this._resolve();
+		p.popstateHandler = (_e) => {
+			_resolve(this);
 		};
-		window.addEventListener("popstate", this._popstateHandler);
-		this._clickHandler = (e) => {
+		window.addEventListener("popstate", p.popstateHandler);
+		p.clickHandler = (e) => {
 			if (e.defaultPrevented) return;
 			const anchor = e.target?.closest?.("a[href]");
 			if (!anchor) return;
@@ -3177,25 +3284,26 @@ var Router = class extends Store {
 			e.preventDefault();
 			this.push(href);
 		};
-		document.addEventListener("click", this._clickHandler);
-		this._resolve();
+		document.addEventListener("click", p.clickHandler);
+		_resolve(this);
 	}
 	setRoutes(routes) {
-		this._routes = routes;
+		rp(this).routes = routes;
 		this.routeConfig = routes;
-		if (typeof window !== "undefined") this._resolve();
+		if (typeof window !== "undefined") _resolve(this);
 	}
 	get page() {
-		return this._guardComponent ?? this._currentComponent;
+		const p = rp(this);
+		return p.guardComponent ?? p.currentComponent;
 	}
 	push(target) {
-		this._navigate(target, "push");
+		_navigate(this, target, "push");
 	}
 	navigate(target) {
 		this.push(target);
 	}
 	replace(target) {
-		this._navigate(target, "replace");
+		_navigate(this, target, "replace");
 	}
 	back() {
 		if (typeof window !== "undefined") window.history.back();
@@ -3207,18 +3315,19 @@ var Router = class extends Store {
 		if (typeof window !== "undefined") window.history.go(delta);
 	}
 	get layoutCount() {
-		return this._layouts.length;
+		return rp(this).layouts.length;
 	}
 	getComponentAtDepth(depth) {
-		if (depth < this._layouts.length) {
-			const layout = this._layouts[depth];
+		const p = rp(this);
+		if (depth < p.layouts.length) {
+			const layout = p.layouts[depth];
 			const props = { ...this.params };
 			props.route = this.route;
 			const nextDepth = depth + 1;
-			if (nextDepth < this._layouts.length) props.page = this._layouts[nextDepth];
-			else props.page = this._guardComponent ?? this._currentComponent;
+			if (nextDepth < p.layouts.length) props.page = p.layouts[nextDepth];
+			else props.page = p.guardComponent ?? p.currentComponent;
 			let cacheKey = null;
-			const modeInfo = this._queryModes.get(depth);
+			const modeInfo = p.queryModes.get(depth);
 			if (modeInfo) {
 				props.activeKey = modeInfo.activeKey;
 				props.keys = modeInfo.keys;
@@ -3238,8 +3347,8 @@ var Router = class extends Store {
 				cacheKey
 			};
 		}
-		if (depth === this._layouts.length) {
-			const comp = this._guardComponent ?? this._currentComponent;
+		if (depth === p.layouts.length) {
+			const comp = p.guardComponent ?? p.currentComponent;
 			return comp ? {
 				component: comp,
 				props: { ...this.params },
@@ -3258,200 +3367,162 @@ var Router = class extends Store {
 	}
 	dispose() {
 		if (typeof window !== "undefined") {
-			if (this._popstateHandler) {
-				window.removeEventListener("popstate", this._popstateHandler);
-				this._popstateHandler = null;
+			const p = rp(this);
+			if (p.popstateHandler) {
+				window.removeEventListener("popstate", p.popstateHandler);
+				p.popstateHandler = null;
 			}
-			if (this._clickHandler) {
-				document.removeEventListener("click", this._clickHandler);
-				this._clickHandler = null;
-			}
-		}
-	}
-	_navigate(target, method) {
-		if (typeof window === "undefined") return;
-		const { path, search, hash } = buildUrl(target);
-		const fullPath = this._options.base + path + search + hash;
-		if (method === "push") {
-			if (window.location.pathname + window.location.search + window.location.hash === fullPath) return;
-		}
-		if (this._options.scroll && method === "push") this._scrollPositions.set(this._historyIndex, {
-			x: window.scrollX ?? 0,
-			y: window.scrollY ?? 0
-		});
-		if (method === "push") {
-			this._historyIndex++;
-			window.history.pushState({ index: this._historyIndex }, "", fullPath);
-		} else window.history.replaceState({ index: this._historyIndex }, "", fullPath);
-		this._resolve();
-		if (this._options.scroll && method === "push") window.scrollTo(0, 0);
-	}
-	_resolve() {
-		if (typeof window === "undefined") return;
-		const base = this._options.base;
-		let currentPath = window.location.pathname;
-		const currentSearch = window.location.search;
-		const currentHash = window.location.hash;
-		if (base && currentPath.startsWith(base)) currentPath = currentPath.slice(base.length) || "/";
-		const resolved = resolveRoute(this._routes, currentPath, currentSearch);
-		if (resolved.redirect) {
-			const redirectMethod = resolved.redirectMethod ?? "replace";
-			this._navigate(resolved.redirect, redirectMethod);
-			return;
-		}
-		if (resolved.guards.length > 0) {
-			const guardResult = runGuards(resolved.guards);
-			if (guardResult !== true) {
-				if (typeof guardResult === "string") {
-					this._navigate(guardResult, "replace");
-					return;
-				}
-				this._guardComponent = guardResult;
-				this._guardProceed = () => {
-					this._guardComponent = null;
-					this._guardProceed = null;
-					this._applyResolved(resolved, currentPath, currentSearch, currentHash);
-				};
-				this.path = currentPath;
-				this.route = resolved.pattern;
-				this.params = resolved.params;
-				this.query = parseQuery(currentSearch);
-				this.hash = currentHash;
-				this.matches = resolved.matches;
-				return;
+			if (p.clickHandler) {
+				document.removeEventListener("click", p.clickHandler);
+				p.clickHandler = null;
 			}
 		}
-		if (resolved.isLazy && resolved.lazyLoader) {
-			const loader = resolved.lazyLoader;
-			resolveLazy(loader).then((component) => {
-				resolved.component = component;
-				this._applyResolved(resolved, currentPath, currentSearch, currentHash);
-			}).catch((err) => {
-				this.error = err?.message ?? "Failed to load route component";
-				this._currentComponent = null;
-				this._guardComponent = null;
-				this.path = currentPath;
-				this.route = resolved.pattern;
-				this.params = resolved.params;
-				this.query = parseQuery(currentSearch);
-				this.hash = currentHash;
-				this.matches = resolved.matches;
-			});
-			this.path = currentPath;
-			this.route = resolved.pattern;
-			this.params = resolved.params;
-			this.query = parseQuery(currentSearch);
-			this.hash = currentHash;
-			this.matches = resolved.matches;
-			return;
-		}
-		this._applyResolved(resolved, currentPath, currentSearch, currentHash);
-	}
-	_applyResolved(resolved, currentPath, currentSearch, currentHash) {
-		this._guardComponent = null;
-		this._currentComponent = resolved.component;
-		this._layouts = resolved.layouts;
-		this._queryModes = resolved.queryModes;
-		this.error = null;
-		this.path = currentPath;
-		this.route = resolved.pattern;
-		this.params = resolved.params;
-		this.query = parseQuery(currentSearch);
-		this.hash = currentHash;
-		this.matches = resolved.matches;
 	}
 };
+function _navigate(router, target, method) {
+	if (typeof window === "undefined") return;
+	const p = rp(router);
+	const { path, search, hash } = buildUrl(target);
+	const fullPath = p.options.base + path + search + hash;
+	if (method === "push") {
+		if (window.location.pathname + window.location.search + window.location.hash === fullPath) return;
+	}
+	if (p.options.scroll && method === "push") p.scrollPositions.set(p.historyIndex, {
+		x: window.scrollX ?? 0,
+		y: window.scrollY ?? 0
+	});
+	if (method === "push") {
+		p.historyIndex++;
+		window.history.pushState({ index: p.historyIndex }, "", fullPath);
+	} else window.history.replaceState({ index: p.historyIndex }, "", fullPath);
+	_resolve(router);
+	if (p.options.scroll && method === "push") window.scrollTo(0, 0);
+}
+function _resolve(router) {
+	if (typeof window === "undefined") return;
+	const p = rp(router);
+	const base = p.options.base;
+	let currentPath = window.location.pathname;
+	const currentSearch = window.location.search;
+	const currentHash = window.location.hash;
+	if (base && currentPath.startsWith(base)) currentPath = currentPath.slice(base.length) || "/";
+	const resolved = resolveRoute(p.routes, currentPath, currentSearch);
+	if (resolved.redirect) {
+		const redirectMethod = resolved.redirectMethod ?? "replace";
+		_navigate(router, resolved.redirect, redirectMethod);
+		return;
+	}
+	if (resolved.guards.length > 0) {
+		const guardResult = runGuards(resolved.guards);
+		if (guardResult !== true) {
+			if (typeof guardResult === "string") {
+				_navigate(router, guardResult, "replace");
+				return;
+			}
+			p.guardComponent = guardResult;
+			p.guardProceed = () => {
+				p.guardComponent = null;
+				p.guardProceed = null;
+				_applyResolved(router, resolved, currentPath, currentSearch, currentHash);
+			};
+			router.path = currentPath;
+			router.route = resolved.pattern;
+			router.params = resolved.params;
+			router.query = parseQuery(currentSearch);
+			router.hash = currentHash;
+			router.matches = resolved.matches;
+			return;
+		}
+	}
+	if (resolved.isLazy && resolved.lazyLoader) {
+		const loader = resolved.lazyLoader;
+		resolveLazy(loader).then((component) => {
+			resolved.component = component;
+			_applyResolved(router, resolved, currentPath, currentSearch, currentHash);
+		}).catch((err) => {
+			router.error = err?.message ?? "Failed to load route component";
+			p.currentComponent = null;
+			p.guardComponent = null;
+			router.path = currentPath;
+			router.route = resolved.pattern;
+			router.params = resolved.params;
+			router.query = parseQuery(currentSearch);
+			router.hash = currentHash;
+			router.matches = resolved.matches;
+		});
+		router.path = currentPath;
+		router.route = resolved.pattern;
+		router.params = resolved.params;
+		router.query = parseQuery(currentSearch);
+		router.hash = currentHash;
+		router.matches = resolved.matches;
+		return;
+	}
+	_applyResolved(router, resolved, currentPath, currentSearch, currentHash);
+}
+function _applyResolved(router, resolved, currentPath, currentSearch, currentHash) {
+	const p = rp(router);
+	p.guardComponent = null;
+	p.currentComponent = resolved.component;
+	p.layouts = resolved.layouts;
+	p.queryModes = resolved.queryModes;
+	router.error = null;
+	router.path = currentPath;
+	router.route = resolved.pattern;
+	router.params = resolved.params;
+	router.query = parseQuery(currentSearch);
+	router.hash = currentHash;
+	router.matches = resolved.matches;
+}
 //#endregion
 //#region src/lib/router/router-view.ts
+const _rvp = /* @__PURE__ */ new WeakMap();
+function rawView(v) {
+	return v[GEA_PROXY_RAW] ?? v;
+}
+function rvp(view) {
+	const key = rawView(view);
+	let p = _rvp.get(key);
+	if (!p) {
+		p = {
+			currentChild: null,
+			currentComponentClass: null,
+			lastCacheKey: null,
+			lastPath: void 0,
+			observerRemovers: [],
+			routesApplied: false
+		};
+		_rvp.set(key, p);
+	}
+	return p;
+}
 var RouterView = class extends Component {
 	constructor(..._args) {
 		super(..._args);
-		this._routerDepth = 0;
-		this._router = null;
-		this._currentChild = null;
-		this._currentComponentClass = null;
-		this._lastCacheKey = null;
-		this._observerRemovers = [];
-		this._routesApplied = false;
+		this[GEA_ROUTER_DEPTH] = 0;
+		this[GEA_ROUTER_REF] = null;
 	}
 	template() {
 		return `<div id="${this.id}"></div>`;
 	}
-	_getRouter() {
-		return this.props?.router ?? this._router ?? Outlet._router;
-	}
-	_rebindRouter(router) {
-		for (const remove of this._observerRemovers) remove();
-		this._observerRemovers = [];
-		this._router = router;
-		const removePath = router.observe("path", () => this._updateView());
-		const removeError = router.observe("error", () => this._updateView());
-		const removeQuery = router.observe("query", () => this._updateView());
-		this._observerRemovers.push(removePath, removeError, removeQuery);
-	}
 	onAfterRender() {
-		const router = this._getRouter();
+		const p = rvp(this);
+		const router = this.props?.router ?? this[GEA_ROUTER_REF] ?? Outlet._router;
 		if (!router) return;
-		if (this.props?.routes && !this._routesApplied) {
+		if (this.props?.routes && !p.routesApplied) {
 			router.setRoutes(this.props.routes);
-			this._routesApplied = true;
+			p.routesApplied = true;
 		}
-		if (router !== this._router) this._rebindRouter(router);
-		else if (this._observerRemovers.length === 0) this._rebindRouter(router);
-		this._updateView();
-	}
-	_clearCurrent() {
-		if (this._currentChild) {
-			this._currentChild.dispose();
-			this._currentChild = null;
-			this[GEA_CHILD_COMPONENTS] = [];
-		}
-		this._currentComponentClass = null;
-		this._lastCacheKey = null;
-	}
-	_isClassComponent(comp) {
-		if (!comp || typeof comp !== "function") return false;
-		let proto = comp.prototype;
-		while (proto) {
-			if (proto === Component.prototype) return true;
-			proto = Object.getPrototypeOf(proto);
-		}
-		return false;
-	}
-	_updateView() {
-		if (!this.el) return;
-		const router = this._getRouter();
-		if (!router) return;
-		if (this._currentChild && (!engineThis(this._currentChild)[GEA_ELEMENT] || !this.el.contains(engineThis(this._currentChild)[GEA_ELEMENT]))) this._clearCurrent();
-		const item = router.getComponentAtDepth(0);
-		if (!item) {
-			this._clearCurrent();
-			return;
-		}
-		const isLeaf = 0 >= router.layoutCount;
-		const isSameComponent = this._currentComponentClass === item.component;
-		if (isSameComponent && !isLeaf) {
-			if (item.cacheKey === null || item.cacheKey === this._lastCacheKey) return;
-		}
-		if (isSameComponent && isLeaf && router.path === this._lastPath) return;
-		this._clearCurrent();
-		while (this.el.firstChild) this.el.removeChild(this.el.firstChild);
-		if (this._isClassComponent(item.component)) {
-			const child = new item.component(item.props);
-			engineThis(child)[GEA_PARENT_COMPONENT] = this;
-			child.render(this.el);
-			this._currentChild = child;
-			this._currentComponentClass = item.component;
-			this[GEA_CHILD_COMPONENTS] = [child];
-		}
-		this._lastCacheKey = item.cacheKey;
-		this._lastPath = router.path;
+		if (router !== this[GEA_ROUTER_REF]) _rebindRouter(this, p, router);
+		else if (p.observerRemovers.length === 0) _rebindRouter(this, p, router);
+		_updateView(this, p);
 	}
 	dispose() {
-		for (const remove of this._observerRemovers) remove();
-		this._observerRemovers = [];
-		this._clearCurrent();
-		this._router = null;
+		const p = rvp(this);
+		for (const remove of p.observerRemovers) remove();
+		p.observerRemovers = [];
+		_clearCurrent(this, p);
+		this[GEA_ROUTER_REF] = null;
 		super.dispose();
 	}
 };
@@ -3460,6 +3531,62 @@ Object.defineProperty(RouterView.prototype, GEA_IS_ROUTER_OUTLET, {
 	enumerable: false,
 	configurable: true
 });
+function _rebindRouter(view, p, router) {
+	for (const remove of p.observerRemovers) remove();
+	p.observerRemovers = [];
+	view[GEA_ROUTER_REF] = router;
+	const removePath = router.observe("path", () => _updateView(view, rvp(view)));
+	const removeError = router.observe("error", () => _updateView(view, rvp(view)));
+	const removeQuery = router.observe("query", () => _updateView(view, rvp(view)));
+	p.observerRemovers.push(removePath, removeError, removeQuery);
+}
+function _clearCurrent(view, p) {
+	if (p.currentChild) {
+		p.currentChild.dispose();
+		p.currentChild = null;
+		view[GEA_CHILD_COMPONENTS] = [];
+	}
+	p.currentComponentClass = null;
+	p.lastCacheKey = null;
+}
+function _isClassComponent(comp) {
+	if (!comp || typeof comp !== "function") return false;
+	let proto = comp.prototype;
+	while (proto) {
+		if (proto === Component.prototype) return true;
+		proto = Object.getPrototypeOf(proto);
+	}
+	return false;
+}
+function _updateView(view, p) {
+	if (!view.el) return;
+	const router = view.props?.router ?? view[GEA_ROUTER_REF] ?? Outlet._router;
+	if (!router) return;
+	if (p.currentChild && (!engineThis(p.currentChild)[GEA_ELEMENT] || !view.el.contains(engineThis(p.currentChild)[GEA_ELEMENT]))) _clearCurrent(view, p);
+	const item = router.getComponentAtDepth(0);
+	if (!item) {
+		_clearCurrent(view, p);
+		return;
+	}
+	const isLeaf = 0 >= router.layoutCount;
+	const isSameComponent = p.currentComponentClass === item.component;
+	if (isSameComponent && !isLeaf) {
+		if (item.cacheKey === null || item.cacheKey === p.lastCacheKey) return;
+	}
+	if (isSameComponent && isLeaf && router.path === p.lastPath) return;
+	_clearCurrent(view, p);
+	while (view.el.firstChild) view.el.removeChild(view.el.firstChild);
+	if (_isClassComponent(item.component)) {
+		const child = new item.component(item.props);
+		engineThis(child)[GEA_PARENT_COMPONENT] = view;
+		child.render(view.el);
+		p.currentChild = child;
+		p.currentComponentClass = item.component;
+		view[GEA_CHILD_COMPONENTS] = [child];
+	}
+	p.lastCacheKey = item.cacheKey;
+	p.lastPath = router.path;
+}
 //#endregion
 //#region src/lib/router/index.ts
 function createRouter(routes, options) {
@@ -3491,6 +3618,6 @@ const gea = {
 	h
 };
 //#endregion
-export { Component, ComponentManager, GEA_APPLY_LIST_CHANGES, GEA_ATTACH_BINDINGS, GEA_ATTR_BINDINGS, GEA_BINDINGS, GEA_CHILD, GEA_CHILD_COMPONENTS, GEA_CLEANUP_BINDINGS, GEA_CLONE_ITEM, GEA_CLONE_TEMPLATE, GEA_COERCE_STATIC_PROP_VALUE, GEA_COMPILED_CHILD, GEA_COMPONENT_CLASSES, GEA_CONDS, GEA_CREATE_PROPS_PROXY, GEA_CTOR_AUTO_REGISTERED, GEA_CTOR_TAG_NAME, GEA_DEPENDENCIES, GEA_DOM_COMPILED_CHILD_ROOT, GEA_DOM_COMPONENT, GEA_DOM_EVENT_HINT, GEA_DOM_ITEM, GEA_DOM_KEY, GEA_DOM_PARENT_CHAIN, GEA_DOM_PROPS, GEA_EL, GEA_ELEMENT, GEA_EL_CACHE, GEA_ENSURE_ARRAY_CONFIGS, GEA_EVENT_BINDINGS, GEA_EXTRACT_COMPONENT_PROPS, GEA_HANDLE_ITEM_HANDLER, GEA_ID, GEA_INSTANTIATE_CHILD_COMPONENTS, GEA_IS_ROUTER_OUTLET, GEA_ITEM_KEY, GEA_LIST_CONFIGS, GEA_LIST_CONFIG_REFRESHING, GEA_MAPS, GEA_MAP_CONFIG_COUNT, GEA_MAP_CONFIG_PREV, GEA_MAP_CONFIG_TPL, GEA_MOUNT_COMPILED_CHILD_COMPONENTS, GEA_NORMALIZE_PROP_NAME, GEA_OBSERVE, GEA_OBSERVER_REMOVERS, GEA_OBSERVE_LIST, GEA_ON_PROP_CHANGE, GEA_PARENT_COMPONENT, GEA_PATCH_COND, GEA_PATCH_NODE, GEA_PROP_BINDINGS, GEA_PROP_BINDING_ATTR_PREFIX, GEA_PROXY_GET_PATH, GEA_PROXY_GET_RAW_TARGET, GEA_PROXY_GET_TARGET, GEA_PROXY_IS_PROXY, GEA_PROXY_RAW, GEA_RAW_PROPS, GEA_REACTIVE_PROPS, GEA_RECONCILE_LIST, GEA_REFRESH_LIST, GEA_REGISTER_COND, GEA_REGISTER_MAP, GEA_RENDERED, GEA_REORDER_CHILDREN, GEA_REQUEST_RENDER, GEA_RESET_CHILD_TREE, GEA_RESET_ELS, GEA_SELF_LISTENERS, GEA_SELF_PROXY, GEA_SETUP_EVENT_DIRECTIVES, GEA_SETUP_LOCAL_STATE_OBSERVERS, GEA_SETUP_REFS, GEA_SKIP_ITEM_HANDLER, GEA_STATIC_ESCAPE_HTML, GEA_STATIC_SANITIZE_ATTR, GEA_STORE_GET_BROWSER_ROOT_PROXY_HANDLER_FOR_TESTS, GEA_STORE_ROOT, GEA_SWAP_CHILD, GEA_SWAP_STATE_CHILDREN, GEA_SYNC_AUTOFOCUS, GEA_SYNC_DOM_REFS, GEA_SYNC_ITEMS, GEA_SYNC_MAP, GEA_SYNC_UNRENDERED_LIST_ITEMS, GEA_SYNC_VALUE_PROPS, GEA_TEARDOWN_SELF_LISTENERS, GEA_UPDATE_PROPS, GEA_UPDATE_TEXT, Link, Outlet, Router, RouterView, Store, applyListChanges, clearUidProvider, createRouter, gea as default, findPropertyDescriptor, geaCondPatchedSymbol, geaCondValueSymbol, __escapeHtml as geaEscapeHtml, geaListItemsSymbol, geaPrevGuardSymbol, __sanitizeAttr as geaSanitizeAttr, h, isClassConstructorValue, matchRoute, resetUidCounter, rootDeleteProperty, rootGetValue, rootSetValue, router, setUidProvider, stashComponentForTransfer };
+export { Component, ComponentManager, GEA_APPLY_LIST_CHANGES, GEA_ATTACH_BINDINGS, GEA_ATTR_BINDINGS, GEA_BINDINGS, GEA_CHILD, GEA_CHILD_COMPONENTS, GEA_CLEANUP_BINDINGS, GEA_CLONE_ITEM, GEA_CLONE_TEMPLATE, GEA_COERCE_STATIC_PROP_VALUE, GEA_COMPILED_CHILD, GEA_COMPONENT_CLASSES, GEA_CONDS, GEA_CREATE_PROPS_PROXY, GEA_CTOR_AUTO_REGISTERED, GEA_CTOR_TAG_NAME, GEA_DEPENDENCIES, GEA_DOM_COMPILED_CHILD_ROOT, GEA_DOM_COMPONENT, GEA_DOM_EVENT_HINT, GEA_DOM_ITEM, GEA_DOM_KEY, GEA_DOM_PARENT_CHAIN, GEA_DOM_PROPS, GEA_EL, GEA_ELEMENT, GEA_EL_CACHE, GEA_ENSURE_ARRAY_CONFIGS, GEA_EVENT_BINDINGS, GEA_EXTRACT_COMPONENT_PROPS, GEA_HANDLE_ITEM_HANDLER, GEA_ID, GEA_INSTANTIATE_CHILD_COMPONENTS, GEA_IS_ROUTER_OUTLET, GEA_ITEM_KEY, GEA_LIST_CONFIGS, GEA_LIST_CONFIG_REFRESHING, GEA_MAPS, GEA_MAP_CONFIG_COUNT, GEA_MAP_CONFIG_PREV, GEA_MAP_CONFIG_TPL, GEA_MOUNT_COMPILED_CHILD_COMPONENTS, GEA_NORMALIZE_PROP_NAME, GEA_OBSERVE, GEA_OBSERVER_REMOVERS, GEA_OBSERVE_LIST, GEA_ON_PROP_CHANGE, GEA_PARENT_COMPONENT, GEA_PATCH_COND, GEA_PATCH_NODE, GEA_PROP_BINDINGS, GEA_PROP_BINDING_ATTR_PREFIX, GEA_PROXY_GET_PATH, GEA_PROXY_GET_RAW_TARGET, GEA_PROXY_GET_TARGET, GEA_PROXY_IS_PROXY, GEA_PROXY_RAW, GEA_RAW_PROPS, GEA_REACTIVE_PROPS, GEA_RECONCILE_LIST, GEA_REFRESH_LIST, GEA_REGISTER_COND, GEA_REGISTER_MAP, GEA_RENDERED, GEA_REORDER_CHILDREN, GEA_REQUEST_RENDER, GEA_RESET_CHILD_TREE, GEA_RESET_ELS, GEA_ROUTER_DEPTH, GEA_ROUTER_REF, GEA_SELF_LISTENERS, GEA_SELF_PROXY, GEA_SETUP_EVENT_DIRECTIVES, GEA_SETUP_LOCAL_STATE_OBSERVERS, GEA_SETUP_REFS, GEA_SKIP_ITEM_HANDLER, GEA_STATIC_ESCAPE_HTML, GEA_STATIC_SANITIZE_ATTR, GEA_STORE_GET_BROWSER_ROOT_PROXY_HANDLER_FOR_TESTS, GEA_STORE_ROOT, GEA_SWAP_CHILD, GEA_SWAP_STATE_CHILDREN, GEA_SYNC_AUTOFOCUS, GEA_SYNC_DOM_REFS, GEA_SYNC_ITEMS, GEA_SYNC_MAP, GEA_SYNC_UNRENDERED_LIST_ITEMS, GEA_SYNC_VALUE_PROPS, GEA_TEARDOWN_SELF_LISTENERS, GEA_UPDATE_PROPS, GEA_UPDATE_TEXT, Link, Outlet, Router, RouterView, Store, applyListChanges, clearUidProvider, createRouter, gea as default, findPropertyDescriptor, geaCondPatchedSymbol, geaCondValueSymbol, __escapeHtml as geaEscapeHtml, geaListItemsSymbol, geaPrevGuardSymbol, __sanitizeAttr as geaSanitizeAttr, h, isClassConstructorValue, matchRoute, resetUidCounter, rootDeleteProperty, rootGetValue, rootSetValue, router, setUidProvider, stashComponentForTransfer };
 
 //# sourceMappingURL=index.mjs.map
