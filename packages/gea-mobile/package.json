@@ -60,8 +60,5 @@
     "lightningcss": "^1.32.0",
     "tsdown": "^0.21.2",
     "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "lightningcss-darwin-arm64": "^1.32.0"
   }
 }
