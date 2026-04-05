@@ -1,5 +1,6 @@
 import getUid from './uid'
 import { Store } from '../store'
+import { engineThis } from './component-internal'
 import {
   GEA_COMPILED_CHILD,
   GEA_CTOR_TAG_NAME,
@@ -7,7 +8,6 @@ import {
   GEA_DOM_KEY,
   GEA_DOM_PARENT_CHAIN,
   GEA_ELEMENT,
-  GEA_PROXY_GET_RAW_TARGET,
   GEA_HANDLE_ITEM_HANDLER,
   GEA_SKIP_ITEM_HANDLER,
 } from '../symbols'
@@ -20,126 +20,7 @@ interface GeaEvent extends Event {
 
 type GeaHTMLElement = HTMLElement & { [GEA_DOM_PARENT_CHAIN]?: string }
 
-function engineThis(c: object): any {
-  return (c as any)[GEA_PROXY_GET_RAW_TARGET] ?? c
-}
-
 type EventPlugin = (manager: ComponentManager) => void
-
-const RESERVED_HTML_TAG_NAMES = new Set([
-  'a',
-  'abbr',
-  'address',
-  'area',
-  'article',
-  'aside',
-  'audio',
-  'b',
-  'base',
-  'bdi',
-  'bdo',
-  'blockquote',
-  'body',
-  'br',
-  'button',
-  'canvas',
-  'caption',
-  'cite',
-  'code',
-  'col',
-  'colgroup',
-  'data',
-  'datalist',
-  'dd',
-  'del',
-  'details',
-  'dfn',
-  'dialog',
-  'div',
-  'dl',
-  'dt',
-  'em',
-  'embed',
-  'fieldset',
-  'figcaption',
-  'figure',
-  'footer',
-  'form',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'head',
-  'header',
-  'hgroup',
-  'hr',
-  'html',
-  'i',
-  'iframe',
-  'img',
-  'input',
-  'ins',
-  'kbd',
-  'label',
-  'legend',
-  'li',
-  'link',
-  'main',
-  'map',
-  'mark',
-  'menu',
-  'meta',
-  'meter',
-  'nav',
-  'noscript',
-  'object',
-  'ol',
-  'optgroup',
-  'option',
-  'output',
-  'p',
-  'picture',
-  'pre',
-  'progress',
-  'q',
-  'rp',
-  'rt',
-  'ruby',
-  's',
-  'samp',
-  'script',
-  'search',
-  'section',
-  'select',
-  'slot',
-  'small',
-  'source',
-  'span',
-  'strong',
-  'style',
-  'sub',
-  'summary',
-  'sup',
-  'table',
-  'tbody',
-  'td',
-  'template',
-  'textarea',
-  'tfoot',
-  'th',
-  'thead',
-  'time',
-  'title',
-  'tr',
-  'track',
-  'u',
-  'ul',
-  'var',
-  'video',
-  'wbr',
-])
 
 interface ComponentLike {
   constructor: Function & { prototype: any; [GEA_CTOR_TAG_NAME]?: string; displayName?: string; name: string }
@@ -149,6 +30,7 @@ interface ComponentLike {
   [GEA_ELEMENT]?: HTMLElement | null
   rendered: boolean
   render(rootEl?: any, opt_index?: number): boolean
+  [GEA_COMPILED_CHILD]?: boolean
   [GEA_HANDLE_ITEM_HANDLER]?: (itemId: string, e: Event) => any
   events?: Record<string, Record<string, ((this: ComponentLike, e: Event, ...args: any[]) => any) | undefined>>
   [key: string]: any
@@ -222,7 +104,6 @@ export default class ComponentManager {
 
     let broken = false
     let step = 0
-    e.targetEl = e.target
 
     do {
       if (broken || e.cancelBubble) break
@@ -258,16 +139,16 @@ export default class ComponentManager {
   addDocumentEventListeners_(eventTypes: string[]): void {
     if (!document.body) return
 
-    eventTypes.forEach((type) => {
-      if (this.registeredDocumentEvents_.has(type)) return
+    for (const type of eventTypes) {
+      if (this.registeredDocumentEvents_.has(type)) continue
       const useCapture = ComponentManager.NON_BUBBLING_EVENTS_.has(type)
       document.body.addEventListener(type, this.boundHandleEvent_, useCapture)
       this.registeredDocumentEvents_.add(type)
-    })
+    }
   }
 
   installConfiguredPlugins_(): void {
-    ComponentManager.eventPlugins_.forEach((plugin) => this.installEventPlugin_(plugin))
+    for (const plugin of ComponentManager.eventPlugins_) this.installEventPlugin_(plugin)
   }
 
   installEventPlugin_(plugin: EventPlugin): void {
@@ -308,7 +189,7 @@ export default class ComponentManager {
         parentComps.push(comp)
         ids.push(node.id)
       } else if (node.id && node.nodeType === 1) {
-        const cid = (node as HTMLElement).getAttribute('data-gea-cid')
+        const cid = (node as HTMLElement).getAttribute('data-gcc')
         if (cid && (comp = this.componentRegistry[cid])) {
           parentComps.push(comp)
           ids.push(cid)
@@ -352,7 +233,7 @@ export default class ComponentManager {
   }
 
   callEventsGetterHandler(comp: ComponentLike, e: GeaEvent, events?: ComponentLike['events']): any {
-    const ev = events !== undefined ? events : comp.events
+    const ev = events ?? comp.events
     if (!comp || !ev) return true
 
     const targetEl = e.targetEl as HTMLElement
@@ -362,9 +243,9 @@ export default class ComponentManager {
     const handlers = ev[eventType]
     if (!handlers) return true
 
-    const geaEvt = (targetEl as any)[GEA_DOM_EVENT_HINT] ?? targetEl.getAttribute?.('data-gea-event')
+    const geaEvt = (targetEl as any)[GEA_DOM_EVENT_HINT] ?? targetEl.getAttribute?.('data-ge')
     if (geaEvt) {
-      const selector = `[data-gea-event="${geaEvt}"]`
+      const selector = `[data-ge="${geaEvt}"]`
       const handler = handlers[selector]
       if (typeof handler === 'function') {
         Object.defineProperty(e, 'currentTarget', { value: targetEl, configurable: true })
@@ -375,17 +256,16 @@ export default class ComponentManager {
     }
 
     for (const selector in handlers) {
-      let matchedEl: HTMLElement | null = null
-      if (selector.charAt(0) === '#') {
-        if (targetEl.id === selector.slice(1)) matchedEl = targetEl
-      } else {
-        const delegateFromAncestor = selector.includes('data-gea-event')
-        if (delegateFromAncestor && typeof targetEl.closest === 'function') {
-          matchedEl = targetEl.closest(selector)
-        } else if (targetEl.matches(selector)) {
-          matchedEl = targetEl
-        }
-      }
+      const matchedEl: HTMLElement | null =
+        selector.charAt(0) === '#'
+          ? targetEl.id === selector.slice(1)
+            ? targetEl
+            : null
+          : selector.includes('data-ge') && typeof targetEl.closest === 'function'
+            ? targetEl.closest(selector)
+            : targetEl.matches(selector)
+              ? targetEl
+              : null
 
       if (matchedEl) {
         const handler = handlers[selector]
@@ -394,8 +274,7 @@ export default class ComponentManager {
           Object.defineProperty(e, 'currentTarget', { value: matchedEl, configurable: true })
           const result = handler.call(comp, e, targetComponent !== comp ? targetComponent : undefined)
           if (result === false) return false
-          const hasItemRow =
-            (targetEl as any)[GEA_DOM_KEY] != null || targetEl.getAttribute?.('data-gea-item-id') != null
+          const hasItemRow = (targetEl as any)[GEA_DOM_KEY] != null || targetEl.getAttribute?.('data-gid') != null
           if (hasItemRow && matchedEl !== targetEl) return GEA_SKIP_ITEM_HANDLER
           return true
         }
@@ -415,11 +294,11 @@ export default class ComponentManager {
     let itemEl: HTMLElement | null = targetEl
     const root = (engineThis(comp)[GEA_ELEMENT] as HTMLElement | undefined) ?? comp.el
     while (itemEl && itemEl !== root) {
-      if ((itemEl as any)[GEA_DOM_KEY] != null || itemEl.getAttribute?.('data-gea-item-id')) break
+      if ((itemEl as any)[GEA_DOM_KEY] != null || itemEl.getAttribute?.('data-gid')) break
       itemEl = itemEl.parentElement
     }
     if (itemEl && itemEl !== root) {
-      const itemId = (itemEl as any)[GEA_DOM_KEY] ?? itemEl.getAttribute?.('data-gea-item-id')
+      const itemId = (itemEl as any)[GEA_DOM_KEY] ?? itemEl.getAttribute?.('data-gid')
       if (itemId != null) return handleItem.call(comp, itemId, e)
     }
 
@@ -433,7 +312,7 @@ export default class ComponentManager {
         const comp = this.getComponent(current.id)
         if (comp) return comp
         if (current.nodeType === 1) {
-          const cid = current.getAttribute('data-gea-cid')
+          const cid = current.getAttribute('data-gcc')
           if (cid) {
             const comp2 = this.getComponent(cid)
             if (comp2) return comp2
@@ -442,7 +321,6 @@ export default class ComponentManager {
       }
       current = current.parentNode as HTMLElement | null
     }
-    return undefined
   }
 
   getComponent(id: string): ComponentLike {
@@ -483,12 +361,12 @@ export default class ComponentManager {
       .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
       .replace(/[\s_]+/g, '-')
       .toLowerCase()
-    return RESERVED_HTML_TAG_NAMES.has(tagName) ? `gea-${tagName}` : tagName
+    return tagName.includes('-') ? tagName : `gea-${tagName}`
   }
 
   getComponentSelectors(): string[] {
     if (!this.componentSelectorsCache_) {
-      this.componentSelectorsCache_ = Object.keys(this.componentClassRegistry).map((name) => `${name}`)
+      this.componentSelectorsCache_ = Object.keys(this.componentClassRegistry)
     }
     return this.componentSelectorsCache_
   }
@@ -503,11 +381,11 @@ export default class ComponentManager {
 
   getActiveDocumentEventTypes_(): string[] {
     const eventTypes = new Set<string>(ComponentManager.customEventTypes_)
-    Object.values(this.componentRegistry).forEach((comp) => {
+    for (const comp of Object.values(this.componentRegistry)) {
       if (comp.events) {
-        Object.keys(comp.events).forEach((type) => eventTypes.add(type))
+        for (const type of Object.keys(comp.events)) eventTypes.add(type)
       }
-    })
+    }
     return [...eventTypes]
   }
 
@@ -520,11 +398,11 @@ export default class ComponentManager {
   static registerEventTypes(eventTypes: string[]): void {
     let changed = false
 
-    eventTypes.forEach((type) => {
-      if (ComponentManager.customEventTypes_.includes(type)) return
+    for (const type of eventTypes) {
+      if (ComponentManager.customEventTypes_.includes(type)) continue
       ComponentManager.customEventTypes_.push(type)
       changed = true
-    })
+    }
 
     if (!changed || !ComponentManager.instance) return
 

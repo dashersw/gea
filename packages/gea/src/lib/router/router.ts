@@ -1,4 +1,5 @@
 import { Store } from '../store'
+import { GEA_PROXY_RAW } from '../symbols'
 import type { RouteMap, RouterOptions, NavigationTarget, RouteComponent, ResolvedRoute } from './types'
 import { resolveRoute } from './resolve'
 import { runGuards } from './guard'
@@ -17,7 +18,6 @@ function stripQueryHash(path: string): string {
 
 function buildUrl(target: string | NavigationTarget): { path: string; search: string; hash: string } {
   if (typeof target === 'string') {
-    // Parse path?query#hash from string
     let path = target
     let search = ''
     let hash = ''
@@ -37,7 +37,6 @@ function buildUrl(target: string | NavigationTarget): { path: string; search: st
     return { path, search, hash }
   }
 
-  // NavigationTarget object
   let search = ''
   if (target.query) {
     const parts: string[] = []
@@ -58,10 +57,33 @@ function buildUrl(target: string | NavigationTarget): { path: string; search: st
   return { path: target.path, search, hash }
 }
 
+interface RouterPrivate {
+  routes: RouteMap
+  options: { base: string; scroll: boolean }
+  currentComponent: any
+  guardComponent: any
+  guardProceed: (() => void) | null
+  popstateHandler: ((e: PopStateEvent) => void) | null
+  clickHandler: ((e: MouseEvent) => void) | null
+  scrollPositions: Map<number, { x: number; y: number }>
+  historyIndex: number
+  queryModes: Map<number, any>
+  layouts: any[]
+}
+
+const _rp = new WeakMap<object, RouterPrivate>()
+
+function raw(r: Router): object {
+  return (r as any)[GEA_PROXY_RAW] ?? r
+}
+
+function rp(router: Router): RouterPrivate {
+  return _rp.get(raw(router))!
+}
+
 export class Router<T extends RouteMap = RouteMap> extends Store {
   static _ssrRouterResolver: (() => object | null) | null = null
   readonly routeConfig: T
-  // Reactive class fields (tracked by Store proxy)
   path = ''
   route = ''
   params: Record<string, string> = {}
@@ -70,38 +92,35 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
   matches: string[] = []
   error: string | null = null
 
-  // Private fields (bypass Store reactivity via _ prefix)
-  private _routes: RouteMap
-  private _options: { base: string; scroll: boolean }
-  private _currentComponent: any = null
-  private _guardComponent: any = null
-  private _guardProceed: (() => void) | null = null
-  private _popstateHandler: ((e: PopStateEvent) => void) | null = null
-  private _clickHandler: ((e: MouseEvent) => void) | null = null
-  private _scrollPositions = new Map<number, { x: number; y: number }>()
-  private _historyIndex = 0
-  private _queryModes = new Map<number, any>()
-  private _layouts: any[] = []
-
   constructor(routes?: T, options?: RouterOptions) {
     super()
 
     this.routeConfig = (routes ?? {}) as T
-    this._routes = routes ?? {}
-    this._options = {
-      base: options?.base ?? '',
-      scroll: options?.scroll ?? false,
+
+    const p: RouterPrivate = {
+      routes: routes ?? {},
+      options: { base: options?.base ?? '', scroll: options?.scroll ?? false },
+      currentComponent: null,
+      guardComponent: null,
+      guardProceed: null,
+      popstateHandler: null,
+      clickHandler: null,
+      scrollPositions: new Map(),
+      historyIndex: 0,
+      queryModes: new Map(),
+      layouts: [],
     }
+    _rp.set(raw(this), p)
 
     Link._router = this
     Outlet._router = this
 
-    this._popstateHandler = (_e: PopStateEvent) => {
-      this._resolve()
+    p.popstateHandler = (_e: PopStateEvent) => {
+      _resolve(this)
     }
-    window.addEventListener('popstate', this._popstateHandler)
+    window.addEventListener('popstate', p.popstateHandler)
 
-    this._clickHandler = (e: MouseEvent) => {
+    p.clickHandler = (e: MouseEvent) => {
       if (e.defaultPrevented) return
       const anchor = (e.target as HTMLElement)?.closest?.('a[href]') as HTMLAnchorElement | null
       if (!anchor) return
@@ -114,26 +133,24 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
       e.preventDefault()
       this.push(href)
     }
-    document.addEventListener('click', this._clickHandler)
+    document.addEventListener('click', p.clickHandler)
 
-    // Sync reactive path/params from the current URL even when no routes are registered
-    // yet (lazy singleton). Without this, `router.path` stays "" and apps that redirect
-    // based on it can clobber deep links on first load.
-    this._resolve()
+    _resolve(this)
   }
 
   setRoutes(routes: RouteMap): void {
-    this._routes = routes
+    rp(this).routes = routes
     ;(this as any).routeConfig = routes
-    if (typeof window !== 'undefined') this._resolve()
+    if (typeof window !== 'undefined') _resolve(this)
   }
 
   get page(): any {
-    return this._guardComponent ?? this._currentComponent
+    const p = rp(this)
+    return p.guardComponent ?? p.currentComponent
   }
 
   push(target: string | NavigationTarget): void {
-    this._navigate(target, 'push')
+    _navigate(this, target, 'push')
   }
 
   navigate(target: string | NavigationTarget): void {
@@ -141,7 +158,7 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
   }
 
   replace(target: string | NavigationTarget): void {
-    this._navigate(target, 'replace')
+    _navigate(this, target, 'replace')
   }
 
   back(): void {
@@ -157,24 +174,25 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
   }
 
   get layoutCount(): number {
-    return this._layouts.length
+    return rp(this).layouts.length
   }
 
   getComponentAtDepth(depth: number): { component: any; props: Record<string, any>; cacheKey: string | null } | null {
-    if (depth < this._layouts.length) {
-      const layout = this._layouts[depth]
+    const p = rp(this)
+    if (depth < p.layouts.length) {
+      const layout = p.layouts[depth]
       const props: Record<string, any> = { ...this.params }
       props.route = this.route
 
       const nextDepth = depth + 1
-      if (nextDepth < this._layouts.length) {
-        props.page = this._layouts[nextDepth]
+      if (nextDepth < p.layouts.length) {
+        props.page = p.layouts[nextDepth]
       } else {
-        props.page = this._guardComponent ?? this._currentComponent
+        props.page = p.guardComponent ?? p.currentComponent
       }
 
       let cacheKey: string | null = null
-      const modeInfo = this._queryModes.get(depth)
+      const modeInfo = p.queryModes.get(depth)
       if (modeInfo) {
         props.activeKey = modeInfo.activeKey
         props.keys = modeInfo.keys
@@ -187,8 +205,8 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
       }
       return { component: layout, props, cacheKey }
     }
-    if (depth === this._layouts.length) {
-      const comp = this._guardComponent ?? this._currentComponent
+    if (depth === p.layouts.length) {
+      const comp = p.guardComponent ?? p.currentComponent
       return comp ? { component: comp, props: { ...this.params }, cacheKey: null } : null
     }
     return null
@@ -206,153 +224,150 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
 
   dispose(): void {
     if (typeof window !== 'undefined') {
-      if (this._popstateHandler) {
-        window.removeEventListener('popstate', this._popstateHandler)
-        this._popstateHandler = null
+      const p = rp(this)
+      if (p.popstateHandler) {
+        window.removeEventListener('popstate', p.popstateHandler)
+        p.popstateHandler = null
       }
-      if (this._clickHandler) {
-        document.removeEventListener('click', this._clickHandler)
-        this._clickHandler = null
+      if (p.clickHandler) {
+        document.removeEventListener('click', p.clickHandler)
+        p.clickHandler = null
       }
     }
   }
+}
 
-  private _navigate(target: string | NavigationTarget, method: 'push' | 'replace'): void {
-    if (typeof window === 'undefined') return
-    const { path, search, hash } = buildUrl(target)
+function _navigate(router: Router, target: string | NavigationTarget, method: 'push' | 'replace'): void {
+  if (typeof window === 'undefined') return
+  const p = rp(router)
+  const { path, search, hash } = buildUrl(target)
 
-    // Prepend base for the history API URL
-    const base = this._options.base
-    const fullPath = base + path + search + hash
+  const base = p.options.base
+  const fullPath = base + path + search + hash
 
-    // Save scroll position before navigation
-    if (this._options.scroll && method === 'push') {
-      this._scrollPositions.set(this._historyIndex, {
-        x: window.scrollX ?? 0,
-        y: window.scrollY ?? 0,
-      })
-    }
-
-    if (method === 'push') {
-      this._historyIndex++
-      window.history.pushState({ index: this._historyIndex }, '', fullPath)
-    } else {
-      window.history.replaceState({ index: this._historyIndex }, '', fullPath)
-    }
-
-    this._resolve()
-
-    // Scroll to top on push navigation if scroll enabled
-    if (this._options.scroll && method === 'push') {
-      window.scrollTo(0, 0)
-    }
+  if (method === 'push') {
+    const currentFull = window.location.pathname + window.location.search + window.location.hash
+    if (currentFull === fullPath) return
   }
 
-  private _resolve(): void {
-    if (typeof window === 'undefined') return
-    const base = this._options.base
-    let currentPath = window.location.pathname
-    const currentSearch = window.location.search
-    const currentHash = window.location.hash
+  if (p.options.scroll && method === 'push') {
+    p.scrollPositions.set(p.historyIndex, {
+      x: window.scrollX ?? 0,
+      y: window.scrollY ?? 0,
+    })
+  }
 
-    // Strip base from path
-    if (base && currentPath.startsWith(base)) {
-      currentPath = currentPath.slice(base.length) || '/'
-    }
+  if (method === 'push') {
+    p.historyIndex++
+    window.history.pushState({ index: p.historyIndex }, '', fullPath)
+  } else {
+    window.history.replaceState({ index: p.historyIndex }, '', fullPath)
+  }
 
-    const resolved: ResolvedRoute = resolveRoute(this._routes, currentPath, currentSearch)
+  _resolve(router)
 
-    // Handle redirect
-    if (resolved.redirect) {
-      const redirectMethod = resolved.redirectMethod ?? 'replace'
-      this._navigate(resolved.redirect, redirectMethod)
-      return
-    }
+  if (p.options.scroll && method === 'push') {
+    window.scrollTo(0, 0)
+  }
+}
 
-    // Handle guards
-    if (resolved.guards.length > 0) {
-      const guardResult = runGuards(resolved.guards)
+function _resolve(router: Router): void {
+  if (typeof window === 'undefined') return
+  const p = rp(router)
+  const base = p.options.base
+  let currentPath = window.location.pathname
+  const currentSearch = window.location.search
+  const currentHash = window.location.hash
 
-      if (guardResult !== true) {
-        if (typeof guardResult === 'string') {
-          // Guard redirects to another path
-          this._navigate(guardResult, 'replace')
-          return
-        }
+  if (base && currentPath.startsWith(base)) {
+    currentPath = currentPath.slice(base.length) || '/'
+  }
 
-        // Guard returned a component — block navigation, show guard component
-        this._guardComponent = guardResult
-        this._guardProceed = () => {
-          this._guardComponent = null
-          this._guardProceed = null
-          this._applyResolved(resolved, currentPath, currentSearch, currentHash)
-        }
+  const resolved: ResolvedRoute = resolveRoute(p.routes, currentPath, currentSearch)
 
-        // Still update path-related reactive fields
-        this.path = currentPath
-        this.route = resolved.pattern
-        this.params = resolved.params
-        this.query = parseQuery(currentSearch)
-        this.hash = currentHash
-        this.matches = resolved.matches
+  if (resolved.redirect) {
+    const redirectMethod = resolved.redirectMethod ?? 'replace'
+    _navigate(router, resolved.redirect, redirectMethod)
+    return
+  }
+
+  if (resolved.guards.length > 0) {
+    const guardResult = runGuards(resolved.guards)
+
+    if (guardResult !== true) {
+      if (typeof guardResult === 'string') {
+        _navigate(router, guardResult, 'replace')
         return
       }
-    }
 
-    // Handle lazy loading
-    if (resolved.isLazy && resolved.lazyLoader) {
-      const loader = resolved.lazyLoader
-      resolveLazy(loader)
-        .then((component: RouteComponent) => {
-          resolved.component = component
-          this._applyResolved(resolved, currentPath, currentSearch, currentHash)
-        })
-        .catch((err: Error) => {
-          this.error = err?.message ?? 'Failed to load route component'
-          this._currentComponent = null
-          this._guardComponent = null
-          // Still update path info
-          this.path = currentPath
-          this.route = resolved.pattern
-          this.params = resolved.params
-          this.query = parseQuery(currentSearch)
-          this.hash = currentHash
-          this.matches = resolved.matches
-        })
+      p.guardComponent = guardResult
+      p.guardProceed = () => {
+        p.guardComponent = null
+        p.guardProceed = null
+        _applyResolved(router, resolved, currentPath, currentSearch, currentHash)
+      }
 
-      // Update path info immediately while loading
-      this.path = currentPath
-      this.route = resolved.pattern
-      this.params = resolved.params
-      this.query = parseQuery(currentSearch)
-      this.hash = currentHash
-      this.matches = resolved.matches
+      router.path = currentPath
+      router.route = resolved.pattern
+      router.params = resolved.params
+      router.query = parseQuery(currentSearch)
+      router.hash = currentHash
+      router.matches = resolved.matches
       return
     }
-
-    this._applyResolved(resolved, currentPath, currentSearch, currentHash)
   }
 
-  private _applyResolved(
-    resolved: ResolvedRoute,
-    currentPath: string,
-    currentSearch: string,
-    currentHash: string,
-  ): void {
-    this._guardComponent = null
-    this._currentComponent = resolved.component
-    this._layouts = resolved.layouts
-    this._queryModes = resolved.queryModes
-    this.error = null
+  if (resolved.isLazy && resolved.lazyLoader) {
+    const loader = resolved.lazyLoader
+    resolveLazy(loader)
+      .then((component: RouteComponent) => {
+        resolved.component = component
+        _applyResolved(router, resolved, currentPath, currentSearch, currentHash)
+      })
+      .catch((err: Error) => {
+        router.error = err?.message ?? 'Failed to load route component'
+        p.currentComponent = null
+        p.guardComponent = null
+        router.path = currentPath
+        router.route = resolved.pattern
+        router.params = resolved.params
+        router.query = parseQuery(currentSearch)
+        router.hash = currentHash
+        router.matches = resolved.matches
+      })
 
-    // Update reactive fields
-    this.path = currentPath
-    this.route = resolved.pattern
-    this.params = resolved.params
-    this.query = parseQuery(currentSearch)
-    this.hash = currentHash
-    this.matches = resolved.matches
+    router.path = currentPath
+    router.route = resolved.pattern
+    router.params = resolved.params
+    router.query = parseQuery(currentSearch)
+    router.hash = currentHash
+    router.matches = resolved.matches
+    return
   }
+
+  _applyResolved(router, resolved, currentPath, currentSearch, currentHash)
+}
+
+function _applyResolved(
+  router: Router,
+  resolved: ResolvedRoute,
+  currentPath: string,
+  currentSearch: string,
+  currentHash: string,
+): void {
+  const p = rp(router)
+  p.guardComponent = null
+  p.currentComponent = resolved.component
+  p.layouts = resolved.layouts
+  p.queryModes = resolved.queryModes
+  router.error = null
+
+  router.path = currentPath
+  router.route = resolved.pattern
+  router.params = resolved.params
+  router.query = parseQuery(currentSearch)
+  router.hash = currentHash
+  router.matches = resolved.matches
 }
 
 /** @deprecated Use Router instead */

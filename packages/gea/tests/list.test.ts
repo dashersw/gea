@@ -28,13 +28,13 @@ function installDom() {
 function createRow(text: string): HTMLElement {
   const el = document.createElement('div')
   el.textContent = text
-  el.setAttribute('data-gea-item-id', text)
+  el.setAttribute('data-gid', text)
   return el
 }
 
-function makeConfig(arrayPathParts: string[] = ['items']): ListConfig {
+function makeConfig(arpp: string[] = ['items']): ListConfig {
   return {
-    arrayPathParts,
+    arpp,
     create: (item: any) => createRow(String(item)),
   }
 }
@@ -174,7 +174,7 @@ describe('applyListChanges', () => {
 
       applyListChanges(container, ['first'], changes, makeConfig(['gestureLog']))
       assert.equal(container.children.length, 1)
-      assert.equal(container.children[0].getAttribute('data-gea-item-id'), 'first')
+      assert.equal(container.children[0].getAttribute('data-gid'), 'first')
       assert.equal(container.children[0].textContent, 'first')
     })
 
@@ -335,7 +335,7 @@ describe('applyListChanges', () => {
           createCalls++
           return createRow(item)
         },
-        render: (item: string) => `<div data-gea-item-id="${item}">${item}</div>`,
+        render: (item: string) => `<div data-gid="${item}">${item}</div>`,
       }
 
       applyListChanges(container, ['x', 'y'], changes, config)
@@ -346,10 +346,10 @@ describe('applyListChanges', () => {
     it('patches rows in place for same-key root replacements when patchRow/getKey are available', () => {
       const container = document.createElement('div')
       const firstRow = document.createElement('div')
-      firstRow.setAttribute('data-gea-item-id', '1')
+      firstRow.setAttribute('data-gid', '1')
       firstRow.textContent = 'row 1'
       const secondRow = document.createElement('div')
-      secondRow.setAttribute('data-gea-item-id', '2')
+      secondRow.setAttribute('data-gid', '2')
       secondRow.textContent = 'row 2'
       container.appendChild(firstRow)
       container.appendChild(secondRow)
@@ -377,14 +377,14 @@ describe('applyListChanges', () => {
         arrayPathParts: ['items'],
         create: (item: { id: number; label: string }) => {
           const el = document.createElement('div')
-          el.setAttribute('data-gea-item-id', String(item.id))
+          el.setAttribute('data-gid', String(item.id))
           el.textContent = item.label
           return el
         },
         getKey: (item: { id: number }) => String(item.id),
         patchRow: (row, item) => {
           row.textContent = item.label
-          row.setAttribute('data-gea-item-id', String(item.id))
+          row.setAttribute('data-gid', String(item.id))
         },
       }
 

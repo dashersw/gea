@@ -1,4 +1,4 @@
-import { resetUidCounter } from '@geajs/core'
+import { resetUidCounter, GEA_OBSERVER_REMOVERS, GEA_CHILD_COMPONENTS } from '@geajs/core'
 import type { GeaComponentConstructor } from './types'
 
 const SSR_UID_SEED = 0
@@ -11,6 +11,18 @@ export function resetSSRIds(): void {
 
 export interface RenderOptions {
   onRenderError?: (error: Error) => string
+}
+
+function _teardownObservers(instance: any): void {
+  const or = instance?.[GEA_OBSERVER_REMOVERS]
+  if (or?.length) {
+    for (const fn of or) fn()
+    instance[GEA_OBSERVER_REMOVERS] = []
+  }
+  const cc = instance?.[GEA_CHILD_COMPONENTS]
+  if (cc?.length) {
+    for (const child of cc) _teardownObservers(child)
+  }
 }
 
 export function renderToString(
@@ -29,5 +41,7 @@ export function renderToString(
       return options.onRenderError(err)
     }
     throw error
+  } finally {
+    _teardownObservers(instance)
   }
 }

@@ -1,4 +1,5 @@
 import Component from '../base/component'
+import { GEA_PROXY_RAW } from '../symbols'
 
 function escapeAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
@@ -16,11 +17,29 @@ export interface LinkProps {
   onNavigate?: (e: MouseEvent) => void
 }
 
+interface LinkPrivate {
+  clickHandler: ((e: MouseEvent) => void) | null
+  observerRemover: (() => void) | null
+}
+
+const _lp = new WeakMap<object, LinkPrivate>()
+
+function rawLink(l: Link): object {
+  return (l as any)[GEA_PROXY_RAW] ?? l
+}
+
+function lp(link: Link): LinkPrivate {
+  const key = rawLink(link)
+  let p = _lp.get(key)
+  if (!p) {
+    p = { clickHandler: null, observerRemover: null }
+    _lp.set(key, p)
+  }
+  return p
+}
+
 export default class Link extends Component<LinkProps> {
   static _router: any = null
-
-  private _clickHandler: ((e: MouseEvent) => void) | null = null
-  private _observerRemover: (() => void) | null = null
 
   template(props: LinkProps) {
     const cls = props.class ? ` class="${escapeAttr(props.class)}"` : ''
@@ -33,8 +52,18 @@ export default class Link extends Component<LinkProps> {
   onAfterRender() {
     const el = this.el as HTMLAnchorElement
     if (!el) return
+    const p = lp(this)
 
-    this._clickHandler = (e: MouseEvent) => {
+    const prev = (el as any).__geaLinkHandler as ((e: MouseEvent) => void) | undefined
+    if (prev) {
+      el.removeEventListener('click', prev)
+    }
+    if (p.observerRemover) {
+      p.observerRemover()
+      p.observerRemover = null
+    }
+
+    p.clickHandler = (e: MouseEvent) => {
       const to = this.props.to
       if (!to) return
       if (to.startsWith('http://') || to.startsWith('https://')) return
@@ -46,46 +75,51 @@ export default class Link extends Component<LinkProps> {
         this.props.replace ? router.replace(to) : router.push(to)
       }
     }
-    el.addEventListener('click', this._clickHandler)
+    ;(el as any).__geaLinkHandler = p.clickHandler
+    el.addEventListener('click', p.clickHandler)
 
     const router = Link._router
     if (router) {
-      this._updateActive(router)
-      this._observerRemover = router.observe('path', () => this._updateActive(router))
+      _updateActive(this, router)
+      p.observerRemover = router.observe('path', () => _updateActive(this, router))
     }
-  }
-
-  private _updateActive(router: any): void {
-    const el = this.el as HTMLAnchorElement
-    if (!el) return
-    const to = this.props.to
-    const active = this.props.exact ? router.isExact(to) : router.isActive(to)
-    if (active) {
-      el.setAttribute('data-active', '')
-    } else {
-      el.removeAttribute('data-active')
-    }
-    // Keep `class` in sync with router when `path` changes — the template only
-    // evaluated `class={...}` at first render; without this, `.active` stays stale.
-    const raw = el.getAttribute('class') ?? ''
-    const base = raw
-      .replace(/\bactive\b/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-    const nextClass = active ? (base ? `${base} active` : 'active') : base
-    if (nextClass) el.setAttribute('class', nextClass)
-    else el.removeAttribute('class')
   }
 
   dispose() {
-    if (this._clickHandler && this.el) {
-      this.el.removeEventListener('click', this._clickHandler)
-      this._clickHandler = null
+    const el = this.el as HTMLAnchorElement | null
+    if (el) {
+      const prev = (el as any).__geaLinkHandler as ((e: MouseEvent) => void) | undefined
+      if (prev) {
+        el.removeEventListener('click', prev)
+        delete (el as any).__geaLinkHandler
+      }
     }
-    if (this._observerRemover) {
-      this._observerRemover()
-      this._observerRemover = null
+    const p = lp(this)
+    p.clickHandler = null
+    if (p.observerRemover) {
+      p.observerRemover()
+      p.observerRemover = null
     }
     super.dispose()
   }
+}
+
+function _updateActive(link: Link, router: any): void {
+  const el = link.el as HTMLAnchorElement
+  if (!el) return
+  const to = link.props.to
+  const active = link.props.exact ? router.isExact(to) : router.isActive(to)
+  if (active) {
+    el.setAttribute('data-active', '')
+  } else {
+    el.removeAttribute('data-active')
+  }
+  const raw = el.getAttribute('class') ?? ''
+  const base = raw
+    .replace(/\bactive\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const nextClass = active ? (base ? `${base} active` : 'active') : base
+  if (nextClass) el.setAttribute('class', nextClass)
+  else el.removeAttribute('class')
 }

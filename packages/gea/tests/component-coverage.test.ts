@@ -580,7 +580,7 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
       (item: any) => {
         const li = document.createElement('li')
         li.textContent = item
-        li.setAttribute('data-gea-item-id', item)
+        li.setAttribute('data-gid', item)
         return li
       },
     )
@@ -632,7 +632,7 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
     const createFn = (item: any) => {
       const li = document.createElement('li')
       li.textContent = item
-      li.setAttribute('data-gea-item-id', item)
+      li.setAttribute('data-gid', item)
       return li
     }
     m[GEA_REGISTER_MAP](
@@ -671,7 +671,7 @@ describe('Component – __geaSyncItems', () => {
 
   function mkItem(id: string) {
     const el = document.createElement('div')
-    el.setAttribute('data-gea-item-id', id)
+    el.setAttribute('data-gid', id)
     el.textContent = id
     ;(el as any)[GEA_DOM_ITEM] = id
     return el
@@ -794,7 +794,7 @@ describe('Component – __geaSyncItems', () => {
     ;(list as any)[GEA_MAP_CONFIG_PREV] = []
     ;(list as any)[GEA_MAP_CONFIG_COUNT] = 0
     s[GEA_SYNC_ITEMS](list, ['a', 'b', 'c'], mkItem)
-    assert.equal(list.querySelectorAll('[data-gea-item-id]').length, 3)
+    assert.equal(list.querySelectorAll('[data-gid]').length, 3)
     assert.equal(
       list.querySelectorAll('.list-empty').length,
       0,
@@ -1080,7 +1080,7 @@ describe('Component – __geaRegisterCond and __geaPatchCond', () => {
     }
     assert.ok(endMarker)
     const row = document.createElement('div')
-    row.setAttribute('data-gea-item-id', '1')
+    row.setAttribute('data-gid', '1')
     row.textContent = 'row'
     root.insertBefore(row, endMarker)
     c[GEA_REGISTER_COND](
@@ -1092,7 +1092,7 @@ describe('Component – __geaRegisterCond and __geaPatchCond', () => {
     )
     ;(c as any)[geaCondValueSymbol(5)] = true
     c[GEA_PATCH_COND](5)
-    assert.ok(root.querySelector('[data-gea-item-id="1"]'))
+    assert.ok(root.querySelector('[data-gid="1"]'))
     assert.equal(root.querySelector('.ph'), null)
   })
 })
@@ -1169,7 +1169,7 @@ describe('Component – GEA_INSTANTIATE_CHILD_COMPONENTS', () => {
   it('skips elements already mounted', () => {
     class Parent extends Component {
       template() {
-        return '<div><child-w data-gea-component-mounted="true"></child-w></div>'
+        return '<div><child-w data-gcm="true"></child-w></div>'
       }
     }
     const parent = new Parent()
@@ -1601,7 +1601,7 @@ describe('Component – __geaSyncItems same-length diff content', () => {
 
   function mkItem(id: string) {
     const el = document.createElement('div')
-    el.setAttribute('data-gea-item-id', id)
+    el.setAttribute('data-gid', id)
     el.textContent = id
     ;(el as any)[GEA_DOM_ITEM] = id
     return el
@@ -1624,7 +1624,7 @@ describe('Component – __geaSyncItems same-length diff content', () => {
     ;(list as any)[GEA_MAP_CONFIG_PREV] = ['a', 'b']
     ;(list as any)[GEA_MAP_CONFIG_COUNT] = 2
     s[GEA_SYNC_ITEMS](list, ['x', 'y'], mkItem)
-    const ids = Array.from(list.querySelectorAll('[data-gea-item-id]')).map((el) => el.getAttribute('data-gea-item-id'))
+    const ids = Array.from(list.querySelectorAll('[data-gid]')).map((el) => el.getAttribute('data-gid'))
     assert.deepEqual(ids, ['x', 'y'])
   })
 
@@ -1698,27 +1698,18 @@ describe('Component – GEA_EXTRACT_COMPONENT_PROPS with missing binding', () =>
     restoreDom()
   })
 
-  it('warns when binding is not found', () => {
-    const warnings: string[] = []
-    const origWarn = console.warn
-    console.warn = (...args: any[]) => {
-      warnings.push(args.join(' '))
-    }
-    try {
-      class A extends Component {
-        template() {
-          return '<div></div>'
-        }
+  it('returns undefined for missing binding', () => {
+    class A extends Component {
+      template() {
+        return '<div></div>'
       }
-      const a = new A()
-      a[GEA_PROP_BINDINGS] = new Map()
-      const el = document.createElement('div')
-      el.setAttribute('data-prop-data', `${GEA_PROP_BINDING_ATTR_PREFIX}missing`)
-      a[GEA_EXTRACT_COMPONENT_PROPS](el)
-      assert.ok(warnings.some((w) => w.includes('Prop binding not found')))
-    } finally {
-      console.warn = origWarn
     }
+    const a = new A()
+    a[GEA_PROP_BINDINGS] = new Map()
+    const el = document.createElement('div')
+    el.setAttribute('data-prop-data', `${GEA_PROP_BINDING_ATTR_PREFIX}missing`)
+    const props = a[GEA_EXTRACT_COMPONENT_PROPS](el)
+    assert.equal(props.data, undefined)
   })
 })
 
@@ -1827,7 +1818,7 @@ describe('Component – __geaRegisterMap and __geaSyncMap with changes', () => {
     const createFn = (item: any) => {
       const li = document.createElement('li')
       li.textContent = item
-      li.setAttribute('data-gea-item-id', item)
+      li.setAttribute('data-gid', item)
       return li
     }
     m[GEA_REGISTER_MAP](
@@ -1990,7 +1981,7 @@ describe('Component – __geaSyncItems with removal partial match', () => {
 
   function mkItem(id: string) {
     const el = document.createElement('div')
-    el.setAttribute('data-gea-item-id', id)
+    el.setAttribute('data-gid', id)
     el.textContent = id
     ;(el as any)[GEA_DOM_ITEM] = id
     return el
@@ -2074,7 +2065,7 @@ describe('Component – local state observer survives createdHooks clear', () =>
           () => this.value || [],
           (item: any) => {
             const el = document.createElement('span')
-            el.setAttribute('data-gea-item-id', String(item))
+            el.setAttribute('data-gid', String(item))
             el.textContent = item
             return el
           },
@@ -2095,7 +2086,7 @@ describe('Component – local state observer survives createdHooks clear', () =>
       }
 
       template() {
-        return `<div id="${this.id}"><div id="${this.id}-list">${(this.value || []).map((v: string) => `<span data-gea-item-id="${v}">${v}</span>`).join('')}<!----></div></div>`
+        return `<div id="${this.id}"><div id="${this.id}-list">${(this.value || []).map((v: string) => `<span data-gid="${v}">${v}</span>`).join('')}<!----></div></div>`
       }
     }
 

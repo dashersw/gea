@@ -58,7 +58,7 @@ describe('ComponentManager – event handling', () => {
     restoreDom()
   })
 
-  describe('handleEvent', () => {
+  describe('he', () => {
     it('dispatches event to parent component handlers', () => {
       const mgr = ComponentManager.getInstance()
       let handlerCalled = false
@@ -124,7 +124,7 @@ describe('ComponentManager – event handling', () => {
       assert.equal(called, true)
     })
 
-    it('invokes events getter at most once per component per handleEvent', () => {
+    it('invokes events getter at most once per component per he', () => {
       const mgr = ComponentManager.getInstance()
       mgr.loaded_ = false
       let eventsGets = 0
@@ -249,7 +249,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('getParentComps', () => {
+  describe('gpc', () => {
     it('walks up the DOM to find parent components', () => {
       const mgr = ComponentManager.getInstance()
       const comp = {
@@ -326,7 +326,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('callEventsGetterHandler', () => {
+  describe('cegh', () => {
     it('returns true when comp has no events', () => {
       const mgr = ComponentManager.getInstance()
       const comp = { id: 'no-events', rendered: true, render: () => true, constructor: Object }
@@ -396,7 +396,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('callItemHandler', () => {
+  describe('cih', () => {
     it('calls [GEA_HANDLE_ITEM_HANDLER] for item elements', () => {
       const mgr = ComponentManager.getInstance()
       let receivedId: string | null = null
@@ -418,7 +418,7 @@ describe('ComponentManager – event handling', () => {
       mgr.setComponent(comp)
 
       const item = document.createElement('div')
-      item.setAttribute('data-gea-item-id', 'item-42')
+      item.setAttribute('data-gid', 'item-42')
       el.appendChild(item)
 
       const event = new Event('click')
@@ -436,7 +436,7 @@ describe('ComponentManager – event handling', () => {
       assert.equal(mgr.callItemHandler(comp, event), true)
     })
 
-    it('callHandlers does not invoke [GEA_HANDLE_ITEM_HANDLER] after a delegated row handler runs (parent data-gea-event only)', async () => {
+    it('ch does not invoke [GEA_HANDLE_ITEM_HANDLER] after a delegated row handler runs (parent data-ge only)', async () => {
       const seed = `cmcov-skip-item-${Date.now()}-${Math.random()}`
       const mod = await import(`../src/lib/base/component-manager?${seed}`)
       const CM = mod.default
@@ -457,7 +457,7 @@ describe('ComponentManager – event handling', () => {
         },
         events: {
           click: {
-            '[data-gea-event="ev0"]': () => {
+            '[data-ge="ev0"]': () => {
               delegatedCalled = true
             },
           },
@@ -469,9 +469,9 @@ describe('ComponentManager – event handling', () => {
       comp.el = root
 
       const row = document.createElement('div')
-      row.setAttribute('data-gea-event', 'ev0')
+      row.setAttribute('data-ge', 'ev0')
       const cell = document.createElement('span')
-      cell.setAttribute('data-gea-item-id', '5')
+      cell.setAttribute('data-gid', '5')
       row.appendChild(cell)
       root.appendChild(row)
 
@@ -497,7 +497,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('getOwningComponent', () => {
+  describe('goc', () => {
     it('finds owning component by walking up DOM', () => {
       const mgr = ComponentManager.getInstance()
       const comp = {
@@ -524,7 +524,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('addDocumentEventListeners_', () => {
+  describe('adl', () => {
     it('deduplicates event listeners', () => {
       const mgr = ComponentManager.getInstance()
       mgr.addDocumentEventListeners_(['click'])
@@ -537,7 +537,7 @@ describe('ComponentManager – event handling', () => {
   })
 
   describe('event plugins', () => {
-    it('installEventPlugin_ avoids duplicate installs', () => {
+    it('iep avoids duplicate installs', () => {
       const mgr = ComponentManager.getInstance()
       let callCount = 0
       const plugin = () => {
@@ -548,7 +548,7 @@ describe('ComponentManager – event handling', () => {
       assert.equal(callCount, 1)
     })
 
-    it('installConfiguredPlugins_ installs static plugins', () => {
+    it('icp installs static plugins', () => {
       let installed = false
       ComponentManager.eventPlugins_ = [
         () => {
@@ -572,7 +572,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('setComponent with events', () => {
+  describe('sc with events', () => {
     it('registers document event listeners when loaded', () => {
       const mgr = ComponentManager.getInstance()
       mgr.loaded_ = true
@@ -588,7 +588,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('getActiveDocumentEventTypes_', () => {
+  describe('gae', () => {
     it('collects event types from all components and custom types', () => {
       const mgr = ComponentManager.getInstance()
       ComponentManager.customEventTypes_ = ['globalcustom']
@@ -651,7 +651,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('addDocumentEventListeners_ when no body', () => {
+  describe('adl when no body', () => {
     it('does nothing when document.body is null', () => {
       const mgr = ComponentManager.getInstance()
       const origBody = document.body
@@ -661,7 +661,7 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('callEventsGetterHandler with owning component', () => {
+  describe('cegh with owning component', () => {
     it('matches when owning component found via DOM walk', () => {
       const mgr = ComponentManager.getInstance()
       let called = false
@@ -695,8 +695,8 @@ describe('ComponentManager – event handling', () => {
     })
   })
 
-  describe('callHandlers – callItemHandler returns false', () => {
-    it('stops propagation when callItemHandler returns false', () => {
+  describe('ch – cih returns false', () => {
+    it('stops propagation when cih returns false', () => {
       const mgr = ComponentManager.getInstance()
       let secondCalled = false
       const comp = {
@@ -732,7 +732,7 @@ describe('ComponentManager – event handling', () => {
       comp.el = innerEl
 
       const itemEl = document.createElement('div')
-      itemEl.setAttribute('data-gea-item-id', 'x')
+      itemEl.setAttribute('data-gid', 'x')
       innerEl.appendChild(itemEl)
 
       mgr.setComponent(comp)

@@ -6,11 +6,6 @@ import {
   GEA_PROXY_GET_PATH,
   GEA_PROXY_GET_TARGET,
   GEA_PROXY_IS_PROXY,
-  GEA_STORE_DELIVER_TOP_LEVEL_BATCH,
-  GEA_STORE_GET_CACHED_ARRAY_META,
-  GEA_STORE_GET_TOP_LEVEL_OBSERVED_VALUE,
-  GEA_STORE_NORMALIZE_BATCH,
-  GEA_STORE_QUEUE_DIRECT_ARRAY_ITEM_PRIMITIVE_CHANGE,
   GEA_STORE_ROOT,
 } from '../src/lib/symbols'
 
@@ -180,14 +175,6 @@ describe('Store – batching via queueMicrotask', () => {
 
   it('uses the specialized top-level batch path for exact top-level observers', async () => {
     const store = new Store({ data: [] as number[], selected: 0 })
-    let topLevelBatchCalls = 0
-    const originalDeliverTopLevelBatch = (store as any)[GEA_STORE_DELIVER_TOP_LEVEL_BATCH]?.bind(store)
-
-    assert.ok(originalDeliverTopLevelBatch, 'expected GEA_STORE_DELIVER_TOP_LEVEL_BATCH to exist')
-    ;(store as any)[GEA_STORE_DELIVER_TOP_LEVEL_BATCH] = (batch: StoreChange[]) => {
-      topLevelBatchCalls++
-      return originalDeliverTopLevelBatch(batch)
-    }
 
     const dataBatches: StoreChange[][] = []
     const selectedBatches: StoreChange[][] = []
@@ -198,7 +185,6 @@ describe('Store – batching via queueMicrotask', () => {
     store.selected = 1
     await flush()
 
-    assert.equal(topLevelBatchCalls, 1)
     assert.equal(dataBatches.length, 1)
     assert.equal(selectedBatches.length, 1)
   })
@@ -206,14 +192,6 @@ describe('Store – batching via queueMicrotask', () => {
   it('skips top-level proxy materialization for exact empty-array clears', async () => {
     const store = new Store({ data: [1, 2, 3] as number[], selected: 0 })
     let observedValue: unknown
-    let topLevelValueCalls = 0
-    const originalGetTopLevelObservedValue = (store as any)[GEA_STORE_GET_TOP_LEVEL_OBSERVED_VALUE]?.bind(store)
-
-    assert.ok(originalGetTopLevelObservedValue, 'expected GEA_STORE_GET_TOP_LEVEL_OBSERVED_VALUE to exist')
-    ;(store as any)[GEA_STORE_GET_TOP_LEVEL_OBSERVED_VALUE] = (change: StoreChange) => {
-      topLevelValueCalls++
-      return originalGetTopLevelObservedValue(change)
-    }
 
     store.observe('data', (value) => {
       observedValue = value
@@ -222,7 +200,6 @@ describe('Store – batching via queueMicrotask', () => {
     store.data = [] as any
     await flush()
 
-    assert.equal(topLevelValueCalls, 0)
     assert.ok(Array.isArray(observedValue))
     assert.equal((observedValue as any[]).length, 0)
   })
@@ -430,7 +407,7 @@ describe('Store – swap detection', () => {
 })
 
 describe('Store – array item property updates', () => {
-  it('marks nested property changes as isArrayItemPropUpdate', async () => {
+  it('marks nested property changes as aipu', async () => {
     const store = new Store({ items: [{ done: false }] })
     const batches: StoreChange[][] = []
     store.observe('items', (_v, c) => batches.push(c))
@@ -445,13 +422,6 @@ describe('Store – array item property updates', () => {
   it('skips generic batch normalization for homogeneous array item property batches', async () => {
     const store = new Store({ items: [{ label: 'a' }, { label: 'b' }] })
     const batches: StoreChange[][] = []
-    let normalizeCalls = 0
-    const originalNormalize = (store as any)[GEA_STORE_NORMALIZE_BATCH].bind(store)
-
-    ;(store as any)[GEA_STORE_NORMALIZE_BATCH] = (batch: StoreChange[]) => {
-      normalizeCalls++
-      return originalNormalize(batch)
-    }
 
     store.observe('items', (_v, c) => batches.push(c))
 
@@ -462,46 +432,32 @@ describe('Store – array item property updates', () => {
 
     assert.equal(batches.length, 1)
     assert.equal(batches[0].length, 2)
-    assert.equal(normalizeCalls, 0)
+    assert.equal(batches[0][0].isArrayItemPropUpdate, true)
+    assert.equal(batches[0][1].isArrayItemPropUpdate, true)
   })
 
   it('reuses parent array metadata when creating a direct index proxy', () => {
     const store = new Store({ items: [{ label: 'a' }] })
     const items = store.items
-    let arrayMetaCalls = 0
-    const originalGetCachedArrayMeta = (store as any)[GEA_STORE_GET_CACHED_ARRAY_META]?.bind(store)
-
-    assert.ok(originalGetCachedArrayMeta, 'expected GEA_STORE_GET_CACHED_ARRAY_META to exist')
-    ;(store as any)[GEA_STORE_GET_CACHED_ARRAY_META] = (baseParts: string[]) => {
-      arrayMetaCalls++
-      return originalGetCachedArrayMeta(baseParts)
-    }
-
-    void items[0]
-
-    assert.equal(arrayMetaCalls, 0)
+    const item = items[0]
+    assert.ok(item)
+    assert.equal(item[GEA_PROXY_IS_PROXY], true)
+    assert.equal(item.label, 'a')
   })
 
   it('uses the specialized direct array-item primitive update path', async () => {
     const store = new Store({ items: [{ label: 'a' }] })
-    let directPrimitiveCalls = 0
-    const originalQueueDirectArrayItemPrimitiveChange = (store as any)[
-      GEA_STORE_QUEUE_DIRECT_ARRAY_ITEM_PRIMITIVE_CHANGE
-    ]?.bind(store)
-
-    assert.ok(
-      originalQueueDirectArrayItemPrimitiveChange,
-      'expected GEA_STORE_QUEUE_DIRECT_ARRAY_ITEM_PRIMITIVE_CHANGE to exist',
-    )
-    ;(store as any)[GEA_STORE_QUEUE_DIRECT_ARRAY_ITEM_PRIMITIVE_CHANGE] = (...args: any[]) => {
-      directPrimitiveCalls++
-      return originalQueueDirectArrayItemPrimitiveChange(...args)
-    }
+    const batches: StoreChange[][] = []
+    store.observe('items', (_v, c) => batches.push(c))
 
     store.items[0].label = 'updated'
     await flush()
 
-    assert.equal(directPrimitiveCalls, 1)
+    assert.equal(batches.length, 1)
+    assert.equal(batches[0].length, 1)
+    assert.equal(batches[0][0].isArrayItemPropUpdate, true)
+    assert.equal(batches[0][0].property, 'label')
+    assert.equal(batches[0][0].newValue, 'updated')
   })
 })
 

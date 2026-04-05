@@ -5,10 +5,7 @@ export type ComponentEngineState = {
   bindings: any[]
   selfListeners: Array<() => void>
   childComponents: any[]
-  geaDependencies: any[]
-  geaEventBindings: Map<string, any>
   geaPropBindings: Map<string, any>
-  geaAttrBindings: Map<string, any>
   observerRemovers: Array<() => void>
   rawProps: Record<string, any>
   elCache: Map<string, HTMLElement>
@@ -29,10 +26,7 @@ function createEngineState(): ComponentEngineState {
     bindings: [],
     selfListeners: [],
     childComponents: [],
-    geaDependencies: [],
-    geaEventBindings: new Map(),
     geaPropBindings: new Map(),
-    geaAttrBindings: new Map(),
     observerRemovers: [],
     rawProps: {},
     elCache: new Map(),
@@ -42,8 +36,8 @@ function createEngineState(): ComponentEngineState {
 
 const engineStateByRawInstance = new WeakMap<object, ComponentEngineState>()
 
-function rawInstanceKey(component: object): object {
-  return (component as any)[GEA_PROXY_GET_RAW_TARGET] ?? component
+export function engineThis(c: object): any {
+  return (c as any)[GEA_PROXY_GET_RAW_TARGET] ?? c
 }
 
 /**
@@ -51,7 +45,7 @@ function rawInstanceKey(component: object): object {
  * Safe to call after `super()` in Component constructors.
  */
 export function getComponentInternals(component: object): ComponentEngineState {
-  const key = rawInstanceKey(component)
+  const key = engineThis(component)
   let s = engineStateByRawInstance.get(key)
   if (!s) {
     s = createEngineState()
