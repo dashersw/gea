@@ -1039,6 +1039,505 @@ test('children prop update must render as HTML, not textContent', async () => {
   }
 })
 
+test('component as named prop: header={<Title />} renders and mounts correctly', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-named-component-props`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Title = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Title extends Component {
+          template() {
+            return <span class="layout-title">Title</span>
+          }
+        }
+      `,
+      '/virtual/NamedPropTitle.jsx',
+      'Title',
+      { Component },
+    )
+
+    const Nav = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Nav extends Component {
+          template() {
+            return <nav class="layout-nav">Nav</nav>
+          }
+        }
+      `,
+      '/virtual/NamedPropNav.jsx',
+      'Nav',
+      { Component },
+    )
+
+    const Content = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Content extends Component {
+          template() {
+            return <section class="layout-content">Main</section>
+          }
+        }
+      `,
+      '/virtual/NamedPropContent.jsx',
+      'Content',
+      { Component },
+    )
+
+    const Layout = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Layout extends Component {
+          template({ header, sidebar, main }) {
+            return (
+              <div class="layout">
+                <div class="layout-aside">{sidebar}</div>
+                <div class="layout-main">{main}</div>
+                <div class="layout-header">{header}</div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/NamedPropLayout.jsx',
+      'Layout',
+      { Component },
+    )
+
+    const App = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Title from './NamedPropTitle.jsx'
+        import Nav from './NamedPropNav.jsx'
+        import Content from './NamedPropContent.jsx'
+        import Layout from './NamedPropLayout.jsx'
+
+        export default class App extends Component {
+          template() {
+            return (
+              <div class="app-root">
+                <Layout header={<Title />} sidebar={<Nav />} main={<Content />} />
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/NamedPropApp.jsx',
+      'App',
+      { Component, Title, Nav, Content, Layout },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new App()
+    view.render(root)
+    await flushMicrotasks()
+
+    const layout = view.el.querySelector('.layout')
+    assert.ok(layout, '.layout must exist')
+
+    assert.ok(layout!.querySelector('.layout-aside .layout-nav'), 'sidebar prop must render Nav inside aside')
+    assert.ok(layout!.querySelector('.layout-main .layout-content'), 'main prop must render Content in main')
+    assert.ok(layout!.querySelector('.layout-header .layout-title'), 'header prop must render Title in header')
+
+    assert.equal(layout!.querySelector('.layout-nav')!.textContent?.trim(), 'Nav')
+    assert.equal(layout!.querySelector('.layout-content')!.textContent?.trim(), 'Main')
+    assert.equal(layout!.querySelector('.layout-title')!.textContent?.trim(), 'Title')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('component as named prop: props.X access renders correctly', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-named-prop-propsX`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Header = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Header extends Component {
+          template() {
+            return <h1 class="header">Header</h1>
+          }
+        }
+      `,
+      '/virtual/PropsXHeader.jsx',
+      'Header',
+      { Component },
+    )
+
+    const Layout = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Layout extends Component {
+          template(props) {
+            return <div class="layout"><div class="slot">{props.header}</div></div>
+          }
+        }
+      `,
+      '/virtual/PropsXLayout.jsx',
+      'Layout',
+      { Component },
+    )
+
+    const App = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Header from './PropsXHeader.jsx'
+        import Layout from './PropsXLayout.jsx'
+
+        export default class App extends Component {
+          template() {
+            return <div class="app"><Layout header={<Header />} /></div>
+          }
+        }
+      `,
+      '/virtual/PropsXApp.jsx',
+      'App',
+      { Component, Header, Layout },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new App()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.ok(view.el.querySelector('.slot .header'), 'props.X access must render component')
+    assert.equal(view.el.querySelector('.header')!.textContent, 'Header')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('component as named prop: this.props.X access renders correctly', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-named-prop-thisPropsX`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Header = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Header extends Component {
+          template() {
+            return <h1 class="header">Header</h1>
+          }
+        }
+      `,
+      '/virtual/ThisPropsXHeader.jsx',
+      'Header',
+      { Component },
+    )
+
+    const Layout = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Layout extends Component {
+          template() {
+            return <div class="layout"><div class="slot">{this.props.header}</div></div>
+          }
+        }
+      `,
+      '/virtual/ThisPropsXLayout.jsx',
+      'Layout',
+      { Component },
+    )
+
+    const App = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Header from './ThisPropsXHeader.jsx'
+        import Layout from './ThisPropsXLayout.jsx'
+
+        export default class App extends Component {
+          template() {
+            return <div class="app"><Layout header={<Header />} /></div>
+          }
+        }
+      `,
+      '/virtual/ThisPropsXApp.jsx',
+      'App',
+      { Component, Header, Layout },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new App()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.ok(view.el.querySelector('.slot .header'), 'this.props.X access must render component')
+    assert.equal(view.el.querySelector('.header')!.textContent, 'Header')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('component as named prop: render prop (() => <Header />) renders when called', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-render-prop`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Header = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Header extends Component {
+          template() {
+            return <h1 class="header">Header</h1>
+          }
+        }
+      `,
+      '/virtual/RenderPropHeader.jsx',
+      'Header',
+      { Component },
+    )
+
+    const Layout = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Layout extends Component {
+          template(props) {
+            return <div class="layout"><div class="slot">{props.renderHeader()}</div></div>
+          }
+        }
+      `,
+      '/virtual/RenderPropLayout.jsx',
+      'Layout',
+      { Component },
+    )
+
+    const App = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Header from './RenderPropHeader.jsx'
+        import Layout from './RenderPropLayout.jsx'
+
+        export default class App extends Component {
+          template() {
+            return <div class="app"><Layout renderHeader={() => <Header />} /></div>
+          }
+        }
+      `,
+      '/virtual/RenderPropApp.jsx',
+      'App',
+      { Component, Header, Layout },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new App()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.ok(view.el.querySelector('.slot .header'), 'render prop must produce component HTML when called')
+    assert.equal(view.el.querySelector('.header')!.textContent, 'Header')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('component as named prop: function component as Layout works with destructured props', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-fn-layout`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Header = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Header extends Component {
+          template() {
+            return <h1 class="header">Header</h1>
+          }
+        }
+      `,
+      '/virtual/FnLayoutHeader.jsx',
+      'Header',
+      { Component },
+    )
+
+    const Footer = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Footer extends Component {
+          template() {
+            return <footer class="footer">Footer</footer>
+          }
+        }
+      `,
+      '/virtual/FnLayoutFooter.jsx',
+      'Footer',
+      { Component },
+    )
+
+    const Layout = await compileJsxComponent(
+      `
+        export default function Layout({ header, footer }) {
+          return (
+            <div class="layout">
+              <div class="top">{header}</div>
+              <div class="bottom">{footer}</div>
+            </div>
+          )
+        }
+      `,
+      '/virtual/FnLayout.jsx',
+      'Layout',
+      { Component },
+    )
+
+    const App = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Header from './FnLayoutHeader.jsx'
+        import Footer from './FnLayoutFooter.jsx'
+        import Layout from './FnLayout.jsx'
+
+        export default class App extends Component {
+          template() {
+            return <div class="app"><Layout header={<Header />} footer={<Footer />} /></div>
+          }
+        }
+      `,
+      '/virtual/FnLayoutApp.jsx',
+      'App',
+      { Component, Header, Footer, Layout },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new App()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.ok(view.el.querySelector('.top .header'), 'header must render inside .top')
+    assert.ok(view.el.querySelector('.bottom .footer'), 'footer must render inside .bottom')
+    assert.equal(view.el.querySelector('.header')!.textContent, 'Header')
+    assert.equal(view.el.querySelector('.footer')!.textContent, 'Footer')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('component as named prop: component with props passed via render prop', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-render-prop-with-args`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const Greeting = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Greeting extends Component {
+          template({ name }) {
+            return <span class="greeting">Hello, {name}!</span>
+          }
+        }
+      `,
+      '/virtual/RenderPropArgsGreeting.jsx',
+      'Greeting',
+      { Component },
+    )
+
+    const Wrapper = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Wrapper extends Component {
+          template({ renderContent }) {
+            return <div class="wrapper"><div class="content">{renderContent()}</div></div>
+          }
+        }
+      `,
+      '/virtual/RenderPropArgsWrapper.jsx',
+      'Wrapper',
+      { Component },
+    )
+
+    const App = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import Greeting from './RenderPropArgsGreeting.jsx'
+        import Wrapper from './RenderPropArgsWrapper.jsx'
+
+        export default class App extends Component {
+          template() {
+            return (
+              <div class="app">
+                <Wrapper renderContent={() => <Greeting name="World" />} />
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/RenderPropArgsApp.jsx',
+      'App',
+      { Component, Greeting, Wrapper },
+    )
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new App()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.ok(view.el.querySelector('.content .greeting'), 'render prop with args must produce component HTML')
+    assert.equal(view.el.querySelector('.greeting')!.textContent, 'Hello, World!')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
 test('Link with plain text children renders anchor content, not raw template expression', async () => {
   const restoreDom = installDom()
 

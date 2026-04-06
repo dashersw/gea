@@ -17,7 +17,8 @@ export interface TemplateSetupContext {
   earlyReturnBarrierIndex?: number
 }
 
-const DOM_EVENT_RE = /^(click|input|change|submit|focus|blur|keydown|keyup|keypress|mousedown|mouseup|mouseover|mouseout|mouseenter|mouseleave|touchstart|touchend|touchmove|pointerdown|pointerup|pointermove|scroll|resize|drag|dragstart|dragend|dragover|drop|reset)$/
+const DOM_EVENT_RE =
+  /^(click|input|change|submit|focus|blur|keydown|keyup|keypress|mousedown|mouseup|mouseover|mouseout|mouseenter|mouseleave|touchstart|touchend|touchmove|pointerdown|pointerup|pointermove|scroll|resize|drag|dragstart|dragend|dragover|drop|reset)$/
 
 export function buildComponentPropsExpression(
   jsxElement: t.JSXElement,
@@ -42,6 +43,16 @@ export function buildComponentPropsExpression(
     else if (t.isJSXExpressionContainer(attr.value) && !t.isJSXEmptyExpression(attr.value.expression)) {
       const expr = attr.value.expression as t.Expression
       propValue = transformExpression(expr)
+      if (
+        propValue &&
+        t.isTemplateLiteral(propValue) &&
+        propValue.quasis.length === 2 &&
+        propValue.quasis[0].value.raw === '' &&
+        propValue.quasis[1].value.raw === '' &&
+        propValue.expressions.length === 1
+      ) {
+        propValue = propValue.expressions[0] as t.Expression
+      }
       if (propValue && (/^on[A-Z]/.test(propName) || DOM_EVENT_RE.test(propName)) && t.isMemberExpression(propValue)) {
         const argsId = t.identifier('args')
         propValue = t.arrowFunctionExpression(
@@ -110,8 +121,11 @@ function collectExpressionDependenciesInto(
       if (!resolved?.parts) continue
       for (const property of declaration.id.properties) {
         if (!t.isObjectProperty(property)) continue
-        const keyName = t.isIdentifier(property.key) ? property.key.name
-          : t.isStringLiteral(property.key) ? property.key.value : null
+        const keyName = t.isIdentifier(property.key)
+          ? property.key.name
+          : t.isStringLiteral(property.key)
+            ? property.key.value
+            : null
         if (!keyName) continue
         if (!collectPatternIdentifiers(property.value as t.LVal).some((n) => referencedNames.has(n))) continue
 
@@ -142,7 +156,10 @@ function collectExpressionDependenciesInto(
       const isMethodCall = parent && t.isCallExpression(parent.node) && parent.node.callee === path.node
       if (isMethodCall && resolved.isImportedState && resolved.storeVar) {
         const ref = stateRefs?.get(resolved.storeVar)
-        if (ref && !ref.reactiveFields) { add([], resolved.storeVar); return }
+        if (ref && !ref.reactiveFields) {
+          add([], resolved.storeVar)
+          return
+        }
         const methodStripped = resolved.parts.slice(0, -1)
         const propName = methodStripped.length === 1 ? methodStripped[0] : undefined
         if (propName && addGetterDeps(ref, propName, resolved.storeVar)) return
@@ -150,8 +167,10 @@ function collectExpressionDependenciesInto(
         return
       }
 
-      const parts = resolved.parts.length >= 2 && resolved.parts[resolved.parts.length - 1] === 'length'
-        ? resolved.parts.slice(0, -1) : resolved.parts
+      const parts =
+        resolved.parts.length >= 2 && resolved.parts[resolved.parts.length - 1] === 'length'
+          ? resolved.parts.slice(0, -1)
+          : resolved.parts
       if (resolved.isImportedState && resolved.storeVar && parts.length >= 1) {
         if (addGetterDeps(stateRefs?.get(resolved.storeVar), parts[0], resolved.storeVar)) return
       }
@@ -246,9 +265,11 @@ function collectPatternIdentifiers(pattern: t.LVal): string[] {
   if (t.isRestElement(pattern)) return collectPatternIdentifiers(pattern.argument)
   if (t.isAssignmentPattern(pattern)) return collectPatternIdentifiers(pattern.left)
   if (t.isObjectPattern(pattern))
-    return pattern.properties.flatMap((p) => collectPatternIdentifiers((t.isRestElement(p) ? p.argument : p.value) as t.LVal))
+    return pattern.properties.flatMap((p) =>
+      collectPatternIdentifiers((t.isRestElement(p) ? p.argument : p.value) as t.LVal),
+    )
   if (t.isArrayPattern(pattern))
-    return pattern.elements.flatMap((el) => el ? collectPatternIdentifiers(el as t.LVal) : [])
+    return pattern.elements.flatMap((el) => (el ? collectPatternIdentifiers(el as t.LVal) : []))
   return []
 }
 
@@ -258,7 +279,9 @@ function collectReferencedIdentifiers(node: t.Node): Set<string> {
   const prog = t.program([t.isStatement(cloned) ? cloned : t.expressionStatement(cloned as t.Expression)])
   traverse(prog, {
     noScope: true,
-    Identifier(path: NodePath<t.Identifier>) { if (path.isReferencedIdentifier()) names.add(path.node.name) },
+    Identifier(path: NodePath<t.Identifier>) {
+      if (path.isReferencedIdentifier()) names.add(path.node.name)
+    },
   })
   return names
 }

@@ -700,6 +700,12 @@ export function collectComponentTags(
     if (tag && isCompTag(tag) && imports.has(tag)) {
       if (!inMapCallback) instanceTags.push(tag)
     }
+    for (const attr of node.openingElement.attributes) {
+      if (!t.isJSXAttribute(attr) || !attr.value || !t.isJSXExpressionContainer(attr.value)) continue
+      if (t.isJSXEmptyExpression(attr.value.expression)) continue
+      const attrExpr = attr.value.expression as t.Expression
+      visitExpr(attrExpr, inMapCallback)
+    }
     node.children.forEach((c) => {
       if (t.isJSXElement(c)) collectComponentTags(c, imports, instanceTags, inMapCallback)
       else if (t.isJSXFragment(c)) collectComponentTags(c, imports, instanceTags, inMapCallback)
@@ -1289,7 +1295,7 @@ function processChildren(
           expressionContainsJSX(rawExpr) ||
           ctx.inMapCallback ||
           callsJSXReturningProperty(rawExpr, ctx.classBody)
-        const safeExpr = skipEscape ? expr : jsExpr`geaEscapeHtml(String(${expr}))`
+        const safeExpr = skipEscape ? expr : jsExpr`geaEscapeHtml(${expr})`
         parts.push({ type: 'expression', value: safeExpr })
       }
     }

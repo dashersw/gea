@@ -190,7 +190,11 @@ function _isInTransfer(comp: AnyComponent): boolean {
   return _inTransfer.has(engineThis(comp))
 }
 
-export function __escapeHtml(str: string): string {
+export function __escapeHtml(val: unknown): string {
+  if (val != null && typeof val === 'object' && typeof (val as any).template === 'function') {
+    return String(val)
+  }
+  const str = String(val)
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
