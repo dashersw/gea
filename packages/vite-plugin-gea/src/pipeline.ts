@@ -65,12 +65,18 @@ export interface CompilerContext {
 
 function isComponentImportSource(source: string): boolean {
   if (source.startsWith('.')) return true
-  // Skip Node built-ins and known non-component packages
   if (source.startsWith('node:')) return false
-  // Package imports — could contain Gea components
   return true
 }
 
+/**
+ * In dev mode, convert relative store imports (e.g. `import { router } from '../router'`)
+ * to `const { router } = await import('../router')` placed after all class declarations.
+ *
+ * This breaks circular-dependency TDZ during HMR: classes are fully initialized
+ * before the store module is loaded, so the store can safely import the component
+ * classes back without hitting the temporal dead zone.
+ */
 export function transform(ctx: CompilerContext): { code: string; map: any } | null {
   const { sourceFile, code, isServe, isSSR, hmrImportSource } = ctx
 
@@ -109,8 +115,6 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     let transformed = false
     const componentImportSet = new Set<string>()
     const componentImportsUsedAsTags = new Set<string>()
-    let isDefaultExport = false
-
     imports.forEach((source) => {
       if (!isComponentImportSource(source)) return
       componentImportSet.add(source)
@@ -121,9 +125,6 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     const knownComponentImports = new Set<string>()
     const namedImportSources = new Map<string, string>()
     traverse(ast, {
-      ExportDefaultDeclaration() {
-        isDefaultExport = true
-      },
       ImportDeclaration(path) {
         const source = path.node.source.value
         if (!isComponentImportSource(source)) return
@@ -214,7 +215,14 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     }
 
     // ── HMR injection (dev only) ──────────────────────────────────────
-    if (isServe && componentClassName) {
+    if (isServe && componentClassNames.length > 0) {
+      let defaultExportClassName: string | null = null
+      for (const node of ast.program.body) {
+        if (t.isExportDefaultDeclaration(node) && t.isClassDeclaration(node.declaration) && node.declaration.id) {
+          defaultExportClassName = node.declaration.id.name
+        }
+      }
+
       const shouldProxyDep = (source: string): boolean => {
         if (!source.startsWith('.')) return false
         const resolved = ctx.resolveImportPath(sourceFile, source)
@@ -223,14 +231,21 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
         if (ctx.isComponentModule(resolved)) return true
         return false
       }
+      const shouldSkipDepAccept = (source: string): boolean => {
+        if (!source.startsWith('.')) return false
+        const resolved = ctx.resolveImportPath(sourceFile, source)
+        if (!resolved) return false
+        return ctx.isStoreModule(resolved)
+      }
       const hmrAdded = injectHMR(
         ast,
-        componentClassName,
+        componentClassNames,
+        defaultExportClassName,
         componentImports,
         componentImportsUsedAsTags,
-        isDefaultExport,
         hmrImportSource,
         shouldProxyDep,
+        shouldSkipDepAccept,
       )
       if (hmrAdded) transformed = true
     }

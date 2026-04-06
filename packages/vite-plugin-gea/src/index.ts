@@ -1,7 +1,7 @@
 import type { Plugin, ResolvedConfig } from 'vite'
 import { transform } from './pipeline.ts'
 import { dirname, relative, resolve } from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const pluginDir = dirname(fileURLToPath(import.meta.url))
@@ -69,6 +69,13 @@ export function reconcile(oldC, newC) {
 `
 
 const HMR_RUNTIME_SOURCE = `
+var GEA_ELEMENT = Symbol.for('gea.element');
+var GEA_RENDERED = Symbol.for('gea.rendered');
+var GEA_CLEANUP_BINDINGS = Symbol.for('gea.component.cleanupBindings');
+var GEA_TEARDOWN_SELF_LISTENERS = Symbol.for('gea.component.teardownSelfListeners');
+var GEA_CHILD_COMPONENTS = Symbol.for('gea.childComponents');
+var GEA_BINDINGS = Symbol.for('gea.bindings');
+var GEA_SELF_LISTENERS = Symbol.for('gea.selfListeners');
 var hot = import.meta.hot;
 var componentInstances = hot && hot.data && hot.data.componentInstances || new Map();
 if (hot) hot.data.componentInstances = componentInstances;
@@ -401,7 +408,7 @@ export function geaPlugin(): Plugin {
 
       if (/\bclass\s+Component\s+extends\s+Store\b/.test(code)) return null
 
-      return transform({
+      const result = transform({
         sourceFile: cleanId,
         code,
         isServe: isServeCommand,
@@ -413,6 +420,58 @@ export function geaPlugin(): Plugin {
         registerStoreModule: (fp) => storeModules.add(fp),
         registerComponentModule: (fp) => componentModules.add(fp),
       })
+      if (result) return result
+
+      // For non-component files (like router.ts) that import from component
+      // modules, inject HMR dep-accept so updates don't propagate further
+      // and cause circular dependency TDZ errors.
+      if (isServeCommand && !isSSR) {
+        const componentDeps = findComponentDeps(code, cleanId)
+        if (componentDeps.length > 0) {
+          const accepts = componentDeps.map((dep) => `  import.meta.hot.accept('${dep}', () => {});`).join('\n')
+          return {
+            code: code + `\nif (import.meta.hot) {\n${accepts}\n}\n`,
+            map: null,
+          }
+        }
+      }
+
+      return null
     },
   }
+}
+
+function resolveToFile(base: string): string | null {
+  const exts = ['.ts', '.tsx', '.js', '.jsx']
+  const indexFiles = exts.map((ext) => resolve(base, 'index' + ext))
+  const candidates = [base, ...exts.map((ext) => base + ext), ...indexFiles]
+  for (const c of candidates) {
+    try {
+      if (existsSync(c) && statSync(c).isFile()) return c
+    } catch {
+      /* skip */
+    }
+  }
+  return null
+}
+
+function findComponentDeps(code: string, filePath: string): string[] {
+  const deps: string[] = []
+  const importRegex = /import\s+(?:[\w{},\s*]+)\s+from\s+['"](\.[^'"]+)['"]/g
+  let match
+  while ((match = importRegex.exec(code)) !== null) {
+    const source = match[1]
+    const base = resolve(dirname(filePath), source)
+    const resolved = resolveToFile(base)
+    if (!resolved) continue
+    try {
+      const depCode = readFileSync(resolved, 'utf8')
+      const looksLikeComponent =
+        /class\s+\w+\s+extends\s+Component\b/.test(depCode) && depCode.includes('<') && depCode.includes('>')
+      if (looksLikeComponent) deps.push(source)
+    } catch {
+      /* skip */
+    }
+  }
+  return deps
 }

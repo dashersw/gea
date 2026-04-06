@@ -2,11 +2,7 @@ import { t } from '../utils/babel-interop.ts'
 import { id, js, jsExpr } from 'eszter'
 import { ensureImport } from '../codegen/member-chain.ts'
 
-const hot = () =>
-  t.memberExpression(
-    t.metaProperty(t.identifier('import'), t.identifier('meta')),
-    t.identifier('hot'),
-  )
+const hot = () => t.memberExpression(t.metaProperty(t.identifier('import'), t.identifier('meta')), t.identifier('hot'))
 
 const importMeta = () => t.metaProperty(t.identifier('import'), t.identifier('meta'))
 
@@ -26,87 +22,104 @@ const legacyShouldProxyDep = (p: string) =>
  */
 export function injectHMR(
   ast: t.File,
-  componentClassName: string | null,
+  componentClassNames: string[],
+  defaultExportClassName: string | null,
   componentImports: string[],
   componentImportsUsedAsTags: Set<string>,
-  isDefaultExport: boolean,
   hmrImportSource = 'virtual:gea-hmr',
   shouldProxyDep?: (importSource: string) => boolean,
+  shouldSkipDepAccept?: (importSource: string) => boolean,
 ): boolean {
-  // Bail out if auto-register plugin comment is present
   if (hasAutoRegisterComment(ast)) return false
+  if (componentClassNames.length === 0) return false
 
   const hmrStmts: t.Statement[] = []
 
-  if (componentClassName) {
-    ensureImport(ast, hmrImportSource, 'handleComponentUpdate')
-    ensureImport(ast, hmrImportSource, 'registerHotModule')
-    ensureImport(ast, hmrImportSource, 'registerComponentInstance')
-    ensureImport(ast, hmrImportSource, 'unregisterComponentInstance')
+  ensureImport(ast, hmrImportSource, 'handleComponentUpdate')
+  ensureImport(ast, hmrImportSource, 'registerHotModule')
+  ensureImport(ast, hmrImportSource, 'registerComponentInstance')
+  ensureImport(ast, hmrImportSource, 'unregisterComponentInstance')
 
-    const proxyDep = shouldProxyDep ?? legacyShouldProxyDep
-    const proxiedDeps = rewriteComponentDeps(ast, componentImports, proxyDep)
-    if (proxiedDeps.length > 0) {
-      ensureImport(ast, hmrImportSource, 'createHotComponentProxy')
+  const proxyDep = shouldProxyDep ?? legacyShouldProxyDep
+  const proxiedDeps = rewriteComponentDeps(ast, componentImports, proxyDep)
+  if (proxiedDeps.length > 0) {
+    ensureImport(ast, hmrImportSource, 'createHotComponentProxy')
+  }
+
+  // Build module exports object covering all component classes
+  const exportProperties: t.ObjectProperty[] = []
+  for (const cn of componentClassNames) {
+    if (cn === defaultExportClassName) {
+      exportProperties.push(t.objectProperty(t.identifier('default'), t.identifier(cn)))
+    } else {
+      exportProperties.push(t.objectProperty(t.identifier(cn), t.identifier(cn), false, true))
     }
+  }
 
-    // Build module exports object
-    const modExports = isDefaultExport
-      ? t.objectExpression([
-          t.objectProperty(t.identifier('default'), t.identifier(componentClassName)),
-        ])
-      : t.objectExpression([
-          t.objectProperty(
-            t.identifier(componentClassName),
-            t.identifier(componentClassName),
-            false,
-            true,
-          ),
-        ])
+  hmrStmts.push(js`const __moduleExports = ${t.objectExpression(exportProperties)};`)
+  hmrStmts.push(js`registerHotModule(${jsExpr`${importMeta()}.url`}, __moduleExports);`)
 
-    hmrStmts.push(js`const __moduleExports = ${modExports};`)
-    hmrStmts.push(
-      js`registerHotModule(${jsExpr`${importMeta()}.url`}, __moduleExports);`,
+  // hot.accept() — call handleComponentUpdate for every component class
+  const acceptBody: t.Statement[] = [
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier('__updatedModule'),
+        t.logicalExpression('||', t.identifier('newModule'), t.identifier('__moduleExports')),
+      ),
+    ]),
+    t.expressionStatement(
+      t.callExpression(t.identifier('registerHotModule'), [
+        t.memberExpression(importMeta(), t.identifier('url')),
+        t.identifier('__updatedModule'),
+      ]),
+    ),
+  ]
+  for (const cn of componentClassNames) {
+    const key = cn === defaultExportClassName ? 'default' : cn
+    acceptBody.push(
+      t.expressionStatement(
+        t.callExpression(t.identifier('handleComponentUpdate'), [
+          t.memberExpression(importMeta(), t.identifier('url')),
+          t.objectExpression([
+            t.objectProperty(
+              t.identifier('default'),
+              t.memberExpression(t.identifier('__updatedModule'), t.identifier(key)),
+            ),
+          ]),
+        ]),
+      ),
     )
+  }
+  hmrStmts.push(
+    t.expressionStatement(
+      t.callExpression(t.memberExpression(hot(), t.identifier('accept')), [
+        t.arrowFunctionExpression([t.identifier('newModule')], t.blockStatement(acceptBody)),
+      ]),
+    ),
+  )
 
-    // hot.accept() for self-updates
-    hmrStmts.push(js`
-      ${hot()}.accept((newModule) => {
-        const __updatedModule = newModule || __moduleExports;
-        registerHotModule(${jsExpr`${importMeta()}.url`}, __updatedModule);
-        handleComponentUpdate(${jsExpr`${importMeta()}.url`}, __updatedModule);
-      });
-    `)
+  // hot.accept() for dependency imports (store/util invalidation)
+  hmrStmts.push(...createAccepts(componentImports, proxyDep, shouldSkipDepAccept))
 
-    // hot.accept() for dependency imports (store/util invalidation)
-    hmrStmts.push(...createAccepts(componentImports, proxyDep))
-
-    // Patch created() for instance registration
+  // Patch created()/dispose() for every component class
+  for (const cn of componentClassNames) {
+    const suffix = componentClassNames.length > 1 ? `_${cn}` : ''
+    hmrStmts.push(js`const ${id('__origCreated' + suffix)} = ${id(cn)}.prototype.created;`)
     hmrStmts.push(
-      js`const __origCreated = ${id(componentClassName)}.prototype.created;`,
-    )
-    hmrStmts.push(
-      js`${id(componentClassName)}.prototype.created = function(__geaProps) {
+      js`${id(cn)}.prototype.created = function(__geaProps) {
         registerComponentInstance(this.constructor.name, this);
-        return __origCreated.call(this, __geaProps);
+        return ${id('__origCreated' + suffix)}.call(this, __geaProps);
       };`,
     )
-
-    // Patch dispose() for instance unregistration
+    hmrStmts.push(js`const ${id('__origDispose' + suffix)} = ${id(cn)}.prototype.dispose;`)
     hmrStmts.push(
-      js`const __origDispose = ${id(componentClassName)}.prototype.dispose;`,
-    )
-    hmrStmts.push(
-      js`${id(componentClassName)}.prototype.dispose = function() {
+      js`${id(cn)}.prototype.dispose = function() {
         unregisterComponentInstance(this.constructor.name, this);
-        return __origDispose.call(this);
+        return ${id('__origDispose' + suffix)}.call(this);
       };`,
     )
   }
 
-  if (hmrStmts.length === 0) return false
-
-  // Wrap everything in `if (import.meta.hot) { ... }`
   ast.program.body.push(t.ifStatement(hot(), t.blockStatement(hmrStmts)))
   return true
 }
@@ -174,10 +187,12 @@ function rewriteComponentDeps(
 function createAccepts(
   imports: string[],
   proxyDep: (importSource: string) => boolean,
+  shouldSkip?: (importSource: string) => boolean,
 ): t.Statement[] {
   const stmts: t.Statement[] = []
   for (const p of imports) {
     if (!isRelative(p)) continue
+    if (shouldSkip?.(p)) continue
     if (!proxyDep(p)) {
       stmts.push(js`${hot()}.accept(${p}, ${invalidateCb()});`)
     }
