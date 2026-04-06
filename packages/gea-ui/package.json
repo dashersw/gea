@@ -1,6 +1,6 @@
 {
   "name": "@geajs/ui",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Accessible UI components for Gea, powered by Zag.js state machines and styled with Tailwind CSS",
   "type": "module",
   "main": "dist/index.mjs",

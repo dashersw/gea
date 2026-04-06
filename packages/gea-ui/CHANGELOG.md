@@ -1,5 +1,11 @@
 # @geajs/ui
 
+## 0.2.4
+
+### Patch Changes
+
+- [`4100293`](https://github.com/dashersw/gea/commit/4100293f124e7c20f8bee33ccedd63dd00ef0157) Thanks [@dashersw](https://github.com/dashersw)! - Replace React type imports with framework-agnostic alternatives. `ReactNode` is replaced by a local `JSXNode` type and `MouseEventHandler` now wraps the native DOM `MouseEvent` instead of React's synthetic event. `@types/react` is removed from devDependencies.
+
 ## 0.2.3
 
 ### Patch Changes
