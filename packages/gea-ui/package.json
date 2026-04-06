@@ -84,7 +84,6 @@
     "tailwind-merge": "^3.0.0"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.0.0",
     "prismjs": "^1.30.0",

@@ -1,12 +1,12 @@
 import * as dialog from '@zag-js/dialog'
 import type { OpenChangeDetails } from '@zag-js/dialog'
 import { normalizeProps } from '@zag-js/vanilla'
-import type { ReactNode } from 'react'
+import type { JSXNode } from '../types'
 import ZagComponent from '../primitives/zag-component'
 
 export interface DialogProps {
   class?: string
-  children?: ReactNode
+  children?: JSXNode
   triggerLabel?: string
   title?: string
   description?: string

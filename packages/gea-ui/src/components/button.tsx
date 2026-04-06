@@ -1,5 +1,5 @@
 import { Component } from '@geajs/core'
-import type { MouseEventHandler, ReactNode } from 'react'
+import type { JSXNode, MouseEventHandler } from '../types'
 import { cn } from '../utils/cn'
 
 export type ButtonVariant = 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link'
@@ -13,7 +13,7 @@ export interface ButtonProps {
   class?: string
   click?: MouseEventHandler<HTMLButtonElement>
   onClick?: MouseEventHandler<HTMLButtonElement>
-  children?: ReactNode
+  children?: JSXNode
 }
 
 const variants: Record<string, string> = {
