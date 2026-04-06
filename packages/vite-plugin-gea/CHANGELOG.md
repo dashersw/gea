@@ -1,5 +1,13 @@
 # @geajs/vite-plugin
 
+## 1.2.2
+
+### Patch Changes
+
+- [`2cc74b4`](https://github.com/dashersw/gea/commit/2cc74b467a668e2f103aa79cc94f108658af2880) Thanks [@dashersw](https://github.com/dashersw)! - Fix HMR circular dependency TDZ errors and support multi-component files
+
+  Non-component files that import from component modules now get `import.meta.hot.accept()` injected to prevent HMR updates from propagating into circular dependency chains and triggering TDZ errors. The HMR postprocess also now handles files exporting multiple component classes, patching `created()`/`dispose()` for each one.
+
 ## 1.2.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@geajs/vite-plugin",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Vite plugin for Gea framework - JSX/TSX transform, reactivity, HMR",
   "type": "module",
   "main": "./dist/index.mjs",
