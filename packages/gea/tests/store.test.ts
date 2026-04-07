@@ -760,6 +760,33 @@ describe('Store – Map reactivity', () => {
     assert.equal(changes[0][0].property, '1')
     assert.equal(changes[0][0].newValue, 'one')
   })
+
+  it('observer at Map key path receives correct value', async () => {
+    const store = new Store({ data: new Map<string, number>([['x', 10]]) })
+    const values: number[] = []
+    store.observe('data.x', (v) => values.push(v))
+    ;(store.data as Map<string, number>).set('x', 42)
+    await flush()
+    assert.equal(values.length, 1)
+    assert.equal(values[0], 42)
+  })
+
+  it('same Map instance at two nested paths uses correct pathParts for each', async () => {
+    const shared = new Map<string, number>([['k', 1]])
+    const store = new Store({ a: { m: shared }, b: { m: shared } })
+    const aChanges: any[][] = []
+    const bChanges: any[][] = []
+    store.observe('a.m', (_v, c) => aChanges.push(c))
+    store.observe('b.m', (_v, c) => bChanges.push(c))
+    ;(store.a.m as Map<string, number>).set('k', 2)
+    await flush()
+    ;(store.b.m as Map<string, number>).set('k', 3)
+    await flush()
+    assert.equal(aChanges.length, 1, 'a.m observer must fire once')
+    assert.equal(bChanges.length, 1, 'b.m observer must fire once')
+    assert.deepEqual(aChanges[0][0].pathParts, ['a', 'm', 'k'])
+    assert.deepEqual(bChanges[0][0].pathParts, ['b', 'm', 'k'])
+  })
 })
 
 describe('Store – Set reactivity', () => {

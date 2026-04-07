@@ -64,6 +64,7 @@ interface StoreInstancePrivate {
   nextArrayOpId: number
   observerRoot: ObserverNode
   proxyCache: WeakMap<any, any>
+  mapSetProxyCache: WeakMap<any, Map<string, any>>
   arrayIndexProxyCache: WeakMap<any, Map<string, any>>
   internedArrayPaths: Map<string, string[]>
   topLevelProxies: Map<string, [raw: any, proxy: any]>
@@ -150,7 +151,8 @@ function shouldWrapNestedReactiveValue(value: any): boolean {
   return value != null && typeof value === 'object' && _isPlain(value)
 }
 
-const getByPathParts = (obj: any, pathParts: string[]): any => pathParts.reduce((o: any, k: string) => o?.[k], obj)
+const getByPathParts = (obj: any, pathParts: string[]): any =>
+  pathParts.reduce((o: any, k: string) => (o instanceof Map ? o.get(k) : o?.[k]), obj)
 
 function _wrapItem(store: Store, arr: any[], i: number, basePath: string, baseParts: string[]): any {
   const raw = arr[i]
@@ -412,6 +414,7 @@ function _tagArrayItem(c: StoreChange, m: ArrayProxyMeta, leafParts: string[]): 
 
 function _dropCaches(p: StoreInstancePrivate, v: any): void {
   p.proxyCache.delete(v)
+  p.mapSetProxyCache.delete(v)
   p.arrayIndexProxyCache.delete(v)
 }
 
@@ -1035,19 +1038,37 @@ function _createProxy(
           return proxyCached
         }
       } else {
-        const cached = _p.proxyCache.get(value)
-        if (cached) return cached
+        if (!(value instanceof Map) && !(value instanceof Set)) {
+          const cached = _p.proxyCache.get(value)
+          if (cached) return cached
+        }
       }
       if (value instanceof Map) {
         const currentPath = joinPath(basePath, prop as string)
-        const mapProxy = _createMapProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
-        _p.proxyCache.set(value, mapProxy)
+        let pathMap = _p.mapSetProxyCache.get(value)
+        if (!pathMap) {
+          pathMap = new Map()
+          _p.mapSetProxyCache.set(value, pathMap)
+        }
+        let mapProxy = pathMap.get(currentPath)
+        if (!mapProxy) {
+          mapProxy = _createMapProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
+          pathMap.set(currentPath, mapProxy)
+        }
         return mapProxy
       }
       if (value instanceof Set) {
         const currentPath = joinPath(basePath, prop as string)
-        const setProxy = _createSetProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
-        _p.proxyCache.set(value, setProxy)
+        let pathMap = _p.mapSetProxyCache.get(value)
+        if (!pathMap) {
+          pathMap = new Map()
+          _p.mapSetProxyCache.set(value, pathMap)
+        }
+        let setProxy = pathMap.get(currentPath)
+        if (!setProxy) {
+          setProxy = _createSetProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
+          pathMap.set(currentPath, setProxy)
+        }
         return setProxy
       }
       if (!_isPlain(value)) return value
@@ -1297,6 +1318,7 @@ export class Store {
       nextArrayOpId: 0,
       observerRoot: _mkNode([]),
       proxyCache: new WeakMap(),
+      mapSetProxyCache: new WeakMap(),
       arrayIndexProxyCache: new WeakMap(),
       internedArrayPaths: new Map(),
       topLevelProxies: new Map(),
