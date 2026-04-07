@@ -514,11 +514,17 @@ describe('Component', () => {
       comp.render(container)
       assert.ok(container.textContent?.includes('Hello'))
       const changes: any[][] = []
-      comp.observe('dict', (_v: any, c: any) => changes.push(c))
+      // Simulate reactive re-render driven by the observer (mirrors what the vite plugin
+      // compiles into components: rerun template expressions when observed data changes).
+      comp.observe('dict', (_v: any, c: any) => {
+        changes.push(c)
+        container.children[0].textContent = comp.getGreeting()
+      })
       ;(comp.dict as Map<string, string>).set('greeting', 'Hi')
       await flush()
       assert.equal(changes.length, 1)
       assert.equal(changes[0][0].newValue, 'Hi')
+      assert.ok(container.textContent?.includes('Hi'), 'DOM must reflect Map update via observer-driven re-render')
     })
 
     it('component with Set fires observer on Set.clear() only when non-empty', async () => {
