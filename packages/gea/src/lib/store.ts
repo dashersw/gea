@@ -841,6 +841,130 @@ function _makePathCache(base: string[]): (prop: string) => string[] {
   }
 }
 
+/**
+ * Creates a reactive Proxy for a Map instance.
+ *
+ * Keys MUST be strings or numbers. Object keys are rejected with a TypeError
+ * because non-string keys would be silently serialized to "[object Object]"
+ * when stored in StoreChange.property and pathParts, causing observer path
+ * collisions and unreachable change events.
+ */
+function _createMapProxy(
+  store: Store,
+  map: Map<any, any>,
+  _basePath: string,
+  baseParts: string[],
+  p: StoreInstancePrivate,
+): any {
+  const proxy = new Proxy(map, {
+    get(target, prop) {
+      if (prop === 'set') {
+        return (key: any, value: any) => {
+          if (typeof key !== 'string' && typeof key !== 'number') {
+            throw new TypeError(
+              `[gea] Reactive Map keys must be strings or numbers, got: ${typeof key}`,
+            )
+          }
+          const keyStr = String(key)
+          const oldValue = target.get(key)
+          target.set(key, value)
+          if (oldValue !== value) {
+            _pushAndSchedule(
+              store,
+              [{ type: 'set', property: keyStr, target, pathParts: appendPathParts(baseParts, keyStr), newValue: value, previousValue: oldValue }],
+              p,
+            )
+          }
+          return proxy
+        }
+      }
+      if (prop === 'delete') {
+        return (key: any) => {
+          if (typeof key !== 'string' && typeof key !== 'number') {
+            throw new TypeError(
+              `[gea] Reactive Map keys must be strings or numbers, got: ${typeof key}`,
+            )
+          }
+          const keyStr = String(key)
+          const existed = target.has(key)
+          const oldValue = target.get(key)
+          target.delete(key)
+          if (existed) {
+            _pushAndSchedule(
+              store,
+              [{ type: 'delete', property: keyStr, target, pathParts: appendPathParts(baseParts, keyStr), previousValue: oldValue }],
+              p,
+            )
+          }
+          return existed
+        }
+      }
+      if (prop === 'clear') {
+        return () => {
+          if (target.size > 0) {
+            target.clear()
+            _pushAndSchedule(store, [{ type: 'set', property: '', target, pathParts: baseParts }], p)
+          }
+        }
+      }
+      const value = Reflect.get(target, prop, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return proxy
+}
+
+function _createSetProxy(
+  store: Store,
+  set: Set<any>,
+  _basePath: string,
+  baseParts: string[],
+  p: StoreInstancePrivate,
+): any {
+  const proxy = new Proxy(set, {
+    get(target, prop) {
+      if (prop === 'add') {
+        return (value: any) => {
+          if (!target.has(value)) {
+            target.add(value)
+            _pushAndSchedule(
+              store,
+              [{ type: 'set', property: String(value), target, pathParts: appendPathParts(baseParts, String(value)), newValue: value }],
+              p,
+            )
+          }
+          return proxy
+        }
+      }
+      if (prop === 'delete') {
+        return (value: any) => {
+          const existed = target.has(value)
+          target.delete(value)
+          if (existed) {
+            _pushAndSchedule(
+              store,
+              [{ type: 'delete', property: String(value), target, pathParts: appendPathParts(baseParts, String(value)), previousValue: value }],
+              p,
+            )
+          }
+          return existed
+        }
+      }
+      if (prop === 'clear') {
+        return () => {
+          if (target.size > 0) {
+            target.clear()
+            _pushAndSchedule(store, [{ type: 'set', property: '', target, pathParts: baseParts }], p)
+          }
+        }
+      }
+      const v = Reflect.get(target, prop, target)
+      return typeof v === 'function' ? v.bind(target) : v
+    },
+  })
+  return proxy
+}
+
 function _createProxy(
   store: Store,
   target: any,
@@ -913,6 +1037,18 @@ function _createProxy(
       } else {
         const cached = _p.proxyCache.get(value)
         if (cached) return cached
+      }
+      if (value instanceof Map) {
+        const currentPath = joinPath(basePath, prop as string)
+        const mapProxy = _createMapProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
+        _p.proxyCache.set(value, mapProxy)
+        return mapProxy
+      }
+      if (value instanceof Set) {
+        const currentPath = joinPath(basePath, prop as string)
+        const setProxy = _createSetProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
+        _p.proxyCache.set(value, setProxy)
+        return setProxy
       }
       if (!_isPlain(value)) return value
       if (isArrIdx) {
@@ -1080,6 +1216,22 @@ export class Store {
     const value = (t as any)[prop]
     if (typeof value === 'function') return value
     if (value != null && typeof value === 'object') {
+      if (value instanceof Map) {
+        const p = storeInstancePrivate.get(t)!
+        const entry = p.topLevelProxies.get(prop)
+        if (entry && entry[0] === value) return entry[1]
+        const mapProxy = _createMapProxy(t, value, prop, _rootPathPartsCache(p, prop), p)
+        p.topLevelProxies.set(prop, [value, mapProxy])
+        return mapProxy
+      }
+      if (value instanceof Set) {
+        const p = storeInstancePrivate.get(t)!
+        const entry = p.topLevelProxies.get(prop)
+        if (entry && entry[0] === value) return entry[1]
+        const setProxy = _createSetProxy(t, value, prop, _rootPathPartsCache(p, prop), p)
+        p.topLevelProxies.set(prop, [value, setProxy])
+        return setProxy
+      }
       if (!_isPlain(value)) return value
       if (shouldSkipReactiveWrapForPath(prop)) return value
       const p = storeInstancePrivate.get(t)!
