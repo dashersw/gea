@@ -109,7 +109,8 @@ function _internAppend(baseParts: string[], segment: string): string[] {
   let result = inner.get(segment)
   if (result === undefined) {
     result = baseParts.length > 0 ? [...baseParts, segment] : [segment]
-    inner.set(segment, result)
+    // Cap inner Map to prevent unbounded growth for large arrays (e.g., numeric index keys)
+    if (inner.size < 10000) inner.set(segment, result)
   }
   return result
 }
