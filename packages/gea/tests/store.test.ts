@@ -675,3 +675,62 @@ describe('Store – silent()', () => {
     assert.equal(notified, false, 'observer must not fire for array mutations inside silent()')
   })
 })
+
+describe('Store – circular reference protection', () => {
+  it('does not infinite loop when an object references itself', () => {
+    const store = new Store<any>({ obj: {} })
+    const objProxy = store.obj
+    objProxy.self = (objProxy as any)[GEA_PROXY_GET_TARGET]
+
+    assert.ok(store.obj.self)
+    assert.ok((store.obj.self as any)[GEA_PROXY_IS_PROXY])
+    assert.strictEqual(store.obj.self, store.obj)
+  })
+
+  it('does not infinite loop when an array contains itself', () => {
+    const arr: any[] = []
+    arr.push(arr)
+    const store = new Store<any>({ arr })
+
+    const nested = store.arr[0]
+    assert.ok(nested !== undefined, 'circular array access must not hang')
+  })
+
+  it('returns the same proxy for the same array on repeated access', () => {
+    const store = new Store<any>({ items: [1, 2, 3] })
+    assert.strictEqual(store.items, store.items, 'same array should return same proxy reference')
+  })
+
+  it('cross-type circular: object references array that references object', () => {
+    const obj: any = { name: 'root' }
+    const arr: any[] = [obj]
+    obj.arr = arr
+    const store = new Store<any>({ obj })
+
+    assert.equal(store.obj.name, 'root')
+    assert.strictEqual(store.obj.arr[0], store.obj)
+    assert.strictEqual(store.obj.arr[0].arr, store.obj.arr)
+  })
+
+  it('shared arrays at different paths maintain independent path tracking', () => {
+    const shared = [1, 2, 3]
+    const store = new Store<any>({ a: shared, b: shared })
+
+    assert.ok(store.a)
+    assert.ok(store.b)
+    assert.equal(store.a.length, 3)
+    assert.equal(store.b.length, 3)
+  })
+
+  it('circular object does not prevent reactivity', async () => {
+    const store = new Store<any>({ data: { value: 0 } })
+    const dataProxy = store.data
+    dataProxy.self = (dataProxy as any)[GEA_PROXY_GET_TARGET]
+    const values: number[] = []
+    store.observe('data.value', (v) => values.push(v as number))
+
+    store.data.value = 42
+    await flush()
+    assert.deepEqual(values, [42])
+  })
+})
