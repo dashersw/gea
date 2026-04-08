@@ -1,0 +1,66 @@
+name: Performance
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run benchmark:record:simulation
+      - run: cp benchmark-history/benchmark-simulation.latest.json /tmp/main-results.json
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          clean: false
+      - run: npm ci
+      - run: npm run build
+      - run: npm run benchmark:record:simulation
+      - run: cp benchmark-history/benchmark-simulation.latest.json /tmp/branch-results.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-results
+          path: /tmp/main-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: branch-results
+          path: /tmp/branch-results.json
+
+  compare:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: main-results
+          path: /tmp/main
+      - uses: actions/download-artifact@v4
+        with:
+          name: branch-results
+          path: /tmp/branch
+      - run: |
+          node scripts/compare-benchmarks.mjs \
+            /tmp/main/main-results.json \
+            /tmp/branch/branch-results.json
