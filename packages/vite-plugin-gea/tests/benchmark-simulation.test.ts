@@ -381,8 +381,8 @@ async function setupHelperDerivedFilterMapGea(
 // Measurement
 // ---------------------------------------------------------------------------
 
-const WARMUP = 3
-const RUNS = 7
+const WARMUP = 5
+const RUNS = 21
 
 function buildStringItems(count: number, startId = 1) {
   return Array.from({ length: count }, (_, i) => String(startId + i))
