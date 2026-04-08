@@ -502,7 +502,7 @@ function collectComponentSlotPatches(
       const instance = instances?.[cursor]
       if (instance) {
         instanceCursors.set(tag, cursor + 1)
-        if (!consumeOnly) {
+        if (!consumeOnly && !instance.lazy) {
           slots.push({ childPath: [...path, idx], instanceVar: instance.instanceVar })
         }
       }
