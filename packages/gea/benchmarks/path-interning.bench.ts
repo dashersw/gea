@@ -2,7 +2,7 @@
  * Benchmark: path parts interning — eliminate hot-path array allocations
  * PR #42: Cache [...parent, key] results in _appendCache WeakMap
  *
- * Run: npx tsx --conditions source packages/gea/benchmarks/path-interning.bench.ts
+ * Run: node --expose-gc --conditions source --import tsx/esm packages/gea/benchmarks/path-interning.bench.ts
  */
 import { Store } from '../src/lib/store.ts'
 
