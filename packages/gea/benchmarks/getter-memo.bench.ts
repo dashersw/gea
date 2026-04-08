@@ -70,9 +70,10 @@ const h1 = heapMB()
 let counter = 0
 const invalidMs = bench(() => {
   void store.total
-  if (counter++ % 100 === 0) {
-    store.price = 100 + (counter % 10) // invalidate every 100 reads
+  if (counter % 100 === 0) {
+    store.price = 100 + ((counter / 100) % 5) // invalidate every 100 reads, cycling 100-104
   }
+  counter++
   void store.summary
 }, ITERS)
 
