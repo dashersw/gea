@@ -78,34 +78,36 @@ console.log('Simulating hot-path proxy navigation: append key to parent path arr
   console.log(`  speedup: ${(oldMs/newMs).toFixed(1)}x\n`)
 }
 
-// --- Real store: deep reactive property access ---
-class DeepStore extends Store {
-  user = {
-    profile: {
-      address: {
-        city: 'Istanbul',
-        zip: '34000',
-      }
-    }
-  }
+// --- Real store: array _wrapItem → _internAppend hot path ---
+// Each .map() call goes through _wrapItem → appendPathParts → _internAppend per element.
+// Cold (fresh store per trial): _internAppend must create and cache new path arrays.
+// Warm (same store, repeated .map()): _internAppend returns already-cached path arrays.
+class ArrayStore extends Store {
+  rows = Array.from({ length: 100 }, (_, i) => ({ id: i, name: `row-${i}`, active: i % 2 === 0 }))
 }
 
-const store = new DeepStore()
-const STORE_ITERS = 50_000
+const STORE_ITERS = 1_000
 
 if (typeof global.gc === 'function') global.gc()
 const hs0 = heapMB()
-const storeMs = bench(() => {
-  void store.user.profile.address.city
-  void store.user.profile.address.zip
+// Cold: fresh store each iteration → _internAppend misses on every element
+const coldMs = bench(() => {
+  const s = new ArrayStore()
+  s.rows.map(r => r.id)
 }, STORE_ITERS)
 if (typeof global.gc === 'function') global.gc()
 const hs1 = heapMB()
+// Warm: same store, repeated .map() → _internAppend returns cached path arrays
+const warmStore = new ArrayStore()
+const warmMs = bench(() => {
+  warmStore.rows.map(r => r.id)
+}, STORE_ITERS)
+if (typeof global.gc === 'function') global.gc()
+const hs2 = heapMB()
 
-console.log('Real store deep property access (depth 4, 2 leaf props):')
-console.log(`  ${STORE_ITERS.toLocaleString()} iterations: ${storeMs.toFixed(2)}ms`)
-console.log(`  per-iter: ${((storeMs/STORE_ITERS)*1000).toFixed(1)}µs`)
-console.log(`  heap delta: ${(hs1-hs0).toFixed(3)} MB`)
-console.log()
-console.log('With path interning: same path arrays are reused across proxy navigations.')
-console.log('Without interning: each proxy access spreads a new array for each path segment.\n')
+console.log('Real store: array .map() via _wrapItem → _internAppend (100 rows):')
+console.log(`  cold (fresh store, intern misses): ${coldMs.toFixed(2)}ms  heap Δ ${(hs1-hs0).toFixed(3)} MB`)
+console.log(`  warm (cached paths, intern hits):  ${warmMs.toFixed(2)}ms  heap Δ ${(hs2-hs1).toFixed(3)} MB`)
+console.log(`  speedup: ${(coldMs/warmMs).toFixed(1)}x\n`)
+console.log('With path interning: _wrapItem reuses cached path arrays on repeated .map() calls.')
+console.log('Without interning: every .map() would spread a new array for each element path.\n')
