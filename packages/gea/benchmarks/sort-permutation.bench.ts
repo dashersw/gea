@@ -26,18 +26,18 @@ function computePermutationOld(prev: any[], next: any[]): number[] {
 }
 
 function computePermutationNew(prev: any[], next: any[]): number[] {
-  const idxMap = new Map<any, number[]>()
+  const idxMap = new Map<any, { indices: number[]; next: number }>()
   for (let i = 0; i < prev.length; i++) {
-    const a = idxMap.get(prev[i])
-    a ? a.push(i) : idxMap.set(prev[i], [i])
+    const bucket = idxMap.get(prev[i])
+    if (bucket) bucket.indices.push(i)
+    else idxMap.set(prev[i], { indices: [i], next: 0 })
   }
-  const cursors = new Map<any, number>()
-  return next.map((v) => {
-    const bucket = idxMap.get(v)!
-    const cursor = cursors.get(v) ?? 0
-    cursors.set(v, cursor + 1)
-    return bucket[cursor]
-  })
+  const permutation = new Array<number>(next.length)
+  for (let i = 0; i < next.length; i++) {
+    const bucket = idxMap.get(next[i])
+    permutation[i] = bucket ? bucket.indices[bucket.next++] : i
+  }
+  return permutation
 }
 
 function runTrials(fn: () => void, warmup: number, trials: number): number[] {

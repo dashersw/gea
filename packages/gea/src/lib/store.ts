@@ -769,16 +769,19 @@ function _interceptArray(
         _clearArrayIndexCache(p, arr)
         const prev = arr.slice()
         Array.prototype[method].apply(arr, args)
-        const idxMap = new Map<any, number[]>()
+        const idxMap = new Map<any, { indices: number[]; next: number }>()
         for (let i = 0; i < prev.length; i++) {
-          const a = idxMap.get(prev[i])
-          a ? a.push(i) : idxMap.set(prev[i], [i])
+          const bucket = idxMap.get(prev[i])
+          if (bucket) bucket.indices.push(i)
+          else idxMap.set(prev[i], { indices: [i], next: 0 })
+        }
+        const permutation = new Array<number>(arr.length)
+        for (let i = 0; i < arr.length; i++) {
+          const bucket = idxMap.get(arr[i])
+          permutation[i] = bucket ? bucket.indices[bucket.next++] : i
         }
         const ch = _mkChange('reorder', baseParts[baseParts.length - 1] || '', arr, baseParts, arr)
-        ch.permutation = arr.map((v, i) => {
-          const a = idxMap.get(v)
-          return a?.length ? a.shift()! : i
-        })
+        ch.permutation = permutation
         _pushAndSchedule(store, [ch], p)
         return arr
       }
