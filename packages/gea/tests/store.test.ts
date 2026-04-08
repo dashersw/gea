@@ -611,6 +611,20 @@ describe('Store – derived arrays passed as values', () => {
   })
 })
 
+describe('Store – dotted key path regression', () => {
+  it('preserves path segments without dot-splitting for nested array item properties', async () => {
+    const store = new Store({ items: [{ key: 'test' }] })
+    const batches: StoreChange[][] = []
+    store.observe('items', (_v, c) => batches.push(c))
+
+    store.items[0].key = 'changed'
+    await flush()
+
+    assert.equal(batches.length, 1)
+    assert.deepEqual(batches[0][0].pathParts, ['items', '0', 'key'])
+  })
+})
+
 describe('Store – silent()', () => {
   it('updates values but does not notify observers', async () => {
     const store = new Store({ count: 0 })
