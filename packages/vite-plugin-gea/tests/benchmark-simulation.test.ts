@@ -1308,7 +1308,8 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
       const staticMed = staticTimes.sort((a, b) => a - b)[Math.floor(TRIALS / 2)]
       const parentMed = parentTimes.sort((a, b) => a - b)[Math.floor(TRIALS / 2)]
-      const overhead = (((parentMed - staticMed) / staticMed) * 100).toFixed(1)
+      const overheadPct = ((parentMed - staticMed) / staticMed) * 100
+      const overhead = overheadPct.toFixed(1)
 
       console.log(
         `  static (${COUNT} mounts): ${staticMed.toFixed(1)}ms = ${(staticMed / COUNT).toFixed(3)}ms/mount\n` +
@@ -1318,10 +1319,11 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
       assert.ok(staticMed > 0, 'static mount time should be positive')
       assert.ok(parentMed > 0, 'parent+child mount time should be positive')
-      assert.ok(parseFloat(overhead) < 50, `child instance overhead should be < 50% (got ${overhead}%)`)
+      assert.ok(overheadPct < 50, `child instance overhead should be < 50% (got ${overhead}%)`)
 
       report('12 clone (child instances)', { vanilla: staticMed / COUNT, gea: parentMed / COUNT, slowdown: parentMed / staticMed })
     } finally {
+      await cleanupDelay()
       restoreDom()
     }
   })
