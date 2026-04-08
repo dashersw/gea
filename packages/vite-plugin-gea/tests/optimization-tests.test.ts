@@ -10,7 +10,7 @@ import { JSDOM } from 'jsdom'
 import { parseSource } from '../src/parse/parser'
 import { transformComponentFile } from '../src/codegen/generator'
 import { geaPlugin } from '../src/index'
-import { buildEvalPrelude, mergeEvalBindings } from './helpers/compile'
+import { compileJsxComponent, loadRuntimeModules } from './helpers/compile'
 
 const generate = 'default' in babelGenerator ? babelGenerator.default : babelGenerator
 
@@ -91,17 +91,6 @@ function installDom() {
 async function flushMicrotasks() {
   await new Promise((resolve) => setTimeout(resolve, 0))
   await new Promise((resolve) => setTimeout(resolve, 0))
-}
-
-async function loadRuntimeModules(seed: string) {
-  const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager.ts')
-  ComponentManager.instance = undefined
-  const [compMod, storeMod, symMod] = await Promise.all([
-    import(`../../gea/src/lib/base/component.tsx?${seed}`),
-    import(`../../gea/src/lib/store.ts?${seed}`),
-    import(`../../gea/src/lib/symbols.ts?${seed}`),
-  ])
-  return [compMod, storeMod, symMod] as const
 }
 
 // --- Optimization #3: Prop patch methods (inlined into GEA_ON_PROP_CHANGE) ---
@@ -504,24 +493,6 @@ export default class MultiStore extends Store {
     await rm(dir, { recursive: true, force: true })
   }
 })
-
-async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
-  const allBindings = mergeEvalBindings(bindings)
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-  const result = await transform?.call({} as never, source, id)
-  assert.ok(result)
-
-  const code = typeof result === 'string' ? result : result.code
-  const compiledSource = `${buildEvalPrelude()}${code
-    .replace(/^import .*;$/gm, '')
-    .replaceAll('import.meta.hot', 'undefined')
-    .replaceAll('import.meta.url', '""')
-    .replace(/export default class\s+/, 'class ')}
-return ${className};`
-
-  return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings))
-}
 
 // --- setAttribute equality guard ---
 
