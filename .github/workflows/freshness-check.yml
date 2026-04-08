@@ -1,0 +1,22 @@
+name: Freshness Check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          git fetch origin main
+          MAIN_SHA=$(git rev-parse origin/main)
+          MERGE_BASE=$(git merge-base HEAD origin/main)
+          if [ "$MERGE_BASE" != "$MAIN_SHA" ]; then
+            echo "::error::Branch is not based on latest main. Please rebase your branch with main."
+            exit 1
+          fi
