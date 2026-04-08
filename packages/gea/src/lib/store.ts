@@ -1201,6 +1201,7 @@ export class Store {
   observe(path: string | string[], handler: StoreObserver): () => void {
     const pathParts = splitPath(path)
     return _addObserver(this, pathParts, handler)
+  }
 
   private _notifyHandlers(node: ObserverNode, relevant: StoreChange[]): void {
     const value = getByPathParts(this, node.pathParts)
