@@ -855,7 +855,6 @@ function _makePathCache(base: string[]): (prop: string) => string[] {
 function _createMapProxy(
   store: Store,
   map: Map<any, any>,
-  _basePath: string,
   baseParts: string[],
   p: StoreInstancePrivate,
 ): any {
@@ -920,7 +919,6 @@ function _createMapProxy(
 function _createSetProxy(
   store: Store,
   set: Set<any>,
-  _basePath: string,
   baseParts: string[],
   p: StoreInstancePrivate,
 ): any {
@@ -1052,7 +1050,7 @@ function _createProxy(
         }
         let mapProxy = pathMap.get(currentPath)
         if (!mapProxy) {
-          mapProxy = _createMapProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
+          mapProxy = _createMapProxy(store, value, getCachedPathParts(prop as string), _p)
           pathMap.set(currentPath, mapProxy)
         }
         return mapProxy
@@ -1066,7 +1064,7 @@ function _createProxy(
         }
         let setProxy = pathMap.get(currentPath)
         if (!setProxy) {
-          setProxy = _createSetProxy(store, value, currentPath, getCachedPathParts(prop as string), _p)
+          setProxy = _createSetProxy(store, value, getCachedPathParts(prop as string), _p)
           pathMap.set(currentPath, setProxy)
         }
         return setProxy
@@ -1241,7 +1239,7 @@ export class Store {
         const p = storeInstancePrivate.get(t)!
         const entry = p.topLevelProxies.get(prop)
         if (entry && entry[0] === value) return entry[1]
-        const mapProxy = _createMapProxy(t, value, prop, _rootPathPartsCache(p, prop), p)
+        const mapProxy = _createMapProxy(t, value, _rootPathPartsCache(p, prop), p)
         p.topLevelProxies.set(prop, [value, mapProxy])
         return mapProxy
       }
@@ -1249,7 +1247,7 @@ export class Store {
         const p = storeInstancePrivate.get(t)!
         const entry = p.topLevelProxies.get(prop)
         if (entry && entry[0] === value) return entry[1]
-        const setProxy = _createSetProxy(t, value, prop, _rootPathPartsCache(p, prop), p)
+        const setProxy = _createSetProxy(t, value, _rootPathPartsCache(p, prop), p)
         p.topLevelProxies.set(prop, [value, setProxy])
         return setProxy
       }
