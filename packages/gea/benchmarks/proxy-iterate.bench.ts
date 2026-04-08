@@ -45,7 +45,7 @@ const noCache: number[] = []
 for (let t = 0; t < WARMUP + TRIALS; t++) {
   const freshStore = new BenchStore()         // empty cache each time
   const t0 = performance.now()
-  for (let i = 0; i < freshStore.items.length; i++) void freshStore.items[i]
+  freshStore.items.forEach((item) => void item)
   const elapsed = performance.now() - t0
   if (t >= WARMUP) noCache.push(elapsed)
 }
@@ -56,15 +56,15 @@ const hA1 = heapMB()
 // Post-PR behavior: proxy for each index is cached in iterateProxyCache.
 console.log('Scenario B — WITH CACHE (same store, proxies reused from iterateProxyCache):')
 const cachedStore = new BenchStore()
-// Pre-warm the cache
-for (let i = 0; i < cachedStore.items.length; i++) void cachedStore.items[i]
+// Pre-warm the cache via forEach so iterateProxyCache is populated
+cachedStore.items.forEach((item) => void item)
 
 forceGC()
 const hB0 = heapMB()
 const withCache: number[] = []
 for (let t = 0; t < WARMUP + TRIALS; t++) {
   const t0 = performance.now()
-  for (let i = 0; i < cachedStore.items.length; i++) void cachedStore.items[i]
+  cachedStore.items.forEach((item) => void item)
   const elapsed = performance.now() - t0
   if (t >= WARMUP) withCache.push(elapsed)
 }
