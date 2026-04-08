@@ -65,6 +65,7 @@ interface StoreInstancePrivate {
   observerRoot: ObserverNode
   proxyCache: WeakMap<any, any>
   arrayIndexProxyCache: WeakMap<any, Map<string, any>>
+  iterateProxyCache: WeakMap<any[], Map<number, any>>
   internedArrayPaths: Map<string, string[]>
   topLevelProxies: Map<string, [raw: any, proxy: any]>
   pathPartsCache: Map<string, string[]>
@@ -152,11 +153,31 @@ function shouldWrapNestedReactiveValue(value: any): boolean {
 
 const getByPathParts = (obj: any, pathParts: string[]): any => pathParts.reduce((o: any, k: string) => o?.[k], obj)
 
-function _wrapItem(store: Store, arr: any[], i: number, basePath: string, baseParts: string[]): any {
+function _wrapItem(
+  store: Store,
+  arr: any[],
+  i: number,
+  basePath: string,
+  baseParts: string[],
+  p?: StoreInstancePrivate,
+): any {
   const raw = arr[i]
-  return shouldWrapNestedReactiveValue(raw)
-    ? _createProxy(store, raw, joinPath(basePath, i), appendPathParts(baseParts, String(i)))
-    : raw
+  if (!shouldWrapNestedReactiveValue(raw)) return raw
+  if (p !== undefined) {
+    let indexCache = p.iterateProxyCache.get(arr)
+    if (indexCache !== undefined) {
+      const cached = indexCache.get(i)
+      if (cached !== undefined && (cached as any)[GEA_PROXY_GET_TARGET] === raw) return cached
+    }
+    const proxy = _createProxy(store, raw, joinPath(basePath, i), appendPathParts(baseParts, String(i)), undefined, p)
+    if (indexCache === undefined) {
+      indexCache = new Map()
+      p.iterateProxyCache.set(arr, indexCache)
+    }
+    indexCache.set(i, proxy)
+    return proxy
+  }
+  return _createProxy(store, raw, joinPath(basePath, i), appendPathParts(baseParts, String(i)))
 }
 
 function proxyIterate(
@@ -167,17 +188,18 @@ function proxyIterate(
   method: string,
   cb: Function,
   thisArg?: any,
+  storePriv?: StoreInstancePrivate,
 ): any {
   const isMap = method === 'map'
   const result: any = isMap ? new Array(arr.length) : method === 'filter' ? [] : undefined
   for (let i = 0; i < arr.length; i++) {
-    const p = _wrapItem(store, arr, i, basePath, baseParts)
-    const v = cb.call(thisArg, p, i, arr)
+    const item = _wrapItem(store, arr, i, basePath, baseParts, storePriv)
+    const v = cb.call(thisArg, item, i, arr)
     if (isMap) {
       result[i] = v
     } else if (v) {
-      if (method === 'filter') result.push(p)
-      else if (method === 'find') return p
+      if (method === 'filter') result.push(item)
+      else if (method === 'find') return item
     }
   }
   return result
@@ -413,6 +435,7 @@ function _tagArrayItem(c: StoreChange, m: ArrayProxyMeta, leafParts: string[]): 
 function _dropCaches(p: StoreInstancePrivate, v: any): void {
   p.proxyCache.delete(v)
   p.arrayIndexProxyCache.delete(v)
+  p.iterateProxyCache.delete(v)
 }
 
 function _dropOld(p: StoreInstancePrivate, old: any): void {
@@ -421,6 +444,7 @@ function _dropOld(p: StoreInstancePrivate, old: any): void {
 
 function _clearArrayIndexCache(p: StoreInstancePrivate, arr: any): void {
   p.arrayIndexProxyCache.delete(arr)
+  p.iterateProxyCache.delete(arr)
 }
 
 function _normalizeBatch(p: StoreInstancePrivate, batch: StoreChange[]): StoreChange[] {
@@ -795,13 +819,13 @@ function _interceptArray(
     case 'map':
     case 'filter':
     case 'find':
-      return (cb: Function, thisArg?: any) => proxyIterate(store, arr, basePath, baseParts, method, cb, thisArg)
+      return (cb: Function, thisArg?: any) => proxyIterate(store, arr, basePath, baseParts, method, cb, thisArg, p)
     case 'reduce':
       return function (cb: Function, init?: any) {
         let acc = arguments.length >= 2 ? init : arr[0]
         const start = arguments.length >= 2 ? 0 : 1
         for (let i = start; i < arr.length; i++) {
-          acc = cb(acc, _wrapItem(store, arr, i, basePath, baseParts), i, arr)
+          acc = cb(acc, _wrapItem(store, arr, i, basePath, baseParts, p), i, arr)
         }
         return acc
       }
@@ -969,6 +993,7 @@ function _createProxy(
       value = unwrapNestedProxyValue(value)
       if (prop === 'length' && _isArr(obj)) {
         _p.arrayIndexProxyCache.delete(obj)
+        _p.iterateProxyCache.delete(obj)
         obj[prop] = value
         return true
       }
@@ -977,6 +1002,8 @@ function _createProxy(
       if (_isArr(obj) && isNumericIndex(prop)) {
         const ic = _p.arrayIndexProxyCache.get(obj)
         if (ic) ic.delete(prop)
+        const itc = _p.iterateProxyCache.get(obj)
+        if (itc) itc.delete(Number(prop))
       }
       _dropOld(_p, oldValue)
       obj[prop] = value
@@ -1005,6 +1032,8 @@ function _createProxy(
       if (_isArr(obj) && isNumericIndex(prop)) {
         const ic = _p.arrayIndexProxyCache.get(obj)
         if (ic) ic.delete(prop)
+        const itc = _p.iterateProxyCache.get(obj)
+        if (itc) itc.delete(Number(prop))
       }
       _dropOld(_p, oldValue)
       delete obj[prop]
@@ -1146,6 +1175,7 @@ export class Store {
       observerRoot: _mkNode([]),
       proxyCache: new WeakMap(),
       arrayIndexProxyCache: new WeakMap(),
+      iterateProxyCache: new WeakMap(),
       internedArrayPaths: new Map(),
       topLevelProxies: new Map(),
       pathPartsCache: new Map(),
