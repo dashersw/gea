@@ -63,7 +63,7 @@ interface StoreInstancePrivate {
   flushScheduled: boolean
   nextArrayOpId: number
   observerRoot: ObserverNode
-  proxyCache: WeakMap<any, any>
+  proxyCache: WeakMap<any, Map<string, any>>
   arrayIndexProxyCache: WeakMap<any, Map<string, any>>
   internedArrayPaths: Map<string, string[]>
   topLevelProxies: Map<string, [raw: any, proxy: any]>
@@ -853,8 +853,18 @@ function _createProxy(
 
   const _p = existingP || getPriv(store)
   if (!_isArr(target)) {
-    const cached = _p.proxyCache.get(target)
-    if (cached) return cached
+    const pathMap = _p.proxyCache.get(target)
+    if (pathMap) {
+      const cached = pathMap.get(basePath)
+      if (cached) return cached
+      // Circular reference guard: if the target already has a proxy at a path
+      // that is a prefix of basePath, the object references itself (directly or
+      // transitively). Return the existing proxy to break the cycle and
+      // preserve reference equality (e.g. store.obj.self === store.obj).
+      for (const [cachedPath, cachedProxy] of pathMap) {
+        if (basePath.startsWith(cachedPath + '.')) return cachedProxy
+      }
+    }
   }
 
   const cachedArrayMeta = arrayMeta ?? _getCachedArrayMeta(_p, baseParts)
@@ -900,19 +910,26 @@ function _createProxy(
           const cached = indexCache.get(prop)
           if (cached) return cached
         }
-        const proxyCached = _p.proxyCache.get(value)
-        if (proxyCached) {
-          let ic = indexCache || _p.arrayIndexProxyCache.get(obj)
-          if (!ic) {
-            ic = new Map()
-            _p.arrayIndexProxyCache.set(obj, ic)
+        const proxyPathMap = _p.proxyCache.get(value)
+        if (proxyPathMap) {
+          const currentPath = joinPath(basePath, prop as string)
+          const proxyCached = proxyPathMap.get(currentPath)
+          if (proxyCached) {
+            let ic = indexCache || _p.arrayIndexProxyCache.get(obj)
+            if (!ic) {
+              ic = new Map()
+              _p.arrayIndexProxyCache.set(obj, ic)
+            }
+            ic.set(prop, proxyCached)
+            return proxyCached
           }
-          ic.set(prop, proxyCached)
-          return proxyCached
         }
       } else {
-        const cached = _p.proxyCache.get(value)
-        if (cached) return cached
+        const pathMap = _p.proxyCache.get(value)
+        if (pathMap) {
+          const cached = pathMap.get(joinPath(basePath, prop as string))
+          if (cached) return cached
+        }
       }
       if (!_isPlain(value)) return value
       if (isArrIdx) {
@@ -940,7 +957,12 @@ function _createProxy(
       }
       const currentPath = joinPath(basePath, prop as string)
       const created = _createProxy(store, value, currentPath, getCachedPathParts(prop as string), undefined, _p)
-      _p.proxyCache.set(value, created)
+      let pathMap = _p.proxyCache.get(value)
+      if (!pathMap) {
+        pathMap = new Map()
+        _p.proxyCache.set(value, pathMap)
+      }
+      pathMap.set(currentPath, created)
       return created
     },
 
@@ -1017,8 +1039,15 @@ function _createProxy(
 
   // Cache the proxy so subsequent accesses (e.g., via .find() in computed
   // getters) return the same reference, enabling stable identity checks.
+  // Keyed by (rawValue, basePath) so the same raw object at different store
+  // paths gets separate proxies (each closes over its own basePath/baseParts).
   if (!_isArr(target)) {
-    _p.proxyCache.set(target, proxy)
+    let pathMap = _p.proxyCache.get(target)
+    if (!pathMap) {
+      pathMap = new Map()
+      _p.proxyCache.set(target, pathMap)
+    }
+    pathMap.set(basePath, proxy)
   }
 
   return proxy
