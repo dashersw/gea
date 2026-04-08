@@ -693,7 +693,10 @@ describe('Store – circular reference protection', () => {
     const store = new Store<any>({ arr })
 
     const nested = store.arr[0]
+    // Accessing a circular array element must not hang or throw;
+    // it returns a proxy wrapping the same raw array at a child path
     assert.ok(nested !== undefined, 'circular array access must not hang')
+    assert.ok(nested === store.arr || Array.isArray((nested as any).__getTarget?.() ?? nested), 'circular element must be an array proxy')
   })
 
   it('returns the same proxy for the same array on repeated access', () => {
