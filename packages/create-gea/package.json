@@ -1,6 +1,6 @@
 {
   "name": "create-gea",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Scaffold a new Gea app with Vite in seconds",
   "type": "module",
   "bin": {

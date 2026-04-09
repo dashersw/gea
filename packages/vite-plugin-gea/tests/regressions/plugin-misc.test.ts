@@ -19,8 +19,8 @@ test('transform creates a distinct child instance for each self-closing componen
     }
   `)
 
-  assert.match(output, /this\._counter = this\.__child\(Counter/)
-  assert.match(output, /this\._counter2 = this\.__child\(Counter/)
+  assert.match(output, /this\._counter = this\[GEA_CHILD\]\(Counter/)
+  assert.match(output, /this\._counter2 = this\[GEA_CHILD\]\(Counter/)
 })
 
 test('component used only in render prop is registered when in knownComponentImports', () => {
@@ -177,7 +177,7 @@ test('unused template IIFE over store state does not emit coarse rerender observ
 
   assert.doesNotMatch(
     baseOutput,
-    /__observe_sheetStore_(cells|computed)|__geaRequestRender\(\)/,
+    /__observe_sheetStore_(cells|computed)|\[GEA_REQUEST_RENDER\]\(\)/,
     'baseline should not include coarse store rerender observers',
   )
   assert.doesNotMatch(
@@ -192,12 +192,12 @@ test('unused template IIFE over store state does not emit coarse rerender observ
   )
   assert.doesNotMatch(
     unusedIifeOutput,
-    /__observe_sheetStore_cells[\s\S]*__geaRequestRender\(\)/,
+    /__observe_sheetStore_cells[\s\S]*[GEA_REQUEST_RENDER]\(\)/,
     'unused inline IIFE should not force full rerender from cells observer',
   )
   assert.doesNotMatch(
     unusedIifeOutput,
-    /__observe_sheetStore_computed[\s\S]*__geaRequestRender\(\)/,
+    /__observe_sheetStore_computed[\s\S]*[GEA_REQUEST_RENDER]\(\)/,
     'unused inline IIFE should not force full rerender from computed observer',
   )
 })
@@ -225,17 +225,17 @@ test('used template IIFE over store state does not emit coarse rerender observer
 
   assert.doesNotMatch(
     usedIifeOutput,
-    /__observe_sheetStore_(cells|computed)[\s\S]*__geaRequestRender\(\)/,
+    /__observe_sheetStore_(cells|computed)[\s\S]*[GEA_REQUEST_RENDER]\(\)/,
     'used inline IIFE should not force full rerender from store observers',
   )
   assert.match(
     usedIifeOutput,
-    /__observe\(sheetStore,\s*\["cells"\]/,
+    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["cells"\]/,
     'used inline IIFE should still observe cells updates',
   )
   assert.match(
     usedIifeOutput,
-    /__observe\(sheetStore,\s*\["computed"\]/,
+    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["computed"\]/,
     'used inline IIFE should still observe computed updates',
   )
 })
@@ -256,12 +256,12 @@ test('unused template-local store reads do not create observers', () => {
 
   assert.doesNotMatch(
     output,
-    /__observe_sheetStore_activeAddress|__observe\(sheetStore,\s*\["activeAddress"\]/,
+    /__observe_sheetStore_activeAddress|this\[GEA_OBSERVE\]\(sheetStore,\s*\["activeAddress"\]/,
     'unused activeAddress local should not create observers',
   )
   assert.doesNotMatch(
     output,
-    /__observe_sheetStore_barDraft|__observe\(sheetStore,\s*\["barDraft"\]/,
+    /__observe_sheetStore_barDraft|this\[GEA_OBSERVE\]\(sheetStore,\s*\["barDraft"\]/,
     'unused barDraft local should not create observers',
   )
 })
@@ -343,9 +343,9 @@ test('unused template local does not add subscriptions when getter already drive
     }
   `)
 
-  const getterOnlyObserveCalls = getterOnlyOutput.match(/this\.__observe\(sheetStore,[^)]+\)/g) ?? []
+  const getterOnlyObserveCalls = getterOnlyOutput.match(/this\[GEA_OBSERVE\]\(sheetStore,[^)]+\)/g) ?? []
   const getterPlusUnusedLocalObserveCalls =
-    getterPlusUnusedLocalOutput.match(/this\.__observe\(sheetStore,[^)]+\)/g) ?? []
+    getterPlusUnusedLocalOutput.match(/this\[GEA_OBSERVE\]\(sheetStore,[^)]+\)/g) ?? []
 
   assert.deepEqual(
     getterPlusUnusedLocalObserveCalls,
@@ -391,17 +391,17 @@ test('getter-backed cell display observers guard by current address', () => {
 
   assert.match(
     output,
-    /__observe\(sheetStore,\s*\["cells"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
+    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["cells"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
     'cells observer should guard by this.props.address before routing to the conditional patch path',
   )
   assert.match(
     output,
-    /__observe\(sheetStore,\s*\["computed"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
+    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["computed"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
     'computed observer should guard by this.props.address before routing to the conditional patch path',
   )
 })
 
-test('ref attribute generates data-gea-ref marker and __setupRefs method', () => {
+test('ref attribute generates data-gea-ref marker and GEA_SETUP_REFS method', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -412,8 +412,8 @@ test('ref attribute generates data-gea-ref marker and __setupRefs method', () =>
     }
   `)
   assert.match(output, /data-gea-ref="ref0"/, 'Should emit data-gea-ref marker attribute')
-  assert.match(output, /__setupRefs/, 'Should generate __setupRefs method')
-  assert.match(output, /querySelector.*data-gea-ref/, 'Should query for data-gea-ref elements in __setupRefs')
+  assert.match(output, /GEA_SETUP_REFS/, 'Should generate GEA_SETUP_REFS method')
+  assert.match(output, /querySelector.*data-gea-ref/, 'Should query for data-gea-ref elements in GEA_SETUP_REFS')
   assert.match(output, /= null;\s*\n.*querySelector/s, 'Should clear ref target before querySelector')
   assert.ok(
     !/ ref="[^"]*"/.test(output.replace(/data-gea-ref="[^"]*"/g, '')),
@@ -438,7 +438,7 @@ test('multiple ref attributes get unique IDs', () => {
   `)
   assert.match(output, /data-gea-ref="ref0"/, 'First ref should get ref0')
   assert.match(output, /data-gea-ref="ref1"/, 'Second ref should get ref1')
-  assert.match(output, /__setupRefs/, 'Should generate __setupRefs method')
+  assert.match(output, /GEA_SETUP_REFS/, 'Should generate GEA_SETUP_REFS method')
 })
 
 test('getJSXTagName handles namespaced names', () => {
@@ -509,7 +509,7 @@ test('ref attribute does not generate a reactive observer', () => {
     'ref must not be removed as an HTML attribute in observer or clone patch',
   )
   assert.match(output, /data-gea-ref/, 'ref should still produce data-gea-ref marker')
-  assert.match(output, /__setupRefs/, 'ref should still generate __setupRefs method')
+  assert.match(output, /GEA_SETUP_REFS/, 'ref should still generate GEA_SETUP_REFS method')
 })
 
 test('ref attribute does not generate clone patch entry', () => {
@@ -553,11 +553,7 @@ test('onclick (on-prefixed) event does not generate clone patch entry or observe
     /\.setAttribute\(\s*["']onclick["']/,
     'onclick must not be set as an HTML attribute in clone patch',
   )
-  assert.doesNotMatch(
-    output,
-    /__observe_local_handleClick/,
-    'onclick handler must not generate a reactive observer',
-  )
+  assert.doesNotMatch(output, /__observe_local_handleClick/, 'onclick handler must not generate a reactive observer')
 })
 
 test('ref with onclick: ref gets marker, neither generates observer', () => {
@@ -579,17 +575,9 @@ test('ref with onclick: ref gets marker, neither generates observer', () => {
   `)
 
   assert.match(output, /data-gea-ref/, 'ref marker should be present')
-  assert.match(output, /__setupRefs/, '__setupRefs should be generated')
-  assert.doesNotMatch(
-    output,
-    /__observe_local_inputEl/,
-    'ref target must not have a reactive observer',
-  )
-  assert.doesNotMatch(
-    output,
-    /\.setAttribute\(\s*["']ref["']/,
-    'ref must not appear as HTML attribute in clone patch',
-  )
+  assert.match(output, /GEA_SETUP_REFS/, 'GEA_SETUP_REFS should be generated')
+  assert.doesNotMatch(output, /__observe_local_inputEl/, 'ref target must not have a reactive observer')
+  assert.doesNotMatch(output, /\.setAttribute\(\s*["']ref["']/, 'ref must not appear as HTML attribute in clone patch')
   assert.doesNotMatch(
     output,
     /\.setAttribute\(\s*["']onclick["']/,

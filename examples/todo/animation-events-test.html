@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Animation Events Test - Gea</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      @keyframes pulse {
+        0% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+        100% {
+          opacity: 1;
+        }
+      }
+
+      .anim-box {
+        width: 100px;
+        height: 100px;
+        background: coral;
+        animation: pulse 80ms linear 2;
+      }
+
+      .trans-box {
+        width: 100px;
+        height: 100px;
+        background: teal;
+        transition: transform 80ms linear;
+      }
+
+      .trans-box.moved {
+        transform: translateX(200px);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import AnimationEventsTest from './AnimationEventsTest.tsx'
+      new AnimationEventsTest().render(document.getElementById('app'))
+    </script>
+  </body>
+</html>

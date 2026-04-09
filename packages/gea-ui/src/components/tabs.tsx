@@ -31,7 +31,7 @@ export default class Tabs extends ZagComponent {
 
   _syncMachineProps() {
     super._syncMachineProps()
-    if (this._machine && this.rendered_) {
+    if (this._machine && this.rendered) {
       this._machine.service.send({ type: 'SET_INDICATOR_RECT' })
     }
   }

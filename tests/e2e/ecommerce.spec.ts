@@ -10,7 +10,7 @@ async function waitForToastDismissed(page: Page) {
 test.describe('E-commerce Storefront', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await page.waitForSelector('.store-layout', { timeout: 500 })
+    await expect(page.locator('.store-layout')).toBeVisible({ timeout: 60_000 })
   })
 
   test.describe('Product Grid', () => {

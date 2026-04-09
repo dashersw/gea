@@ -8,7 +8,7 @@
 npm install @geajs/ui
 ```
 
-`@geajs/ui` has a peer dependency on `@geajs/core` ^1.0.0. It also requires [Tailwind CSS](https://tailwindcss.com/) **v3** for styling — see [Getting Started](getting-started.md) for the full setup instructions.
+`@geajs/ui` has a peer dependency on `@geajs/core` ^1.0.0. It also requires [Tailwind CSS](https://tailwindcss.com/) for styling — see [Getting Started](getting-started.md) for the full setup instructions.
 
 ## Quick Example
 

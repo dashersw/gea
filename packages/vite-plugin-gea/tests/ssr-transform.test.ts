@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import babelGenerator from '@babel/generator'
-import { parseSource } from '../src/parse'
-import { transformComponentFile } from '../src/transform-component'
+import { parseSource } from '../src/parse/parser'
+import { transformComponentFile } from '../src/codegen/generator'
 
 const generate = 'default' in babelGenerator ? babelGenerator.default : babelGenerator
 

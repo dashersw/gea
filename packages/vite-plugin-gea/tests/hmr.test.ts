@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { parse } from '@babel/parser'
 import _generate from '@babel/generator'
-import { injectHMR } from '../src/hmr.ts'
+import { injectHMR } from '../src/postprocess/hmr.ts'
 
 const generate = typeof (_generate as any).default === 'function' ? (_generate as any).default : _generate
 
@@ -24,7 +24,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      const injected = injectHMR(ast, 'Counter', [], new Set(), true)
+      const injected = injectHMR(ast, ['Counter'], 'Counter', [], new Set())
       assert.equal(injected, true)
 
       const code = codegen(ast)
@@ -35,13 +35,13 @@ describe('injectHMR', () => {
       assert.ok(code.includes('unregisterComponentInstance'), 'should patch dispose')
     })
 
-    it('returns false when no component class is given', () => {
+    it('returns false when no component classes are given', () => {
       const ast = parseModule(`
         import { Store } from '@geajs/core'
         export class MyStore extends Store {}
       `)
 
-      const injected = injectHMR(ast, null, [], new Set(), false)
+      const injected = injectHMR(ast, [], null, [], new Set())
       assert.equal(injected, false)
     })
   })
@@ -55,7 +55,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'App', [], new Set(), true)
+      injectHMR(ast, ['App'], 'App', [], new Set())
       const code = codegen(ast)
 
       assert.ok(code.includes('virtual:gea-hmr'), 'should import from virtual:gea-hmr')
@@ -73,7 +73,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'App', [], new Set(), true, 'custom-hmr-source')
+      injectHMR(ast, ['App'], 'App', [], new Set(), 'custom-hmr-source')
       const code = codegen(ast)
       assert.ok(code.includes('custom-hmr-source'))
     })
@@ -88,7 +88,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      const injected = injectHMR(ast, 'MyWidget', [], new Set(), false)
+      const injected = injectHMR(ast, ['MyWidget'], null, [], new Set())
       assert.equal(injected, true)
 
       const code = codegen(ast)
@@ -106,7 +106,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'MyWidget', [], new Set(), true)
+      injectHMR(ast, ['MyWidget'], 'MyWidget', [], new Set())
       const code = codegen(ast)
       assert.ok(code.includes('default: MyWidget') || code.includes('"default"'))
     })
@@ -122,7 +122,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'App', ['./my-store'], new Set(), true)
+      injectHMR(ast, ['App'], 'App', ['./my-store'], new Set())
       const code = codegen(ast)
       assert.ok(code.includes('./my-store'), 'should accept store dependency')
       assert.ok(code.includes('invalidate'), 'store imports should trigger invalidation')
@@ -137,7 +137,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'App', ['./child-comp.ts'], new Set(['ChildComp']), true)
+      injectHMR(ast, ['App'], 'App', ['./child-comp.ts'], new Set(['ChildComp']))
       const code = codegen(ast)
       assert.ok(code.includes('createHotComponentProxy'), 'should proxy component deps')
     })
@@ -151,7 +151,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'App', ['./child-comp.ts'], new Set(['ChildComp']), true, 'virtual:gea-hmr', () => false)
+      injectHMR(ast, ['App'], 'App', ['./child-comp.ts'], new Set(['ChildComp']), 'virtual:gea-hmr', () => false)
       const code = codegen(ast)
       assert.ok(!code.includes('createHotComponentProxy'), 'explicit classifier can disable proxy')
       assert.ok(code.includes('invalidate'), 'falls back to invalidate-only accept')
@@ -167,7 +167,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'Test', [], new Set(), true)
+      injectHMR(ast, ['Test'], 'Test', [], new Set())
       const code = codegen(ast)
       assert.ok(code.includes('Test.prototype.created'))
       assert.ok(code.includes('registerComponentInstance'))
@@ -181,10 +181,106 @@ describe('injectHMR', () => {
         }
       `)
 
-      injectHMR(ast, 'Test', [], new Set(), true)
+      injectHMR(ast, ['Test'], 'Test', [], new Set())
       const code = codegen(ast)
       assert.ok(code.includes('Test.prototype.dispose'))
       assert.ok(code.includes('unregisterComponentInstance'))
+    })
+
+    it('patches all classes in a multi-component file', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        export default class Home extends Component {
+          template() { return '<div>Home</div>' }
+        }
+        export class About extends Component {
+          template() { return '<div>About</div>' }
+        }
+        export class NotFound extends Component {
+          template() { return '<div>404</div>' }
+        }
+      `)
+
+      const injected = injectHMR(ast, ['Home', 'About', 'NotFound'], 'Home', [], new Set())
+      assert.equal(injected, true)
+
+      const code = codegen(ast)
+      assert.ok(code.includes('Home.prototype.created'), 'should patch Home.created')
+      assert.ok(code.includes('About.prototype.created'), 'should patch About.created')
+      assert.ok(code.includes('NotFound.prototype.created'), 'should patch NotFound.created')
+      assert.ok(code.includes('default: Home'), 'default export should be Home')
+    })
+  })
+
+  describe('shouldSkipDepAccept – circular store deps', () => {
+    it('skips hot.accept for store module deps when shouldSkipDepAccept returns true', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        import { router } from '../router'
+        export default class Home extends Component {
+          template() { return '<div>Home</div>' }
+        }
+      `)
+
+      injectHMR(
+        ast,
+        ['Home'],
+        'Home',
+        ['../router'],
+        new Set(),
+        'virtual:gea-hmr',
+        () => false,
+        (source) => source === '../router',
+      )
+      const code = codegen(ast)
+
+      assert.ok(
+        !code.includes("'../router'") || !code.includes('invalidate'),
+        'should NOT generate hot.accept for ../router with invalidate',
+      )
+      assert.ok(code.includes('handleComponentUpdate'), 'self-accept should still work')
+    })
+
+    it('still generates hot.accept for non-store relative deps', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        import { router } from '../router'
+        import { utils } from './utils'
+        export default class Home extends Component {
+          template() { return '<div>Home</div>' }
+        }
+      `)
+
+      injectHMR(
+        ast,
+        ['Home'],
+        'Home',
+        ['../router', './utils'],
+        new Set(),
+        'virtual:gea-hmr',
+        () => false,
+        (source) => source === '../router',
+      )
+      const code = codegen(ast)
+
+      assert.ok(code.includes('./utils'), 'should still accept non-store deps')
+      assert.ok(code.includes('invalidate'), 'non-store deps should invalidate')
+    })
+
+    it('without shouldSkipDepAccept, all relative deps get hot.accept', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        import { router } from '../router'
+        export default class Home extends Component {
+          template() { return '<div>Home</div>' }
+        }
+      `)
+
+      injectHMR(ast, ['Home'], 'Home', ['../router'], new Set(), 'virtual:gea-hmr', () => false)
+      const code = codegen(ast)
+
+      assert.ok(code.includes('../router'), 'should accept ../router when no skip predicate')
+      assert.ok(code.includes('invalidate'), 'should invalidate')
     })
   })
 
@@ -198,7 +294,7 @@ describe('injectHMR', () => {
         }
       `)
 
-      const injected = injectHMR(ast, 'App', [], new Set(), true)
+      const injected = injectHMR(ast, ['App'], 'App', [], new Set())
       assert.equal(injected, false)
     })
   })

@@ -2,6 +2,15 @@
  * Port of `HMR_RUNTIME_SOURCE` in `src/index.ts` for node tests that simulate
  * `virtual:gea-hmr` without Vite. Keep behavior aligned when changing the runtime.
  */
+import {
+  GEA_BINDINGS,
+  GEA_CHILD_COMPONENTS,
+  GEA_CLEANUP_BINDINGS,
+  GEA_ELEMENT,
+  GEA_RENDERED,
+  GEA_SELF_LISTENERS,
+  GEA_TEARDOWN_SELF_LISTENERS,
+} from '../../../gea/src/lib/symbols'
 export type GeaHmrBindings = {
   registerHotModule: (moduleUrl: string, moduleExports: unknown) => unknown
   createHotComponentProxy: (moduleUrl: string, initialComponent: unknown) => unknown
@@ -10,7 +19,7 @@ export type GeaHmrBindings = {
   handleComponentUpdate: (moduleId: string, newModule: unknown) => boolean
 }
 
-type GeaHot = { data: { componentInstances: Map<string, Set<unknown>> }; invalidate?: () => void }
+type GeaHot = { data: { componentInstances: Map<string, Set<unknown>> }; invalidate?: () => void; accept?: () => void }
 
 function getHot(): GeaHot {
   return (globalThis as { __geaHmrTestHot?: GeaHot }).__geaHmrTestHot!
@@ -46,8 +55,9 @@ function getLatestComponentClass(
 }
 
 function reRenderComponent(instance: Record<string, unknown>) {
-  if (!instance || !instance.element_) return
-  const el = instance.element_ as { parentElement: HTMLElement | null }
+  const i = instance as Record<string | symbol, unknown>
+  if (!i || !i[GEA_ELEMENT]) return
+  const el = i[GEA_ELEMENT] as { parentElement: HTMLElement | null }
   const parent = el.parentElement
   if (!parent) return
   const index = Array.prototype.indexOf.call(parent.children, el)
@@ -56,7 +66,7 @@ function reRenderComponent(instance: Record<string, unknown>) {
   const __ownKeys = Object.getOwnPropertyNames(instance)
   for (let __ki = 0; __ki < __ownKeys.length; __ki++) {
     const __k = __ownKeys[__ki]
-    if (__k.charAt(0) === '_' || __k === 'props' || __k === 'element_' || __k === 'rendered_' || __k === 'id') continue
+    if (__k.charAt(0) === '_' || __k === 'props' || __k === 'id') continue
     const __desc = Object.getOwnPropertyDescriptor(instance, __k)
     if (__desc && (__desc.get || __desc.set)) continue
     try {
@@ -65,25 +75,23 @@ function reRenderComponent(instance: Record<string, unknown>) {
       /* ignore */
     }
   }
-  instance.rendered_ = false
-  if (typeof instance.cleanupBindings_ === 'function') instance.cleanupBindings_()
-  if (typeof instance.teardownSelfListeners_ === 'function') instance.teardownSelfListeners_()
+  ;(i as any)[GEA_RENDERED] = false
+  if (typeof (instance as any)[GEA_CLEANUP_BINDINGS] === 'function') (instance as any)[GEA_CLEANUP_BINDINGS]()
+  if (typeof (instance as any)[GEA_TEARDOWN_SELF_LISTENERS] === 'function') (instance as any)[GEA_TEARDOWN_SELF_LISTENERS]()
   if (typeof instance.__cleanupCompiledDirectEvents === 'function') instance.__cleanupCompiledDirectEvents()
-  const childComponents = instance.__childComponents as unknown[] | undefined
+  const childComponents = i[GEA_CHILD_COMPONENTS] as unknown[] | undefined
   if (childComponents && childComponents.length) {
     childComponents.forEach((child) => {
       if (child && typeof (child as { dispose?: () => void }).dispose === 'function') {
         ;(child as { dispose: () => void }).dispose()
       }
     })
-    instance.__childComponents = []
+    i[GEA_CHILD_COMPONENTS] = []
   }
-  if (instance.element_ && (instance.element_ as { parentNode: Node | null }).parentNode) {
-    ;(instance.element_ as { parentNode: { removeChild: (n: unknown) => void } }).parentNode.removeChild(
-      instance.element_,
-    )
+  if (i[GEA_ELEMENT] && (i[GEA_ELEMENT] as { parentNode: Node | null }).parentNode) {
+    ;(i[GEA_ELEMENT] as { parentNode: { removeChild: (n: unknown) => void } }).parentNode.removeChild(i[GEA_ELEMENT])
   }
-  instance.element_ = null
+  i[GEA_ELEMENT] = null
   instance.props = props
   const __restoreKeys = Object.getOwnPropertyNames(__stateSnapshot)
   for (let __ri = 0; __ri < __restoreKeys.length; __ri++) {
@@ -93,10 +101,10 @@ function reRenderComponent(instance: Record<string, unknown>) {
       /* ignore */
     }
   }
-  if (!instance.__bindings) instance.__bindings = []
+  if (!i[GEA_BINDINGS]) i[GEA_BINDINGS] = []
   if (!instance.__bindingRemovers) instance.__bindingRemovers = []
-  if (!instance.__selfListeners) instance.__selfListeners = []
-  if (!instance.__childComponents) instance.__childComponents = []
+  if (!i[GEA_SELF_LISTENERS]) i[GEA_SELF_LISTENERS] = []
+  if (!i[GEA_CHILD_COMPONENTS]) i[GEA_CHILD_COMPONENTS] = []
   if (typeof instance.render === 'function') {
     ;(instance.render as (p: HTMLElement, i: number) => void)(parent, index)
   }

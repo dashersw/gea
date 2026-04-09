@@ -1,11 +1,12 @@
 import babelGenerator from '@babel/generator'
 import babelTraverse from '@babel/traverse'
-import { parseSource } from './parse.ts'
-import { transformComponentFile, transformNonComponentJSX } from './transform-component.ts'
-import { convertFunctionalToClass } from './transform-functional.ts'
-import { isComponentTag } from './utils.ts'
-import { clearCaches as clearStoreCaches } from './store-getter-analysis.ts'
-import { clearCaches as clearEventCaches } from './component-event-helpers.ts'
+import { parseSource } from './parse/parser.ts'
+import { transformComponentFile, transformNonComponentJSX } from './codegen/generator.ts'
+import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
+import { isComponentTag } from './codegen/jsx-utils.ts'
+import { ensureGeaCompilerSymbolImports } from './codegen/member-chain.ts'
+import { clearCaches as clearStoreCaches } from './parse/store-analysis.ts'
+import { clearCaches as clearEventCaches } from './codegen/event-helpers.ts'
 
 const traverse = typeof (babelTraverse as any).default === 'function' ? (babelTraverse as any).default : babelTraverse
 const generate =
@@ -159,6 +160,7 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
             originalAST,
             componentImportsUsedAsTags,
             knownComponentImports,
+            false,
           )
           if (result) transformed = true
         }
@@ -167,6 +169,7 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
       }
 
       if (transformed) {
+        ensureGeaCompilerSymbolImports(ast)
         const output = generate(ast)
         compiledModules[filename] = output.code
       } else {

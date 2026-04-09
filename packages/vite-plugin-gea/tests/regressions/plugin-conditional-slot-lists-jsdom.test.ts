@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
+import { GEA_DOM_KEY } from '../../../gea/src/lib/symbols'
 import { compileJsxComponent, loadComponentUnseeded } from '../helpers/compile'
 
 async function mountCompiledComponent(source: string, bindings: Record<string, unknown>, id: string) {
@@ -153,7 +154,7 @@ test('conditional slot empty branch remains visible when initial list is empty',
   }
 })
 
-test('gesture-log pattern: empty branch to keyed list with unshift keeps unique data-gea-item-id', async () => {
+test('gesture-log pattern: empty branch to keyed list with unshift keeps unique data-gid', async () => {
   const { Store } = await import('../../../gea/src/lib/store.ts')
 
   let counter = 0
@@ -198,7 +199,7 @@ test('gesture-log pattern: empty branch to keyed list with unshift keeps unique 
     }
 
     const rows = mounted.root.querySelectorAll('.gesture-log-entry')
-    const ids = [...rows].map((el) => (el as any).__geaKey ?? el.getAttribute('data-gea-item-id'))
+    const ids = [...rows].map((el) => (el as any)[GEA_DOM_KEY] ?? el.getAttribute('data-gid'))
     const unique = new Set(ids)
     assert.equal(unique.size, ids.length, `duplicate keys: ${JSON.stringify(ids)}`)
   } finally {

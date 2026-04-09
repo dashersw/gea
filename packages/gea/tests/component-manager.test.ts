@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
+import { GEA_CTOR_TAG_NAME } from '../src/lib/symbols'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -84,7 +85,7 @@ describe('ComponentManager', () => {
     })
   })
 
-  describe('registerComponentClass', () => {
+  describe('rcc', () => {
     it('registers class with auto-generated tag name', () => {
       const mgr = ComponentManager.getInstance()
       class MyWidget {}
@@ -102,25 +103,26 @@ describe('ComponentManager', () => {
     it('does not re-register same class', () => {
       const mgr = ComponentManager.getInstance()
       class Bar {
-        static __geaTagName?: string
+        static [GEA_CTOR_TAG_NAME]?: string
       }
       mgr.registerComponentClass(Bar)
-      const tag1 = (Bar as any).__geaTagName
+      const tag1 = (Bar as any)[GEA_CTOR_TAG_NAME]
       mgr.registerComponentClass(Bar, 'different-bar')
-      assert.equal((Bar as any).__geaTagName, tag1)
+      assert.equal((Bar as any)[GEA_CTOR_TAG_NAME], tag1)
     })
   })
 
-  describe('generateTagName_', () => {
+  describe('gtn', () => {
     it('converts PascalCase to kebab-case', () => {
       const mgr = ComponentManager.getInstance()
       assert.equal(mgr.generateTagName_({ name: 'MyComponent' }), 'my-component')
     })
 
-    it('prefixes names that collide with native html tags', () => {
+    it('prefixes single-word names that have no hyphen', () => {
       const mgr = ComponentManager.getInstance()
       assert.equal(mgr.generateTagName_({ name: 'Link' }), 'gea-link')
       assert.equal(mgr.generateTagName_({ name: 'Label' }), 'gea-label')
+      assert.equal(mgr.generateTagName_({ name: 'Foo' }), 'gea-foo')
     })
 
     it('uses displayName when available', () => {
@@ -128,21 +130,21 @@ describe('ComponentManager', () => {
       assert.equal(mgr.generateTagName_({ displayName: 'CustomName', name: 'Other' }), 'custom-name')
     })
 
-    it('falls back to "component"', () => {
+    it('falls back to "gea-component"', () => {
       const mgr = ComponentManager.getInstance()
-      assert.equal(mgr.generateTagName_({}), 'component')
+      assert.equal(mgr.generateTagName_({}), 'gea-component')
     })
   })
 
   describe('component registry', () => {
-    it('setComponent and getComponent round-trip', () => {
+    it('sc and gc round-trip', () => {
       const mgr = ComponentManager.getInstance()
       const comp = { id: 'test-1', rendered: true, render: () => true, constructor: Object }
       mgr.setComponent(comp)
       assert.equal(mgr.getComponent('test-1'), comp)
     })
 
-    it('removeComponent deletes from registry', () => {
+    it('rc deletes from registry', () => {
       const mgr = ComponentManager.getInstance()
       const comp = { id: 'test-2', rendered: true, render: () => true, constructor: Object }
       mgr.setComponent(comp)
@@ -157,7 +159,7 @@ describe('ComponentManager', () => {
       assert.ok(mgr.componentsToRender['test-3'])
     })
 
-    it('markComponentRendered removes from componentsToRender', () => {
+    it('mcr removes from componentsToRender', () => {
       const mgr = ComponentManager.getInstance()
       const comp = { id: 'test-4', rendered: false, render: () => true, constructor: Object }
       mgr.setComponent(comp)
@@ -166,13 +168,13 @@ describe('ComponentManager', () => {
     })
   })
 
-  describe('getComponentSelectors', () => {
+  describe('gcs', () => {
     it('returns tag names of registered classes', () => {
       const mgr = ComponentManager.getInstance()
       class Alpha {}
       mgr.registerComponentClass(Alpha)
       const selectors = mgr.getComponentSelectors()
-      assert.ok(selectors.includes('alpha'))
+      assert.ok(selectors.includes('gea-alpha'))
     })
 
     it('caches selectors', () => {

@@ -35,12 +35,13 @@ The theme stylesheet (`@geajs/ui/style.css`) defines variables in HSL format on 
   --border: 214 32% 91%;
   --input: 214 32% 91%;
   --ring: 222 47% 11%;
+  --dialog-background: var(--background);
 
   --radius: 0.5rem;
 }
 ```
 
-Each variable holds the HSL values without the `hsl()` wrapper. The Tailwind preset references them as `hsl(var(--primary))`, so you only need to provide the three numbers (hue, saturation, lightness).
+Each variable holds the HSL values without the `hsl()` wrapper. The theme CSS maps them to Tailwind utilities via `@theme inline` (e.g. `hsl(var(--primary))`), so you only need to provide the three numbers (hue, saturation, lightness).
 
 ## Available Tokens
 
@@ -58,6 +59,7 @@ Each variable holds the HSL values without the `hsl()` wrapper. The Tailwind pre
 | `--input` | Input field borders |
 | `--ring` | Focus ring color |
 | `--radius` | Base border radius (components derive `lg`, `md`, `sm` from this) |
+| `--dialog-background` | Dialog content background, useful mainly for dark theme |
 
 ## Dark Mode
 
@@ -98,6 +100,7 @@ Then define dark-mode overrides:
   --border: 217 33% 17%;
   --input: 217 33% 17%;
   --ring: 212 27% 84%;
+  --dialog-background: 344.35 7.21% 9.8%;
 }
 ```
 
@@ -147,13 +150,14 @@ Styled components also apply semantic class names (`dialog-trigger`, `tabs-conte
 
 ## Border Radius
 
-The `--radius` variable controls the base radius. The Tailwind preset derives three tokens from it:
+The `--radius` variable controls the base radius. The theme derives four tokens from it:
 
 | Token | Value |
 | --- | --- |
 | `rounded-lg` | `var(--radius)` |
 | `rounded-md` | `calc(var(--radius) - 2px)` |
 | `rounded-sm` | `calc(var(--radius) - 4px)` |
+| `rounded-xs` | `calc(var(--radius) - 6px)` |
 
 Change `--radius` once and all components update:
 

@@ -342,9 +342,9 @@ This works identically to passing an object to a JavaScript function — if the 
 | --- | --- | --- |
 | React 19 + ReactDOM | ~40 kb | Rendering only |
 | React 19 + ReactDOM + React Router 7 + Zustand 5 | **~74 kb** | Rendering + state + routing |
-| Gea | **~13 kb** | Rendering + state + routing |
+| Gea | **~19 kb** | Rendering + state + routing |
 
-A real-world React app needs at least a router and a state manager. With React Router and Zustand — two of the most lightweight options — the total comes to ~74 kb gzipped. Gea ships all three concerns built in at ~13 kb, making it **5.6x smaller** than a comparable React stack.
+A real-world React app needs at least a router and a state manager. With React Router and Zustand — two of the most lightweight options — the total comes to ~74 kb gzipped. Gea ships all three concerns built in at ~19 kb, making it **3.9x smaller** than a comparable React stack.
 
 ## Event Handling
 

@@ -1,7 +1,7 @@
 {
   "name": "@geajs/core",
   "type": "module",
-  "version": "1.0.29",
+  "version": "1.2.3",
   "description": "A lightweight, reactive JavaScript UI framework with compile-time JSX and proxy-based stores",
   "main": "./dist/index.mjs",
   "module": "./dist/index.mjs",
@@ -54,8 +54,8 @@
   "scripts": {
     "build": "tsdown --config-loader unrun",
     "prepublishOnly": "npm run build",
-    "size": "node -e \"process.stdout.write('gzip size: ')\" && gzip-size dist/gea.js",
-    "ts-type-check": "tsc --noEmit --project tsconfig.build.json",
+    "size": "node -e \"const{gzipSync}=require('zlib'),{readFileSync}=require('fs');const b=gzipSync(readFileSync('dist/gea.js'));console.log('gzip size: '+(b.length/1024).toFixed(2)+' kB')\"",
+    "ts-type-check": "tsc --noEmit",
     "lint": "eslint src",
     "test": "tsx --conditions source --import ./tests/preload.ts --test tests/*.test.ts --test tests/examples/*.test.ts",
     "test:coverage": "c8 --reporter=text --reporter=lcov tsx --conditions source --import ./tests/preload.ts --test tests/*.test.ts --test tests/examples/*.test.ts"

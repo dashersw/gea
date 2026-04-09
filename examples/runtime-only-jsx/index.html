@@ -19,7 +19,7 @@
       /** @jsxRuntime classic */
       /** @jsx gea.h */
 
-      const { Store, Component } = gea
+      const { Store, Component, GEA_OBSERVER_REMOVERS } = gea
 
       // --- Store ---
 
@@ -104,7 +104,7 @@
         }
 
         createdHooks() {
-          this.__observer_removers__.push(
+          this[GEA_OBSERVER_REMOVERS].push(
             store.observe('todos', () => {
               this.$('.todo-list').innerHTML = this.renderItems()
               this.$('.active-count').textContent = `${store.activeCount} items left`

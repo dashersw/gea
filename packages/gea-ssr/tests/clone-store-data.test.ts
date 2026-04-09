@@ -91,13 +91,13 @@ describe('cloneStoreData – fail fast on unsupported types', () => {
     assert.equal(cloned.increment, undefined)
   })
 
-  it('skips internal props (existing behavior)', () => {
+  it('clones underscore-shaped user fields', () => {
     const store = Object.create(null)
     Object.defineProperty(store, '_private', { value: 'secret', writable: true, enumerable: true, configurable: true })
     Object.defineProperty(store, 'visible', { value: 'yes', writable: true, enumerable: true, configurable: true })
 
     const cloned = cloneStoreData(store)
-    assert.equal(cloned._private, undefined)
+    assert.equal(cloned._private, 'secret')
     assert.equal(cloned.visible, 'yes')
   })
 })
@@ -129,7 +129,10 @@ describe('cloneStoreData – deep structures', () => {
 
   it('clones arrays of objects with independence', () => {
     const store = {
-      items: [{ id: 1, name: 'a' }, { id: 2, name: 'b' }],
+      items: [
+        { id: 1, name: 'a' },
+        { id: 2, name: 'b' },
+      ],
     }
     const result = cloneStoreData(store)
     const items = result.items as Array<Record<string, unknown>>

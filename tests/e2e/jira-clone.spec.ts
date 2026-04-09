@@ -1,7 +1,21 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
+
+/** Cards inside Kanban columns only (avoids duplicate ghost nodes outside `.board-lists`). */
+function boardIssueCards(page: Page) {
+  return page.locator('.board-lists .issue-card')
+}
+
+/** Active issue detail dialog — prefer last when duplicate subtrees exist. */
+function issueDetail(page: Page) {
+  return page.locator('.dialog-issue-detail').last()
+}
 
 test.describe('jira-clone board and surgical DOM updates', () => {
+  test.describe.configure({ mode: 'serial' })
+
   test.beforeEach(async ({ page }) => {
+    // Reset mock API state so each test starts from seed data
+    await page.request.post('/api/__reset')
     await page.goto('/')
     // Wait for auth + project fetch to complete and board to render
     await expect(page.locator('.board')).toBeVisible({ timeout: 500 })
@@ -18,7 +32,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await expect(columns.nth(3).locator('.board-list-title')).toContainText(/done/i)
 
     // Total issue cards should be present
-    const issueCards = page.locator('.issue-card')
+    const issueCards = boardIssueCards(page)
     const totalCards = await issueCards.count()
     expect(totalCards).toBeGreaterThan(0)
   })
@@ -30,15 +44,15 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
   test('clicking an issue card opens issue detail dialog', async ({ page }) => {
     // Click first issue card
-    const firstCard = page.locator('.issue-card').first()
+    const firstCard = boardIssueCards(page).first()
     const cardTitle = await firstCard.locator('.issue-card-title').textContent()
     await firstCard.click()
 
     // Issue detail dialog should appear
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).toBeVisible()
+    await expect(issueDetail(page).locator('[data-part="content"]')).toBeVisible()
 
     // Dialog should contain the issue title
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).toContainText(cardTitle!)
+    await expect(issueDetail(page).locator('[data-part="content"]')).toContainText(cardTitle!)
   })
 
   test('opening issue detail must not rebuild the board columns', async ({ page }) => {
@@ -60,8 +74,8 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     }
 
     // Click an issue to open dialog
-    await page.locator('.issue-card').first().click()
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).toBeVisible()
+    await boardIssueCards(page).first().click()
+    await expect(issueDetail(page).locator('[data-part="content"]')).toBeVisible()
 
     // Board must be the same DOM node
     const boardSame = await page.locator('.board').evaluate((el) => {
@@ -89,8 +103,8 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     })
 
     // Open issue detail
-    await page.locator('.issue-card').first().click()
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).toBeVisible()
+    await boardIssueCards(page).first().click()
+    await expect(issueDetail(page).locator('[data-part="content"]')).toBeVisible()
 
     // Close dialog by clicking backdrop or close
     // The dialog uses @geajs/ui Dialog — close by navigating back to /project/board
@@ -99,7 +113,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       window.history.pushState({}, '', '/project/board')
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
 
     // Board must be the same DOM node
     const boardSame = await page.locator('.board').evaluate((el) => {
@@ -143,14 +157,14 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       ;(window as any).__colRefs = Array.from(document.querySelectorAll('.board-list'))
     })
 
-    const totalBefore = await page.locator('.issue-card').count()
+    const totalBefore = await boardIssueCards(page).count()
 
     // Type in search input
     await page.locator('.board-filters-search input').fill('login')
     await page.waitForTimeout(300)
 
     // Should show fewer (or equal) cards
-    const totalAfter = await page.locator('.issue-card').count()
+    const totalAfter = await boardIssueCards(page).count()
     expect(totalAfter).toBeLessThanOrEqual(totalBefore)
 
     // At least one card should contain "login" in title
@@ -170,7 +184,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     // Clear search — all cards should return
     await page.locator('.board-filters-search input').fill('')
     await page.waitForTimeout(300)
-    const totalRestored = await page.locator('.issue-card').count()
+    const totalRestored = await boardIssueCards(page).count()
     expect(totalRestored).toBe(totalBefore)
   })
 
@@ -180,7 +194,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       ;(window as any).__colRefs = Array.from(document.querySelectorAll('.board-list'))
     })
 
-    const totalBefore = await page.locator('.issue-card').count()
+    const totalBefore = await boardIssueCards(page).count()
 
     // Click "Only My Issues"
     await page.locator('.board-filters-button', { hasText: 'Only My Issues' }).click()
@@ -190,7 +204,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await expect(page.locator('.board-filters-button.active', { hasText: 'Only My Issues' })).toBeVisible()
 
     // Card count may change
-    const totalFiltered = await page.locator('.issue-card').count()
+    const totalFiltered = await boardIssueCards(page).count()
     expect(totalFiltered).toBeLessThanOrEqual(totalBefore)
 
     // Columns must be same DOM nodes
@@ -204,12 +218,12 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     // Toggle off
     await page.locator('.board-filters-button', { hasText: 'Only My Issues' }).click()
     await page.waitForTimeout(300)
-    const totalRestored = await page.locator('.issue-card').count()
+    const totalRestored = await boardIssueCards(page).count()
     expect(totalRestored).toBe(totalBefore)
   })
 
   test('avatar filter toggles and filters issues by user', async ({ page }) => {
-    const totalBefore = await page.locator('.issue-card').count()
+    const totalBefore = await boardIssueCards(page).count()
 
     // Click first avatar filter
     const avatarFilters = page.locator('.board-filters-avatar')
@@ -220,7 +234,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await page.waitForTimeout(300)
 
     // Should filter to fewer or equal cards (shows only that user's issues)
-    const totalFiltered = await page.locator('.issue-card').count()
+    const totalFiltered = await boardIssueCards(page).count()
     expect(totalFiltered).toBeLessThanOrEqual(totalBefore)
 
     // Click again to deselect
@@ -228,13 +242,13 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await page.waitForTimeout(300)
 
     // All cards should be restored
-    const totalRestored = await page.locator('.issue-card').count()
+    const totalRestored = await boardIssueCards(page).count()
     expect(totalRestored).toBe(totalBefore)
   })
 
   test('issue cards render with correct type and priority icons', async ({ page }) => {
     // Every issue card should have a type icon and priority icon
-    const cards = page.locator('.issue-card')
+    const cards = boardIssueCards(page)
     const cardCount = await cards.count()
     expect(cardCount).toBeGreaterThan(0)
 
@@ -246,8 +260,8 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   })
 
   test('changing issue status in detail dialog updates badge and preserves arrow', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).toBeVisible()
+    await boardIssueCards(page).first().click()
+    await expect(issueDetail(page).locator('[data-part="content"]')).toBeVisible()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const badge = page.locator('.status-badge')
@@ -255,7 +269,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await expect(badge.locator('.status-badge-arrow')).toBeVisible()
 
     await badge.click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
     await page.locator('.custom-dropdown-item', { hasText: 'Done' }).click()
 
     await expect(badge).toContainText('DONE')
@@ -264,7 +278,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   })
 
   test('changing status preserves comments section and DOM nodes', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const comments = page.locator('.issue-details-comments')
@@ -285,35 +299,37 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   })
 
   test('cycling through dropdowns shows only the active one without slot stealing', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     await page.locator('.status-badge').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
     await page.locator('.dropdown-overlay').click()
-    await expect(page.locator('.custom-dropdown')).not.toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).not.toBeVisible()
 
     await page.locator('.reporter-display').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
-    await expect(page.locator('.custom-dropdown')).toHaveCount(1)
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toHaveCount(1)
     await page.locator('.dropdown-overlay').click()
-    await expect(page.locator('.custom-dropdown')).not.toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).not.toBeVisible()
 
     await page.locator('.priority-display').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
-    await expect(page.locator('.custom-dropdown')).toHaveCount(1)
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toHaveCount(1)
     await page.locator('.dropdown-overlay').click()
-    await expect(page.locator('.custom-dropdown')).not.toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).not.toBeVisible()
   })
 
   test('time tracking dialog progress bar updates on input change', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     await page.locator('.tracking-widget--clickable').click()
     await expect(page.locator('.dialog-tracking [data-part="content"]')).toBeVisible()
 
     const dialogBar = page.locator('.dialog-tracking .tracking-bar-fill')
+    // Wait for the tracking bar style to be rendered (reactive update may need a tick)
+    await expect(dialogBar).toHaveAttribute('style', /width/, { timeout: 2000 })
     const initialWidth = await dialogBar.evaluate((el) => el.style.width)
     expect(initialWidth).toBeTruthy()
 
@@ -321,14 +337,17 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await spentInput.fill('10')
     await spentInput.dispatchEvent('input')
 
-    const updatedWidth = await dialogBar.evaluate((el) => el.style.width)
-    expect(updatedWidth).not.toBe(initialWidth)
+    // Wait for the updated width to differ from initial
+    await expect(async () => {
+      const w = await dialogBar.evaluate((el) => el.style.width)
+      expect(w).not.toBe(initialWidth)
+    }).toPass({ timeout: 2000 })
   })
 
   test('still exactly 4 columns after opening and closing issue detail', async ({ page }) => {
     // Open issue
-    await page.locator('.issue-card').first().click()
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).toBeVisible()
+    await boardIssueCards(page).first().click()
+    await expect(issueDetail(page).locator('[data-part="content"]')).toBeVisible()
 
     // Still 4 columns behind the dialog
     await expect(page.locator('.board-list')).toHaveCount(4)
@@ -338,52 +357,52 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       window.history.pushState({}, '', '/project/board')
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
 
     // Still 4 columns
     await expect(page.locator('.board-list')).toHaveCount(4)
   })
 
   test('changing issue type via type dropdown', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const typeLabel = page.locator('.issue-details-type-label')
     const initialText = await typeLabel.textContent()
 
     await page.locator('.issue-type-clickable').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
 
     // Pick a type different from current
     const targetType = initialText?.startsWith('STORY') ? 'Bug' : 'Story'
     await page.locator('.custom-dropdown-item', { hasText: targetType }).click()
 
     await expect(typeLabel).toContainText(new RegExp(targetType.toUpperCase()))
-    await expect(page.locator('.custom-dropdown')).not.toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).not.toBeVisible()
   })
 
   test('changing priority via priority dropdown', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const priorityName = page.locator('.priority-name')
     await page.locator('.priority-display').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
     await page.locator('.custom-dropdown-item', { hasText: 'Highest' }).click()
 
     await expect(priorityName).toHaveText('Highest')
-    await expect(page.locator('.custom-dropdown')).not.toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).not.toBeVisible()
   })
 
   test('changing reporter via reporter dropdown', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const reporterName = page.locator('.reporter-name')
     const initialReporter = await reporterName.textContent()
 
     await page.locator('.reporter-display').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
 
     // Pick a different user than the current reporter
     const items = page.locator('.custom-dropdown-item:not(.active)')
@@ -391,11 +410,11 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     const newReporter = await reporterName.textContent()
     expect(newReporter).not.toBe(initialReporter)
-    await expect(page.locator('.custom-dropdown')).not.toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).not.toBeVisible()
   })
 
   test('editing issue title inline', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const titleText = page.locator('.issue-title-text')
@@ -411,9 +430,9 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   })
 
   test('delete issue via confirm dialog', async ({ page }) => {
-    const totalBefore = await page.locator('.issue-card').count()
+    const totalBefore = await boardIssueCards(page).count()
 
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     // Click trash button
@@ -427,13 +446,13 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await page.locator('.confirm-dialog-actions button', { hasText: 'Delete issue' }).click()
 
     // Dialog should close and board should have one fewer card
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
     // deleteIssue() is fire-and-forget — wait for the board to re-render
-    await expect(page.locator('.issue-card')).toHaveCount(totalBefore - 1, { timeout: 500 })
+    await expect(boardIssueCards(page)).toHaveCount(totalBefore - 1, { timeout: 500 })
   })
 
   test('cancel delete keeps issue', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     await page.locator('.issue-details-action-btn').nth(2).click()
@@ -447,56 +466,56 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   })
 
   test('add a comment to an issue', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const commentsBefore = await page.locator('.comment').count()
 
     // Click the comment placeholder to open form
-    await page.locator('.comment-create-fake').click()
-    await expect(page.locator('.comment-create-form')).toBeVisible()
+    await issueDetail(page).locator('.comment-create-fake').click()
+    await expect(issueDetail(page).locator('.comment-create-form')).toBeVisible()
 
-    await page.locator('.comment-create-form textarea').fill('Test comment from e2e')
-    await page.locator('.comment-create-form button', { hasText: 'Save' }).click()
+    await issueDetail(page).locator('.comment-create-form textarea').fill('Test comment from e2e')
+    await issueDetail(page).locator('.comment-create-form button', { hasText: 'Save' }).click()
 
     // New comment should appear
     await expect(page.locator('.comment')).toHaveCount(commentsBefore + 1)
-    await expect(page.locator('.comment-body').last()).toContainText('Test comment from e2e')
+    await expect(issueDetail(page).locator('.comment-body').last()).toContainText('Test comment from e2e')
   })
 
   test('cancel comment form clears and closes', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
-    await page.locator('.comment-create-fake').click()
-    await expect(page.locator('.comment-create-form')).toBeVisible()
+    await issueDetail(page).locator('.comment-create-fake').click()
+    await expect(issueDetail(page).locator('.comment-create-form')).toBeVisible()
 
-    await page.locator('.comment-create-form textarea').fill('This will be cancelled')
-    await page.locator('.comment-create-form button', { hasText: 'Cancel' }).click()
+    await issueDetail(page).locator('.comment-create-form textarea').fill('This will be cancelled')
+    await issueDetail(page).locator('.comment-create-form button', { hasText: 'Cancel' }).click()
 
-    await expect(page.locator('.comment-create-form')).not.toBeVisible()
-    await expect(page.locator('.comment-create-fake')).toBeVisible()
+    await expect(issueDetail(page).locator('.comment-create-form')).not.toBeVisible()
+    await expect(issueDetail(page).locator('.comment-create-fake')).toBeVisible()
   })
 
   test('"Recently Updated" filter toggles and filters', async ({ page }) => {
-    const totalBefore = await page.locator('.issue-card').count()
+    const totalBefore = await boardIssueCards(page).count()
 
     await page.locator('.board-filters-button', { hasText: 'Recently Updated' }).click()
     await page.waitForTimeout(300)
 
     await expect(page.locator('.board-filters-button.active', { hasText: 'Recently Updated' })).toBeVisible()
-    const totalFiltered = await page.locator('.issue-card').count()
+    const totalFiltered = await boardIssueCards(page).count()
     expect(totalFiltered).toBeLessThanOrEqual(totalBefore)
 
     // Toggle off
     await page.locator('.board-filters-button', { hasText: 'Recently Updated' }).click()
     await page.waitForTimeout(300)
-    const totalRestored = await page.locator('.issue-card').count()
+    const totalRestored = await boardIssueCards(page).count()
     expect(totalRestored).toBe(totalBefore)
   })
 
   test('"Clear all" button resets all filters', async ({ page }) => {
-    const totalBefore = await page.locator('.issue-card').count()
+    const totalBefore = await boardIssueCards(page).count()
 
     // Apply multiple filters
     await page.locator('.board-filters-button', { hasText: 'Only My Issues' }).click()
@@ -508,7 +527,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await page.waitForTimeout(300)
 
     // All cards restored
-    const totalRestored = await page.locator('.issue-card').count()
+    const totalRestored = await boardIssueCards(page).count()
     expect(totalRestored).toBe(totalBefore)
 
     // Clear all link should be gone
@@ -516,16 +535,16 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   })
 
   test('close issue detail via close button', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     // Click close (X) button — last action button
     await page.locator('.issue-details-action-btn').last().click()
-    await expect(page.locator('.dialog-issue-detail [data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
   })
 
   test('original estimate input updates value', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const estimateInput = page.locator('.issue-details-field input[type="number"]').first()
@@ -533,6 +552,105 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await estimateInput.dispatchEvent('change')
 
     await expect(estimateInput).toHaveValue('20')
+  })
+
+  test('changing original estimate updates time tracking remaining hours', async ({ page }) => {
+    await boardIssueCards(page).first().click()
+    await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
+
+    const estimateInput = page.locator('.issue-details-field input[type="number"]').first()
+    const trackingValues = page.locator('.tracking-widget--clickable .tracking-values')
+
+    // Read how much time is already logged for this issue
+    const loggedText = await trackingValues.locator('span').first().textContent()
+    const alreadySpent = parseInt(loggedText || '0', 10) || 0
+
+    // Set estimate to 10 — remaining = max(0, 10 - alreadySpent)
+    await estimateInput.fill('10')
+    await estimateInput.dispatchEvent('change')
+    const expectedRemaining10 = Math.max(0, 10 - alreadySpent)
+    await expect(trackingValues).toContainText(`${expectedRemaining10}h remaining`)
+
+    // Now change estimate to 20 — remaining = max(0, 20 - alreadySpent)
+    await estimateInput.fill('20')
+    await estimateInput.dispatchEvent('change')
+    const expectedRemaining20 = Math.max(0, 20 - alreadySpent)
+    await expect(trackingValues).toContainText(`${expectedRemaining20}h remaining`)
+
+    // Verify logged time is unchanged
+    await expect(trackingValues).toContainText(loggedText!)
+  })
+
+  test('changing estimate after logging time in dialog recalculates remaining', async ({ page }) => {
+    await boardIssueCards(page).first().click()
+    await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
+
+    const estimateInput = page.locator('.issue-details-field input[type="number"]').first()
+    const trackingValues = page.locator('.tracking-widget--clickable .tracking-values')
+
+    // Set a known estimate first
+    await estimateInput.fill('10')
+    await estimateInput.dispatchEvent('change')
+
+    // Open tracking dialog, log 4h spent, save
+    await page.locator('.tracking-widget--clickable').click()
+    await expect(page.locator('.dialog-tracking [data-part="content"]')).toBeVisible()
+
+    const spentInput = page.locator('.tracking-edit-field').first().locator('input')
+    await spentInput.fill('4')
+    await spentInput.dispatchEvent('input')
+    await page.locator('.dialog-tracking button', { hasText: 'Done' }).click()
+    await expect(page.locator('.dialog-tracking [data-part="content"]')).not.toBeVisible({ timeout: 2000 })
+
+    // remaining = 10 - 4 = 6
+    await expect(trackingValues).toContainText('4h logged')
+    await expect(trackingValues).toContainText('6h remaining')
+
+    // Now change estimate to 16 — remaining should become 16-4=12h
+    await estimateInput.fill('16')
+    await estimateInput.dispatchEvent('change')
+    await expect(trackingValues).toContainText('12h remaining')
+    await expect(trackingValues).toContainText('4h logged')
+  })
+
+  test('increasing time spent in dialog auto-decreases remaining', async ({ page }) => {
+    await boardIssueCards(page).first().click()
+    await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
+
+    // Set a known estimate
+    const estimateInput = page.locator('.issue-details-field input[type="number"]').first()
+    await estimateInput.fill('10')
+    await estimateInput.dispatchEvent('change')
+
+    // Open tracking dialog
+    await page.locator('.tracking-widget--clickable').click()
+    await expect(page.locator('.dialog-tracking [data-part="content"]')).toBeVisible()
+
+    const spentInput = page.locator('.tracking-edit-field').first().locator('input')
+    const dialogValues = page.locator('.dialog-tracking .tracking-values')
+
+    // Type 3 into spent — remaining should show 10-3=7
+    await spentInput.fill('3')
+    await spentInput.dispatchEvent('input')
+    await expect(dialogValues).toContainText('7h remaining')
+
+    // Type 8 into spent — remaining should show 10-8=2
+    await spentInput.fill('8')
+    await spentInput.dispatchEvent('input')
+    await expect(dialogValues).toContainText('2h remaining')
+
+    // Type 12 (over estimate) — remaining should clamp to 0
+    await spentInput.fill('12')
+    await spentInput.dispatchEvent('input')
+    await expect(dialogValues).toContainText('0h remaining')
+
+    // Save and verify the outer widget reflects the saved values
+    await page.locator('.dialog-tracking button', { hasText: 'Done' }).click()
+    await expect(page.locator('.dialog-tracking [data-part="content"]')).not.toBeVisible({ timeout: 2000 })
+
+    const trackingValues = page.locator('.tracking-widget--clickable .tracking-values')
+    await expect(trackingValues).toContainText('12h logged')
+    await expect(trackingValues).toContainText('0h remaining')
   })
 
   test('project settings form displays and can be edited', async ({ page }) => {
@@ -578,23 +696,23 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   })
 
   test('type dropdown search filters options', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     await page.locator('.issue-type-clickable').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
 
     // All 3 type options visible
-    await expect(page.locator('.custom-dropdown-item')).toHaveCount(3)
+    await expect(issueDetail(page).locator('.custom-dropdown-item')).toHaveCount(3)
 
     // Search for "bug"
-    await page.locator('.custom-dropdown-search-input').fill('bug')
-    await expect(page.locator('.custom-dropdown-item')).toHaveCount(1, { timeout: 2000 })
-    await expect(page.locator('.custom-dropdown-item')).toContainText('Bug')
+    await issueDetail(page).locator('.custom-dropdown-search-input').fill('bug')
+    await expect(issueDetail(page).locator('.custom-dropdown-item')).toHaveCount(1, { timeout: 2000 })
+    await expect(issueDetail(page).locator('.custom-dropdown-item')).toContainText('Bug')
 
     // Clear search — all options back
-    await page.locator('.custom-dropdown-search-input').fill('')
-    await expect(page.locator('.custom-dropdown-item')).toHaveCount(3, { timeout: 2000 })
+    await issueDetail(page).locator('.custom-dropdown-search-input').fill('')
+    await expect(issueDetail(page).locator('.custom-dropdown-item')).toHaveCount(3, { timeout: 2000 })
   })
 
   test.describe('DOM Stability', () => {
@@ -608,12 +726,12 @@ test.describe('jira-clone board and surgical DOM updates', () => {
         })
 
       // Open issue detail dialog
-      await page.locator('.issue-card').first().click()
-      await expect(page.locator('.dialog-issue-detail [data-part="content"]')).toBeVisible()
+      await boardIssueCards(page).first().click()
+      await expect(issueDetail(page).locator('[data-part="content"]')).toBeVisible()
 
       // Close the dialog
       await page.locator('.issue-details-action-btn').last().click()
-      await expect(page.locator('.dialog-issue-detail [data-part="content"]')).not.toBeVisible({ timeout: 500 })
+      await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
 
       // The marker must survive — proves the DOM node was not recreated
       const marker = await page
@@ -636,18 +754,67 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     })
   })
 
+  test.describe('Drag and Drop', () => {
+    test('dragging a card to another column moves it without errors', async ({ page }) => {
+      const errors: string[] = []
+      page.on('pageerror', (err) => errors.push(err.message))
+
+      const backlogCards = page.locator('.board-list').nth(0).locator('.issue-card')
+      const selectedCards = page.locator('.board-list').nth(1).locator('.issue-card')
+
+      const backlogCountBefore = await backlogCards.count()
+      const selectedCountBefore = await selectedCards.count()
+      expect(backlogCountBefore).toBeGreaterThan(0)
+
+      const firstCard = backlogCards.first()
+      const cardTitle = await firstCard.locator('.issue-card-title').textContent()
+
+      const selectedDropZone = page.locator('.board-list').nth(1).locator('.board-list-issues')
+
+      // Drag from backlog to selected column
+      const cardBox = await firstCard.boundingBox()
+      const dropBox = await selectedDropZone.boundingBox()
+
+      await page.mouse.move(cardBox!.x + cardBox!.width / 2, cardBox!.y + cardBox!.height / 2)
+      await page.mouse.down()
+      // Move past drag threshold (5px)
+      await page.mouse.move(cardBox!.x + cardBox!.width / 2 + 10, cardBox!.y + cardBox!.height / 2 + 10, { steps: 3 })
+      // Move to the drop zone
+      await page.mouse.move(dropBox!.x + dropBox!.width / 2, dropBox!.y + 20, { steps: 10 })
+      await page.waitForTimeout(100)
+      await page.mouse.up()
+
+      // Wait for drop animation + reconciliation
+      await page.waitForTimeout(500)
+
+      // No ReferenceError should have occurred
+      const stashErrors = errors.filter((e) => e.includes('stashComponentForTransfer'))
+      expect(stashErrors).toEqual([])
+
+      // Card should have moved: backlog has one fewer, selected has one more
+      await expect(backlogCards).toHaveCount(backlogCountBefore - 1, { timeout: 1000 })
+      await expect(selectedCards).toHaveCount(selectedCountBefore + 1, { timeout: 1000 })
+
+      // The moved card should be in the selected column
+      await expect(selectedCards.locator('.issue-card-title', { hasText: cardTitle! })).toBeVisible()
+
+      // No placeholder should remain
+      await expect(page.locator('.gea-dnd-placeholder')).toHaveCount(0)
+    })
+  })
+
   test('assignee add and remove', async ({ page }) => {
-    await page.locator('.issue-card').first().click()
+    await boardIssueCards(page).first().click()
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
 
     const chipsBefore = await page.locator('.assignee-chip').count()
 
     // Click "+ Add more"
     await page.locator('.assignee-add-more').click()
-    await expect(page.locator('.custom-dropdown')).toBeVisible()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
 
     // Add a user
-    const availableUsers = page.locator('.custom-dropdown-item')
+    const availableUsers = issueDetail(page).locator('.custom-dropdown-item')
     const userCount = await availableUsers.count()
     if (userCount > 0) {
       await availableUsers.first().click()

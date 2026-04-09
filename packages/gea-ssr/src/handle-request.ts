@@ -11,8 +11,8 @@ import { createSSRRootProxyHandler } from './ssr-proxy-handler'
 import { resolveSSRRouter, runWithSSRRouter, createSSRRouterState } from './ssr-router-context'
 
 // Wire the SSR root proxy handler into Store (7 traps, overlay semantics)
-if (!Store._rootProxyHandlerFactory) {
-  Store._rootProxyHandlerFactory = createSSRRootProxyHandler
+if (!Store.rootProxyHandlerFactory) {
+  Store.rootProxyHandlerFactory = createSSRRootProxyHandler
 }
 
 // Wire the SSR router resolver into the Router singleton proxy

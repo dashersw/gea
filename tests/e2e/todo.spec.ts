@@ -13,9 +13,12 @@ test.describe('todo-app surgical DOM updates', () => {
     await expect(page.locator('.todo-item')).toHaveCount(1)
 
     // Tag the first item's DOM node with a data attribute so we can verify identity
-    await page.locator('.todo-item').first().evaluate((el) => {
-      el.setAttribute('data-test-marker', 'first')
-    })
+    await page
+      .locator('.todo-item')
+      .first()
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'first')
+      })
 
     // Add second todo
     await page.locator('.todo-input').fill('Walk dog')
@@ -23,26 +26,38 @@ test.describe('todo-app surgical DOM updates', () => {
     await expect(page.locator('.todo-item')).toHaveCount(2)
 
     // The first item must still have its marker — same DOM node, not recreated
-    const firstHasMarker = await page.locator('.todo-item').first().evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
+    const firstHasMarker = await page
+      .locator('.todo-item')
+      .first()
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
     expect(firstHasMarker).toBe('first')
 
     // Add a third todo — both previous markers must survive
-    await page.locator('.todo-item').nth(1).evaluate((el) => {
-      el.setAttribute('data-test-marker', 'second')
-    })
+    await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'second')
+      })
 
     await page.locator('.todo-input').fill('Clean house')
     await page.locator('.todo-input').press('Enter')
     await expect(page.locator('.todo-item')).toHaveCount(3)
 
-    const firstStillMarked = await page.locator('.todo-item').first().evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
-    const secondStillMarked = await page.locator('.todo-item').nth(1).evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
+    const firstStillMarked = await page
+      .locator('.todo-item')
+      .first()
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
+    const secondStillMarked = await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
     expect(firstStillMarked).toBe('first')
     expect(secondStillMarked).toBe('second')
   })
@@ -56,23 +71,35 @@ test.describe('todo-app surgical DOM updates', () => {
     await expect(page.locator('.todo-item')).toHaveCount(2)
 
     // Mark both DOM nodes
-    await page.locator('.todo-item').first().evaluate((el) => {
-      el.setAttribute('data-test-marker', 'first')
-    })
-    await page.locator('.todo-item').nth(1).evaluate((el) => {
-      el.setAttribute('data-test-marker', 'second')
-    })
+    await page
+      .locator('.todo-item')
+      .first()
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'first')
+      })
+    await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'second')
+      })
 
     // Toggle first todo
     await page.locator('.todo-checkbox').first().click()
 
     // Both DOM nodes must survive
-    const firstMarker = await page.locator('.todo-item').first().evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
-    const secondMarker = await page.locator('.todo-item').nth(1).evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
+    const firstMarker = await page
+      .locator('.todo-item')
+      .first()
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
+    const secondMarker = await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
     expect(firstMarker).toBe('first')
     expect(secondMarker).toBe('second')
   })
@@ -88,24 +115,36 @@ test.describe('todo-app surgical DOM updates', () => {
     await expect(page.locator('.todo-item')).toHaveCount(3)
 
     // Mark second and third
-    await page.locator('.todo-item').nth(1).evaluate((el) => {
-      el.setAttribute('data-test-marker', 'second')
-    })
-    await page.locator('.todo-item').nth(2).evaluate((el) => {
-      el.setAttribute('data-test-marker', 'third')
-    })
+    await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'second')
+      })
+    await page
+      .locator('.todo-item')
+      .nth(2)
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'third')
+      })
 
     // Remove first todo
     await page.locator('.todo-remove').first().click()
     await expect(page.locator('.todo-item')).toHaveCount(2)
 
     // Surviving items must keep their markers
-    const newFirstMarker = await page.locator('.todo-item').first().evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
-    const newSecondMarker = await page.locator('.todo-item').nth(1).evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
+    const newFirstMarker = await page
+      .locator('.todo-item')
+      .first()
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
+    const newSecondMarker = await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
     expect(newFirstMarker).toBe('second')
     expect(newSecondMarker).toBe('third')
   })
@@ -234,17 +273,23 @@ test.describe('todo-app surgical DOM updates', () => {
     await page.locator('.todo-checkbox').first().click()
 
     // Store reference to the active item (Walk dog)
-    await page.locator('.todo-item').nth(1).evaluate((el) => {
-      ;(window as any).__activeRef = el
-    })
+    await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        ;(window as any).__activeRef = el
+      })
 
     // Switch to Active filter — Walk dog should survive
     await page.locator('.filter-btn', { hasText: 'Active' }).click()
     await expect(page.locator('.todo-item')).toHaveCount(1)
 
-    const same = await page.locator('.todo-item').first().evaluate((el) => {
-      return el === (window as any).__activeRef
-    })
+    const same = await page
+      .locator('.todo-item')
+      .first()
+      .evaluate((el) => {
+        return el === (window as any).__activeRef
+      })
     expect(same).toBe(true)
   })
 
@@ -319,9 +364,12 @@ test.describe('todo-app surgical DOM updates', () => {
     await page.locator('.todo-input').press('Enter')
 
     // Store reference to second item
-    await page.locator('.todo-item').nth(1).evaluate((el) => {
-      ;(window as any).__secondRef = el
-    })
+    await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        ;(window as any).__secondRef = el
+      })
 
     // Rename first item
     await page.locator('.todo-text').first().dblclick()
@@ -330,9 +378,12 @@ test.describe('todo-app surgical DOM updates', () => {
     await expect(page.locator('.todo-text').first()).toHaveText('Buy oat milk')
 
     // Second item must be same DOM node
-    const same = await page.locator('.todo-item').nth(1).evaluate((el) => {
-      return el === (window as any).__secondRef
-    })
+    const same = await page
+      .locator('.todo-item')
+      .nth(1)
+      .evaluate((el) => {
+        return el === (window as any).__secondRef
+      })
     expect(same).toBe(true)
   })
 
@@ -408,9 +459,12 @@ test.describe('todo-app surgical DOM updates', () => {
       await expect(page.locator('.todo-item')).toHaveCount(1)
 
       // Mark the first .todo-item with a custom data attribute
-      await page.locator('.todo-item').first().evaluate((el) => {
-        el.setAttribute('data-stability-marker', 'survivor')
-      })
+      await page
+        .locator('.todo-item')
+        .first()
+        .evaluate((el) => {
+          el.setAttribute('data-stability-marker', 'survivor')
+        })
 
       // Add a new todo
       await page.locator('.todo-input').fill('Walk dog')
@@ -418,9 +472,12 @@ test.describe('todo-app surgical DOM updates', () => {
       await expect(page.locator('.todo-item')).toHaveCount(2)
 
       // The marker must survive — proves the DOM node was not recreated
-      const marker = await page.locator('.todo-item').first().evaluate((el) => {
-        return el.getAttribute('data-stability-marker')
-      })
+      const marker = await page
+        .locator('.todo-item')
+        .first()
+        .evaluate((el) => {
+          return el.getAttribute('data-stability-marker')
+        })
       expect(marker).toBe('survivor')
     })
 
@@ -463,5 +520,39 @@ test.describe('todo-app surgical DOM updates', () => {
       return refs.every((ref, i) => ref === current[i])
     })
     expect(allSame).toBe(true)
+  })
+})
+
+test.describe('CSS animation and transition event delegation', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/animation-events-test.html')
+    await expect(page.locator('.anim-test')).toBeVisible()
+  })
+
+  test('animationstart fires through Gea event delegation', async ({ page }) => {
+    await expect(page.locator('.r-anim-start')).toHaveText('true', { timeout: 2000 })
+  })
+
+  test('animationend fires through Gea event delegation', async ({ page }) => {
+    await expect(page.locator('.r-anim-end')).toHaveText('true', { timeout: 2000 })
+  })
+
+  test('animationiteration fires through Gea event delegation', async ({ page }) => {
+    await expect(page.locator('.r-anim-iter')).toHaveText('true', { timeout: 2000 })
+  })
+
+  test('transitionrun fires through Gea event delegation', async ({ page }) => {
+    await page.locator('.trigger-transition').click()
+    await expect(page.locator('.r-trans-run')).toHaveText('true', { timeout: 2000 })
+  })
+
+  test('transitionstart fires through Gea event delegation', async ({ page }) => {
+    await page.locator('.trigger-transition').click()
+    await expect(page.locator('.r-trans-start')).toHaveText('true', { timeout: 2000 })
+  })
+
+  test('transitionend fires through Gea event delegation', async ({ page }) => {
+    await page.locator('.trigger-transition').click()
+    await expect(page.locator('.r-trans-end')).toHaveText('true', { timeout: 2000 })
   })
 })

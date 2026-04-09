@@ -27,7 +27,7 @@ test('conditional child components are instantiated lazily', () => {
   // Conditional children use lazy getters instead of eager constructor assignment
   assert.match(output, /get _childView\(\)/, 'should generate a lazy getter for conditional child')
   assert.match(output, /__lazy_childView/, 'lazy getter should use a backing field')
-  assert.match(output, /this\.__child\(ChildView/, 'lazy getter should call __child on first access')
+  assert.match(output, /this\[GEA_CHILD\]\(ChildView/, 'lazy getter should call [GEA_CHILD] on first access')
   assert.doesNotMatch(output, /__ensureChild_childView/)
 })
 
@@ -224,7 +224,7 @@ test('constructor-inlined conditional slot init is guarded when template has ear
     }
   `)
 
-  assert.match(output, /__geaRegisterCond/, 'should generate __geaRegisterCond calls')
+  assert.match(output, /\[GEA_REGISTER_COND\]/, 'should generate [GEA_REGISTER_COND] calls')
 
   const ctorStart = output.indexOf('constructor(')
   const templateStart = output.indexOf('  template()')
@@ -267,7 +267,7 @@ test('compound || early-return guard optionalizes constructor-inlined conditiona
     }
   `)
 
-  assert.match(output, /__geaRegisterCond/, 'should generate __geaRegisterCond calls')
+  assert.match(output, /\[GEA_REGISTER_COND\]/, 'should generate [GEA_REGISTER_COND] calls')
 
   const ctorStart = output.indexOf('constructor(')
   const templateStart = output.indexOf('  template()')
@@ -302,9 +302,41 @@ export default class T extends Component {
   const code = typeof result === 'string' ? result : (result as { code: string }).code
   assert.match(
     code,
-    /__geaRegisterCond\(0, "c0"[\s\S]*?const filtered[\s\S]*?return[\s\S]*?filtered\.map/,
+    /\[GEA_REGISTER_COND\]\(0, "c0"[\s\S]*?const filtered[\s\S]*?return[\s\S]*?filtered\.map/,
     'dropdown branch HTML must hoist const filtered from template into getTruthyHtml closure',
   )
+})
+
+test('nested JSX ternary: outer falsy HTML keeps full inner conditional (compiler extractHtmlTemplatesFromConditional)', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import authStore from './store'
+    export default class C extends Component {
+      template() {
+        return (
+          <div>
+            {authStore.isLoading ? (
+              <p>Loading</p>
+            ) : authStore.isAuthenticated ? (
+              <p>Authenticated branch</p>
+            ) : (
+              <p>Not authenticated branch</p>
+            )}
+          </div>
+        )
+      }
+    }
+  `)
+  const slotIdx = output.indexOf('[GEA_REGISTER_COND](0')
+  assert.ok(slotIdx >= 0, 'expected one conditional slot')
+  const slotRegion = output.slice(slotIdx, slotIdx + 5000)
+  assert.match(
+    slotRegion,
+    /authStore\.isAuthenticated\s*\?/,
+    'outer falsy branch must be the entire inner ternary, not only the inner consequent HTML',
+  )
+  assert.match(slotRegion, /Not authenticated branch/, 'inner falsy branch must appear in slot HTML')
+  assert.match(slotRegion, /Authenticated branch/, 'inner truthy branch must appear in slot HTML')
 })
 
 test('conditional slot analyze order matches transform (nested ternary before sibling &&)', async () => {
@@ -331,12 +363,12 @@ export default class SlotOrder extends Component {
   const code = typeof result === 'string' ? result : (result as { code: string }).code
   assert.match(
     code,
-    /__geaRegisterCond\(0, "c0",\s*\(\)\s*=>\s*\{[^}]*return this\.props\.renderValue;/,
+    /\[GEA_REGISTER_COND\]\(0, "c0",\s*\(\)\s*=>\s*\{[^}]*return this\.props\.renderValue;/,
     'slot c0 must be the inner renderValue ternary, not the outer isOpen &&',
   )
   assert.match(
     code,
-    /__geaRegisterCond\(1, "c1",\s*\(\)\s*=>\s*\{[^}]*return this\.isOpen;/,
+    /\[GEA_REGISTER_COND\]\(1, "c1",\s*\(\)\s*=>\s*\{[^}]*return this\.isOpen;/,
     'slot c1 must be isOpen && dropdown',
   )
 })
@@ -411,17 +443,17 @@ export default class App extends Component {
     assert.ok(output, 'should produce compiled output')
 
     // The compiled output should use conditional slot patching for store-driven conditionals
-    assert.match(output!, /__geaRegisterCond/, 'should register conditional slots for store-driven conditionals')
-    assert.match(output!, /__geaPatchCond/, 'should patch conditional slots reactively')
+    assert.match(output!, /\[GEA_REGISTER_COND\]/, 'should register conditional slots for store-driven conditionals')
+    assert.match(output!, /\[GEA_PATCH_COND\]/, 'should patch conditional slots reactively')
     // Must register an observer for cartOpen on the store
-    assert.match(output!, /__observe\(store, \["cartOpen"\]/, 'should register observer for cartOpen')
-    assert.match(output!, /__observe\(store, \["checkoutOpen"\]/, 'should register observer for checkoutOpen')
+    assert.match(output!, /\[GEA_OBSERVE\]\(store, \["cartOpen"\]/, 'should register observer for cartOpen')
+    assert.match(output!, /\[GEA_OBSERVE\]\(store, \["checkoutOpen"\]/, 'should register observer for checkoutOpen')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('conditional empty vs store html map: template() must not embed gestureLog.map (list DOM is __applyListChanges only)', () => {
+test('conditional empty vs store html map: template() must not embed gestureLog.map (list DOM is [GEA_APPLY_LIST_CHANGES] only)', () => {
   const output = transformComponentSource(`
     import { View } from '@geajs/mobile'
     import appStore from './app-store'
@@ -447,13 +479,13 @@ test('conditional empty vs store html map: template() must not embed gestureLog.
     }
   `)
 
-  assert.match(output, /__geaRegisterCond\(/)
-  assert.match(output, /__applyListChanges/)
+  assert.match(output, /\[GEA_REGISTER_COND\]\(/)
+  assert.match(output, /\[GEA_APPLY_LIST_CHANGES\]/)
   const tmpl = output.match(/template\([^)]*\)\s*\{([\s\S]*)\n {2}\}/)
   assert.ok(tmpl, 'template method should exist')
   assert.doesNotMatch(
     tmpl![1],
     /gestureLog\.map\(/,
-    'store-backed list inside conditional slot must not serialize .map() into template() (duplicates __applyListChanges rows)',
+    'store-backed list inside conditional slot must not serialize .map() into template() (duplicates [GEA_APPLY_LIST_CHANGES] rows)',
   )
 })

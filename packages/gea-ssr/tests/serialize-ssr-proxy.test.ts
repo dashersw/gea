@@ -1,22 +1,22 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { serializeStores } from '../src/serialize.ts'
-import { Store } from '@geajs/core'
+import { GEA_PROXY_GET_RAW_TARGET, Store } from '@geajs/core'
 import { createSSRRootProxyHandler, SSR_DELETED } from '../src/ssr-proxy-handler.ts'
 import { resolveOverlay, runInSSRContext } from '../src/ssr-context.ts'
 
 function getRaw(store: object): object {
-  const r = Reflect.get(store, '__getRawTarget')
+  const r = Reflect.get(store, GEA_PROXY_GET_RAW_TARGET)
   return typeof r === 'object' && r !== null ? r : store
 }
 
 describe('serializeStores – SSR overlay awareness', () => {
   beforeEach(() => {
-    Store._rootProxyHandlerFactory = createSSRRootProxyHandler
+    Store.rootProxyHandlerFactory = createSSRRootProxyHandler
   })
 
   afterEach(() => {
-    Store._rootProxyHandlerFactory = null
+    Store.rootProxyHandlerFactory = null
   })
 
   it('serializes overlay values, not underlying store values', () => {

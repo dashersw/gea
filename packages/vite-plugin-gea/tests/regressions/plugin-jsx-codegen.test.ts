@@ -74,8 +74,8 @@ test('transform recognizes aliased named component imports', () => {
     }
   `)
 
-  assert.match(output, /this\._fancyCounter = this\.__child\(FancyCounter/)
-  assert.match(output, /this\._fancyCounter2 = this\.__child\(FancyCounter/)
+  assert.match(output, /this\._fancyCounter = this\[GEA_CHILD\]\(FancyCounter/)
+  assert.match(output, /this\._fancyCounter2 = this\[GEA_CHILD\]\(FancyCounter/)
 })
 
 test('prop patch methods use getElementById for element lookup', () => {
@@ -98,8 +98,8 @@ test('prop patch methods use getElementById for element lookup', () => {
 
   assert.match(output, /counter-value.*id=.*__id.*-b\d|id=.*__id.*-b\d.*counter-value/)
   assert.ok(
-    /getElementById\([^)]*__id[^)]*\+[^)]*"-b\d"\)/.test(output),
-    'prop patch must use getElementById, not this.$(selector)',
+    /__gid\([^)]*__id[^)]*\+[^)]*"-b\d"\)/.test(output),
+    'prop patch must use __gid, not this.$(selector)',
   )
 })
 
@@ -126,10 +126,12 @@ test('generated selectors distinguish repeated sibling bindings', () => {
   `)
 
   const selectors = Array.from(output.matchAll(/this\.\$\("([^"]+)"\)/g)).map((match) => match[1])
-  const bindingIds = Array.from(output.matchAll(/getElementById\([^+]*\+\s*["']-([^"']+)["']\)/g)).map(
+  const bindingIds = Array.from(output.matchAll(/__gid\([^+]*\+\s*["']-([^"']+)["']\)/g)).map(
     (match) => match[1],
   )
-  const updateTextIds = Array.from(output.matchAll(/this\.__updateText\('([^']+)'/g)).map((match) => match[1])
+  const updateTextIds = Array.from(output.matchAll(/this\[GEA_UPDATE_TEXT\]\(['"]([^'"]+)['"]/g)).map(
+    (match) => match[1],
+  )
   assert.equal(new Set(selectors).size >= 2 || new Set(bindingIds).size >= 2 || new Set(updateTextIds).size >= 2, true)
 })
 
@@ -288,6 +290,7 @@ test('two components in a single file are both transformed', () => {
       '/virtual/multi-component.jsx',
       original.ast,
       new Set(),
+      new Set(),
     )
   }
 
@@ -366,7 +369,7 @@ test('static text with single quotes is escaped as &#39;', () => {
 // Render prop / dynamic content function calls
 // ---------------------------------------------------------------------------
 
-test('render prop call result must not be escaped with __escapeHtml', () => {
+test('render prop call result must not be escaped with geaEscapeHtml', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import SummaryContent from './SummaryContent'
@@ -392,9 +395,9 @@ test('render prop call result must not be escaped with __escapeHtml', () => {
 
   // A call that returns JSX/component HTML must not be escaped
   assert.ok(
-    !output.includes('__escapeHtml(String(activeTab.content()))'),
-    'render prop call returning JSX must not be wrapped with __escapeHtml, got: ' +
-      output.match(/__escapeHtml[^)]*\)/)?.[0],
+    !output.includes('geaEscapeHtml(String(activeTab.content()))'),
+    'render prop call returning JSX must not be wrapped with geaEscapeHtml, got: ' +
+      output.match(/geaEscapeHtml[^)]*\)/)?.[0],
   )
 
   // Observer must use innerHTML (not textContent) for render prop updates

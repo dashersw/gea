@@ -1,4 +1,4 @@
-import { Component } from '@geajs/core'
+import { Component, GEA_MAPS, GEA_SYNC_MAP, GEA_UPDATE_PROPS } from '@geajs/core'
 import { VanillaMachine, normalizeProps, spreadProps } from '@zag-js/vanilla'
 
 type SpreadCleanup = () => void
@@ -76,8 +76,8 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
     this._scheduleSpreadApplication()
   }
 
-  __geaUpdateProps(nextProps: Record<string, any>) {
-    super.__geaUpdateProps(nextProps)
+  [GEA_UPDATE_PROPS](nextProps: Record<string, any>) {
+    super[GEA_UPDATE_PROPS](nextProps)
     this._syncMachineProps()
   }
 
@@ -109,12 +109,12 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
   }
 
   _applyAllSpreads() {
-    if (!this.rendered_ || !this._api) return
+    if (!this.rendered || !this._api) return
     const map = this.getSpreadMap()
 
     for (const selector in map) {
       const getter = map[selector]
-      
+
       let elements = this._elementCache.get(selector)
       if (!elements) {
         elements = this._queryAllIncludingSelf(selector)
@@ -145,8 +145,8 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
     }
   }
 
-  __geaSyncMap(idx: number) {
-    super.__geaSyncMap(idx)
+  [GEA_SYNC_MAP](idx: number) {
+    super[GEA_SYNC_MAP](idx)
     this._elementCache.clear()
     // After the map syncs new/updated DOM items, Zag spreads must be
     // re-applied because createItemFn produces elements without Zag's
@@ -161,7 +161,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
   }
 
   _cacheArrayContainers() {
-    const maps = (this as any).__geaMaps
+    const maps = (this as any)[GEA_MAPS]
     if (!maps) return
     for (const idx in maps) {
       const map = maps[idx]

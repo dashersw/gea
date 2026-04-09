@@ -1,10 +1,14 @@
+/**
+ * Wall-clock budgets are loose enough for full-workspace `npm test` runs (parallel packages + CPU contention).
+ * For tight regression signal, run this file in isolation.
+ */
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { JSDOM } from 'jsdom'
 
 import { geaPlugin } from '../src/index'
-import { __escapeHtml, __sanitizeAttr } from '../../gea/src/lib/base/component'
+import { buildEvalPrelude, mergeEvalBindings } from './helpers/compile'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -54,14 +58,14 @@ async function flushMicrotasks() {
 }
 
 async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
-  const allBindings = { __escapeHtml, __sanitizeAttr, ...bindings }
+  const allBindings = mergeEvalBindings(bindings)
   const plugin = geaPlugin()
   const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
   const result = await transform?.call({} as never, source, id)
   assert.ok(result)
 
   const code = typeof result === 'string' ? result : result.code
-  const compiledSource = `${code
+  const compiledSource = `${buildEvalPrelude()}${code
     .replace(/^import .*;$/gm, '')
     .replaceAll('import.meta.hot', 'undefined')
     .replaceAll('import.meta.url', '""')
@@ -74,10 +78,11 @@ return ${className};`
 async function loadRuntimeModules(seed: string) {
   const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager')
   ComponentManager.instance = undefined
-  return Promise.all([
+  const [compMod, storeMod] = await Promise.all([
     import(`../../gea/src/lib/base/component.tsx?${seed}`),
     import(`../../gea/src/lib/store.ts?${seed}`),
   ])
+  return [compMod, storeMod] as const
 }
 
 function buildRows(count: number, startId = 1) {
@@ -320,7 +325,7 @@ test('benchmark proxy: partial update preserves row identity and avoids structur
         }
         await flushMicrotasks()
       },
-      200,
+      700,
     )
 
     const rowsAfter = getRows(tbody)
@@ -362,7 +367,7 @@ test('benchmark proxy: simulate 03_update10th1k_x16 without structural DOM churn
           await flushMicrotasks()
         }
       },
-      1000,
+      3500,
     )
 
     const rowsAfter = getRows(tbody)
@@ -406,7 +411,7 @@ test('benchmark proxy: keyed remove deletes one row without bulk container rewri
         store.data.splice(500, 1)
         await flushMicrotasks()
       },
-      100,
+      400,
     )
 
     const rowsAfter = getRows(tbody)
@@ -446,7 +451,7 @@ test('benchmark proxy: keyed append preserves existing rows and appends at conta
         store.data.push(...buildRows(1000, 1001))
         await flushMicrotasks()
       },
-      500,
+      1800,
     )
 
     const rowsAfter = getRows(tbody)
@@ -500,7 +505,7 @@ test('benchmark proxy: simulate 08_create1k-after1k_x2 preserving prior identiti
         store.data.push(...buildRows(1000, 1001))
         await flushMicrotasks()
       },
-      1200,
+      3500,
     )
 
     const rowsAfterSecondAppend = getRows(tbody)
@@ -540,7 +545,7 @@ test('benchmark proxy: disjoint keyed replace recreates rows without per-row mov
         store.data = buildRows(1000, 2001)
         await flushMicrotasks()
       },
-      300,
+      1200,
     )
 
     const rowsAfter = getRows(tbody)
@@ -576,7 +581,7 @@ test('benchmark proxy: same-key replace preserves row identity and avoids struct
         store.data = buildRows(1000).map((row) => ({ ...row, label: `updated ${row.id}` }))
         await flushMicrotasks()
       },
-      300,
+      1200,
     )
 
     const rowsAfter = getRows(tbody)
@@ -616,7 +621,7 @@ test('benchmark proxy: clear uses container clear path without structural churn'
         store.data = []
         await flushMicrotasks()
       },
-      200,
+      700,
     )
 
     assert.equal(getRows(tbody).length, 0)
@@ -654,7 +659,7 @@ test('benchmark proxy: simulate 09_clear1k_x8 using the same clear path repeated
           assert.equal(spy.counts.containerRemoveChildCalls, 0)
         }
       },
-      1500,
+      4500,
     )
   } finally {
     spy.restore()

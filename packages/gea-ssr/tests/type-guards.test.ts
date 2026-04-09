@@ -1,12 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  isRecord,
-  isComponentConstructor,
-  isRouteGroup,
-  isInternalProp,
-  flattenHeaders,
-} from '../src/types.ts'
+import { isRecord, isComponentConstructor, isRouteGroup, flattenHeaders } from '../src/types.ts'
 
 describe('isRecord()', () => {
   it('returns true for plain objects', () => {
@@ -39,7 +33,12 @@ describe('isRecord()', () => {
 
 describe('isComponentConstructor()', () => {
   it('returns true for functions (constructors)', () => {
-    class Comp { props = {}; template() { return '' } }
+    class Comp {
+      props = {}
+      template() {
+        return ''
+      }
+    }
     assert.equal(isComponentConstructor(Comp), true)
   })
 
@@ -62,25 +61,6 @@ describe('isRouteGroup()', () => {
   })
 })
 
-describe('isInternalProp()', () => {
-  it('returns true for underscore-prefixed keys', () => {
-    assert.equal(isInternalProp('_private'), true)
-  })
-
-  it('returns true for underscore-suffixed keys', () => {
-    assert.equal(isInternalProp('element_'), true)
-  })
-
-  it('returns false for normal keys', () => {
-    assert.equal(isInternalProp('count'), false)
-    assert.equal(isInternalProp('name'), false)
-  })
-
-  it('returns true for single underscore', () => {
-    assert.equal(isInternalProp('_'), true)
-  })
-})
-
 describe('flattenHeaders()', () => {
   it('passes through string values unchanged', () => {
     const result = flattenHeaders({ 'content-type': 'text/html' })
@@ -88,7 +68,7 @@ describe('flattenHeaders()', () => {
   })
 
   it('joins array values with comma-space', () => {
-    const result = flattenHeaders({ 'accept': ['text/html', 'application/json'] })
+    const result = flattenHeaders({ accept: ['text/html', 'application/json'] })
     assert.equal(result['accept'], 'text/html, application/json')
   })
 

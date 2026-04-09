@@ -1,28 +1,10 @@
 import type { Plugin, ResolvedConfig } from 'vite'
-import babelGenerator from '@babel/generator'
-import babelTraverse from '@babel/traverse'
-import { parseSource } from './parse.ts'
-import { injectHMR } from './hmr.ts'
-import { transformComponentFile, transformNonComponentJSX } from './transform-component.ts'
-import { convertFunctionalToClass } from './transform-functional.ts'
-import { ensureImport, isComponentTag } from './utils.ts'
-import { pascalToKebabCase } from './transform-jsx.ts'
-import * as t from '@babel/types'
+import { transform } from './pipeline.ts'
 import { dirname, relative, resolve } from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const pluginDir = dirname(fileURLToPath(import.meta.url))
-// CJS/ESM interop: some bundlers wrap the export in { default: fn }
-function resolveDefault(mod: unknown): Function {
-  if (typeof mod === 'function') return mod
-  if (typeof mod === 'object' && mod !== null && 'default' in mod && typeof mod.default === 'function') {
-    return mod.default
-  }
-  throw new Error('resolveDefault: expected a function or module with default export')
-}
-const traverse = resolveDefault(babelTraverse)
-const generate = resolveDefault(babelGenerator)
 
 function hasSSREnvironment(ctx: object): boolean {
   if (!('environment' in ctx)) return false
@@ -40,8 +22,9 @@ const STORE_REGISTRY_ID = 'virtual:gea-store-registry'
 const RESOLVED_STORE_REGISTRY_ID = '\0' + STORE_REGISTRY_ID
 
 const RECONCILE_SOURCE = `
+import { GEA_DOM_ITEM } from '@geajs/core';
 function getKey(el) {
-  if (el.__geaItem) return String(el.__geaItem.id);
+  if (el[GEA_DOM_ITEM]) return String(el[GEA_DOM_ITEM].id);
   return el.getAttribute('key');
 }
 export function reconcile(oldC, newC) {
@@ -86,6 +69,13 @@ export function reconcile(oldC, newC) {
 `
 
 const HMR_RUNTIME_SOURCE = `
+var GEA_ELEMENT = Symbol.for('gea.element');
+var GEA_RENDERED = Symbol.for('gea.rendered');
+var GEA_CLEANUP_BINDINGS = Symbol.for('gea.component.cleanupBindings');
+var GEA_TEARDOWN_SELF_LISTENERS = Symbol.for('gea.component.teardownSelfListeners');
+var GEA_CHILD_COMPONENTS = Symbol.for('gea.childComponents');
+var GEA_BINDINGS = Symbol.for('gea.bindings');
+var GEA_SELF_LISTENERS = Symbol.for('gea.selfListeners');
 var hot = import.meta.hot;
 var componentInstances = hot && hot.data && hot.data.componentInstances || new Map();
 if (hot) hot.data.componentInstances = componentInstances;
@@ -180,41 +170,42 @@ export function unregisterComponentInstance(className, instance) {
 }
 
 function reRenderComponent(instance) {
-  if (!instance || !instance.element_) return;
-  var parent = instance.element_.parentElement;
+  if (!instance || !instance[GEA_ELEMENT]) return;
+  var parent = instance[GEA_ELEMENT].parentElement;
   if (!parent) return;
-  var index = Array.prototype.indexOf.call(parent.children, instance.element_);
+  var index = Array.prototype.indexOf.call(parent.children, instance[GEA_ELEMENT]);
   var props = Object.assign({}, instance.props);
   var __stateSnapshot = {};
   var __ownKeys = Object.getOwnPropertyNames(instance);
   for (var __ki = 0; __ki < __ownKeys.length; __ki++) {
     var __k = __ownKeys[__ki];
-    if (__k.charAt(0) === '_' || __k === 'props' || __k === 'element_' || __k === 'rendered_' || __k === 'id') continue;
+    if (__k.charAt(0) === '_' || __k === 'props' || __k === 'id') continue;
     var __desc = Object.getOwnPropertyDescriptor(instance, __k);
     if (__desc && (__desc.get || __desc.set)) continue;
     try { __stateSnapshot[__k] = instance[__k]; } catch(e) {}
   }
-  instance.rendered_ = false;
-  if (instance.cleanupBindings_) instance.cleanupBindings_();
-  if (instance.teardownSelfListeners_) instance.teardownSelfListeners_();
+  instance[GEA_RENDERED] = false;
+  if (typeof instance[GEA_CLEANUP_BINDINGS] === 'function') instance[GEA_CLEANUP_BINDINGS]();
+  if (typeof instance[GEA_TEARDOWN_SELF_LISTENERS] === 'function') instance[GEA_TEARDOWN_SELF_LISTENERS]();
   if (instance.__cleanupCompiledDirectEvents) instance.__cleanupCompiledDirectEvents();
-  if (instance.__childComponents && instance.__childComponents.length) {
-    instance.__childComponents.forEach(function(child) { if (child && child.dispose) child.dispose(); });
-    instance.__childComponents = [];
+  var __cc = instance[GEA_CHILD_COMPONENTS];
+  if (__cc && __cc.length) {
+    __cc.forEach(function(child) { if (child && child.dispose) child.dispose(); });
+    instance[GEA_CHILD_COMPONENTS] = [];
   }
-  if (instance.element_ && instance.element_.parentNode) {
-    instance.element_.parentNode.removeChild(instance.element_);
+  if (instance[GEA_ELEMENT] && instance[GEA_ELEMENT].parentNode) {
+    instance[GEA_ELEMENT].parentNode.removeChild(instance[GEA_ELEMENT]);
   }
-  instance.element_ = null;
+  instance[GEA_ELEMENT] = null;
   instance.props = props;
   var __restoreKeys = Object.getOwnPropertyNames(__stateSnapshot);
   for (var __ri = 0; __ri < __restoreKeys.length; __ri++) {
     try { instance[__restoreKeys[__ri]] = __stateSnapshot[__restoreKeys[__ri]]; } catch(e) {}
   }
-  if (!instance.__bindings) instance.__bindings = [];
+  if (!instance[GEA_BINDINGS]) instance[GEA_BINDINGS] = [];
   if (!instance.__bindingRemovers) instance.__bindingRemovers = [];
-  if (!instance.__selfListeners) instance.__selfListeners = [];
-  if (!instance.__childComponents) instance.__childComponents = [];
+  if (!instance[GEA_SELF_LISTENERS]) instance[GEA_SELF_LISTENERS] = [];
+  if (!instance[GEA_CHILD_COMPONENTS]) instance[GEA_CHILD_COMPONENTS] = [];
   instance.render(parent, index);
   if (typeof instance.createdHooks === 'function') {
     instance.createdHooks(instance.props);
@@ -259,27 +250,6 @@ export function handleComponentUpdate(moduleId, newModule) {
   return true;
 }
 `
-
-function isComponentImportSource(source: string): boolean {
-  if (source.startsWith('.')) return true
-  // Skip Node built-ins and known non-component packages
-  if (source.startsWith('node:')) return false
-  // Package imports — could contain Gea components
-  return true
-}
-
-/**
- * Gea functional components compile to classes but their **source** has no `extends Component`.
- * `isComponentModule` must still treat them as components so HMR wraps imports in
- * `createHotComponentProxy` and tab switches don't reconstruct stale constructors.
- */
-function looksLikeGeaFunctionalComponentSource(source: string): boolean {
-  if (!source.includes('<') || !source.includes('>')) return false
-  if (/export\s+default\s+async\s+function\b/.test(source)) return true
-  if (/export\s+default\s+function\b/.test(source)) return true
-  if (/export\s+default\s*\([^)]*\)\s*=>\s*/.test(source)) return true
-  return false
-}
 
 export function geaPlugin(): Plugin {
   const storeModules = new Set<string>()
@@ -339,6 +309,14 @@ export function geaPlugin(): Plugin {
     } catch {
       return false
     }
+  }
+
+  const looksLikeGeaFunctionalComponentSource = (source: string): boolean => {
+    if (!source.includes('<') || !source.includes('>')) return false
+    if (/export\s+default\s+async\s+function\b/.test(source)) return true
+    if (/export\s+default\s+function\b/.test(source)) return true
+    if (/export\s+default\s*\([^)]*\)\s*=>\s*/.test(source)) return true
+    return false
   }
 
   const isComponentModule = (filePath: string): boolean => {
@@ -418,6 +396,7 @@ export function geaPlugin(): Plugin {
       const cleanId = id.split('?')[0]
       if (!cleanId.match(/\.(js|jsx|ts|tsx)$/) || cleanId.includes('node_modules')) return null
 
+      // Register stores (must happen before pipeline for cross-file tracking)
       if (code.includes('extends Store') || code.includes('new Store(')) {
         storeModules.add(cleanId)
         const storeClassName = extractStoreClassName(code)
@@ -429,179 +408,70 @@ export function geaPlugin(): Plugin {
 
       if (/\bclass\s+Component\s+extends\s+Store\b/.test(code)) return null
 
-      const hasAngleBrackets = code.includes('<') && code.includes('>')
+      const result = transform({
+        sourceFile: cleanId,
+        code,
+        isServe: isServeCommand,
+        isSSR,
+        hmrImportSource: HMR_RUNTIME_ID,
+        isStoreModule,
+        isComponentModule,
+        resolveImportPath: (importer, source) => resolveImportPath(importer, source),
+        registerStoreModule: (fp) => storeModules.add(fp),
+        registerComponentModule: (fp) => componentModules.add(fp),
+      })
+      if (result) return result
 
-      if (!hasAngleBrackets) return null
-
-      try {
-        const parsed = parseSource(code)
-        if (!parsed) return null
-        const { functionalComponentInfo, hasJSX } = parsed
-        let { ast, componentClassName, imports } = parsed
-        let { componentClassNames } = parsed
-
-        if (!hasJSX) return null
-
-        if (functionalComponentInfo) {
-          convertFunctionalToClass(ast, functionalComponentInfo, imports)
-          componentClassName = functionalComponentInfo.name
-          componentClassNames = [functionalComponentInfo.name]
-          const freshCode = generate(ast, { retainLines: true }).code
-          const freshParsed = parseSource(freshCode)
-          if (freshParsed) {
-            ast = freshParsed.ast
-            imports = freshParsed.imports
+      // For non-component files (like router.ts) that import from component
+      // modules, inject HMR dep-accept so updates don't propagate further
+      // and cause circular dependency TDZ errors.
+      if (isServeCommand && !isSSR) {
+        const componentDeps = findComponentDeps(code, cleanId)
+        if (componentDeps.length > 0) {
+          const accepts = componentDeps.map((dep) => `  import.meta.hot.accept('${dep}', () => {});`).join('\n')
+          return {
+            code: code + `\nif (import.meta.hot) {\n${accepts}\n}\n`,
+            map: null,
           }
         }
-
-        if (componentClassNames.length > 0) {
-          componentModules.add(cleanId)
-        }
-
-        let transformed = false
-        const componentImportSet = new Set<string>()
-        const componentImportsUsedAsTags = new Set<string>()
-        let isDefaultExport = false
-
-        imports.forEach((source) => {
-          if (!isComponentImportSource(source)) return
-          componentImportSet.add(source)
-        })
-        const componentImports = Array.from(componentImportSet)
-
-        const storeImports = new Map<string, string>()
-        const knownComponentImports = new Set<string>()
-        const namedImportSources = new Map<string, string>()
-        traverse(ast, {
-          ExportDefaultDeclaration() {
-            isDefaultExport = true
-          },
-          ImportDeclaration(path) {
-            const source = path.node.source.value
-            if (!isComponentImportSource(source)) return
-            const resolvedImport = source.startsWith('.') ? resolveImportPath(cleanId, source) : null
-            const isComp = resolvedImport ? isComponentModule(resolvedImport) : false
-            path.node.specifiers.forEach(
-              (spec: { type: string; imported?: { name?: string }; local: { name: string } }) => {
-                if (isComp) knownComponentImports.add(spec.local.name)
-                if (spec.type === 'ImportDefaultSpecifier') {
-                  if (resolvedImport && !isStoreModule(resolvedImport)) return
-                  storeImports.set(spec.local.name, source)
-                } else if (spec.type === 'ImportSpecifier') {
-                  namedImportSources.set(spec.local.name, source)
-                  if (resolvedImport && isStoreModule(resolvedImport)) {
-                    storeImports.set(spec.local.name, source)
-                  } else if (!resolvedImport && source.startsWith('@geajs/core') && spec.local.name === 'router') {
-                    storeImports.set(spec.local.name, source)
-                  }
-                  // Recognize PascalCase exports from @geajs/core as components
-                  // (exclude base classes — they're not child component tags)
-                  const importedName = spec.imported?.name ?? spec.local.name
-                  const geaCoreBaseClasses = ['Component', 'Store']
-                  if (
-                    source === '@geajs/core' &&
-                    isComponentTag(importedName) &&
-                    !geaCoreBaseClasses.includes(importedName)
-                  ) {
-                    knownComponentImports.add(spec.local.name)
-                  }
-                }
-              },
-            )
-          },
-          VariableDeclarator(path: any) {
-            const init = path.node.init
-            if (
-              init &&
-              init.type === 'NewExpression' &&
-              init.callee?.type === 'Identifier' &&
-              namedImportSources.has(init.callee.name) &&
-              path.node.id?.type === 'Identifier'
-            ) {
-              const source = namedImportSources.get(init.callee.name)!
-              storeImports.set(path.node.id.name, source)
-            }
-          },
-        })
-
-        if (hasJSX) {
-          const originalAST = parseSource(code)!.ast
-          if (componentClassNames.length > 0) {
-            for (const cn of componentClassNames) {
-              if (!imports.has(cn)) imports.set(cn, cleanId)
-            }
-            for (const cn of componentClassNames) {
-              const result = transformComponentFile(
-                ast,
-                imports,
-                storeImports,
-                cn,
-                cleanId,
-                originalAST,
-                componentImportsUsedAsTags,
-                knownComponentImports,
-                isSSR,
-              )
-              if (result) transformed = true
-            }
-            // Inject __geaTagName on each component class so the tag name
-            // survives minification (the constructor registers via ctor.name
-            // which gets mangled; __geaTagName is a string literal).
-            for (const cn of componentClassNames) {
-              const kebab = pascalToKebabCase(cn)
-              traverse(ast, {
-                noScope: true,
-                ClassDeclaration(path: any) {
-                  if (!path.node.id || path.node.id.name !== cn) return
-                  const prop = t.classProperty(t.identifier('__geaTagName'), t.stringLiteral(kebab))
-                  prop.static = true
-                  path.node.body.body.unshift(prop)
-                  path.stop()
-                },
-              })
-              transformed = true
-            }
-          } else {
-            transformed = transformNonComponentJSX(ast, imports)
-          }
-        }
-
-        if (isServeCommand) {
-          const shouldProxyDep = (source: string): boolean => {
-            if (!source.startsWith('.')) return false
-            const resolved = resolveImportPath(cleanId, source)
-            if (!resolved) return false
-            if (isStoreModule(resolved)) return false
-            if (isComponentModule(resolved)) return true
-            return false
-          }
-          const hmrAdded = injectHMR(
-            ast,
-            componentClassName,
-            componentImports,
-            componentImportsUsedAsTags,
-            isDefaultExport,
-            HMR_RUNTIME_ID,
-            shouldProxyDep,
-          )
-          if (hmrAdded) transformed = true
-        }
-
-        if (!transformed) return null
-
-        // Inject XSS prevention helper imports when the compiled output uses them
-        ensureImport(ast, '@geajs/core', '__escapeHtml')
-        ensureImport(ast, '@geajs/core', '__sanitizeAttr')
-
-        const output = generate(ast, { sourceMaps: true, sourceFileName: cleanId }, code)
-        return { code: output.code, map: output.map }
-      } catch (error: any) {
-        if (error?.__geaCompileError) {
-          throw error
-        }
-        console.warn(`[gea-plugin] Failed to transform ${cleanId}:`, error.message)
-        return null
       }
+
+      return null
     },
   }
+}
+
+function resolveToFile(base: string): string | null {
+  const exts = ['.ts', '.tsx', '.js', '.jsx']
+  const indexFiles = exts.map((ext) => resolve(base, 'index' + ext))
+  const candidates = [base, ...exts.map((ext) => base + ext), ...indexFiles]
+  for (const c of candidates) {
+    try {
+      if (existsSync(c) && statSync(c).isFile()) return c
+    } catch {
+      /* skip */
+    }
+  }
+  return null
+}
+
+function findComponentDeps(code: string, filePath: string): string[] {
+  const deps: string[] = []
+  const importRegex = /import\s+(?:[\w{},\s*]+)\s+from\s+['"](\.[^'"]+)['"]/g
+  let match
+  while ((match = importRegex.exec(code)) !== null) {
+    const source = match[1]
+    const base = resolve(dirname(filePath), source)
+    const resolved = resolveToFile(base)
+    if (!resolved) continue
+    try {
+      const depCode = readFileSync(resolved, 'utf8')
+      const looksLikeComponent =
+        /class\s+\w+\s+extends\s+Component\b/.test(depCode) && depCode.includes('<') && depCode.includes('>')
+      if (looksLikeComponent) deps.push(source)
+    } catch {
+      /* skip */
+    }
+  }
+  return deps
 }

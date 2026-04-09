@@ -46,7 +46,7 @@ Functions and internal properties are excluded from serialization.
 
 ## Proxy Unwrapping
 
-Store instances are Proxy objects. The SSR context needs the raw target (not the Proxy) as the `WeakMap` key, because the Proxy handler passes `target` (not `this`) to `resolveOverlay`. The context uses `Reflect.get(store, '__getRawTarget')` to unwrap the Proxy before cloning.
+Store instances are Proxy objects. The SSR context needs the raw target (not the Proxy) as the `WeakMap` key, because the Proxy handler passes `target` (not `this`) to `resolveOverlay`. The context uses `Reflect.get(store, GEA_PROXY_GET_RAW_TARGET)` (from `@geajs/core`) to unwrap the Proxy before cloning.
 
 ## Manual Usage
 

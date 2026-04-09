@@ -42,7 +42,12 @@ describe('store isolation', () => {
   })
 
   it('does not snapshot functions', () => {
-    const store = { count: 0, increment() { this.count++ } }
+    const store = {
+      count: 0,
+      increment() {
+        this.count++
+      },
+    }
     const snapshot = snapshotStores([store])
     store.count = 5
     restoreStores(snapshot)
@@ -62,7 +67,9 @@ describe('store isolation', () => {
   it('preserves methods and getters while removing request-added data on class instances', () => {
     class TestStore {
       count = 0
-      increment() { this.count++ }
+      increment() {
+        this.count++
+      }
     }
     const store: GeaStore = new TestStore()
     const snapshot = snapshotStores([store])
@@ -87,18 +94,22 @@ describe('store isolation', () => {
   it('logs warning for unserializable properties instead of silently dropping', () => {
     const warnings: string[] = []
     const originalWarn = console.warn
-    console.warn = (...args: unknown[]) => { warnings.push(String(args[0])) }
+    console.warn = (...args: unknown[]) => {
+      warnings.push(String(args[0]))
+    }
     try {
       const store: GeaStore = {
         name: 'test',
-        socket: new (class WebSocket { url = 'ws://x' })(),
+        socket: new (class WebSocket {
+          url = 'ws://x'
+        })(),
       }
       const snapshot = snapshotStores([store])
       // Should still snapshot the valid properties
       assert.equal(snapshot[0][1].name, 'test')
       // Should have logged a warning about the unserializable property
       assert.ok(
-        warnings.some(w => w.includes('socket') && w.includes('SSR')),
+        warnings.some((w) => w.includes('socket') && w.includes('SSR')),
         `Expected warning about "socket", got: ${JSON.stringify(warnings)}`,
       )
     } finally {
@@ -106,15 +117,15 @@ describe('store isolation', () => {
     }
   })
 
-  it('skips internal props (underscore prefix/suffix)', () => {
+  it('snapshots and restores underscore-shaped user fields', () => {
     const store: GeaStore = { _private: 'a', public_: 'b', visible: 'c' }
     const snapshot = snapshotStores([store])
     store._private = 'modified'
     store.public_ = 'modified'
     store.visible = 'modified'
     restoreStores(snapshot)
-    assert.equal(store.visible, 'c', 'public prop should be restored')
-    assert.equal(store._private, 'modified', '_prefixed prop must NOT be snapshot/restored')
-    assert.equal(store.public_, 'modified', '_suffixed prop must NOT be snapshot/restored')
+    assert.equal(store.visible, 'c')
+    assert.equal(store._private, 'a')
+    assert.equal(store.public_, 'b')
   })
 })

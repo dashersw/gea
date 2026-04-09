@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { GEA_REQUEST_RENDER, GEA_UPDATE_PROPS } from '@geajs/core'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -153,7 +154,7 @@ test('__onPropChange does not crash when an object prop becomes null', async () 
     assert.equal(root.querySelector('.pax')!.textContent, 'Jane')
 
     assert.doesNotThrow(() => {
-      view.__geaUpdateProps({ pass: null })
+      view[GEA_UPDATE_PROPS]({ pass: null })
     }, 'setting object prop to null must not throw')
 
     assert.equal(
@@ -163,7 +164,7 @@ test('__onPropChange does not crash when an object prop becomes null', async () 
     )
 
     assert.doesNotThrow(() => {
-      view.__geaUpdateProps({
+      view[GEA_UPDATE_PROPS]({
         pass: { departure: 'LAX', arrival: 'ORD', confirmationCode: 'XYZ', passengerName: 'Bob' },
       })
     }, 'restoring prop must not throw')
@@ -269,8 +270,8 @@ export default class TodoStore extends Store {
     assert.match(root.querySelector('.completed-count')?.textContent || '', /0 completed/)
 
     let parentRerenders = 0
-    const origParentRender = view.__geaRequestRender.bind(view)
-    view.__geaRequestRender = () => {
+    const origParentRender = view[GEA_REQUEST_RENDER].bind(view)
+    view[GEA_REQUEST_RENDER] = () => {
       parentRerenders++
       return origParentRender()
     }
@@ -278,8 +279,8 @@ export default class TodoStore extends Store {
     const filtersChild = view._todoFilters
     assert.ok(filtersChild, 'TodoFilters child must exist after render')
     let childRerenders = 0
-    const origChildRender = filtersChild.__geaRequestRender.bind(filtersChild)
-    filtersChild.__geaRequestRender = () => {
+    const origChildRender = filtersChild[GEA_REQUEST_RENDER].bind(filtersChild)
+    filtersChild[GEA_REQUEST_RENDER] = () => {
       childRerenders++
       return origChildRender()
     }
@@ -296,8 +297,8 @@ export default class TodoStore extends Store {
     assert.match(root.querySelector('.active-count')?.textContent || '', /1 items left/)
     assert.match(root.querySelector('.completed-count')?.textContent || '', /1 completed/)
 
-    assert.equal(parentRerenders, 0, 'parent must NOT call __geaRequestRender')
-    assert.equal(childRerenders, 0, 'child must NOT call __geaRequestRender (should use surgical prop patches)')
+    assert.equal(parentRerenders, 0, 'parent must NOT call [GEA_REQUEST_RENDER]')
+    assert.equal(childRerenders, 0, 'child must NOT call [GEA_REQUEST_RENDER] (should use surgical prop patches)')
 
     const filtersElAfter = root.querySelector('.todo-filters')
     assert.equal(filtersElAfter, filtersElBefore, 'TodoFilters DOM element must be the same object (not replaced)')
@@ -315,8 +316,8 @@ export default class TodoStore extends Store {
     parentRerenders = 0
     childRerenders = 0
     let childUpdatePropsCalled = false
-    const origUpdateProps = filtersChild.__geaUpdateProps.bind(filtersChild)
-    filtersChild.__geaUpdateProps = (...args: any[]) => {
+    const origUpdateProps = filtersChild[GEA_UPDATE_PROPS].bind(filtersChild)
+    filtersChild[GEA_UPDATE_PROPS] = (...args: any[]) => {
       childUpdatePropsCalled = true
       return origUpdateProps(...args)
     }
@@ -327,7 +328,7 @@ export default class TodoStore extends Store {
     assert.equal(
       childUpdatePropsCalled,
       false,
-      'draft mutation must NOT trigger __geaUpdateProps on child (observer targets ["todos"], not root [])',
+      'draft mutation must NOT trigger [GEA_UPDATE_PROPS] on child (observer targets ["todos"], not root [])',
     )
     assert.equal(parentRerenders, 0, 'draft mutation must NOT rerender parent')
     assert.equal(childRerenders, 0, 'draft mutation must NOT rerender child')
@@ -398,8 +399,8 @@ test('local state change patches DOM without full rerender (editing toggle)', as
     assert.ok(!item.el.className.includes('editing'), 'not editing initially')
 
     let rerenders = 0
-    const origRerender = item.__geaRequestRender.bind(item)
-    item.__geaRequestRender = () => {
+    const origRerender = item[GEA_REQUEST_RENDER].bind(item)
+    item[GEA_REQUEST_RENDER] = () => {
       rerenders++
       return origRerender()
     }
@@ -483,7 +484,7 @@ test('real-file store: getter accessed via direct member expression updates when
   }
 })
 
-test('map createItem patch path rewrites template props after __geaUpdateProps (Select isMulti)', async () => {
+test('map createItem patch path rewrites template props after [GEA_UPDATE_PROPS] (Select isMulti)', async () => {
   const restoreDom = installDom()
 
   try {
@@ -531,7 +532,7 @@ test('map createItem patch path rewrites template props after __geaUpdateProps (
 
     assert.equal(view.el.querySelectorAll('.opt').length, 1)
 
-    view.__geaUpdateProps({
+    view[GEA_UPDATE_PROPS]({
       options: [
         { value: '1', label: 'One' },
         { value: '2', label: 'Two' },

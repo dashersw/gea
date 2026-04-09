@@ -12,6 +12,9 @@ export default defineConfig({
   resolve: {
     alias: [...geaCoreAliases(resolve(__dirname, '../../packages'))],
   },
+  build: {
+    modulePreload: { polyfill: false },
+  },
   server: {
     port: 5183,
     open: true,

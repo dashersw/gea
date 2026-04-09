@@ -119,7 +119,7 @@ import TodoItem from './todo-item'
 <TodoItem todo={todo} onToggle={() => store.toggle(todo.id)} />
 ```
 
-If the kebab-case name collides with a reserved HTML tag, the compiler automatically prefixes it with `gea-`. For example, a component named `Link` becomes `gea-link` instead of `link`, and `Label` becomes `gea-label` instead of `label`. This is handled transparently — you always use the PascalCase import name in JSX.
+Single-word component names (e.g., `Link`, `Label`) are automatically prefixed with `gea-` to produce valid custom element tag names (e.g., `gea-link`, `gea-label`). Multi-word PascalCase names naturally contain a hyphen when converted to kebab-case (e.g., `TodoItem` becomes `todo-item`) and are used as-is. This is handled transparently — you always use the PascalCase import name in JSX.
 
 ## Type Safety
 

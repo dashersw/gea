@@ -8,7 +8,7 @@ test.describe('docs component documentation', () => {
 
   test('renders sidebar with logo and version', async ({ page }) => {
     await expect(page.locator('.docs-sidebar-logo')).toHaveText('gea-ui')
-    await expect(page.locator('.docs-sidebar-version')).toContainText('v0.1.0')
+    await expect(page.locator('.docs-sidebar-version')).toContainText('v0.2.0')
   })
 
   test('sidebar has categorized navigation links', async ({ page }) => {

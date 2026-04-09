@@ -35,7 +35,7 @@ test('static array .map() with child components inside child component children 
   )
 
   // The compiled output should include the items array in constructor:
-  assert.match(output, /_ITEMSItems/, 'should create _ITEMSItems in constructor')
+  assert.match(output, /geaListItemsSymbol\("ITEMS"\)/, 'should create list-items symbol for ITEMS')
   // A refresh method should exist:
   assert.match(output, /__refreshITEMSItems/, 'should have __refreshITEMSItems method')
 
@@ -52,7 +52,7 @@ test('static array .map() with child components inside child component children 
 // Bug 2: Observer for a store property unconditionally accesses a lazy child
 // component getter, pre-creating it with stale/null props. When the child is
 // inside a conditional (lazy getter), the observer should guard the
-// __geaUpdateProps call to avoid premature creation.
+// [GEA_UPDATE_PROPS] call to avoid premature creation.
 test('observer for store prop guarding a lazy conditional child does not eagerly access getter', () => {
   const output = transformComponentSource(
     `
@@ -77,25 +77,25 @@ test('observer for store prop guarding a lazy conditional child does not eagerly
   )
 
   // The observer for store.boardingPass should NOT unconditionally call
-  // this._boardingPass.__geaUpdateProps(...) because _boardingPass is a
+  // this._boardingPass[GEA_UPDATE_PROPS](...) because _boardingPass is a
   // lazy getter (inside a conditional). It should guard with the backing field.
 
   // Verify the lazy child pattern exists
   assert.match(output, /__lazy_boardingPass/, 'should have lazy backing field for _boardingPass')
-  assert.match(output, /__geaUpdateProps/, 'should have __geaUpdateProps call somewhere')
+  assert.match(output, /\[GEA_UPDATE_PROPS\]/, 'should have [GEA_UPDATE_PROPS] call somewhere')
 
-  // The __geaUpdateProps call for _boardingPass must be guarded by the
+  // The [GEA_UPDATE_PROPS] call for _boardingPass must be guarded by the
   // lazy backing field existence check to prevent premature creation.
-  // Bad:  this._boardingPass.__geaUpdateProps(this.__buildProps_boardingPass())
-  // Good: if (this.__lazy_boardingPass) { this._boardingPass.__geaUpdateProps(...) }
+  // Bad:  this._boardingPass[GEA_UPDATE_PROPS](this.__buildProps_boardingPass())
+  // Good: if (this.__lazy_boardingPass) { this._boardingPass[GEA_UPDATE_PROPS](...) }
   assert.match(
     output,
     /if\s*\(this\.__lazy_boardingPass\)/,
-    'observer should guard lazy child __geaUpdateProps with __lazy backing field check',
+    'observer should guard lazy child [GEA_UPDATE_PROPS] with __lazy backing field check',
   )
 })
 
-test('user createdHooks is merged: compiler prepends __observe, user body remains', () => {
+test('user createdHooks is merged: compiler prepends [GEA_OBSERVE], user body remains', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -124,7 +124,7 @@ test('user createdHooks is merged: compiler prepends __observe, user body remain
 
   assert.match(
     output,
-    /createdHooks\s*\([^)]*\)\s*\{[\s\S]*__observe\([\s\S]*__userCreatedHooksRan/s,
+    /createdHooks\s*\([^)]*\)\s*\{[\s\S]*\[GEA_OBSERVE\]\([\s\S]*__userCreatedHooksRan/s,
     'generated store setup should run before user createdHooks body',
   )
 })
@@ -147,4 +147,40 @@ test('dynamic class expression is coerced and trimmed in template output', () =>
   )
 
   assert.match(output, /\.trim\(\)/, 'compiled output should trim dynamic class strings')
+})
+
+// Style object serialisation uses Object.entries({…}).map(…).join("; ").
+// The `addJoinToUnresolvedMapCalls` pass must not append the `<!---->` sentinel
+// to this join — it's CSS, not child HTML.
+test('style object .map().join() must not include HTML comment sentinel', () => {
+  const output = transformComponentSource(
+    `
+    import { Component } from '@geajs/core'
+
+    const options = [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }]
+
+    export default class Bar extends Component {
+      pct = 50
+
+      template() {
+        return (
+          <div class="wrap">
+            <div class="bar" style={{ width: this.pct + '%' }}></div>
+            <ul>{options.map(o => '<li>' + o.label + '</li>')}</ul>
+          </div>
+        )
+      }
+    }
+  `,
+    new Set(),
+  )
+
+  // The style serialisation's .join("; ") must NOT be followed by + "<!---->"
+  assert.doesNotMatch(
+    output,
+    /\.join\("; "\)\s*\+\s*"<!---->"/,
+    'style .map().join("; ") must not have HTML comment sentinel appended',
+  )
+  // The unresolved list .map() SHOULD have the sentinel
+  assert.match(output, /\.join\(""\)\s*\+\s*"<!---->"/s, 'unresolved list .map() should have <!---> sentinel')
 })

@@ -107,16 +107,24 @@ test.describe('Router Simple (SSR)', () => {
   test('browser back/forward navigation works', async ({ page }) => {
     await page.click('.nav-link:has-text("About")')
     await expect(page.locator('main h1')).toHaveText('About')
+
     await page.click('.nav-link:has-text("Alice")')
     await expect(page.locator('main h1')).toHaveText('Alice')
+
     await page.goBack()
     await expect(page.locator('main h1')).toHaveText('About')
+
+    await page.goBack()
+    await expect(page.locator('main h1')).toHaveText('Home')
+
     await page.goForward()
-    await expect(page.locator('main h1')).toHaveText('Alice')
+    await expect(page.locator('main h1')).toHaveText('About')
   })
 
   test('navigation does not cause full page reload', async ({ page }) => {
-    await page.evaluate(() => { (window as any).__spa_marker = true })
+    await page.evaluate(() => {
+      ;(window as any).__spa_marker = true
+    })
     await page.click('.nav-link:has-text("About")')
     await expect(page.locator('main h1')).toHaveText('About')
     const marker = await page.evaluate(() => (window as any).__spa_marker)

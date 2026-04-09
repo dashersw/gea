@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
+import { GEA_ON_PROP_CHANGE, GEA_UPDATE_PROPS } from '../src/lib/symbols'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -119,7 +120,7 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
     assert.ok(wrapperBefore, 'container target should exist before prop change')
 
     // Simulate parent updating value prop (like onChange → editDescription change → prop update)
-    editor.__geaUpdateProps({ value: '<p>Hello <strong>world</strong></p>' })
+    editor[GEA_UPDATE_PROPS]({ value: '<p>Hello <strong>world</strong></p>' })
     await flush()
 
     // Without __onPropChange, __geaRequestRender re-renders the template,
@@ -135,9 +136,9 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
 
   it('component WITH __onPropChange preserves Quill DOM on prop updates', async () => {
     class SafeQuillEditor extends Component {
-      quill: Quill | null = null
+      quill: Quill | null = null;
 
-      __onPropChange() {}
+      [GEA_ON_PROP_CHANGE]() {}
 
       onAfterRender() {
         const container = this.el?.querySelector('.ql-container-target')
@@ -171,7 +172,7 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
     assert.ok(wrapperBefore, 'container target should exist before prop change')
 
     // Simulate parent updating value prop
-    editor.__geaUpdateProps({ value: '<p>Hello <strong>world</strong></p>' })
+    editor[GEA_UPDATE_PROPS]({ value: '<p>Hello <strong>world</strong></p>' })
     await flush()
 
     // With __onPropChange, DOM is preserved — Quill's managed DOM stays intact
@@ -185,10 +186,10 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
     const receivedHtml: string[] = []
 
     class SafeQuillEditor extends Component {
-      quill: Quill | null = null
-      _ignoreChange = false
+      quill: Quill | null = null;
+      _ignoreChange = false;
 
-      __onPropChange() {}
+      [GEA_ON_PROP_CHANGE]() {}
 
       onAfterRender() {
         const container = this.el?.querySelector('.ql-container-target')
@@ -232,7 +233,7 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
     assert.ok(receivedHtml[0].includes('world'), 'onChange should contain new text')
 
     // Now simulate parent updating the prop (as IssueDetails would do in its onDescriptionChange)
-    editor.__geaUpdateProps({ value: receivedHtml[0], onChange })
+    editor[GEA_UPDATE_PROPS]({ value: receivedHtml[0], onChange })
     await flush()
 
     // Quill DOM should still be intact

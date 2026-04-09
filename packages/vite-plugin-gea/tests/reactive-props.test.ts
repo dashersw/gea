@@ -4,12 +4,13 @@
  */
 
 import assert from 'node:assert/strict'
+import { GEA_REQUEST_RENDER } from '@geajs/core'
 import test from 'node:test'
 
 import { JSDOM } from 'jsdom'
 
 import { geaPlugin } from '../src/index'
-import { __escapeHtml, __sanitizeAttr } from '../../gea/src/lib/base/component'
+import { buildEvalPrelude, mergeEvalBindings } from './helpers/compile'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -57,14 +58,14 @@ async function flushMicrotasks() {
 }
 
 async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
-  const allBindings = { __escapeHtml, __sanitizeAttr, ...bindings }
+  const allBindings = mergeEvalBindings(bindings)
   const plugin = geaPlugin()
   const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
   const result = await transform?.call({} as never, source, id)
   assert.ok(result)
 
   const code = typeof result === 'string' ? result : result.code
-  const compiledSource = `${code
+  const compiledSource = `${buildEvalPrelude()}${code
     .replace(/^import .*;$/gm, '')
     .replaceAll('import.meta.hot', 'undefined')
     .replaceAll('import.meta.url', '""')
@@ -77,10 +78,11 @@ return ${className};`
 async function loadRuntimeModules(seed: string) {
   const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager')
   ComponentManager.instance = undefined
-  return Promise.all([
+  const [compMod, storeMod] = await Promise.all([
     import(`../../gea/src/lib/base/component.tsx?${seed}`),
     import(`../../gea/src/lib/store.ts?${seed}`),
   ])
+  return [compMod, storeMod] as const
 }
 
 test('compiled child: parent passes props and child updates when parent state changes', async () => {
@@ -267,8 +269,8 @@ test('conditional compiled child is not instantiated until branch becomes truthy
     await flushMicrotasks()
 
     let parentRerenders = 0
-    const originalRerender = view.__geaRequestRender.bind(view)
-    view.__geaRequestRender = () => {
+    const originalRerender = view[GEA_REQUEST_RENDER].bind(view)
+    view[GEA_REQUEST_RENDER] = () => {
       parentRerenders++
       return originalRerender()
     }
@@ -282,7 +284,7 @@ test('conditional compiled child is not instantiated until branch becomes truthy
     store.payload = { label: 'ready' }
     await flushMicrotasks()
     assert.equal(view.el?.querySelector('.lazy-child')?.textContent, 'ready')
-    assert.equal(parentRerenders, 0, 'lazy child mount should not force parent __geaRequestRender')
+    assert.equal(parentRerenders, 0, 'lazy child mount should not force parent [GEA_REQUEST_RENDER]')
 
     view.dispose()
     await flushMicrotasks()

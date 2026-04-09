@@ -57,7 +57,7 @@ test('prop text patch keeps nullish guard when derived expr reads properties of 
     }
   `)
 
-  assert.match(output, /__onPropChange/)
+  assert.match(output, /GEA_ON_PROP_CHANGE/)
   assert.match(output, /if \(!\(value === null \|\| value === undefined\)\)/)
 })
 
@@ -84,7 +84,7 @@ test('generated selectors distinguish repeated typed inputs', () => {
   `)
 
   const selectors = Array.from(output.matchAll(/this\.\$\("([^"]+)"\)/g)).map((match) => match[1])
-  const bindingIds = Array.from(output.matchAll(/getElementById\([^+]*\+\s*["']-([^"']+)["']\)/g)).map(
+  const bindingIds = Array.from(output.matchAll(/__gid\([^+]*\+\s*["']-([^"']+)["']\)/g)).map(
     (match) => match[1],
   )
   assert.equal(new Set(selectors).size >= 2 || new Set(bindingIds).size >= 2, true)
@@ -120,7 +120,7 @@ test('multiple handlers on one element reuse a single generated selector id', ()
   assert.ok(selectorIds, 'expected both event handlers to be emitted')
   assert.equal(selectorIds[1], selectorIds[2], 'same element should reuse one generated selector across handlers')
   assert.doesNotMatch(output, /id="\$\{this\.id \+ "-ev\d+"\}"\s+id="\$\{this\.id \+ "-ev\d+"\}"/)
-  assert.doesNotMatch(output, /data-gea-event="ev\d+"\s+data-gea-event="ev\d+"/)
+  assert.doesNotMatch(output, /data-ge="ev\d+"\s+data-ge="ev\d+"/)
 })
 
 test('conditional root html event handlers are preserved inside logical branches', () => {
@@ -259,7 +259,7 @@ test('map event handler using only index skips helper and uses indexOf fast path
     /__getMapItemFromEvent/,
     'index-only handler should not call __getMapItemFromEvent helper',
   )
-  assert.match(eventMethod![1], /\.indexOf\(__el\.__geaItem\)/, 'should resolve index via indexOf on __geaItem')
+  assert.match(eventMethod![1], /\.indexOf\(__el\[GEA_DOM_ITEM]\)/, 'should resolve index via indexOf on __geaItem')
 })
 
 test('map event handler using only item calls helper without indexOf', () => {
@@ -322,5 +322,5 @@ test('map event handler using both item and index calls helper and uses indexOf'
   `)
 
   assert.match(output, /__getMapItemFromEvent/, 'both-needed handler should call __getMapItemFromEvent helper')
-  assert.match(output, /\.indexOf\(__el\.__geaItem\)/, 'should resolve index via indexOf on __geaItem')
+  assert.match(output, /\.indexOf\(__el\[GEA_DOM_ITEM]\)/, 'should resolve index via indexOf on __geaItem')
 })

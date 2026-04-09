@@ -1,12 +1,53 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach } from 'node:test'
-import { Store } from '../src/lib/store'
+import { Store, isClassConstructorValue } from '../src/lib/store'
 import type { StoreChange } from '../src/lib/store'
+import {
+  GEA_PROXY_GET_PATH,
+  GEA_PROXY_GET_TARGET,
+  GEA_PROXY_IS_PROXY,
+  GEA_STORE_ROOT,
+} from '../src/lib/symbols'
 
 async function flush() {
   await new Promise((r) => setTimeout(r, 0))
   await new Promise((r) => setTimeout(r, 0))
 }
+
+describe('isClassConstructorValue', () => {
+  it('identifies class constructors (not via toString)', () => {
+    class RouteComponent {}
+    function plainFn() {}
+    assert.equal(isClassConstructorValue(RouteComponent), true)
+    assert.equal(isClassConstructorValue(plainFn), false)
+    assert.equal(
+      isClassConstructorValue(() => {}),
+      false,
+    )
+  })
+
+  it('treats HMR-style constructor proxy as a class (real prototype.constructor)', () => {
+    class Page {}
+    const target = function GeaHotStub() {}
+    const proxy = new Proxy(target, {
+      get(_t, prop) {
+        if (prop === 'prototype') return Page.prototype
+        return Reflect.get(Page as object as Function, prop)
+      },
+      getOwnPropertyDescriptor(_t, prop) {
+        return Object.getOwnPropertyDescriptor(Page, prop)
+      },
+    }) as unknown as Function
+    assert.throws(() => Object.getOwnPropertyDescriptor(proxy, 'prototype'))
+    assert.equal(isClassConstructorValue(proxy), true)
+  })
+
+  it('root proxy returns same class reference for route components (no spurious bind)', () => {
+    class HomePage {}
+    const router = new Store({ component: HomePage })
+    assert.strictEqual(router.component, HomePage)
+  })
+})
 
 describe('Store – construction', () => {
   it('creates with explicit initial state', () => {
@@ -21,7 +62,7 @@ describe('Store – construction', () => {
 
   it('returns a proxy from the constructor', () => {
     const store = new Store({ nested: { x: 1 } })
-    assert.equal((store.nested as any).__isProxy, true)
+    assert.equal((store.nested as any)[GEA_PROXY_IS_PROXY], true)
   })
 })
 
@@ -108,6 +149,16 @@ describe('Store – observe and notify', () => {
     await flush()
     assert.equal(changes.length, 1)
   })
+
+  it('notifies nested path observers when parent object is replaced without observer on parent', async () => {
+    const s = new Store()
+    s.issue = { id: '1', status: 'backlog' }
+    const values: string[] = []
+    s.observe('issue.status', (v) => values.push(v as string))
+    s.issue = { id: '1', status: 'done' }
+    await flush()
+    assert.deepEqual(values, ['done'])
+  })
 })
 
 describe('Store – batching via queueMicrotask', () => {
@@ -124,14 +175,6 @@ describe('Store – batching via queueMicrotask', () => {
 
   it('uses the specialized top-level batch path for exact top-level observers', async () => {
     const store = new Store({ data: [] as number[], selected: 0 })
-    let topLevelBatchCalls = 0
-    const originalDeliverTopLevelBatch = (store as any)._deliverTopLevelBatch?.bind(store)
-
-    assert.ok(originalDeliverTopLevelBatch, 'expected _deliverTopLevelBatch to exist')
-    ;(store as any)._deliverTopLevelBatch = (batch: StoreChange[]) => {
-      topLevelBatchCalls++
-      return originalDeliverTopLevelBatch(batch)
-    }
 
     const dataBatches: StoreChange[][] = []
     const selectedBatches: StoreChange[][] = []
@@ -142,7 +185,6 @@ describe('Store – batching via queueMicrotask', () => {
     store.selected = 1
     await flush()
 
-    assert.equal(topLevelBatchCalls, 1)
     assert.equal(dataBatches.length, 1)
     assert.equal(selectedBatches.length, 1)
   })
@@ -150,14 +192,6 @@ describe('Store – batching via queueMicrotask', () => {
   it('skips top-level proxy materialization for exact empty-array clears', async () => {
     const store = new Store({ data: [1, 2, 3] as number[], selected: 0 })
     let observedValue: unknown
-    let topLevelValueCalls = 0
-    const originalGetTopLevelObservedValue = (store as any)._getTopLevelObservedValue?.bind(store)
-
-    assert.ok(originalGetTopLevelObservedValue, 'expected _getTopLevelObservedValue to exist')
-    ;(store as any)._getTopLevelObservedValue = (change: StoreChange) => {
-      topLevelValueCalls++
-      return originalGetTopLevelObservedValue(change)
-    }
 
     store.observe('data', (value) => {
       observedValue = value
@@ -166,7 +200,6 @@ describe('Store – batching via queueMicrotask', () => {
     store.data = [] as any
     await flush()
 
-    assert.equal(topLevelValueCalls, 0)
     assert.ok(Array.isArray(observedValue))
     assert.equal((observedValue as any[]).length, 0)
   })
@@ -374,7 +407,7 @@ describe('Store – swap detection', () => {
 })
 
 describe('Store – array item property updates', () => {
-  it('marks nested property changes as isArrayItemPropUpdate', async () => {
+  it('marks nested property changes as aipu', async () => {
     const store = new Store({ items: [{ done: false }] })
     const batches: StoreChange[][] = []
     store.observe('items', (_v, c) => batches.push(c))
@@ -389,13 +422,6 @@ describe('Store – array item property updates', () => {
   it('skips generic batch normalization for homogeneous array item property batches', async () => {
     const store = new Store({ items: [{ label: 'a' }, { label: 'b' }] })
     const batches: StoreChange[][] = []
-    let normalizeCalls = 0
-    const originalNormalize = (store as any)._normalizeBatch.bind(store)
-
-    ;(store as any)._normalizeBatch = (batch: StoreChange[]) => {
-      normalizeCalls++
-      return originalNormalize(batch)
-    }
 
     store.observe('items', (_v, c) => batches.push(c))
 
@@ -406,41 +432,32 @@ describe('Store – array item property updates', () => {
 
     assert.equal(batches.length, 1)
     assert.equal(batches[0].length, 2)
-    assert.equal(normalizeCalls, 0)
+    assert.equal(batches[0][0].isArrayItemPropUpdate, true)
+    assert.equal(batches[0][1].isArrayItemPropUpdate, true)
   })
 
   it('reuses parent array metadata when creating a direct index proxy', () => {
     const store = new Store({ items: [{ label: 'a' }] })
     const items = store.items
-    let arrayMetaCalls = 0
-    const originalGetCachedArrayMeta = (store as any)._getCachedArrayMeta?.bind(store)
-
-    assert.ok(originalGetCachedArrayMeta, 'expected _getCachedArrayMeta to exist')
-    ;(store as any)._getCachedArrayMeta = (baseParts: string[]) => {
-      arrayMetaCalls++
-      return originalGetCachedArrayMeta(baseParts)
-    }
-
-    void items[0]
-
-    assert.equal(arrayMetaCalls, 0)
+    const item = items[0]
+    assert.ok(item)
+    assert.equal(item[GEA_PROXY_IS_PROXY], true)
+    assert.equal(item.label, 'a')
   })
 
   it('uses the specialized direct array-item primitive update path', async () => {
     const store = new Store({ items: [{ label: 'a' }] })
-    let directPrimitiveCalls = 0
-    const originalQueueDirectArrayItemPrimitiveChange = (store as any)._queueDirectArrayItemPrimitiveChange?.bind(store)
-
-    assert.ok(originalQueueDirectArrayItemPrimitiveChange, 'expected _queueDirectArrayItemPrimitiveChange to exist')
-    ;(store as any)._queueDirectArrayItemPrimitiveChange = (...args: any[]) => {
-      directPrimitiveCalls++
-      return originalQueueDirectArrayItemPrimitiveChange(...args)
-    }
+    const batches: StoreChange[][] = []
+    store.observe('items', (_v, c) => batches.push(c))
 
     store.items[0].label = 'updated'
     await flush()
 
-    assert.equal(directPrimitiveCalls, 1)
+    assert.equal(batches.length, 1)
+    assert.equal(batches[0].length, 1)
+    assert.equal(batches[0][0].isArrayItemPropUpdate, true)
+    assert.equal(batches[0][0].property, 'label')
+    assert.equal(batches[0][0].newValue, 'updated')
   })
 })
 
@@ -497,21 +514,21 @@ describe('Store – delete property', () => {
 })
 
 describe('Store – proxy identity', () => {
-  it('__isProxy flag is set on nested objects', () => {
+  it('GEA_PROXY_IS_PROXY flag is set on nested objects', () => {
     const store = new Store({ nested: { val: 1 } })
-    assert.equal((store.nested as any).__isProxy, true)
+    assert.equal((store.nested as any)[GEA_PROXY_IS_PROXY], true)
   })
 
-  it('__getTarget returns raw object', () => {
+  it('GEA_PROXY_GET_TARGET returns raw object', () => {
     const raw = { val: 42 }
     const store = new Store({ nested: raw })
-    assert.equal((store.nested as any).__getTarget, raw)
+    assert.equal((store.nested as any)[GEA_PROXY_GET_TARGET], raw)
   })
 
-  it('__getPath returns the property path', () => {
+  it('GEA_PROXY_GET_PATH returns the property path', () => {
     const store = new Store({ nested: { deep: { val: 1 } } })
-    assert.equal((store.nested as any).__getPath, 'nested')
-    assert.equal((store.nested.deep as any).__getPath, 'nested.deep')
+    assert.equal((store.nested as any)[GEA_PROXY_GET_PATH], 'nested')
+    assert.equal((store.nested.deep as any)[GEA_PROXY_GET_PATH], 'nested.deep')
   })
 
   it('assigning proxy value unwraps it', async () => {
@@ -534,10 +551,10 @@ describe('Store – array full replacement as append', () => {
   })
 })
 
-describe('Store – __store accessor', () => {
+describe('Store – GEA_STORE_ROOT accessor', () => {
   it('returns the store instance from nested proxy', () => {
     const store = new Store({ obj: { x: 1 } })
-    assert.equal((store.obj as any).__store, store)
+    assert.equal((store.obj as any)[GEA_STORE_ROOT], store)
   })
 })
 

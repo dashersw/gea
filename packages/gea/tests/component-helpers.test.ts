@@ -1,6 +1,24 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
+import {
+  GEA_CHILD,
+  GEA_CHILD_COMPONENTS,
+  GEA_COMPILED_CHILD,
+  GEA_EL,
+  GEA_ITEM_KEY,
+  GEA_OBSERVE,
+  GEA_OBSERVE_LIST,
+  GEA_OBSERVER_REMOVERS,
+  GEA_PARENT_COMPONENT,
+  GEA_PROXY_GET_RAW_TARGET,
+  GEA_RECONCILE_LIST,
+  GEA_UPDATE_TEXT,
+} from '../src/lib/symbols'
+
+function engineThis(c: object): any {
+  return (c as any)[GEA_PROXY_GET_RAW_TARGET] ?? c
+}
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -79,11 +97,11 @@ describe('Component.__child', () => {
       }
     }
     const parent = new Parent()
-    const child = parent.__child(Child, {})
-    assert.equal(child.parentComponent, parent)
+    const child = parent[GEA_CHILD](Child, {})
+    assert.equal(engineThis(child)[GEA_PARENT_COMPONENT], parent)
   })
 
-  it('sets __geaCompiledChild to true on the child', () => {
+  it('sets GEA_COMPILED_CHILD to true on the child', () => {
     class Parent extends Component {
       template() {
         return '<div></div>'
@@ -95,8 +113,8 @@ describe('Component.__child', () => {
       }
     }
     const parent = new Parent()
-    const child = parent.__child(Child, {})
-    assert.equal(child.__geaCompiledChild, true)
+    const child = parent[GEA_CHILD](Child, {})
+    assert.equal(child[GEA_COMPILED_CHILD], true)
   })
 
   it('passes props correctly to the child', () => {
@@ -111,12 +129,12 @@ describe('Component.__child', () => {
       }
     }
     const parent = new Parent()
-    const child = parent.__child(Child, { color: 'blue', count: 42 })
+    const child = parent[GEA_CHILD](Child, { color: 'blue', count: 42 })
     assert.equal(child.props.color, 'blue')
     assert.equal(child.props.count, 42)
   })
 
-  it('registers the child in parent.__childComponents', () => {
+  it('registers the child in parent[GEA_CHILD_COMPONENTS]', () => {
     class Parent extends Component {
       template() {
         return '<div></div>'
@@ -128,8 +146,8 @@ describe('Component.__child', () => {
       }
     }
     const parent = new Parent()
-    const child = parent.__child(Child, {})
-    assert.ok(parent.__childComponents.includes(child))
+    const child = parent[GEA_CHILD](Child, {})
+    assert.ok(parent[GEA_CHILD_COMPONENTS].includes(child))
   })
 
   it('sets __geaItemKey (stringified) when key argument is provided', () => {
@@ -144,11 +162,11 @@ describe('Component.__child', () => {
       }
     }
     const parent = new Parent()
-    const childNumKey = parent.__child(Child, {}, 7)
-    assert.equal(childNumKey.__geaItemKey, '7')
+    const childNumKey = parent[GEA_CHILD](Child, {}, 7)
+    assert.equal(childNumKey[GEA_ITEM_KEY], '7')
 
-    const childStrKey = parent.__child(Child, {}, 'abc')
-    assert.equal(childStrKey.__geaItemKey, 'abc')
+    const childStrKey = parent[GEA_CHILD](Child, {}, 'abc')
+    assert.equal(childStrKey[GEA_ITEM_KEY], 'abc')
   })
 
   it('does not set __geaItemKey when no key argument is provided', () => {
@@ -163,8 +181,8 @@ describe('Component.__child', () => {
       }
     }
     const parent = new Parent()
-    const child = parent.__child(Child, {})
-    assert.equal(child.__geaItemKey, undefined)
+    const child = parent[GEA_CHILD](Child, {})
+    assert.equal(child[GEA_ITEM_KEY], undefined)
   })
 })
 
@@ -191,11 +209,11 @@ describe('Component.__el', () => {
     const comp = new MyComp()
     document.body.innerHTML = ''
     comp.render(document.body)
-    const el = comp.__el('info')
+    const el = comp[GEA_EL]('info')
     assert.ok(el)
     assert.equal(el.textContent, 'hi')
     // Second call returns cached
-    assert.equal(comp.__el('info'), el)
+    assert.equal(comp[GEA_EL]('info'), el)
   })
 
   it('re-queries DOM when cached element is disconnected', async () => {
@@ -207,7 +225,7 @@ describe('Component.__el', () => {
     const comp = new MyComp()
     document.body.innerHTML = ''
     comp.render(document.body)
-    const el1 = comp.__el('info')
+    const el1 = comp[GEA_EL]('info')
     assert.ok(el1)
 
     // Disconnect the cached element by removing it from the DOM
@@ -217,11 +235,11 @@ describe('Component.__el', () => {
     const newP = document.createElement('p')
     newP.id = comp.id + '-info'
     newP.textContent = 'replaced'
-    comp.__el('info') // should detect disconnected, re-query
+    comp[GEA_EL]('info') // should detect disconnected, re-query
     // but the element is gone now, let's put it back first
     document.getElementById(comp.id)!.appendChild(newP)
 
-    const el2 = comp.__el('info')
+    const el2 = comp[GEA_EL]('info')
     assert.ok(el2)
     assert.notEqual(el2, el1)
     assert.equal(el2.textContent, 'replaced')
@@ -251,7 +269,7 @@ describe('Component.__updateText', () => {
     const comp = new MyComp()
     document.body.innerHTML = ''
     comp.render(document.body)
-    comp.__updateText('msg', 'new')
+    comp[GEA_UPDATE_TEXT]('msg', 'new')
     assert.equal(document.getElementById(comp.id + '-msg')?.textContent, 'new')
   })
 
@@ -265,7 +283,7 @@ describe('Component.__updateText', () => {
     document.body.innerHTML = ''
     comp.render(document.body)
     // Should not throw when suffix does not exist in the rendered output
-    comp.__updateText('nonexistent', 'text')
+    comp[GEA_UPDATE_TEXT]('nonexistent', 'text')
   })
 })
 
@@ -285,7 +303,7 @@ describe('Component.__observe', () => {
     restoreDom()
   })
 
-  it('registers observer and pushes remover to __observer_removers__', async () => {
+  it('registers observer and pushes remover to GEA_OBSERVER_REMOVERS', async () => {
     class MyComp extends Component {
       template() {
         return `<div id="${this.id}"></div>`
@@ -297,8 +315,8 @@ describe('Component.__observe', () => {
     const store = new TestStore()
     const comp = new MyComp()
     const values: number[] = []
-    comp.__observe(store, ['count'], (v: number) => values.push(v))
-    assert.equal(comp.__observer_removers__.length, 1)
+    comp[GEA_OBSERVE](store, ['count'], (v: number) => values.push(v))
+    assert.equal(comp[GEA_OBSERVER_REMOVERS].length, 1)
     store.count = 5
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.deepEqual(values, [5])
@@ -340,11 +358,11 @@ describe('Component.__reconcileList', () => {
     parent.render(document.body)
 
     const items = [
-      parent.__child(Item, { text: 'a' }, 1),
-      parent.__child(Item, { text: 'b' }, 2),
-      parent.__child(Item, { text: 'c' }, 3),
+      parent[GEA_CHILD](Item, { text: 'a' }, 1),
+      parent[GEA_CHILD](Item, { text: 'b' }, 2),
+      parent[GEA_CHILD](Item, { text: 'c' }, 3),
     ]
-    const list = parent.__el('list')
+    const list = parent[GEA_EL]('list')
     items.forEach((item) => item.render(list))
 
     // Remove item with key "2"
@@ -352,7 +370,7 @@ describe('Component.__reconcileList', () => {
       { id: 1, text: 'a' },
       { id: 3, text: 'c' },
     ]
-    const result = parent.__reconcileList(
+    const result = parent[GEA_RECONCILE_LIST](
       items,
       newData,
       list,
@@ -380,15 +398,15 @@ describe('Component.__reconcileList', () => {
     document.body.innerHTML = ''
     parent.render(document.body)
 
-    const items = [parent.__child(Item, { text: 'a' }, 1)]
-    const list = parent.__el('list')
+    const items = [parent[GEA_CHILD](Item, { text: 'a' }, 1)]
+    const list = parent[GEA_EL]('list')
     items.forEach((item) => item.render(list))
 
     const newData = [
       { id: 1, text: 'a' },
       { id: 2, text: 'b' },
     ]
-    const result = parent.__reconcileList(
+    const result = parent[GEA_RECONCILE_LIST](
       items,
       newData,
       list,
@@ -399,7 +417,7 @@ describe('Component.__reconcileList', () => {
     assert.equal(result.length, 2)
     assert.equal(result[0], items[0]) // reused
     assert.notEqual(result[1], items[0]) // new component
-    assert.equal(result[1].__geaItemKey, '2')
+    assert.equal(result[1][GEA_ITEM_KEY], '2')
   })
 
   it('reorders items to match new data order', async () => {
@@ -418,11 +436,11 @@ describe('Component.__reconcileList', () => {
     parent.render(document.body)
 
     const items = [
-      parent.__child(Item, { text: 'a' }, 1),
-      parent.__child(Item, { text: 'b' }, 2),
-      parent.__child(Item, { text: 'c' }, 3),
+      parent[GEA_CHILD](Item, { text: 'a' }, 1),
+      parent[GEA_CHILD](Item, { text: 'b' }, 2),
+      parent[GEA_CHILD](Item, { text: 'c' }, 3),
     ]
-    const list = parent.__el('list')
+    const list = parent[GEA_EL]('list')
     items.forEach((item) => item.render(list))
 
     // Reverse the order
@@ -431,7 +449,7 @@ describe('Component.__reconcileList', () => {
       { id: 1, text: 'a' },
       { id: 2, text: 'b' },
     ]
-    const result = parent.__reconcileList(
+    const result = parent[GEA_RECONCILE_LIST](
       items,
       newData,
       list,
@@ -460,7 +478,7 @@ describe('Component.__reconcileList', () => {
     document.body.innerHTML = ''
     parent.render(document.body)
 
-    const board = parent.__el('board')
+    const board = parent[GEA_EL]('board')
     assert.ok(board)
     const marker = document.createElement('span')
     marker.className = 'static-marker'
@@ -468,9 +486,9 @@ describe('Component.__reconcileList', () => {
     board.appendChild(marker)
 
     const items = [
-      parent.__child(Item, { label: 'a' }, '1'),
-      parent.__child(Item, { label: 'b' }, '2'),
-      parent.__child(Item, { label: 'c' }, '3'),
+      parent[GEA_CHILD](Item, { label: 'a' }, '1'),
+      parent[GEA_CHILD](Item, { label: 'b' }, '2'),
+      parent[GEA_CHILD](Item, { label: 'c' }, '3'),
     ]
     items.forEach((item) => item.render(board))
 
@@ -481,7 +499,7 @@ describe('Component.__reconcileList', () => {
       { k: '1', label: 'a' },
       { k: '2', label: 'b' },
     ]
-    parent.__reconcileList(
+    parent[GEA_RECONCILE_LIST](
       items,
       newData,
       board,
@@ -536,7 +554,7 @@ describe('Component.__observeList', () => {
       }
     }
     class Parent extends Component {
-      _items: any[] = []
+      compiledItems: any[] = []
       template() {
         return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
       }
@@ -544,18 +562,22 @@ describe('Component.__observeList', () => {
     const parent = new Parent()
     document.body.innerHTML = ''
     parent.render(document.body)
-    parent.__observeList(store, ['todos'], {
-      items: parent._items,
-      container: () => parent.__el('list'),
+    const backingRef = parent.compiledItems
+    parent[GEA_OBSERVE_LIST](store, ['todos'], {
+      items: parent.compiledItems,
+      container: () => parent[GEA_EL]('list'),
       Ctor: Item,
       props: (todo: any) => ({ text: todo.text }),
       key: (todo: any) => todo.id,
     })
+    assert.strictEqual(parent.compiledItems, backingRef, 'compiledItems array ref must stay stable after __observeList')
 
     store.add('first')
+    assert.strictEqual(parent.compiledItems, backingRef, 'compiledItems array ref must stay stable after store.add')
     await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(parent._items.length, 1)
-    assert.equal(parent.__el('list')?.children.length, 1)
+    assert.equal(parent.compiledItems.length, 1)
+    assert.ok(parent.compiledItems[0], 'append must set compiledItems[0] to the row component')
+    assert.equal(parent[GEA_EL]('list')?.children.length, 1)
   })
 
   it('updates item props on property change', async () => {
@@ -565,7 +587,7 @@ describe('Component.__observeList', () => {
       }
     }
     class Parent extends Component {
-      _items: any[] = []
+      compiledItems: any[] = []
       template() {
         return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
       }
@@ -573,9 +595,9 @@ describe('Component.__observeList', () => {
     const parent = new Parent()
     document.body.innerHTML = ''
     parent.render(document.body)
-    parent.__observeList(store, ['todos'], {
-      items: parent._items,
-      container: () => parent.__el('list'),
+    parent[GEA_OBSERVE_LIST](store, ['todos'], {
+      items: parent.compiledItems,
+      container: () => parent[GEA_EL]('list'),
       Ctor: Item,
       props: (todo: any) => ({ text: todo.text, done: todo.done }),
       key: (todo: any) => todo.id,
@@ -583,12 +605,13 @@ describe('Component.__observeList', () => {
 
     store.add('task')
     await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(parent.compiledItems.length, 1, 'append should populate compiledItems')
     const todoId = store.todos[0].id
 
     store.toggle(todoId)
     await new Promise((resolve) => setTimeout(resolve, 50))
     // Item should have updated props
-    assert.equal(parent._items[0].props.done, true)
+    assert.equal(parent.compiledItems[0].props.done, true)
   })
 
   it('reconciles on filter (remove)', async () => {
@@ -598,7 +621,7 @@ describe('Component.__observeList', () => {
       }
     }
     class Parent extends Component {
-      _items: any[] = []
+      compiledItems: any[] = []
       template() {
         return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
       }
@@ -606,9 +629,9 @@ describe('Component.__observeList', () => {
     const parent = new Parent()
     document.body.innerHTML = ''
     parent.render(document.body)
-    parent.__observeList(store, ['todos'], {
-      items: parent._items,
-      container: () => parent.__el('list'),
+    parent[GEA_OBSERVE_LIST](store, ['todos'], {
+      items: parent.compiledItems,
+      container: () => parent[GEA_EL]('list'),
       Ctor: Item,
       props: (todo: any) => ({ text: todo.text }),
       key: (todo: any) => todo.id,
@@ -617,12 +640,12 @@ describe('Component.__observeList', () => {
     store.add('first')
     store.add('second')
     await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(parent._items.length, 2)
+    assert.equal(parent.compiledItems.length, 2, 'two appends should populate compiledItems')
     const firstId = store.todos[0].id
 
     store.remove(firstId)
     await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(parent._items.length, 1)
-    assert.equal(parent._items[0].props.text, 'second')
+    assert.equal(parent.compiledItems.length, 1)
+    assert.equal(parent.compiledItems[0].props.text, 'second')
   })
 })

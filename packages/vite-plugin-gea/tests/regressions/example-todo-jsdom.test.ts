@@ -182,7 +182,7 @@ describe('examples/todo app in JSDOM (ported from todo.spec)', { concurrency: fa
     await flushMicrotasks()
     ;(root.querySelector('.todo-checkbox') as HTMLInputElement).click()
     await flushMicrotasks()
-    ;[...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'Active')!.click()
+    ;([...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'Active') as HTMLElement).click()
     await flushMicrotasks()
     assert.equal(root.querySelectorAll('.todo-item').length, 1)
     assert.match(root.querySelector('.todo-text')!.textContent || '', /Walk dog/)
@@ -198,7 +198,7 @@ describe('examples/todo app in JSDOM (ported from todo.spec)', { concurrency: fa
     ;(root.querySelector('.todo-checkbox') as HTMLInputElement).click()
     await flushMicrotasks()
 
-    const completedBtn = [...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.includes('Completed'))!
+    const completedBtn = [...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.includes('Completed'))! as HTMLElement
     completedBtn.click()
     await flushMicrotasks()
     assert.equal(root.querySelectorAll('.todo-item').length, 1)
@@ -213,10 +213,10 @@ describe('examples/todo app in JSDOM (ported from todo.spec)', { concurrency: fa
     await flushMicrotasks()
     ;(root.querySelector('.todo-checkbox') as HTMLInputElement).click()
     await flushMicrotasks()
-    ;[...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'Active')!.click()
+    ;([...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'Active') as HTMLElement).click()
     await flushMicrotasks()
     assert.equal(root.querySelectorAll('.todo-item').length, 1)
-    ;[...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'All')!.click()
+    ;([...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'All') as HTMLElement).click()
     await flushMicrotasks()
     assert.equal(root.querySelectorAll('.todo-item').length, 2)
   })
@@ -231,7 +231,7 @@ describe('examples/todo app in JSDOM (ported from todo.spec)', { concurrency: fa
     await flushMicrotasks()
 
     const walkDogEl = root.querySelectorAll('.todo-item')[1]
-    ;[...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'Active')!.click()
+    ;([...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.trim() === 'Active') as HTMLElement).click()
     await flushMicrotasks()
     assert.equal(root.querySelector('.todo-item'), walkDogEl)
   })

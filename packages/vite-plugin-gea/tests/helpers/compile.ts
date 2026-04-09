@@ -4,8 +4,41 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ResolvedConfig } from 'vite'
 import { geaPlugin } from '../../src/index'
-import { __escapeHtml, __sanitizeAttr } from '../../../gea/src/lib/base/component'
+import { __escapeHtml as geaEscapeHtml, __sanitizeAttr as geaSanitizeAttr } from '../../../gea/src/lib/base/component'
+import * as geaSymbolsNs from '../../../gea/src/lib/symbols'
 import type { GeaHmrBindings } from './gea-hmr-runtime'
+
+/** Reserved — do not use these names in compileJsx* `bindings`. */
+const GEA_EVAL_RESERVED = ['__geaXss', '__geaSyms'] as const
+
+/** Plain object copy of `@geajs/core` symbol exports for `__geaSyms` (avoids `new Function` param collisions with `router`, etc.). */
+export const geaSymsForEval: Record<string, unknown> = { ...geaSymbolsNs }
+
+export function buildEvalPrelude(): string {
+  const symKeys = Object.keys(geaSymbolsNs).filter((k) => k !== 'default')
+  return [
+    'const geaEscapeHtml = __geaXss.geaEscapeHtml;',
+    'const geaSanitizeAttr = __geaXss.geaSanitizeAttr;',
+    `const { ${symKeys.join(', ')} } = __geaSyms;`,
+    '',
+  ].join('\n')
+}
+
+function assertNoEvalBindingCollisions(bindings: Record<string, unknown>): void {
+  for (const k of GEA_EVAL_RESERVED) {
+    assert.ok(!(k in bindings), `[gea test compile] bindings must not use reserved name "${k}"`)
+  }
+}
+
+/** Merge user `bindings` with reserved `__geaXss` / `__geaSyms` params for `new Function` eval. */
+export function mergeEvalBindings(bindings: Record<string, unknown>): Record<string, unknown> {
+  assertNoEvalBindingCollisions(bindings)
+  return {
+    ...bindings,
+    __geaXss: { geaEscapeHtml, geaSanitizeAttr },
+    __geaSyms: geaSymsForEval,
+  }
+}
 
 const HELPERS_DIR = dirname(fileURLToPath(import.meta.url))
 
@@ -103,16 +136,14 @@ export async function transformGeaSourceToEvalBodyForHmr(
  * Compile a source file that defines multiple top-level classes (e.g. gea-ui `card.tsx`).
  * `exportNames` must list every class identifier to return from the eval closure.
  */
-const _xssHelpers = { __escapeHtml, __sanitizeAttr }
-
 export async function compileJsxModule(
   source: string,
   id: string,
   exportNames: string[],
   bindings: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const allBindings = { ..._xssHelpers, ...bindings }
-  const body = await transformGeaSourceToEvalBody(source, id)
+  const allBindings = mergeEvalBindings(bindings)
+  const body = buildEvalPrelude() + (await transformGeaSourceToEvalBody(source, id))
   const compiledSource = `${body}
 return { ${exportNames.join(', ')} };`
   return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings)) as Record<
@@ -127,8 +158,8 @@ export async function compileJsxComponent(
   className: string,
   bindings: Record<string, unknown>,
 ) {
-  const allBindings = { ..._xssHelpers, ...bindings }
-  const body = await transformGeaSourceToEvalBody(source, id)
+  const allBindings = mergeEvalBindings(bindings)
+  const body = buildEvalPrelude() + (await transformGeaSourceToEvalBody(source, id))
   const compiledSource = `${body}
 return ${className};`
   return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings))
@@ -146,8 +177,8 @@ export async function compileJsxComponentForHmr(
   bindings: Record<string, unknown>,
   hmrBindings: GeaHmrBindings,
 ) {
-  const allBindings = { ..._xssHelpers, ...bindings }
-  const body = await transformGeaSourceToEvalBodyForHmr(source, id, moduleUrl)
+  const allBindings = mergeEvalBindings(bindings)
+  const body = buildEvalPrelude() + (await transformGeaSourceToEvalBodyForHmr(source, id, moduleUrl))
   const compiledSource = `${body}
 return ${className};`
   return new Function(...Object.keys(allBindings), '__geaHmrBindings', compiledSource)(
@@ -159,16 +190,17 @@ return ${className};`
 export async function loadRuntimeModules(seed: string) {
   const { default: ComponentManager } = await import('../../../gea/src/lib/base/component-manager')
   ComponentManager.instance = undefined
-  return Promise.all([
+  const [componentModule, storeModule] = await Promise.all([
     import(`../../../gea/src/lib/base/component.tsx?${seed}`),
     import(`../../../gea/src/lib/store.ts?${seed}`),
   ])
+  return [componentModule, storeModule]
 }
 
 /** Same `Component` module as `@geajs/ui` and `RouterView` — required when mixing compiled examples with those packages (seeded `component.tsx?seed` breaks prototype checks). */
 export async function loadComponentUnseeded() {
   const { default: ComponentManager } = await import('../../../gea/src/lib/base/component-manager')
   ComponentManager.instance = undefined
-  const { default: Component } = await import('../../../gea/src/lib/base/component.tsx')
-  return Component
+  const mod = await import('../../../gea/src/lib/base/component.tsx')
+  return mod.default
 }

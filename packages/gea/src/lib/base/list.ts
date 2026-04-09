@@ -1,4 +1,7 @@
+import { samePathParts } from '../store'
+const _frag = () => document.createDocumentFragment()
 import type { StoreChange } from '../store'
+import { GEA_DOM_KEY, GEA_PROXY_GET_TARGET } from '../symbols'
 
 export interface ListConfig {
   arrayPathParts: string[]
@@ -10,26 +13,12 @@ export interface ListConfig {
   hasComponentItems?: boolean
 }
 
-function samePathParts(a?: string[], b?: string[]): boolean {
-  if (!a || !b || a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false
-  }
-  return true
-}
-
 function rebuildList(container: HTMLElement, array: any[], config: ListConfig): void {
-  if (array.length === 0) {
-    container.textContent = ''
-    return
-  }
-
-  const fragment = document.createDocumentFragment()
-  for (let i = 0; i < array.length; i++) {
-    fragment.appendChild(config.create(array[i], i))
-  }
   container.textContent = ''
-  container.appendChild(fragment)
+  if (array.length === 0) return
+  const f = _frag()
+  for (let i = 0; i < array.length; i++) f.appendChild(config.create(array[i], i))
+  container.appendChild(f)
 }
 
 function rerenderListInPlace(
@@ -37,77 +26,50 @@ function rerenderListInPlace(
   array: any[],
   create: (item: any, index?: number) => HTMLElement,
 ): void {
-  const currentLength = container.children.length
-  const nextLength = array.length
-  const sharedLength = currentLength < nextLength ? currentLength : nextLength
-
-  for (let i = 0; i < sharedLength; i++) {
-    const row = container.children[i]
-    const nextRow = create(array[i], i)
-    if (row) {
-      row.replaceWith(nextRow)
-    } else {
-      container.appendChild(nextRow)
-    }
+  const cl = container.children.length
+  const nl = array.length
+  for (let i = 0; i < (cl < nl ? cl : nl); i++) container.children[i].replaceWith(create(array[i], i))
+  if (nl > cl) {
+    const f = _frag()
+    for (let i = cl; i < nl; i++) f.appendChild(create(array[i], i))
+    container.appendChild(f)
   }
-
-  if (nextLength > currentLength) {
-    const fragment = document.createDocumentFragment()
-    for (let i = currentLength; i < nextLength; i++) {
-      fragment.appendChild(create(array[i], i))
-    }
-    container.appendChild(fragment)
-    return
-  }
-
-  for (let i = currentLength - 1; i >= nextLength; i--) {
-    const row = container.children[i]
-    if (row) row.remove()
-  }
+  while (container.children.length > nl) container.lastElementChild!.remove()
 }
 
 function applyReorder(container: HTMLElement, permutation: number[]): void {
   const rows = Array.from(container.children)
   for (let i = 0; i < permutation.length; i++) {
-    const row = rows[permutation[i]] as HTMLElement | undefined
-    if (!row) continue
-    const currentRow = container.children[i]
-    if (currentRow !== row) {
-      container.insertBefore(row, currentRow || null)
-    }
+    const r = rows[permutation[i]] as HTMLElement | undefined
+    if (r && r !== container.children[i]) container.insertBefore(r, container.children[i] || null)
   }
 }
 
-function applySwap(container: HTMLElement, firstIndex: number, secondIndex: number): void {
-  if (firstIndex === secondIndex) return
-  const lowIndex = firstIndex < secondIndex ? firstIndex : secondIndex
-  const highIndex = firstIndex < secondIndex ? secondIndex : firstIndex
-  const lowRow = container.children[lowIndex]
-  const highRow = container.children[highIndex]
-  if (!(lowRow && highRow)) return
-
-  const highNext = highRow.nextElementSibling
-  container.insertBefore(highRow, lowRow)
-  container.insertBefore(lowRow, highNext)
-}
-
-function applyPropChanges(container: HTMLElement, items: any[], changes: StoreChange[], config: ListConfig): boolean {
+function applyPropChanges(
+  container: HTMLElement,
+  rawItems: any[],
+  changes: StoreChange[],
+  config: ListConfig,
+): boolean {
   if (!config.propPatchers) return false
 
-  const rawItems = items && (items as any).__getTarget ? (items as any).__getTarget : items
+  const children = container.children
   let handledAny = false
+
+  const firstAipu = changes[0]
+  const arppMatch = firstAipu?.isArrayItemPropUpdate ? samePathParts(firstAipu.arrayPathParts, config.arrayPathParts) : false
+
   for (let i = 0; i < changes.length; i++) {
     const change = changes[i]
-    if (!change?.isArrayItemPropUpdate) continue
-    if (!samePathParts(change.arrayPathParts, config.arrayPathParts)) continue
-    if (change.arrayIndex == null) continue
+    if (!change.isArrayItemPropUpdate || change.arrayIndex == null) continue
+    if (!arppMatch && !samePathParts(change.arrayPathParts, config.arrayPathParts)) continue
 
     const lp = change.leafPathParts
     const key = lp && lp.length > 0 ? (lp.length === 1 ? lp[0] : lp.join('.')) : change.property
     const patchers = config.propPatchers[key] || config.propPatchers[change.property]
     if (!patchers || patchers.length === 0) continue
 
-    const row = container.children[change.arrayIndex] as HTMLElement | undefined
+    const row = children[change.arrayIndex] as HTMLElement | undefined
     if (!row) continue
 
     handledAny = true
@@ -137,7 +99,7 @@ function applyRootReplacementPatch(
     if (prevKey !== nextKey) return false
     const row = container.children[index] as HTMLElement | undefined
     if (!row) return false
-    const domKey = (row as any).__geaKey ?? row.getAttribute('data-gea-item-id')
+    const domKey = (row as any)[GEA_DOM_KEY] ?? row.getAttribute('data-gid')
     if (domKey == null || domKey !== prevKey) return false
   }
 
@@ -156,7 +118,7 @@ export function applyListChanges(
   config: ListConfig,
 ): void {
   const proxiedItems = Array.isArray(array) ? array : []
-  const items = proxiedItems && (proxiedItems as any).__getTarget ? (proxiedItems as any).__getTarget : proxiedItems
+  const items = (proxiedItems as any)?.[GEA_PROXY_GET_TARGET] ?? proxiedItems
 
   if (!changes || changes.length === 0) {
     rerenderListInPlace(container, items, config.create)
@@ -173,18 +135,31 @@ export function applyListChanges(
     return
   }
 
-  if (changes.every((change) => change?.type === 'update' && change.arrayOp === 'swap')) {
+  let allSwaps = true
+  for (let i = 0; i < changes.length; i++) {
+    const c = changes[i]
+    if (!(c?.type === 'update' && c.arrayOp === 'swap')) {
+      allSwaps = false
+      break
+    }
+  }
+  if (allSwaps) {
     const seen = new Set<string>()
     for (let i = 0; i < changes.length; i++) {
-      const change = changes[i]
-      const opId = change.opId || `${change.property}:${change.otherIndex}`
-      if (seen.has(opId)) continue
-      seen.add(opId)
-
-      const firstIndex = Number(change.property)
-      const secondIndex = Number(change.otherIndex)
-      if (!Number.isInteger(firstIndex) || !Number.isInteger(secondIndex)) continue
-      applySwap(container, firstIndex, secondIndex)
+      const c = changes[i]
+      const id = c.opId || c.property + ':' + c.otherIndex
+      if (seen.has(id)) continue
+      seen.add(id)
+      const a = +c.property,
+        b = +c.otherIndex
+      if (a === b || !(a >= 0) || !(b >= 0)) continue
+      const ea = container.children[a],
+        eb = container.children[b]
+      if (ea && eb) {
+        const ref = eb.nextElementSibling
+        container.insertBefore(eb, ea)
+        container.insertBefore(ea, ref)
+      }
     }
     return
   }
@@ -212,19 +187,10 @@ export function applyListChanges(
     const change = changes[i]
     if (!change) continue
 
-    if (change.type === 'delete') {
+    if (change.type === 'delete' || change.type === 'add') {
       const idx = Number(change.property)
       if (Number.isInteger(idx) && idx >= 0) {
-        deleteIndexes.push(idx)
-        handledMutation = true
-      }
-      continue
-    }
-
-    if (change.type === 'add') {
-      const idx = Number(change.property)
-      if (Number.isInteger(idx) && idx >= 0) {
-        addIndexes.push(idx)
+        ;(change.type === 'delete' ? deleteIndexes : addIndexes).push(idx)
         handledMutation = true
       }
       continue
@@ -234,7 +200,7 @@ export function applyListChanges(
       const start = change.start ?? 0
       const count = change.count ?? 0
       if (count > 0) {
-        const fragment = document.createDocumentFragment()
+        const fragment = _frag()
         for (let j = 0; j < count; j++) {
           fragment.appendChild(config.create(items[start + j], start + j))
         }
@@ -251,7 +217,7 @@ export function applyListChanges(
 
   if (addIndexes.length > 0 && addIndexes.includes(0)) {
     const firstChild = container.children[0] as HTMLElement | undefined
-    if (firstChild && (firstChild as any).__geaKey == null && !firstChild.hasAttribute('data-gea-item-id')) {
+    if (firstChild && (firstChild as any)[GEA_DOM_KEY] == null && !firstChild.hasAttribute('data-gid')) {
       if (container.children.length !== items.length) {
         rebuildList(container, items, config)
         return

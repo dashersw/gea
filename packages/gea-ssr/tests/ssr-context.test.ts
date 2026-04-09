@@ -1,3 +1,4 @@
+import { GEA_PROXY_GET_RAW_TARGET } from '@geajs/core'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleRequest } from '../src/handle-request.ts'
@@ -142,11 +143,11 @@ describe('resolveOverlay()', () => {
 })
 
 describe('unwrapProxy via runInSSRContext', () => {
-  it('uses __getRawTarget when present on store', async () => {
+  it('uses GEA_PROXY_GET_RAW_TARGET when present on store', async () => {
     const realStore = { count: 10 }
     const proxy = {
       count: 10,
-      __getRawTarget: realStore,
+      [GEA_PROXY_GET_RAW_TARGET]: realStore,
     }
     await runInSSRContext([proxy], () => {
       // resolveOverlay uses the raw target as key
@@ -158,8 +159,8 @@ describe('unwrapProxy via runInSSRContext', () => {
     })
   })
 
-  it('uses store directly when __getRawTarget is not an object', async () => {
-    const store = { count: 7, __getRawTarget: 'not-an-object' }
+  it('uses store directly when GEA_PROXY_GET_RAW_TARGET is not an object', async () => {
+    const store = { count: 7, [GEA_PROXY_GET_RAW_TARGET]: 'not-an-object' }
     await runInSSRContext([store], () => {
       const overlay = resolveOverlay(store)
       assert.ok(overlay !== undefined, 'store itself is the key')

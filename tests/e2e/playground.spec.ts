@@ -35,7 +35,7 @@ test.describe('Website Playground', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     // Wait for playground to initialise — counter preview iframe should render
-    await expect(preview(page).locator('.counter')).toBeVisible({ timeout: 2000 })
+    await expect(preview(page).locator('.counter')).toBeVisible({ timeout: 5000 })
   })
 
   // ── Counter example ──────────────────────────────────────

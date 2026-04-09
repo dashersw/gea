@@ -1,5 +1,143 @@
 # @geajs/vite-plugin
 
+## 1.2.3
+
+### Patch Changes
+
+- [`9ff1122`](https://github.com/dashersw/gea/commit/9ff112258dd81f8eba93569b85f4a6f47c7da995) Thanks [@dashersw](https://github.com/dashersw)! - Fix stable handler references and compiled component lifecycle injection
+  - Store proxy now only binds prototype methods, preserving identity for instance field functions (fixes `removeEventListener` with handler references stored in `created()`)
+  - Compiler injects `created()`/`createdHooks()`/`setupLocalStateObservers()` into compiled component constructors after `super()`, so they run after class field initializers; non-compiled components retain lifecycle calls from the base constructor via `GEA_COMPILED` symbol guard
+  - `GEA_LIFECYCLE_CALLED` symbol prevents double lifecycle execution in compiled class hierarchies (e.g. `GestureView extends View extends Component`)
+  - Internal `__evts` property replaced with `GEA_EVENTS_CACHE` symbol
+
+## 1.2.2
+
+### Patch Changes
+
+- [`2cc74b4`](https://github.com/dashersw/gea/commit/2cc74b467a668e2f103aa79cc94f108658af2880) Thanks [@dashersw](https://github.com/dashersw)! - Fix HMR circular dependency TDZ errors and support multi-component files
+
+  Non-component files that import from component modules now get `import.meta.hot.accept()` injected to prevent HMR updates from propagating into circular dependency chains and triggering TDZ errors. The HMR postprocess also now handles files exporting multiple component classes, patching `created()`/`dispose()` for each one.
+
+## 1.2.1
+
+### Patch Changes
+
+- [`8935a33`](https://github.com/dashersw/gea/commit/8935a33ad8ace7527e39d19e80bfaed9ace0aae5) Thanks [@dashersw](https://github.com/dashersw)! - Support passing components as named props (e.g. `<Layout header={<Title />} />`)
+
+  Components passed as JSX prop values are now properly rendered and mounted in the child's template. Previously, they were stringified and HTML-escaped, producing escaped markup instead of live components.
+
+  Three changes make this work:
+  - **Compiler**: `collectComponentTags` now walks JSX attribute values, so component tags in props are registered as tracked child instances with proper lifecycle and event delegation.
+  - **Compiler**: Single-expression template literals in prop values and arrow function bodies are unwrapped, passing component instances directly instead of stringifying them.
+  - **Runtime**: `__escapeHtml` detects component instances (objects with a `template` method) and returns their HTML unescaped, while still escaping regular strings for XSS safety.
+
+  This also enables the render-prop pattern: `renderHeader={() => <Header />}` with `{props.renderHeader()}` in the child template.
+
+## 1.2.0
+
+### Minor Changes
+
+- [`0f6a207`](https://github.com/dashersw/gea/commit/0f6a20702dc4281103f2195c1329bf718bdb0b72) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (minor)
+
+  **Modular compiler architecture rewrite — 20,467 → 17,197 lines (16% reduction), all 410 tests pass.**
+
+  #### New architecture
+  - **Emitter registry** (`src/emit/`): Pluggable `PatchEmitter` interface for binding-type dispatch. Adding new binding types: create emitter + 1-line registration. No orchestrator changes needed.
+  - **Reactivity split**: Monolithic `gen-reactivity.ts` (2,285 lines) → 5 focused modules: `reactivity.ts` (orchestrator), `reactivity-arrays.ts`, `reactivity-bindings.ts`, `reactivity-wiring.ts`, `reactivity-types.ts`.
+  - **Shared JSX walker** (`analyze/jsx-walker.ts`): `walkJSX()`, `classifyAttribute()`, `isEventAttribute()` shared between analysis and codegen walkers.
+  - **Shared template params** (`codegen/template-params.ts`): Deduplicated prop name/param analysis.
+
+  #### Eliminated dead code and indirection
+  - Deleted `ast-helpers.ts` barrel (62 lines of pure re-exports) — all 20 consumers updated to import directly
+  - Merged `gen-observe.ts` (78-line wrapper) into `gen-observe-helpers.ts`
+  - Deleted dead `postprocess/map-join.ts` and `postprocess/xss-imports.ts` (117 lines)
+  - Merged `map-analyzer.ts` into `template-walker.ts`
+
+  #### Code quality
+  - Generic `deepMap`/`walk` helpers replace 7+ hand-rolled 150-300 line recursive visitors
+  - All codegen converted to eszter tagged templates
+  - Unified array create/patch loop via `buildRefCacheAndApply`
+  - Compressed all codegen + analyze files (event helpers -30%, map helpers -28%, array subsystem -19%, analyze files -23%)
+
+- [`0de2a3c`](https://github.com/dashersw/gea/commit/0de2a3ce5314d2480ed475a202e1089b09c49f8f) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/core (minor)
+
+  **Convert runtime internals to module-level functions with tree-shaking and performance optimizations.**
+
+  #### Architecture
+  - Replace ~25 symbol-keyed store instance methods with plain module-level functions, eliminating symbol dispatch overhead
+  - Convert component, router, and list subsystem methods to symbol-keyed functions with `/*#__PURE__*/` annotations for tree-shaking
+  - Thread `StoreInstancePrivate` through the entire reactivity pipeline to eliminate redundant `WeakMap.get()` lookups
+
+  #### Store performance optimizations
+  - **Targeted array index cache invalidation**: Per-index `arrayIndexProxyCache` eviction instead of full-array clear on single-element set/delete
+  - **Pipeline threading**: Pass private state (`p`) through `_deliverArrayBatch`, `_getObserverNode`, `_collectMatchingNodes`, `_notify`, `_normalizeBatch`, `_commitObjSet`, `_createProxy`, and `_rootPathPartsCache`
+  - **Pre-computed `shouldSkipReactiveWrapForPath`**: Evaluate once per proxy creation instead of on every get-trap invocation
+  - **Single global microtask scheduler**: Replace per-store `queueMicrotask` calls with a shared `_flushAllPending` function
+  - **Fast-path single-change batches**: Skip `Map` allocation in `_deliverTopLevelBatch` for the common single-property-update case
+
+  ### @geajs/vite-plugin (minor)
+
+  Update compiler codegen to emit the new module-level function calls and symbol-keyed method references from the core refactor.
+
+### Patch Changes
+
+- [`20cf8a8`](https://github.com/dashersw/gea/commit/20cf8a870725327c5ca1d21a06657e86467c3fac) Thanks [@dashersw](https://github.com/dashersw)! - Fix three compiler bugs:
+  - **Conditional observer early-return preventing list reconciliation**: `generateConditionalSlotObserveMethod` emitted `return` statements inside conditional patching blocks. When other observer actions (like `GEA_REFRESH_LIST`) were merged into the same method, the `return` would exit the entire method prematurely, preventing getter-backed lists from reconciling when a sibling conditional also changed. Replaced `return`-based guards with `if (!condPatched)` wrapping pattern.
+  - **GEA_CLONE_TEMPLATE missing from auto-import list**: Added `GEA_CLONE_TEMPLATE` to `GEA_COMPILER_SYMBOL_IMPORTS` so compiled files that use clone templates get the symbol imported automatically.
+  - **Browser compiler missing symbol imports**: The `compileForBrowser` entry point used by the website playground was not calling `ensureGeaCompilerSymbolImports`, causing `ReferenceError` for symbols like `GEA_ELEMENT` in the playground iframe.
+
+- [`4fed17a`](https://github.com/dashersw/gea/commit/4fed17a2469b887261b8266b4aeb07b26e8ba81b) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **EVENT_NAMES**: Added missing `'drag'` event to the `EVENT_NAMES` Set in `event-helpers.ts`
+  - **getElementById in GEA_ON_PROP_CHANGE**: Extended `isCompilerGenerated` check to include computed `GEA_ON_PROP_CHANGE` methods so that `this.id` is cached as `const __id = this.id` before `getElementById` calls
+  - **Style map sentinel uses double quotes**: Replaced `jsExpr` template (which preserves single-quote style) with `t.binaryExpression` + `t.stringLiteral` for the `<!---->` sentinel appended to unresolved map `.join()` calls
+  - **Null guard for single-part observer keys**: When an observer key is a guard key and the method body contains `GEA_UPDATE_PROPS` calls, inject a null guard `if (store.prop == null) return` before those calls
+  - **Early-return guard observer**: Replaced hand-rolled rerender observer (missing `prev !== undefined` and `GEA_RENDERED` guard) with `generateRerenderObserver` for correct deduplication
+  - **Nested ternary conditional slot**: Fixed `extractHtmlTemplatesFromConditional` to preserve the full `C ? D : E` expression as the falsy branch when the alternate is itself a conditional
+  - **Children diff-patch**: Changed `emitInnerHTML` to use `Component[GEA_PATCH_NODE]` for in-place DOM diff-patching when the children prop updates, preserving existing DOM node references and runtime-added attributes instead of replacing via `innerHTML`
+
+  ### @geajs/core (patch)
+  - **dnd-manager symbol APIs**: Updated `DndManager._getComponentFromElement`, `_findCompiledArray`, and `_performTransfer` in `gea-ui` to use the correct GEA symbol APIs (`GEA_DOM_COMPONENT`, `geaListItemsSymbol`, `GEA_PARENT_COMPONENT`, `GEA_PROXY_GET_RAW_TARGET`) instead of legacy string property names
+
+- [`a23721b`](https://github.com/dashersw/gea/commit/a23721bd2dd943fa3b1418c781f094575d875ca1) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Unified array compiler**: Merged `gen-array.ts`, `gen-array-patch.ts`, `gen-array-render.ts`, and `gen-array-slot-sync.ts` into a single `array-compiler.ts` (1,833 lines). Eliminates 4 files and deduplicates shared helpers (`thisPrivate`, naming helpers). All 410 tests pass with identical generated output.
+
+## 1.1.3
+
+### Patch Changes
+
+- [`ad460bb`](https://github.com/dashersw/gea/commit/ad460bbb29c2c72b9a134ce5d4b9a9dac6a986d6) Thanks [@dashersw](https://github.com/dashersw)! - Fix reactivity bugs preventing drag-and-drop across kanban columns
+  - **Compiler**: prevent `GEA_SYNC_MAP` and `GEA_PATCH_COND` calls from being swallowed by subprop change guards in `__onPropChange`, so map lists re-sync even when only a nested array (e.g. `taskIds`) changes
+  - **Runtime**: stop `GEA_SYNC_MAP` from bailing on empty map containers that share a parent with conditional slots
+  - **Runtime**: restrict `__observeList` append fast-path to fire only when the change targets the observed array itself, not nested arrays
+
+## 1.1.2
+
+### Patch Changes
+
+- [`d75459b`](https://github.com/dashersw/gea/commit/d75459b8bf2f94518b8a73bedeb1ccb4cb68489d) Thanks [@dashersw](https://github.com/dashersw)! - Fix event delegation for elements inside conditional branches: the compiler no longer generates duplicate handler selectors that overwrite root-element event handlers. Also fix nested conditional expressions (e.g. `store.x && <Component/>` inside a ternary branch) not being tracked reactively — they are now registered as separate conditional slots with independent observers.
+
+## 1.1.0
+
+### Minor Changes
+
+- [`20fe43c`](https://github.com/dashersw/gea/commit/20fe43c8cf86af3b47b5fd0bea36b0fb22cc85c5) Thanks [@dashersw](https://github.com/dashersw)! - Migrate Component and UI internals from string keys to Symbol keys for cleaner separation of engine state and user data. Update docs, README package tables, and examples list. Remove unused imports in vite-plugin.
+
+### Patch Changes
+
+- [`9e4bf06`](https://github.com/dashersw/gea/commit/9e4bf060185a0e2b73b347da95139a4a961e9b19) Thanks [@dashersw](https://github.com/dashersw)! - Add event delegation support for CSS animation and transition events: `animationstart`, `animationend`, `animationiteration`, `transitionstart`, `transitionend`, `transitionrun`, and `transitioncancel`. These can now be used declaratively in JSX (e.g. `onAnimationEnd={() => ...}`) instead of requiring imperative `addEventListener` in lifecycle hooks.
+
+- [`0e478e5`](https://github.com/dashersw/gea/commit/0e478e5f897fb52008e02d8cd09565d7c83dc3fe) Thanks [@dashersw](https://github.com/dashersw)! - Fix event delegation for mouseover, mouseout, mouseenter, mouseleave, contextmenu, pointer events, touch events, scroll, resize, keypress, and reset. These were missing from EVENT_TYPES so the compiler rendered them as plain HTML attributes instead of wiring event delegation. Also fix `toGeaEventType` to fully lowercase the `on`-prefix form (e.g. `onMouseOver` → `mouseover`) so it matches native DOM event names.
+
+- [`13fe40f`](https://github.com/dashersw/gea/commit/13fe40f1b21542535db837e6f81126b9674eb155) Thanks [@dashersw](https://github.com/dashersw)! - Fix DOM ordering when `.map()` and conditional slots are siblings in JSX
+
+  Previously, list items rendered by `.map()` were always inserted before the first conditional comment marker in the container. This broke JSX source order when a conditional preceded the map (e.g. `{cond && <Header />}` followed by `{items.map(...)}`), causing list items to appear above the header.
+
+  The compiler now records `afterCondSlotIndex` — the index of the first conditional slot that follows the map in JSX source order — and passes it to the runtime. The runtime uses this to find the exact marker to insert before, preserving the intended order regardless of how many conditionals appear before or after the map.
+
+- [`482eb6b`](https://github.com/dashersw/gea/commit/482eb6b87483d44977e56a03cd5f0e8240355f4a) Thanks [@dashersw](https://github.com/dashersw)! - Fix list reconciliation when stripping duplicate map output: walk to a keyed list ancestor so Card roots under keyed ProductCard rows strip correctly, while static compiled siblings (for example CommentCreate) remain. Improve DOM recovery of keyed rows from element hosts. Align store getter analysis, events, and SSR proxy serialization with the store naming refactor.
+
+- [`227f7f9`](https://github.com/dashersw/gea/commit/227f7f925a6b275edd63901582aad0554079d828) Thanks [@dashersw](https://github.com/dashersw)! - Fix nested JSX ternaries in conditional slots (`a ? b : c ? d : e`): the outer falsy branch no longer collapses to only the inner consequent, so the DOM can show the correct branch when the outer test is false. Extract HTML templates from the raw conditional AST before the full-expression JSX transform (`extractHtmlTemplatesFromRawConditional`). Fix early-return template guard observers so the first store delivery is not skipped when the previous guard value was still `undefined`. Add regression tests (nested ternary codegen + auth-style repro with `pause()` after sign-in/out).
+
 ## 1.0.28
 
 ### Patch Changes

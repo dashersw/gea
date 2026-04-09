@@ -31,20 +31,20 @@ describe('serializeStores', () => {
     assert.equal(parsed.S.increment, undefined)
   })
 
-  it('skips private fields starting with _', () => {
+  it('serializes underscore-shaped user fields (not treated as non-data)', () => {
     const store: GeaStore = { _internal: 'secret', visible: 'yes' }
     const result = serializeStores([store], { S: store })
     const parsed = evaluate(result) as Record<string, Record<string, unknown>>
-    assert.equal(parsed.S._internal, undefined)
+    assert.equal(parsed.S._internal, 'secret')
     assert.equal(parsed.S.visible, 'yes')
   })
 
-  it('skips fields ending with _', () => {
+  it('serializes trailing-underscore user fields', () => {
     const store: GeaStore = { element_: {}, rendered_: true, name: 'ok' }
     const result = serializeStores([store], { S: store })
     const parsed = evaluate(result) as Record<string, Record<string, unknown>>
-    assert.equal(parsed.S.element_, undefined)
-    assert.equal(parsed.S.rendered_, undefined)
+    assert.deepEqual(parsed.S.element_, {})
+    assert.equal(parsed.S.rendered_, true)
     assert.equal(parsed.S.name, 'ok')
   })
 
@@ -84,8 +84,11 @@ describe('serializeStores', () => {
     const result = serializeStores([store], { S: store })
     const parsed = evaluate(result) as Record<string, Record<string, unknown>>
     assert.equal(parsed.S.safe, 'value')
-    assert.equal(Object.hasOwn(parsed.S, '__proto__'), false,
-      '__proto__ key should not appear as own property in serialized output')
+    assert.equal(
+      Object.hasOwn(parsed.S, '__proto__'),
+      false,
+      '__proto__ key should not appear as own property in serialized output',
+    )
   })
 
   it('handles empty store registry', () => {

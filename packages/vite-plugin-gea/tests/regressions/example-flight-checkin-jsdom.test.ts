@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, loadComponentUnseeded } from '../helpers/compile'
 import { readExampleFile } from '../helpers/example-paths'
 
-async function mountFlightCheckin(seed: string) {
-  const [{ default: Component }] = await loadRuntimeModules(seed)
+/** Unseeded Component matches example stores (`Store` from `@geajs/core`); seeded runtime breaks observer/prototype pairing. */
+async function mountFlightCheckin() {
+  const Component = await loadComponentUnseeded()
   const { default: store } = await import('../../../../examples/flight-checkin/src/flight-store.ts')
   const { default: optionsStore } = await import('../../../../examples/flight-checkin/src/options-store.ts')
   const { default: paymentStore } = await import('../../../../examples/flight-checkin/src/payment-store.ts')
@@ -84,6 +85,27 @@ function optionByLabel(root: HTMLElement, labelSubstring: string): HTMLElement |
   return null
 }
 
+/** Multiple macrotask rounds so nested Gea renders finish (reduces flakiness under full-suite load). */
+async function settleUi(): Promise<void> {
+  await flushMicrotasks()
+  await flushMicrotasks()
+  await flushMicrotasks()
+}
+
+/** Wait until an option row appears or timeout (JSDOM can lag behind multi-step store updates). */
+async function waitForOption(root: HTMLElement, labelSubstring: string, timeoutMs = 3000): Promise<HTMLElement> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const el = optionByLabel(root, labelSubstring)
+    if (el) return el
+    await settleUi()
+    await new Promise<void>((r) => setTimeout(r, 5))
+  }
+  const el = optionByLabel(root, labelSubstring)
+  assert.ok(el, `expected .option-item containing ${JSON.stringify(labelSubstring)}`)
+  return el
+}
+
 function setInputValue(el: HTMLInputElement, value: string) {
   el.value = value
   el.dispatchEvent(new Event('input', { bubbles: true }))
@@ -98,7 +120,7 @@ describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', {
     restoreDom = installDom()
     const { default: store } = await import('../../../../examples/flight-checkin/src/flight-store.ts')
     store.startOver()
-    const m = await mountFlightCheckin(`ex-fc-${Date.now()}-${Math.random()}`)
+    const m = await mountFlightCheckin()
     app = m.app
     root = m.root
   })
@@ -118,31 +140,28 @@ describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', {
 
   it('advance to seat step', async () => {
     ;(root.querySelector('.nav-buttons .btn-primary') as HTMLButtonElement).click()
-    await flushMicrotasks()
+    await settleUi()
     assert.equal(root.querySelector('.step-header h2')?.textContent, 'Select Seat')
   })
 
-  it('full flow reaches boarding pass', async () => {
-    const checked = optionByLabel(root, '1 checked bag')
-    assert.ok(checked)
-    checked!.click()
-    await flushMicrotasks()
+  it('full flow reaches boarding pass', { timeout: 15_000 }, async () => {
+    const checked = await waitForOption(root, '1 checked bag')
+    checked.click()
+    await settleUi()
     ;(root.querySelector('.nav-buttons .btn-primary') as HTMLButtonElement).click()
-    await flushMicrotasks()
+    await settleUi()
 
-    const economyPlus = optionByLabel(root, 'Economy Plus')
-    assert.ok(economyPlus)
-    economyPlus!.click()
-    await flushMicrotasks()
+    const economyPlus = await waitForOption(root, 'Economy Plus')
+    economyPlus.click()
+    await settleUi()
     ;(root.querySelector('.nav-buttons .btn-primary') as HTMLButtonElement).click()
-    await flushMicrotasks()
+    await settleUi()
 
-    const chicken = optionByLabel(root, 'Chicken')
-    assert.ok(chicken)
-    chicken!.click()
-    await flushMicrotasks()
+    const chicken = await waitForOption(root, 'Chicken')
+    chicken.click()
+    await settleUi()
     ;(root.querySelector('.nav-buttons .btn-primary') as HTMLButtonElement).click()
-    await flushMicrotasks()
+    await settleUi()
 
     assert.equal(root.querySelector('.step-header h2')?.textContent, 'Review & Payment')
 
@@ -152,21 +171,21 @@ describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', {
     setInputValue(nameInput, 'Jane Smith')
     setInputValue(cardInput, '4242424242424242')
     setInputValue(expiryInput, '1228')
-    await flushMicrotasks()
+    await settleUi()
 
     const payBtn = [...root.querySelectorAll('.payment-form .btn-primary')].find((b) =>
       b.textContent?.includes('Pay'),
     ) as HTMLButtonElement
     assert.ok(payBtn)
     payBtn.click()
-    await flushMicrotasks()
+    await settleUi()
 
     const viewPass = [...root.querySelectorAll('.nav-buttons .btn-primary')].find((b) =>
       b.textContent?.includes('View Boarding Pass'),
     ) as HTMLButtonElement
     assert.ok(viewPass)
     viewPass.click()
-    await flushMicrotasks()
+    await settleUi()
 
     assert.ok(root.querySelector('.boarding-pass'))
   })

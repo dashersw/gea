@@ -1,15 +1,20 @@
-import { resetUidCounter } from '@geajs/core'
+import {
+  GEA_ATTACH_BINDINGS,
+  GEA_ELEMENT,
+  GEA_INSTANTIATE_CHILD_COMPONENTS,
+  GEA_MOUNT_COMPILED_CHILD_COMPONENTS,
+  GEA_RENDERED,
+  GEA_SETUP_EVENT_DIRECTIVES,
+  resetUidCounter,
+} from '@geajs/core'
 import type { GeaComponentConstructor, StoreRegistry } from './types'
-import { isInternalProp } from './types'
+import { STORE_IMPL_OWN_KEYS } from './types'
 
 interface RestoreOptions {
   preserveNull?: boolean
 }
 
-export function restoreStoreState(
-  registry: StoreRegistry,
-  options?: RestoreOptions,
-): void {
+export function restoreStoreState(registry: StoreRegistry, options?: RestoreOptions): void {
   if (typeof window === 'undefined') return
   const state = window.__GEA_STATE__
   if (!state || typeof state !== 'object') return
@@ -18,7 +23,7 @@ export function restoreStoreState(
     const serialized = state[name]
     if (!serialized || typeof serialized !== 'object') continue
     for (const [key, value] of Object.entries(serialized)) {
-      if (isInternalProp(key) || key === 'constructor' || key === '__proto__') continue
+      if (key === 'constructor' || key === '__proto__' || STORE_IMPL_OWN_KEYS.has(key)) continue
       try {
         // Don't overwrite client-initialized values with null from SSR,
         // unless preserveNull is set (for authoritative server nulls).
@@ -53,9 +58,7 @@ export function hydrate(
   }
 
   // Snapshot innerHTML before hydration for dev-mode mismatch detection
-  const savedInnerHTML = (typeof import.meta !== 'undefined' && import.meta.env?.DEV)
-    ? element.innerHTML
-    : ''
+  const savedInnerHTML = typeof import.meta !== 'undefined' && import.meta.env?.DEV ? element.innerHTML : ''
 
   // Reset UID counter to match SSR-generated IDs so component IDs align with DOM
   resetUidCounter(0)
@@ -64,14 +67,14 @@ export function hydrate(
   const app = new App()
 
   // Set the element to the existing DOM content
-  app.element_ = element.firstElementChild
-  app.rendered_ = true
+  ;(app as any)[GEA_ELEMENT] = element.firstElementChild
+  ;(app as any)[GEA_RENDERED] = true
 
   // Attach reactivity bindings (observers, events)
-  if (typeof app.attachBindings_ === 'function') app.attachBindings_()
-  if (typeof app.mountCompiledChildComponents_ === 'function') app.mountCompiledChildComponents_()
-  if (typeof app.instantiateChildComponents_ === 'function') app.instantiateChildComponents_()
-  if (typeof app.setupEventDirectives_ === 'function') app.setupEventDirectives_()
+  if (typeof app[GEA_ATTACH_BINDINGS] === 'function') app[GEA_ATTACH_BINDINGS]()
+  if (typeof app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS] === 'function') app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]()
+  if (typeof app[GEA_INSTANTIATE_CHILD_COMPONENTS] === 'function') app[GEA_INSTANTIATE_CHILD_COMPONENTS]()
+  if (typeof app[GEA_SETUP_EVENT_DIRECTIVES] === 'function') app[GEA_SETUP_EVENT_DIRECTIVES]()
   if (typeof app.onAfterRender === 'function') app.onAfterRender()
   if (typeof app.onAfterRenderHooks === 'function') app.onAfterRenderHooks()
 
@@ -85,17 +88,17 @@ export function hydrate(
           import('./render'),
           import('./mismatch'),
         ])
-        resetUidCounter(0)  // Safe: hydration is complete
+        resetUidCounter(0) // Safe: hydration is complete
         const clientHtml = renderToString(App)
-        const mismatch = detectHydrationMismatch(
-          { innerHTML: savedInnerHTML },
-          clientHtml,
-        )
+        const mismatch = detectHydrationMismatch({ innerHTML: savedInnerHTML }, clientHtml)
         if (mismatch) {
           console.warn(
             '[gea-ssr] Hydration mismatch detected.\n' +
-            'Server HTML: ' + mismatch.server.substring(0, 200) + '\n' +
-            'Client HTML: ' + mismatch.client.substring(0, 200),
+              'Server HTML: ' +
+              mismatch.server.substring(0, 200) +
+              '\n' +
+              'Client HTML: ' +
+              mismatch.client.substring(0, 200),
           )
         }
       } catch {
@@ -103,5 +106,4 @@ export function hydrate(
       }
     }, 0)
   }
-
 }

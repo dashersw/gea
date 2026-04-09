@@ -6,7 +6,7 @@ import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
 // Bug: store-backed component list inside a conditional (lazy) child renders
 // items in the constructor but the DOM container doesn't exist until the
 // conditional flips true. After mount, pre-created items must be synced into
-// the container via __syncUnrenderedListItems.
+// the container via Component's private list sync after mount.
 test('store-backed component list inside lazy conditional renders items after mount', async () => {
   const restoreDom = installDom()
 

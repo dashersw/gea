@@ -1,10 +1,10 @@
 {
   "name": "@geajs/vite-plugin",
-  "version": "1.0.28",
+  "version": "1.2.3",
   "description": "Vite plugin for Gea framework - JSX/TSX transform, reactivity, HMR",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
   "publishConfig": {
     "access": "public"
   },
@@ -31,8 +31,8 @@
   "homepage": "https://github.com/dashersw/gea#readme",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
     }
   },
   "files": [
@@ -40,9 +40,9 @@
     "gea-env.d.ts"
   ],
   "scripts": {
-    "prepublishOnly": "tsup src/index.ts --format esm --dts --clean --external vite",
-    "build": "tsup src/index.ts --format esm --dts --clean --external vite",
-    "test": "tsx --test 'tests/**/*.test.ts'",
+    "prepublishOnly": "tsdown",
+    "build": "tsdown",
+    "test": "tsx --conditions source --test 'tests/**/*.test.ts'",
     "test:e2e": "npx playwright test --config=../../tests/e2e/playwright.config.ts",
     "build:browser": "rollup -c rollup.browser.config.js",
     "build:codemirror": "rollup -c rollup.codemirror.config.js",
@@ -72,7 +72,7 @@
     "jsdom": "^28.1.0",
     "rollup": "^4.60.0",
     "rollup-plugin-esbuild": "^6.2.1",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.21.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },

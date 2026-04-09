@@ -1,9 +1,10 @@
+import { GEA_DOM_PARENT_CHAIN } from './lib/symbols'
+
 export {}
 
 declare global {
   interface HTMLElement {
-    __geaEventHandlers?: Record<string, EventListener>
-    parentComps?: string
+    [GEA_DOM_PARENT_CHAIN]?: string
   }
 
   interface Event {

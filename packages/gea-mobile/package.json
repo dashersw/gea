@@ -1,6 +1,6 @@
 {
   "name": "@geajs/mobile",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Mobile-oriented UI primitives for the Gea framework — views, navigation, gestures, and layout components",
   "type": "module",
   "main": "dist/index.mjs",
@@ -30,7 +30,7 @@
   },
   "homepage": "https://github.com/dashersw/gea#readme",
   "scripts": {
-    "build:js": "tsup --config tsup.config.cjs",
+    "build:js": "tsdown",
     "build:css": "node scripts/build-css.mjs",
     "build": "npm run build:js && npm run build:css",
     "prepublishOnly": "npm run build"
@@ -49,15 +49,16 @@
       "import": "./dist/index.mjs",
       "types": "./dist/index.d.mts"
     },
-    "./style.css": "./dist/index.css",
+    "./style.css": "./dist/style.css",
     "./dist/gea-mobile.css": "./dist/gea-mobile.css"
   },
   "peerDependencies": {
     "@geajs/core": "^1.0.0"
   },
   "devDependencies": {
+    "@tsdown/css": "^0.21.7",
     "lightningcss": "^1.32.0",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.21.2",
     "typescript": "^5.9.3"
   }
 }

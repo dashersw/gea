@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
+import { GEA_DOM_COMPONENT } from '@geajs/core'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
 
 const BERZI_ITEM_INPUT = `
@@ -119,12 +120,12 @@ test('berzi App shape: ItemInput child under fragment + main still gets textarea
     app.render(root)
     await flushMicrotasks()
 
-    const panel = root.querySelector('.send-item-panel') as (HTMLElement & { __geaComponent?: unknown }) | null
+    const panel = root.querySelector('.send-item-panel') as HTMLElement | null
     assert.ok(panel, 'ItemInput root section must be in the DOM')
-    const itemInstance = panel.__geaComponent as
+    const itemInstance = (panel as HTMLElement & { [GEA_DOM_COMPONENT]?: unknown })[GEA_DOM_COMPONENT] as
       | { trySubmitItem?: () => string; itemTextarea?: HTMLTextAreaElement | null }
       | undefined
-    assert.ok(itemInstance, 'section.__geaComponent must be the ItemInput instance')
+    assert.ok(itemInstance, 'section[GEA_DOM_COMPONENT] must be the ItemInput instance')
     assert.ok(itemInstance.itemTextarea, 'nested ItemInput must have textarea ref after render')
 
     assert.equal(itemInstance.trySubmitItem?.(), 'ref-is-set')

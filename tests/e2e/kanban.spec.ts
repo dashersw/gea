@@ -28,6 +28,18 @@ test.describe('kanban surgical DOM updates', () => {
     await expect(columns.nth(3).locator('.kanban-card')).toHaveCount(0)
   })
 
+  test('adding a task must not create spurious columns', async ({ page }) => {
+    await expect(page.locator('.kanban-column')).toHaveCount(4)
+
+    const backlogColumn = page.locator('.kanban-column').first()
+    await backlogColumn.locator('.kanban-add-task').click()
+    await backlogColumn.locator('input[type="text"]').fill('Spurious column check')
+    await backlogColumn.locator('input[type="text"]').press('Enter')
+
+    await expect(backlogColumn.locator('.kanban-card')).toHaveCount(4)
+    await expect(page.locator('.kanban-column')).toHaveCount(4)
+  })
+
   test('adding a task must not detach/reattach existing cards in the column', async ({ page }) => {
     const backlogColumn = page.locator('.kanban-column').first()
     const backlogBody = backlogColumn.locator('.kanban-column-body')
@@ -68,15 +80,21 @@ test.describe('kanban surgical DOM updates', () => {
   test('adding a task must not detach/reattach cards in other columns', async ({ page }) => {
     // Mark a card in the second column (To Do)
     const todoColumn = page.locator('.kanban-column').nth(1)
-    await todoColumn.locator('.kanban-card').first().evaluate((el) => {
-      el.setAttribute('data-test-marker', 'todo-first')
-    })
+    await todoColumn
+      .locator('.kanban-card')
+      .first()
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'todo-first')
+      })
 
     // Mark a card in the third column (In Progress)
     const progressColumn = page.locator('.kanban-column').nth(2)
-    await progressColumn.locator('.kanban-card').first().evaluate((el) => {
-      el.setAttribute('data-test-marker', 'progress-first')
-    })
+    await progressColumn
+      .locator('.kanban-card')
+      .first()
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'progress-first')
+      })
 
     // Add a task to backlog
     const backlogColumn = page.locator('.kanban-column').first()
@@ -86,12 +104,18 @@ test.describe('kanban surgical DOM updates', () => {
     await expect(backlogColumn.locator('.kanban-card')).toHaveCount(4)
 
     // Cards in other columns must still have their markers (same DOM nodes)
-    const todoMarker = await todoColumn.locator('.kanban-card').first().evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
-    const progressMarker = await progressColumn.locator('.kanban-card').first().evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
+    const todoMarker = await todoColumn
+      .locator('.kanban-card')
+      .first()
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
+    const progressMarker = await progressColumn
+      .locator('.kanban-card')
+      .first()
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
     expect(todoMarker).toBe('todo-first')
     expect(progressMarker).toBe('progress-first')
   })
@@ -100,9 +124,12 @@ test.describe('kanban surgical DOM updates', () => {
     const backlogColumn = page.locator('.kanban-column').first()
 
     // Mark first card in backlog
-    await backlogColumn.locator('.kanban-card').first().evaluate((el) => {
-      el.setAttribute('data-test-marker', 'backlog-first')
-    })
+    await backlogColumn
+      .locator('.kanban-card')
+      .first()
+      .evaluate((el) => {
+        el.setAttribute('data-test-marker', 'backlog-first')
+      })
 
     // Click a card to open the modal
     await backlogColumn.locator('.kanban-card').first().click()
@@ -113,9 +140,12 @@ test.describe('kanban surgical DOM updates', () => {
     await expect(page.locator('.kanban-modal-backdrop')).not.toBeVisible()
 
     // Card must still have its marker
-    const marker = await backlogColumn.locator('.kanban-card').first().evaluate((el) => {
-      return el.getAttribute('data-test-marker')
-    })
+    const marker = await backlogColumn
+      .locator('.kanban-card')
+      .first()
+      .evaluate((el) => {
+        return el.getAttribute('data-test-marker')
+      })
     expect(marker).toBe('backlog-first')
   })
 
@@ -311,14 +341,65 @@ test.describe('kanban surgical DOM updates', () => {
     await expect(backlogColumn.locator('.kanban-card')).toHaveCount(countBefore)
   })
 
+  test.describe('Drag and drop', () => {
+    async function simulateDrop(page: any, taskId: string, fromColumnId: string, targetColumnIndex: number) {
+      await page.evaluate(
+        ({ taskId, fromColumnId, targetColIdx }: any) => {
+          const targetCol = document.querySelectorAll('.kanban-column')[targetColIdx] as any
+          const sym = Object.getOwnPropertySymbols(targetCol).find((s: any) => s.description === 'gea.dom.component')
+          const comp = sym ? targetCol[sym] : null
+          if (!comp) throw new Error('No component found on target column')
+          const dt = new DataTransfer()
+          dt.setData('application/json', JSON.stringify({ taskId, fromColumnId }))
+          comp.__event_drop_2({ preventDefault() {}, dataTransfer: dt })
+        },
+        { taskId, fromColumnId, targetColIdx: targetColumnIndex },
+      )
+    }
+
+    test('drag a card from one column to another', async ({ page }) => {
+      const sourceColumn = page.locator('.kanban-column').nth(0) // Backlog
+      const targetColumn = page.locator('.kanban-column').nth(3) // Done
+
+      const sourceInitial = await sourceColumn.locator('.kanban-card').count()
+      const targetInitial = await targetColumn.locator('.kanban-card').count()
+
+      const cardTitle = await sourceColumn.locator('.kanban-card-title').first().textContent()
+
+      await simulateDrop(page, 't1', 'col-backlog', 3)
+
+      await expect(sourceColumn.locator('.kanban-card')).toHaveCount(sourceInitial - 1)
+      await expect(targetColumn.locator('.kanban-card')).toHaveCount(targetInitial + 1)
+
+      const targetTitles = await targetColumn.locator('.kanban-card-title').allTextContents()
+      expect(targetTitles).toContain(cardTitle)
+    })
+
+    test('drag a card to a column that already has cards', async ({ page }) => {
+      const sourceColumn = page.locator('.kanban-column').nth(0) // Backlog (3 cards)
+      const targetColumn = page.locator('.kanban-column').nth(2) // In Progress (2 cards)
+
+      const sourceInitial = await sourceColumn.locator('.kanban-card').count()
+      const targetInitial = await targetColumn.locator('.kanban-card').count()
+
+      await simulateDrop(page, 't1', 'col-backlog', 2)
+
+      await expect(sourceColumn.locator('.kanban-card')).toHaveCount(sourceInitial - 1)
+      await expect(targetColumn.locator('.kanban-card')).toHaveCount(targetInitial + 1)
+    })
+  })
+
   test.describe('DOM Stability', () => {
     test('surgical DOM updates: adding a task preserves existing card DOM nodes', async ({ page }) => {
       const backlogColumn = page.locator('.kanban-column').first()
 
       // Mark the first kanban card with a custom data attribute
-      await backlogColumn.locator('.kanban-card').first().evaluate((el) => {
-        el.setAttribute('data-stability-marker', 'survivor')
-      })
+      await backlogColumn
+        .locator('.kanban-card')
+        .first()
+        .evaluate((el) => {
+          el.setAttribute('data-stability-marker', 'survivor')
+        })
 
       // Add a new task to the same column
       await backlogColumn.locator('.kanban-add-task').click()
@@ -329,9 +410,12 @@ test.describe('kanban surgical DOM updates', () => {
       await expect(backlogColumn.locator('.kanban-card')).toHaveCount(4)
 
       // The marker must survive — proves the DOM node was not recreated
-      const marker = await backlogColumn.locator('.kanban-card').first().evaluate((el) => {
-        return el.getAttribute('data-stability-marker')
-      })
+      const marker = await backlogColumn
+        .locator('.kanban-card')
+        .first()
+        .evaluate((el) => {
+          return el.getAttribute('data-stability-marker')
+        })
       expect(marker).toBe('survivor')
     })
 
@@ -387,5 +471,4 @@ test.describe('kanban surgical DOM updates', () => {
       expect(same).toBe(true)
     }
   })
-
 })

@@ -15,7 +15,7 @@ The "magic" is invisible and lives entirely in the build step. The Vite plugin a
 ## Key Features
 
 - **Batteries included** — state management and routing are built in, solving the biggest pain points of modern frontend development out of the box
-- **~13 kb gzipped** with the router, ~10 kb without — zero runtime dependencies
+- **~19 kb gzipped** with the router, ~15 kb without — zero runtime dependencies
 - **Compile-time JSX** — the Vite plugin transforms JSX into HTML strings and generates targeted DOM patches
 - **Proxy-based reactivity** — mutate state directly and the framework handles updates automatically
 - **Class and function components** — use classes for stateful logic, functions for presentational UI
@@ -28,6 +28,7 @@ The "magic" is invisible and lives entirely in the build step. The Vite plugin a
 | Package | Description |
 | --- | --- |
 | [`@geajs/core`](https://www.npmjs.com/package/@geajs/core) | Core framework — stores, components, reactivity, DOM patching |
+| [`@geajs/ui`](https://www.npmjs.com/package/@geajs/ui) | Headless UI primitives — accessible components built on [Zag.js](https://zagjs.com) |
 | [`@geajs/mobile`](https://www.npmjs.com/package/@geajs/mobile) | Mobile UI primitives — views, navigation, gestures, layout |
 | [`@geajs/ssr`](ssr.md) | Server-side rendering — streaming HTML, hydration, head management |
 | [`@geajs/vite-plugin`](https://www.npmjs.com/package/@geajs/vite-plugin) | Vite plugin — JSX transform, reactivity wiring, HMR |

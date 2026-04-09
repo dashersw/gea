@@ -158,7 +158,7 @@ export class Toaster extends Component {
   }
 
   _applyGroupSpreads() {
-    if (!this.rendered_ || !this._api) return
+    if (!this.rendered || !this._api) return
 
     const groupEl = this.el
     if (groupEl) {

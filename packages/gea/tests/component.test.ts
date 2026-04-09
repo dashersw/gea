@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
+import {
+  GEA_CHILD_COMPONENTS,
+  GEA_COMPONENT_CLASSES,
+  GEA_COERCE_STATIC_PROP_VALUE,
+  GEA_ELEMENT,
+  GEA_NORMALIZE_PROP_NAME,
+  GEA_UPDATE_PROPS,
+} from '../src/lib/symbols'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -274,9 +282,9 @@ describe('Component', () => {
       const container = document.createElement('div')
       document.body.appendChild(container)
       o.render(container)
-      assert.ok(o.element_)
+      assert.ok(o[GEA_ELEMENT])
       o.dispose()
-      assert.equal(o.element_, null)
+      assert.equal(o[GEA_ELEMENT], null)
     })
 
     it('disposes child components', () => {
@@ -297,7 +305,7 @@ describe('Component', () => {
       }
       const parent = new Parent()
       const child = new Child()
-      parent.__childComponents.push(child)
+      parent[GEA_CHILD_COMPONENTS].push(child)
       parent.dispose()
       assert.equal(childDisposed, true)
     })
@@ -321,12 +329,12 @@ describe('Component', () => {
         }
       }
       const q = new Q()
-      assert.equal(q.coerceStaticPropValue_('true'), true)
-      assert.equal(q.coerceStaticPropValue_('false'), false)
-      assert.equal(q.coerceStaticPropValue_('42'), 42)
-      assert.equal(q.coerceStaticPropValue_('3.14'), 3.14)
-      assert.equal(q.coerceStaticPropValue_('hello'), 'hello')
-      assert.equal(q.coerceStaticPropValue_(null), undefined)
+      assert.equal(q[GEA_COERCE_STATIC_PROP_VALUE]('true'), true)
+      assert.equal(q[GEA_COERCE_STATIC_PROP_VALUE]('false'), false)
+      assert.equal(q[GEA_COERCE_STATIC_PROP_VALUE]('42'), 42)
+      assert.equal(q[GEA_COERCE_STATIC_PROP_VALUE]('3.14'), 3.14)
+      assert.equal(q[GEA_COERCE_STATIC_PROP_VALUE]('hello'), 'hello')
+      assert.equal(q[GEA_COERCE_STATIC_PROP_VALUE](null), undefined)
     })
 
     it('normalizes prop names from kebab to camel', () => {
@@ -336,7 +344,7 @@ describe('Component', () => {
         }
       }
       const r = new R()
-      assert.equal(r.normalizePropName_('my-prop-name'), 'myPropName')
+      assert.equal(r[GEA_NORMALIZE_PROP_NAME]('my-prop-name'), 'myPropName')
     })
   })
 
@@ -348,7 +356,7 @@ describe('Component', () => {
         }
       }
       const s = new S({ x: 1 })
-      s.__geaUpdateProps({ x: 2 })
+      s[GEA_UPDATE_PROPS]({ x: 2 })
       assert.equal(s.props.x, 2)
     })
   })
@@ -361,7 +369,7 @@ describe('Component', () => {
         }
       }
       Component._register(TestComp)
-      assert.ok(Component.__componentClasses.has('TestComp'))
+      assert.ok(Component[GEA_COMPONENT_CLASSES].has('TestComp'))
     })
   })
 

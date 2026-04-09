@@ -1,5 +1,85 @@
 # @geajs/ui
 
+## 0.2.4
+
+### Patch Changes
+
+- [`4100293`](https://github.com/dashersw/gea/commit/4100293f124e7c20f8bee33ccedd63dd00ef0157) Thanks [@dashersw](https://github.com/dashersw)! - Replace React type imports with framework-agnostic alternatives. `ReactNode` is replaced by a local `JSXNode` type and `MouseEventHandler` now wraps the native DOM `MouseEvent` instead of React's synthetic event. `@types/react` is removed from devDependencies.
+
+## 0.2.3
+
+### Patch Changes
+
+- [`4a65330`](https://github.com/dashersw/gea/commit/4a653309329deaf0057556759037bb1250c683bf) Thanks [@dashersw](https://github.com/dashersw)! - Fix missing `stashComponentForTransfer` import in dnd-manager causing `ReferenceError` when dropping a dragged card into a different column. Also remove unused `geaListItemsSymbol` import.
+
+## 0.2.2
+
+### Patch Changes
+
+- [#51](https://github.com/dashersw/gea/pull/51) [`66c4f61`](https://github.com/dashersw/gea/commit/66c4f613c883c222d9f31e4dad011dc494d95142) Thanks [@kraus-milan](https://github.com/kraus-milan)! - Fixed HTML issues reported by the browser:
+  - **Progress**: Use `<span>` for label instead of `<label>` (`<label>` should be connected to input)
+  - **Select**: Add hidden `<select>` to make label's `for` attribute point to existing element
+
+## 0.2.1
+
+### Patch Changes
+
+- [#48](https://github.com/dashersw/gea/pull/48) [`ec4c323`](https://github.com/dashersw/gea/commit/ec4c32319a03102a405e5c02808d375221190906) Thanks [@kraus-milan](https://github.com/kraus-milan)! - ### @geajs/ui (patch)
+  - Improved Dialog styling in dark theme
+    - Replaced fixed colors with theme-aware alternatives
+    - Added CSS variable `--dialog-background` to enable customization
+
+## 0.2.0
+
+### Minor Changes
+
+- [#45](https://github.com/dashersw/gea/pull/45) [`0437762`](https://github.com/dashersw/gea/commit/0437762bc654b2a03518269952e0e3ac7c9d216d) Thanks [@kraus-milan](https://github.com/kraus-milan)! - ### @geajs/ui (minor)
+  - **Tailwind CSS v4**: Upgraded from Tailwind CSS v3 to v4. The CSS-based configuration system replaces the old JavaScript preset.
+  - Migration steps:
+    1. **Update dependencies**
+
+    ```bash
+    npm install -D tailwindcss@4 @tailwindcss/vite
+    npm uninstall autoprefixer postcss
+    ```
+
+    2. **Update `vite.config.ts`** — add `@tailwindcss/vite` as a plugin and remove any inline PostCSS Tailwind config
+
+    ```ts
+    // vite.config.ts
+    import tailwindcss from '@tailwindcss/vite'
+
+    export default defineConfig({
+      plugins: [tailwindcss()],
+    })
+    ```
+
+    3. **Remove the old `@geajs/ui` preset/PostCSS wiring** — delete `postcss.config.js` if it only existed for Tailwind v3, and only remove `tailwind.config.js` if it contained no project-specific configuration
+    4. **Remove `@tailwind` directives** from any CSS files you own (e.g. `@tailwind base; @tailwind components; @tailwind utilities;`). You don't have to `@import "tailwindcss";` in your own CSS, just make sure the theme file is imported first.
+
+    ```ts
+    // main.ts
+    import '@geajs/ui/style.css'
+    import './style.css'
+    ```
+
+    5. **Remove manual CSS resets** — if your project has a global reset like `* { margin: 0; padding: 0; }` outside a CSS layer, it will silently override Tailwind v4 utilities. In v4, all utilities live inside `@layer utilities`, and unlayered styles always win over layered styles regardless of specificity. Tailwind v4's Preflight already handles these resets inside `@layer base`, so the manual reset is redundant and should be removed
+
+    ```css
+    /* Remove this — Tailwind v4 Preflight already does it */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    ```
+
+    6. **Check [Tailwind CSS upgrade guide](https://tailwindcss.com/docs/upgrade-guide#changes-from-v3)** for needed changes in your custom components
+
+### Patch Changes
+
+- [`20fe43c`](https://github.com/dashersw/gea/commit/20fe43c8cf86af3b47b5fd0bea36b0fb22cc85c5) Thanks [@dashersw](https://github.com/dashersw)! - Migrate Component and UI internals from string keys to Symbol keys for cleaner separation of engine state and user data. Update docs, README package tables, and examples list. Remove unused imports in vite-plugin.
+
 ## 0.1.5
 
 ### Patch Changes

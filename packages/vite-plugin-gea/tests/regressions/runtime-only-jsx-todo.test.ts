@@ -133,7 +133,7 @@ describe('runtime-only-jsx todo app (JSX templates)', { concurrency: false }, ()
           }
 
           createdHooks() {
-            this.__observer_removers__.push(
+            this[GEA_OBSERVER_REMOVERS].push(
               store.observe('todos', () => {
                 this.$('.todo-list').innerHTML = this.itemsHtml()
                 this.$('.active-count').textContent = \`\${store.activeCount} items left\`

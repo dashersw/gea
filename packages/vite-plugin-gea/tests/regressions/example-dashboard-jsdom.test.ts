@@ -147,7 +147,7 @@ describe('examples/dashboard in JSDOM (ported from dashboard.spec)', { concurren
   })
 
   it('overview tabs and chart placeholder', () => {
-    assert.ok(root.querySelector('[role="tab"]'))
+    assert.ok(root.querySelector('button[data-part="trigger"]'))
     assert.ok(root.textContent?.includes('Revenue'))
     assert.ok(root.querySelector('.chart-placeholder'))
   })
@@ -155,7 +155,7 @@ describe('examples/dashboard in JSDOM (ported from dashboard.spec)', { concurren
   it('monthly target and progress', () => {
     assert.ok(root.textContent?.includes('Monthly Target'))
     assert.ok(root.textContent?.includes('On Track'))
-    assert.ok(root.querySelector('[role="progressbar"]'))
+    assert.ok(root.querySelector('[data-part="track"]'))
   })
 
   it('recent activity and team lists', () => {

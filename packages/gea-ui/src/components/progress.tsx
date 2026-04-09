@@ -46,9 +46,9 @@ export default class Progress extends ZagComponent {
       <div data-part="root" class={props.class || ''}>
         <div class="flex justify-between mb-1">
           {props.label && (
-            <label data-part="label" class="progress-label text-sm font-medium">
+            <span data-part="label" class="progress-label text-sm font-medium">
               {props.label}
-            </label>
+            </span>
           )}
           <span data-part="value-text" class="progress-value-text text-sm text-muted-foreground">
             {this.percent}%

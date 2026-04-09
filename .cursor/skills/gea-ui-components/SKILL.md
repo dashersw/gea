@@ -15,7 +15,7 @@ Read `reference.md` in this skill directory for the full component API with prop
 
 ```bash
 npm install @geajs/core @geajs/ui
-npm install -D vite @geajs/vite-plugin
+npm install -D vite @geajs/vite-plugin tailwindcss @tailwindcss/vite
 ```
 
 ### Vite config
@@ -23,24 +23,11 @@ npm install -D vite @geajs/vite-plugin
 ```js
 import { defineConfig } from 'vite'
 import { geaPlugin } from '@geajs/vite-plugin'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [geaPlugin()],
+  plugins: [geaPlugin(), tailwindcss()],
 })
-```
-
-### Tailwind config
-
-```js
-import geaPreset from '@geajs/ui/tailwind-preset'
-
-export default {
-  presets: [geaPreset],
-  content: [
-    './src/**/*.{tsx,ts,jsx,js}',
-    './node_modules/@geajs/ui/dist/**/*.js',
-  ],
-}
 ```
 
 ### Import styles
@@ -221,7 +208,13 @@ Dark mode activates with the `dark` class on `<html>`:
 <html class="dark">
 ```
 
-Key CSS variables: `--background`, `--foreground`, `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, `--radius`, `--card`, `--popover` (each with a `-foreground` counterpart).
+Base color CSS variables: `--background`, `--foreground`.
+
+Color CSS variables related to elements containing text (styled with `-foreground` counterpart): `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--card`, `--popover`.
+
+Color CSS variables related to elements without text: `--border`, `--input` (input field borders), `--ring` (focus ring color), `--dialog-background`.
+
+Other CSS variables: `--radius` (base border radius).
 
 ## Styling components
 

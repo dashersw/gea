@@ -15,7 +15,6 @@ const componentEntries = Object.fromEntries(
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
-    'tailwind-preset': 'src/tailwind-preset.ts',
     ...componentEntries,
   },
   plugins: [geaPlugin() as any],

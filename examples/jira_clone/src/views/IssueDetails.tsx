@@ -46,7 +46,6 @@ export default class IssueDetails extends Component {
   isLinkCopied = false
   isEditingTracking = false
   editTimeSpent = 0
-  editTimeRemaining = 0
   openDropdown: string | null = null
   assigneeSearch = ''
 
@@ -113,18 +112,13 @@ export default class IssueDetails extends Component {
   }
 
   startEditTracking() {
-    const issue = issueStore.issue
-    this.editTimeSpent = issue?.timeSpent || 0
-    this.editTimeRemaining = issue?.timeRemaining || issue?.estimate || 0
+    this.editTimeSpent = issueStore.issue?.timeSpent || 0
     this.isEditingTracking = true
   }
 
   saveTracking() {
     this.isEditingTracking = false
-    issueStore.updateIssue({
-      timeSpent: this.editTimeSpent,
-      timeRemaining: this.editTimeRemaining,
-    })
+    issueStore.updateIssue({ timeSpent: this.editTimeSpent })
   }
 
   handleGiveFeedback() {
@@ -171,8 +165,7 @@ export default class IssueDetails extends Component {
     const issueUserIds = issue.userIds || []
     const issueReporterId = issue.reporterId || ''
     const timeSpent = issue.timeSpent || 0
-    const timeRemaining = issue.timeRemaining || issue.estimate || 0
-    const trackPercent = getTrackingPercent(timeSpent, timeRemaining)
+    const trackPercent = getTrackingPercent(timeSpent, issueStore.timeRemaining)
     const createdAgo = formatDateTimeConversational(issue.createdAt)
     const updatedAgo = formatDateTimeConversational(issue.updatedAt)
     const reporter = users.find((u: any) => u.id === issueReporterId)
@@ -315,9 +308,11 @@ export default class IssueDetails extends Component {
                 </div>
               )}
               {!this.isEditingDescription && issueDescription && (
-                <div class="text-edited-content description-clickable" click={() => this.startEditDescription()}>
-                  {issueDescription}
-                </div>
+                <div
+                  class="text-edited-content description-clickable"
+                  click={() => this.startEditDescription()}
+                  dangerouslySetInnerHTML={issueDescription}
+                />
               )}
               {!this.isEditingDescription && !issueDescription && (
                 <p class="issue-description-placeholder" click={() => this.startEditDescription()}>
@@ -491,7 +486,9 @@ export default class IssueDetails extends Component {
                 class="input"
                 type="number"
                 value={issueEstimate}
-                change={(e: any) => issueStore.updateIssue({ estimate: Number(e.target.value) || null })}
+                change={(e: any) => {
+                  issueStore.updateIssue({ estimate: Number(e.target.value) || null })
+                }}
               />
             </div>
 
@@ -506,7 +503,7 @@ export default class IssueDetails extends Component {
                 </div>
                 <div class="tracking-values">
                   <span>{timeSpent ? `${timeSpent}h logged` : 'No time logged'}</span>
-                  <span>{timeRemaining}h remaining</span>
+                  <span>{issueStore.timeRemaining}h remaining</span>
                 </div>
               </div>
               {this.isEditingTracking && (
@@ -534,13 +531,15 @@ export default class IssueDetails extends Component {
                       <div class="tracking-bar">
                         <div
                           class="tracking-bar-fill"
-                          style={{ width: `${getTrackingPercent(this.editTimeSpent, this.editTimeRemaining)}%` }}
+                          style={{
+                            width: `${getTrackingPercent(this.editTimeSpent, Math.max(0, issueEstimate - this.editTimeSpent))}%`,
+                          }}
                         ></div>
                       </div>
                     </div>
                     <div class="tracking-values">
                       <span>{this.editTimeSpent ? `${this.editTimeSpent}h logged` : 'No time logged'}</span>
-                      <span>{this.editTimeRemaining}h remaining</span>
+                      <span>{Math.max(0, issueEstimate - this.editTimeSpent)}h remaining</span>
                     </div>
                     <div class="tracking-edit-fields">
                       <div class="tracking-edit-field">
@@ -552,18 +551,6 @@ export default class IssueDetails extends Component {
                           value={this.editTimeSpent}
                           input={(e: any) => {
                             this.editTimeSpent = Number(e.target.value) || 0
-                          }}
-                        />
-                      </div>
-                      <div class="tracking-edit-field">
-                        <label class="tracking-edit-label">Time remaining (hours)</label>
-                        <input
-                          class="input"
-                          type="number"
-                          min="0"
-                          value={this.editTimeRemaining}
-                          input={(e: any) => {
-                            this.editTimeRemaining = Number(e.target.value) || 0
                           }}
                         />
                       </div>

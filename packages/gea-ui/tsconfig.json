@@ -1,7 +1,6 @@
 {
   "extends": "../gea/tsconfig.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
       "@geajs/core": [
         "../gea/src/index.ts"

@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
+import { GEA_STORE_ROOT } from '../../../gea/src/lib/symbols'
+import type { StateRefMeta } from '../../src/ir/types'
 import {
   transformComponentSource,
   transformWithPlugin,
@@ -31,8 +33,8 @@ test('static reactivity wires subscriptions for every imported store used by a c
     }
   `)
 
-  assert.match(output, /this\.__observe\(counterStore,/)
-  assert.match(output, /this\.__observe\(filterStore,/)
+  assert.match(output, /this\[GEA_OBSERVE\]\(counterStore,/)
+  assert.match(output, /this\[GEA_OBSERVE\]\(filterStore,/)
 })
 
 test('static reactivity detects default Store imports across files', async () => {
@@ -65,7 +67,7 @@ export default class DashboardStore extends Store {
     )
 
     assert.ok(output)
-    assert.match(output, /this\.__observe\(store,/)
+    assert.match(output, /this\[GEA_OBSERVE\]\(store,/)
     assert.match(output, /\["count"\]/)
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -102,8 +104,8 @@ test('imported store array text bindings inject id on stats element for getEleme
     'todo-stats div must have id attribute for getElementById lookup',
   )
   assert.ok(
-    /this\.__updateText\('b\d'/.test(output),
-    'stats binding must use __updateText helper, not inline getElementById',
+    /this\[GEA_UPDATE_TEXT\]\(['"]b\d['"]/.test(output),
+    'stats binding must use [GEA_UPDATE_TEXT] helper, not inline getElementById',
   )
 })
 
@@ -131,7 +133,7 @@ test('imported store input value binding injects id for getElementById', () => {
     /input[^>]*id=.*__id.*-b\d|id=.*__id.*-b\d[^>]*input/.test(output),
     'input must have id for getElementById so value updates (e.g. clear after add) work',
   )
-  assert.ok(/getElementById\([^)]*__id[^)]*\+[^)]*"-b\d"\)/.test(output), 'input value binding must use getElementById')
+  assert.ok(/__gid\([^)]*__id[^)]*\+[^)]*"-b\d"\)/.test(output), 'input value binding must use __gid')
 })
 
 test('wildcard observers update index zero items', () => {
@@ -153,7 +155,7 @@ test('wildcard observers update index zero items', () => {
       `,
     )
     harness.root = document.createElement('div')
-    harness.root.innerHTML = '<div class="item" data-gea-item-id="0"><span class="label">before</span></div>'
+    harness.root.innerHTML = '<div class="item" data-gid="0"><span class="label">before</span></div>'
     harness.__todos_container = harness.root
 
     harness[getObserveMethodName(['todos', '*', 'label'])]('after', {
@@ -187,10 +189,10 @@ test('wildcard observers resolve imported array paths correctly', () => {
     )
     const methodSource = generate(method).code
     const harness = createObserveHarness(methodSource, '', {
-      storeState: { __store: { todos: [{ id: 1, label: 'before' }] } },
+      storeState: { [GEA_STORE_ROOT]: { todos: [{ id: 1, label: 'before' }] } },
     })
     harness.root = document.createElement('div')
-    harness.root.innerHTML = '<div class="item" data-gea-item-id="0"><span class="label">before</span></div>'
+    harness.root.innerHTML = '<div class="item" data-gid="0"><span class="label">before</span></div>'
     harness.__todos_container = harness.root
 
     harness[getObserveMethodName(['todos', '*', 'label'], 'storeState')]('after', {
@@ -304,7 +306,11 @@ export default class TodoStore extends Store {
     assert.match(output, /\["todos"\]/, 'store getter should observe its actual state dependency')
     assert.doesNotMatch(output, /\["activeCount"\]/, 'should not observe getter name as path')
     assert.doesNotMatch(output, /\["completedCount"\]/, 'should not observe getter name as path')
-    assert.doesNotMatch(output, /__observe\([^,]+,\s*\[\]/, 'should not use root observer when getter deps are known')
+    assert.doesNotMatch(
+      output,
+      /\[GEA_OBSERVE\]\([^,]+,\s*\[\]/,
+      'should not use root observer when getter deps are known',
+    )
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -396,10 +402,10 @@ export default class TodoStore extends Store {
     const methodSlice = output.slice(methodStart, methodStart + 300)
     assert.match(
       methodSlice,
-      /this\._todoFilters\.__geaUpdateProps\(this\.__buildProps_todoFilters\(\)\)/,
-      'observer should call child prop update, not __geaRequestRender',
+      /this\._todoFilters\[GEA_UPDATE_PROPS\]\(this\.__buildProps_todoFilters\(\)\)/,
+      'observer should call child prop update, not [GEA_REQUEST_RENDER]',
     )
-    assert.doesNotMatch(methodSlice, /__geaRequestRender/, 'observer must not trigger a full re-render')
+    assert.doesNotMatch(methodSlice, /\[GEA_REQUEST_RENDER\]\(\)/, 'observer must not trigger a full re-render')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -427,7 +433,7 @@ test('component class getters that access stores create observers for underlying
 
   assert.match(
     output,
-    /this\.__observe\(routeStore/,
+    /this\[GEA_OBSERVE\]\(routeStore/,
     'compiler must observe routeStore when a component getter accesses it',
   )
   assert.match(output, /\["path"\]/, 'observer must be registered for the underlying store path the getter reads')
@@ -483,7 +489,7 @@ test('transitive getter-to-getter deps produce __via observers for underlying st
   assert.match(output, /Issue \$\{.*this\.issueId/, 'issueId must still participate in the truthy branch HTML')
   assert.doesNotMatch(
     output,
-    /__geaRequestRender/,
+    /\[GEA_REQUEST_RENDER\]\(\)/,
     'no fallback full re-render should be generated when all deps resolve to store observers',
   )
   assert.doesNotMatch(
@@ -513,7 +519,7 @@ test('component getter reading this.props registers deps for this.getter in temp
   assert.match(output, /key === "options"/, 'getter reads this.props.options — options must trigger prop patch')
 })
 
-test('observer calls __geaUpdateProps when guard-dependent props reference the store', () => {
+test('observer calls [GEA_UPDATE_PROPS] when guard-dependent props reference the store', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import projectStore from './project-store'
@@ -539,8 +545,8 @@ test('observer calls __geaUpdateProps when guard-dependent props reference the s
 
   assert.match(
     observerMatch![0],
-    /this\._icon\.__geaUpdateProps\(this\.__buildProps_icon\(\)\)/,
-    'observer must call this._icon.__geaUpdateProps to update the child when the guard dependency changes',
+    /this\._icon\[GEA_UPDATE_PROPS\]\(this\.__buildProps_icon\(\)\)/,
+    'observer must call this._icon.[GEA_UPDATE_PROPS] to update the child when the guard dependency changes',
   )
 })
 
@@ -562,19 +568,19 @@ test('store observer for top-level project guard must observe the guard path and
     new Set(['Board']),
   )
 
-  assert.match(output, /__observe\(projectStore,\s*\["project"\]/, 'must observe projectStore.project')
+  assert.match(output, /\[GEA_OBSERVE\]\(projectStore,\s*\["project"\]/, 'must observe projectStore.project')
   const projectObserver =
     output.match(/__observe_projectStore_project\([\s\S]*?\n {2}\}/)?.[0] ??
-    output.match(/__observe\(projectStore,\s*\["project"\],[\s\S]*?\)\s*\)/)?.[0] ??
+    output.match(/\[GEA_OBSERVE\]\(projectStore,\s*\["project"\],[\s\S]*?\)\s*\)/)?.[0] ??
     ''
   assert.ok(projectObserver, 'project guard path must produce an observer')
   assert.ok(
-    projectObserver.includes('__geaRequestRender') || projectObserver.includes('__geaPatchCond'),
+    projectObserver.includes('[GEA_REQUEST_RENDER]') || projectObserver.includes('[GEA_PATCH_COND]'),
     'project guard observer must handle loading transitions',
   )
 })
 
-test('store observer for nested project.users must NOT trigger __geaRequestRender on the parent component', () => {
+test('store observer for nested project.users must NOT trigger [GEA_REQUEST_RENDER] on the parent component', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -603,8 +609,8 @@ test('store observer for nested project.users must NOT trigger __geaRequestRende
   const projectObserver = output.match(/__observe_projectStore_project\b[^_]([\s\S]*?)\n {2}\}/)?.[0]
   assert.ok(projectObserver, 'must generate __observe_projectStore_project')
   assert.ok(
-    !projectObserver.includes('__geaRequestRender'),
-    '__observe_projectStore_project must NOT call __geaRequestRender (it should only refresh child props). Got: ' +
+    !projectObserver.includes('[GEA_REQUEST_RENDER]'),
+    '__observe_projectStore_project must NOT call [GEA_REQUEST_RENDER] (it should only refresh child props). Got: ' +
       projectObserver,
   )
 })
@@ -642,9 +648,9 @@ test('store-alias nested field must produce inline patch or rerender observer (s
   if (observerMatch) {
     assert.ok(
       observerMatch[0].includes('__patchNode') ||
-        observerMatch[0].includes('__geaRequestRender') ||
+        observerMatch[0].includes('[GEA_REQUEST_RENDER]') ||
         observerMatch[0].includes('textContent') ||
-        observerMatch[0].includes('__updateText'),
+        observerMatch[0].includes('[GEA_UPDATE_TEXT]'),
       'observer must contain patch logic or rerender. Got: ' + observerMatch[0],
     )
   }
@@ -686,8 +692,94 @@ export default class App extends Component {
     )
     assert.ok(output, 'should produce compiled output')
 
-    assert.match(output!, /observe\(.*"draft"/, 'should observe "draft" path')
-    assert.doesNotMatch(output!, /observe\(.*"draft".*"trim"/, 'should NOT observe "draft","trim" path')
+    assert.match(output!, /\[GEA_OBSERVE\]\(.*"draft"/, 'should observe "draft" path')
+    assert.doesNotMatch(output!, /\[GEA_OBSERVE\]\(.*"draft".*"trim"/, 'should NOT observe "draft","trim" path')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('guard-key observer with nested property accesses must guard against null value', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'gea-guard-null-'))
+  try {
+    const componentPath = join(dir, 'IssueDetails.jsx')
+    const storePath = join(dir, 'issue-store.ts')
+
+    await writeFile(
+      storePath,
+      `import { Store } from '@geajs/core'
+class IssueStore extends Store {
+  issue: any = null
+  isLoading = false
+  get timeRemaining(): number {
+    if (!this.issue) return 0
+    return Math.max(0, (this.issue.estimate || 0) - (this.issue.timeSpent || 0))
+  }
+}
+export default new IssueStore()`,
+    )
+
+    const output = await transformWithPlugin(
+      `
+        import { Component } from '@geajs/core'
+        import issueStore from './issue-store'
+        import StatusBadge from './StatusBadge'
+        import TimeTracker from './TimeTracker'
+
+        export default class IssueDetails extends Component {
+          template() {
+            const { isLoading, issue } = issueStore
+            if (isLoading || !issue) {
+              return <div class="loader">Loading...</div>
+            }
+            const timeSpent = issue.timeSpent || 0
+            const estimate = issue.estimate || 0
+            return (
+              <div class="issue-details">
+                <StatusBadge status={issue.status} />
+                <TimeTracker spent={timeSpent} remaining={issueStore.timeRemaining} />
+                <span class="estimate">{estimate}h estimated</span>
+              </div>
+            )
+          }
+        }
+      `,
+      componentPath,
+    )
+
+    assert.ok(output, 'should produce compiled output')
+
+    // Extract the __observe_issueStore_issue method body
+    const issueObserverIdx = output!.indexOf('__observe_issueStore_issue(')
+    assert.ok(issueObserverIdx !== -1, 'must generate __observe_issueStore_issue')
+
+    const braceStart = output!.indexOf('{', issueObserverIdx)
+    let depth = 0
+    let braceEnd = braceStart
+    for (let i = braceStart; i < output!.length; i++) {
+      if (output![i] === '{') depth++
+      if (output![i] === '}') depth--
+      if (depth === 0) { braceEnd = i + 1; break }
+    }
+    const observerBody = output!.slice(issueObserverIdx, braceEnd)
+
+    // The observer is a merged function that combines child prop updates
+    // (GEA_UPDATE_PROPS) and a truthiness guard. When issueStore.issue becomes
+    // null, the child prop update methods (__buildProps_*) read nested properties
+    // like issue.status and issue.timeSpent, which throws TypeError.
+    // The observer must guard against null BEFORE any GEA_UPDATE_PROPS calls.
+    const hasChildPropUpdate = observerBody.includes('GEA_UPDATE_PROPS')
+    const hasNullGuardBeforeProps =
+      /issueStore\.issue\s*==\s*null[\s\S]*GEA_UPDATE_PROPS/.test(observerBody)
+
+    if (hasChildPropUpdate) {
+      assert.ok(
+        hasNullGuardBeforeProps,
+        'observer calls GEA_UPDATE_PROPS (which reads nested properties on issue) ' +
+        'but has no null guard before it. When issueStore.issue becomes null, ' +
+        '__buildProps_* methods will throw TypeError. Got:\n' + observerBody,
+      )
+    }
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

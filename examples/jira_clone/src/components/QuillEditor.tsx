@@ -1,4 +1,4 @@
-import { Component } from '@geajs/core'
+import { Component, GEA_ON_PROP_CHANGE } from '@geajs/core'
 import Quill from 'quill'
 
 const TOOLBAR_OPTIONS = [
@@ -10,10 +10,10 @@ const TOOLBAR_OPTIONS = [
 ]
 
 export default class QuillEditor extends Component {
-  quill: Quill | null = null
-  _ignoreChange = false
+  quill: Quill | null = null;
+  _ignoreChange = false;
 
-  __onPropChange() {
+  [GEA_ON_PROP_CHANGE]() {
     // Quill manages its own DOM — never re-render.
   }
 

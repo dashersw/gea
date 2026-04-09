@@ -171,14 +171,14 @@ describe('examples/chat in JSDOM (ported from chat.spec)', { concurrency: false 
   it('send enables when draft non-empty', async () => {
     const send = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Send') as HTMLButtonElement
     assert.equal(send.disabled, true)
-    chatStore.setDraft({ target: { value: 'JSDOM hello' } })
+    chatStore.setDraft({ target: { value: 'JSDOM hello' } as any })
     await flushMicrotasks()
     assert.equal(send.disabled, false)
   })
 
   it('sendMessage updates store (nested messages + compiled shell)', async () => {
     const before = chatStore.activeMessages.length
-    chatStore.setDraft({ target: { value: 'JSDOM hello' } })
+    chatStore.setDraft({ target: { value: 'JSDOM hello' } as any })
     chatStore.sendMessage()
     assert.equal(chatStore.activeMessages.length, before + 1)
     assert.equal(chatStore.activeMessages[chatStore.activeMessages.length - 1]?.text, 'JSDOM hello')

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Store } from '../src/lib/store'
 import type { StoreChange } from '../src/lib/store'
+import { GEA_STORE_ROOT } from '../src/lib/symbols'
 
 async function flush() {
   await new Promise((r) => setTimeout(r, 0))
@@ -225,10 +226,10 @@ describe('Store – defineProperty trap', () => {
   })
 })
 
-describe('Store – __store on raw target (line 174)', () => {
-  it('__store returns self on the raw store object', () => {
+describe('Store – GEA_STORE_ROOT on raw target', () => {
+  it('GEA_STORE_ROOT returns self on the raw store object', () => {
     const store = new Store({ x: 1 })
-    assert.equal((store as any).__store, store)
+    assert.equal((store as any)[GEA_STORE_ROOT], store)
   })
 })
 

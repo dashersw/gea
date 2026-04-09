@@ -17,5 +17,5 @@ export type {
   StoreSnapshotEntry,
   NodeResponseWriter,
 } from './types'
-export { isRecord, isInternalProp, isComponentConstructor, isRouteGroup, flattenHeaders } from './types'
+export { isRecord, isComponentConstructor, isRouteGroup, flattenHeaders } from './types'
 export { escapeHtml } from './head'

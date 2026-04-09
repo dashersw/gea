@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
-import { Store } from '@geajs/core'
+import { GEA_PROXY_GET_RAW_TARGET, Store } from '@geajs/core'
 import { createSSRRootProxyHandler } from '../src/ssr-proxy-handler.ts'
 import { runInSSRContext } from '../src/ssr-context.ts'
 
 describe('Store SSR overlay – delete tombstone', () => {
   beforeEach(() => {
-    Store._rootProxyHandlerFactory = createSSRRootProxyHandler
+    Store.rootProxyHandlerFactory = createSSRRootProxyHandler
   })
 
   afterEach(() => {
-    Store._rootProxyHandlerFactory = null
+    Store.rootProxyHandlerFactory = null
   })
 
   it('deleting a property in SSR overlay returns undefined on read, not the underlying value', () => {
@@ -60,7 +60,7 @@ describe('Store SSR overlay – delete tombstone', () => {
 
   it('delete in SSR overlay does not affect the underlying store', () => {
     const store = new Store({ count: 99 })
-    const raw = (store as Record<string, unknown>).__getRawTarget as Record<string, unknown>
+    const raw = Reflect.get(store, GEA_PROXY_GET_RAW_TARGET) as Record<string, unknown>
     runInSSRContext([store], () => {
       delete (store as Record<string, unknown>).count
 

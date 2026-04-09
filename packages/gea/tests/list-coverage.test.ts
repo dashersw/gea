@@ -28,13 +28,13 @@ function installDom() {
 function createRow(text: string): HTMLElement {
   const el = document.createElement('div')
   el.textContent = text
-  el.setAttribute('data-gea-item-id', text)
+  el.setAttribute('data-gid', text)
   return el
 }
 
-function makeConfig(arrayPathParts: string[] = ['items']): ListConfig {
+function makeConfig(arpp: string[] = ['items']): ListConfig {
   return {
-    arrayPathParts,
+    arpp,
     create: (item: any) => createRow(String(item)),
   }
 }
@@ -68,7 +68,7 @@ describe('list.ts – add at index 0 edge cases (lines 197-204)', () => {
     restoreDom()
   })
 
-  it('rebuilds when add at 0 and first child has no data-gea-item-id, lengths differ', () => {
+  it('rebuilds when add at 0 and first child has no data-gid, lengths differ', () => {
     const container = document.createElement('div')
     const plain = document.createElement('div')
     plain.textContent = 'plain'
@@ -82,7 +82,7 @@ describe('list.ts – add at index 0 edge cases (lines 197-204)', () => {
     assert.deepEqual(getTexts(container), ['new', 'a'])
   })
 
-  it('returns early when add at 0, no data-gea-item-id, but lengths match', () => {
+  it('returns early when add at 0, no data-gid, but lengths match', () => {
     const container = document.createElement('div')
     const plain = document.createElement('div')
     plain.textContent = 'plain'
@@ -99,7 +99,7 @@ describe('list.ts – add at index 0 edge cases (lines 197-204)', () => {
     assert.equal(container.children.length, 2)
   })
 
-  it('inserts at index 0 when first child has data-gea-item-id', () => {
+  it('inserts at index 0 when first child has data-gid', () => {
     const container = document.createElement('div')
     container.appendChild(createRow('a'))
     container.appendChild(createRow('b'))
@@ -213,7 +213,7 @@ describe('list.ts – delete with non-matching pathParts falls through', () => {
     restoreDom()
   })
 
-  it('ignores delete with wrong arrayPathParts', () => {
+  it('ignores delete with wrong arpp', () => {
     const container = document.createElement('div')
     container.appendChild(createRow('a'))
     container.appendChild(createRow('b'))
@@ -240,7 +240,7 @@ describe('list.ts – append with non-matching pathParts falls through', () => {
     restoreDom()
   })
 
-  it('ignores append with wrong arrayPathParts', () => {
+  it('ignores append with wrong arpp', () => {
     const container = document.createElement('div')
     container.appendChild(createRow('a'))
 
@@ -269,7 +269,7 @@ describe('list.ts – prop patches with non-matching pathParts', () => {
     restoreDom()
   })
 
-  it('falls through to rebuild when prop patches have wrong arrayPathParts', () => {
+  it('falls through to rebuild when prop patches have wrong arpp', () => {
     const container = document.createElement('div')
     container.appendChild(createRow('old'))
 

@@ -17,8 +17,6 @@ export default defineConfig({
     minify: 'esbuild',
   },
   resolve: {
-    alias: {
-      gea: resolve(geaRoot, 'packages/gea/src'),
-    },
+    alias: [{ find: 'gea', replacement: resolve(geaRoot, 'packages/gea/src') }],
   },
 })

@@ -3,6 +3,7 @@
  * Verifies that DOM queries are memoized and correctly invalidated.
  */
 
+import { GEA_MAPS, GEA_SYNC_MAP, GEA_UPDATE_PROPS } from '@geajs/core'
 import { transformSync } from 'esbuild'
 import { JSDOM } from 'jsdom'
 import assert from 'node:assert/strict'
@@ -34,9 +35,11 @@ async function loadZagComponent() {
   const src = await readFile(resolve(__dirname, '../src/primitives/zag-component.ts'), 'utf-8')
   // Mock Component base class
   class MockComponent {
-    rendered_ = true
+    get rendered() {
+      return true
+    }
     _cacheArrayContainers() {}
-    __geaSyncMap() {}
+    [GEA_SYNC_MAP]() {}
     dispose() {}
   }
 
@@ -51,6 +54,9 @@ async function loadZagComponent() {
     'VanillaMachine',
     'normalizeProps',
     'spreadProps',
+    'GEA_MAPS',
+    'GEA_SYNC_MAP',
+    'GEA_UPDATE_PROPS',
     `${js}\nreturn ZagComponent;`,
   )
   return fn(
@@ -58,6 +64,9 @@ async function loadZagComponent() {
     {},
     () => ({}),
     () => () => ({}),
+    GEA_MAPS,
+    GEA_SYNC_MAP,
+    GEA_UPDATE_PROPS,
   )
 }
 
@@ -91,8 +100,8 @@ test('ZagComponent: should cache element queries and handle invalidation', async
   instance._applyAllSpreads()
   assert.strictEqual(queryCount, 1, 'Should NOT query DOM on second run (Cache HIT)')
 
-  // Run 3: Invalidation via __geaSyncMap
-  instance.__geaSyncMap(0)
+  // Run 3: Invalidation via [GEA_SYNC_MAP]
+  instance[GEA_SYNC_MAP](0)
   instance._applyAllSpreads()
   assert.strictEqual(queryCount, 2, 'Should re-query after __geaSyncMap clears cache')
 
@@ -113,11 +122,11 @@ test('ZagComponent: should cache element queries and handle invalidation', async
   const newThumb = document.createElement('span')
   newThumb.setAttribute('data-part', 'item')
   instance.el.appendChild(newThumb)
-  
+
   instance.onAfterRender()
   instance._applyAllSpreads()
   assert.strictEqual(queryCount, 4, 'Should re-query after onAfterRender clears cache')
-  
+
   const cachedElements = instance._elementCache.get('[data-part="item"]')
   assert.strictEqual(cachedElements.length, 2, 'Should find the newly added element after invalidation')
 

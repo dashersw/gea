@@ -1,6 +1,19 @@
-export { default as Component, __escapeHtml, __sanitizeAttr } from './lib/base/component'
+export {
+  default as Component,
+  __escapeHtml as geaEscapeHtml,
+  __sanitizeAttr as geaSanitizeAttr,
+  stashComponentForTransfer,
+} from './lib/base/component'
+export * from './lib/symbols'
 export { resetUidCounter, setUidProvider, clearUidProvider } from './lib/base/uid'
-export { Store, isInternalProp, rootGetValue, rootSetValue, rootDeleteProperty } from './lib/store'
+export {
+  Store,
+  findPropertyDescriptor,
+  rootGetValue,
+  rootSetValue,
+  rootDeleteProperty,
+  isClassConstructorValue,
+} from './lib/store'
 export { h } from './lib/h'
 export type { DOMEvent } from './lib/types'
 export { default as ComponentManager } from './lib/base/component-manager'

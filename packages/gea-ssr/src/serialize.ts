@@ -1,15 +1,14 @@
 import { uneval } from 'devalue'
 import type { GeaStore, StoreRegistry } from './types'
-import { isInternalProp } from './types'
+import { STORE_IMPL_OWN_KEYS } from './types'
 
 /**
- * Extract serializable data from a store, filtering internal props and functions.
+ * Extract serializable data from a store, filtering functions and Store implementation fields.
  */
 function extractStoreData(store: GeaStore): Record<string, unknown> {
   const data: Record<string, unknown> = {}
   for (const key of Object.keys(store)) {
-    if (isInternalProp(key)) continue
-    if (key === 'constructor' || key === '__proto__') continue
+    if (key === 'constructor' || key === '__proto__' || STORE_IMPL_OWN_KEYS.has(key)) continue
     const value: unknown = store[key]
     if (typeof value === 'function') continue
     data[key] = value
@@ -25,10 +24,7 @@ function extractStoreData(store: GeaStore): Record<string, unknown> {
  * - Handles circular/repeated references
  * - Escapes </script> for safe embedding in HTML
  */
-export function serializeStores(
-  stores: GeaStore[],
-  registry: StoreRegistry,
-): string {
+export function serializeStores(stores: GeaStore[], registry: StoreRegistry): string {
   const state: Record<string, Record<string, unknown>> = {}
   for (const [name, store] of Object.entries(registry)) {
     if (!stores.includes(store)) continue

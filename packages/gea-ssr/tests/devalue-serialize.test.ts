@@ -35,7 +35,7 @@ describe('devalue-based serialization', () => {
     assert.ok(!result.includes('</script>'), 'must escape closing script tags')
   })
 
-  it('still filters internal props and functions', () => {
+  it('serializes user underscore fields and skips functions', () => {
     const store: Record<string, unknown> = {
       _internal: 'hidden',
       visible: 'shown',
@@ -43,7 +43,7 @@ describe('devalue-based serialization', () => {
       constructor: Object,
     }
     const result = serializeStores([store], { myStore: store })
-    assert.ok(!result.includes('_internal'))
+    assert.ok(result.includes('hidden'))
     assert.ok(!result.includes('method'))
     assert.ok(result.includes('shown'))
   })

@@ -41,7 +41,7 @@ export default class Parent extends Component {
     }
     const transform = plugin.transform
     assert.ok(typeof transform === 'function')
-    const run = transform as (this: unknown, code: string, id: string) => ReturnType<NonNullable<typeof transform>>
+    const run = transform as (this: unknown, code: string, id: string) => any
 
     const childPath = join(dir, 'child.tsx')
     const parentPath = join(dir, 'parent.tsx')

@@ -14,7 +14,7 @@ The website playground at `website/playground/` ships two pre-built browser bund
 
 ## When to rebuild
 
-Rebuild **both** bundles whenever either package's source changes. The compiler generates code that calls runtime helpers from core (e.g. `__escapeHtml`, `__sanitizeAttr`), so they must stay in sync.
+Rebuild **both** bundles whenever either package's source changes. The compiler generates code that calls runtime helpers from core (e.g. `geaEscapeHtml`, `geaSanitizeAttr`), so they must stay in sync.
 
 ## Build order
 

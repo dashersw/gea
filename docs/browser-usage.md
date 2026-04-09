@@ -2,7 +2,7 @@
 
 Gea can be used directly in the browser without any build tools, bundlers, or package managers. Load the runtime from a CDN and start writing components in a plain `<script>` tag.
 
-The browser bundle is **13 KB gzipped** and includes everything: `Store`, `Component`, `Router`, event delegation, and list reconciliation.
+The browser bundle is **20 KB gzipped** and includes everything: `Store`, `Component`, `Router`, event delegation, and list reconciliation.
 
 ## Quick Start
 
@@ -16,7 +16,7 @@ The browser bundle is **13 KB gzipped** and includes everything: `Store`, `Compo
   <div id="app"></div>
 
   <script>
-    const { Store, Component } = gea
+    const { Store, Component, GEA_OBSERVER_REMOVERS } = gea
 
     class CounterStore extends Store {
       count = 0
@@ -38,7 +38,7 @@ The browser bundle is **13 KB gzipped** and includes everything: `Store`, `Compo
       }
 
       createdHooks() {
-        this.__observer_removers__.push(
+        this[GEA_OBSERVER_REMOVERS].push(
           store.observe('count', () => {
             this.$('h1').textContent = store.count
           })
@@ -126,7 +126,7 @@ In the compiled JSX path, the Vite plugin statically analyzes your templates and
 
 ```js
 createdHooks() {
-  this.__observer_removers__.push(
+  this[GEA_OBSERVER_REMOVERS].push(
     store.observe('todos', () => {
       this.$('.todo-list').innerHTML = this.renderItems()
       this.$('.count').textContent = store.activeTodos.length
@@ -138,7 +138,7 @@ createdHooks() {
 }
 ```
 
-Push the unsubscribe functions into `this.__observer_removers__` so they are automatically cleaned up when the component is disposed.
+Push the unsubscribe functions into `this[GEA_OBSERVER_REMOVERS]` so they are automatically cleaned up when the component is disposed.
 
 `this.$()` and `this.$$()` are built-in selectors that query within the component's root element — equivalent to `this.el.querySelector()` and `this.el.querySelectorAll()`.
 
@@ -181,7 +181,7 @@ You can use JSX in the browser by adding [Babel Standalone](https://babeljs.io/d
     /** @jsxRuntime classic */
     /** @jsx gea.h */
 
-    const { Store, Component } = gea
+    const { Store, Component, GEA_OBSERVER_REMOVERS } = gea
 
     class Counter extends Component {
       template() {
@@ -235,7 +235,7 @@ Babel Standalone adds **~200 KB gzipped** to the page. This is fine for prototyp
 
 | | Browser (no build) | Browser + Babel | Vite (compiled) |
 |---|---|---|---|
-| Bundle size | 13 KB | ~213 KB | 13 KB + your app |
+| Bundle size | 20 KB | ~220 KB | ~15 KB + your app |
 | JSX | No (template literals) | Yes | Yes |
 | Automatic reactivity | No (manual `observe()`) | No (manual `observe()`) | Yes (compiler-generated) |
 | Build step | None | None | Vite |

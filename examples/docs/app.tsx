@@ -62,7 +62,7 @@ export default class App extends Component {
       <div class="docs-layout">
         <nav class="docs-sidebar">
           <div class="docs-sidebar-logo">gea-ui</div>
-          <div class="docs-sidebar-version">v0.1.0</div>
+          <div class="docs-sidebar-version">v0.2.0</div>
 
           <h4>General</h4>
           <a href="#button">Button</a>
@@ -2076,7 +2076,7 @@ export default class App extends Component {
                 <Dialog title="Confirm Delete" description="This cannot be undone." triggerLabel="Open Dialog">
                   <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
                     <button
-                      class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 rounded-md px-3 text-xs"
+                      class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground h-8 rounded-md px-3 text-xs"
                       type="button"
                       data-part="close-trigger"
                       click={() => (this.dialogAction = 'Cancel clicked')}
@@ -2084,7 +2084,7 @@ export default class App extends Component {
                       Cancel
                     </button>
                     <button
-                      class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90 h-8 rounded-md px-3 text-xs"
+                      class="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 h-8 rounded-md px-3 text-xs"
                       type="button"
                       data-part="close-trigger"
                       click={() => (this.dialogAction = 'Delete clicked')}
@@ -2775,7 +2775,7 @@ ToastStore.loading({ title: 'Loading...', description: 'Wait.' })`}</div>
               padding: '2rem 0',
             }}
           >
-            gea-ui v0.1.0 — 35 components, fully accessible, keyboard navigable, and screen reader friendly.
+            gea-ui v0.2.0 — 35 components, fully accessible, keyboard navigable, and screen reader friendly.
           </p>
         </main>
         <Toaster />

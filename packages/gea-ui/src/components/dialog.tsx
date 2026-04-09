@@ -1,12 +1,12 @@
 import * as dialog from '@zag-js/dialog'
 import type { OpenChangeDetails } from '@zag-js/dialog'
 import { normalizeProps } from '@zag-js/vanilla'
-import type { ReactNode } from 'react'
+import type { JSXNode } from '../types'
 import ZagComponent from '../primitives/zag-component'
 
 export interface DialogProps {
   class?: string
-  children?: ReactNode
+  children?: JSXNode
   triggerLabel?: string
   title?: string
   description?: string
@@ -112,21 +112,21 @@ export default class Dialog extends ZagComponent<DialogProps> {
           class="dialog-positioner fixed inset-0 flex items-center justify-center z-50"
           hidden
         >
-          <div data-part="content" class="dialog-content bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+          <div data-part="content" class="dialog-content text-foreground rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
             {props.title && (
               <h2 data-part="title" class="dialog-title text-lg font-semibold mb-2">
                 {props.title}
               </h2>
             )}
             {props.description && (
-              <p data-part="description" class="dialog-description text-sm text-gray-500 mb-4">
+              <p data-part="description" class="dialog-description text-sm text-muted-foreground mb-4">
                 {props.description}
               </p>
             )}
             <div class="dialog-body">{props.children}</div>
             <button
               data-part="close-trigger"
-              class="dialog-close-trigger absolute top-3 right-3 text-gray-400 hover:text-gray-600"
+              class="dialog-close-trigger absolute top-3 right-3 text-muted-foreground hover:text-foreground"
             >
               &#x2715;
             </button>

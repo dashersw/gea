@@ -665,7 +665,7 @@ When items are primitives, use the item itself:
 ))}
 ```
 
-Callbacks inside `.map()` use event delegation — the framework resolves which array item was targeted via a `__geaKey` JS property on each row element (with `data-gea-item-id` attribute as fallback for initially rendered items). No synthetic DOM `id` attributes are generated on list items.
+Callbacks inside `.map()` use event delegation — the framework resolves which array item was targeted via a `__geaKey` JS property on each row element (with `data-gid` attribute as fallback for initially rendered items). No synthetic DOM `id` attributes are generated on list items.
 
 ---
 

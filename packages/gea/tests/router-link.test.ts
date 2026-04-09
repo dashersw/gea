@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
+import { GEA_ELEMENT, GEA_RENDERED } from '../src/lib/symbols'
 
 function installDom(url = 'http://localhost/') {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url })
@@ -125,8 +126,8 @@ describe('Link', () => {
     document.body.appendChild(container)
     container.insertAdjacentHTML('beforeend', String(link))
     const el = document.getElementById(link.id) as HTMLAnchorElement
-    link.element_ = el
-    link.rendered_ = true
+    link[GEA_ELEMENT] = el
+    link[GEA_RENDERED] = true
     link.onAfterRender()
 
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -155,8 +156,8 @@ describe('Link', () => {
     document.body.appendChild(container)
     container.insertAdjacentHTML('beforeend', String(link))
     const el = document.getElementById(link.id) as HTMLAnchorElement
-    link.element_ = el
-    link.rendered_ = true
+    link[GEA_ELEMENT] = el
+    link[GEA_RENDERED] = true
     link.onAfterRender()
 
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -179,8 +180,8 @@ describe('Link', () => {
     document.body.appendChild(container)
     container.insertAdjacentHTML('beforeend', String(link))
     const el = document.getElementById(link.id) as HTMLAnchorElement
-    link.element_ = el
-    link.rendered_ = true
+    link[GEA_ELEMENT] = el
+    link[GEA_RENDERED] = true
     link.onAfterRender()
 
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -203,8 +204,8 @@ describe('Link', () => {
     document.body.appendChild(container)
     container.insertAdjacentHTML('beforeend', String(link))
     const el = document.getElementById(link.id) as HTMLAnchorElement
-    link.element_ = el
-    link.rendered_ = true
+    link[GEA_ELEMENT] = el
+    link[GEA_RENDERED] = true
     link.onAfterRender()
 
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
@@ -227,8 +228,8 @@ describe('Link', () => {
     document.body.appendChild(container)
     container.insertAdjacentHTML('beforeend', String(link))
     const el = document.getElementById(link.id) as HTMLAnchorElement
-    link.element_ = el
-    link.rendered_ = true
+    link[GEA_ELEMENT] = el
+    link[GEA_RENDERED] = true
     link.onAfterRender()
 
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))

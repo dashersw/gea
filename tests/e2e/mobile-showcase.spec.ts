@@ -164,7 +164,7 @@ test.describe('mobile-showcase views and navigation', () => {
 
     const itemKeys = await log
       .locator('.gesture-log-entry')
-      .evaluateAll((els) => els.map((el: any) => el.__geaKey ?? el.getAttribute('data-gea-item-id') ?? el.id))
+      .evaluateAll((els) => els.map((el: any) => el[Symbol.for('gea.dom.key')] ?? el.getAttribute('data-gid') ?? el.id))
     const unique = new Set(itemKeys)
     expect(unique.size).toBe(itemKeys.length)
   })

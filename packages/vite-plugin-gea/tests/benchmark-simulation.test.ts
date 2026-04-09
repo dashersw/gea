@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { JSDOM } from 'jsdom'
 
 import { createBenchmarkHistoryEntry } from '../../../scripts/benchmark-history.mjs'
+import { GEA_PROXY_GET_TARGET } from '../../gea/src/lib/symbols'
 import { compileJsxComponent, loadRuntimeModules } from './helpers/compile'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -380,8 +381,8 @@ async function setupHelperDerivedFilterMapGea(
 // Measurement
 // ---------------------------------------------------------------------------
 
-const WARMUP = 3
-const RUNS = 7
+const WARMUP = 5
+const RUNS = 21
 
 function buildStringItems(count: number, startId = 1) {
   return Array.from({ length: count }, (_, i) => String(startId + i))
@@ -643,7 +644,8 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
     const restoreDom = installDom()
     try {
       const seed = `sim-callcount-all-${Date.now()}`
-      const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+      const [{ default: Component }, storeModule] = await loadRuntimeModules(seed)
+      const { Store, _getBrowserRootProxyHandler } = storeModule as any
       const store = new Store({ data: [] as Array<{ id: number; label: string }>, selected: 0 })
       const fixturePath = join(__dirname, 'fixtures/benchmark-select-row.jsx')
 
@@ -677,51 +679,9 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
       store.selected = 1
       await flush()
 
-      const rawStore = (store as any).__raw
-      const storeProto = Object.getPrototypeOf(rawStore)
-
-      const ALL_STORE_METHODS = [
-        '_flushChanges',
-        '_emitChanges',
-        '_queueChange',
-        '_scheduleFlush',
-        '_trackPendingChange',
-        '_deliverTopLevelBatch',
-        '_deliverKnownArrayItemPropBatch',
-        '_deliverArrayItemPropBatch',
-        '_normalizeBatch',
-        '_collectMatchingObserverNodes',
-        '_collectMatchingObserverNodesFromNode',
-        '_addDescendantsForObjectReplacement',
-        '_notifyHandlers',
-        '_notifyHandlersWithValue',
-        '_getDirectTopLevelObservedValue',
-        '_getTopLevelObservedValue',
-        '_getObserverNode',
-        '_collectDescendantObserverNodes',
-        '_clearArrayIndexCache',
-        '_createProxy',
-        '_queueDirectArrayItemPrimitiveChange',
-        '_interceptArrayMethod',
-      ]
-
-      const calls: Record<string, number> = {}
-      const originals: Record<string, Function> = {}
-
-      for (const name of ALL_STORE_METHODS) {
-        const orig = rawStore[name] ?? storeProto[name]
-        if (typeof orig === 'function') {
-          originals[name] = orig
-          rawStore[name] = function (this: any, ...args: any[]) {
-            calls[`store.${name}`] = (calls[`store.${name}`] || 0) + 1
-            return orig.apply(this, args)
-          }
-        }
-      }
-
       let proxyGetCalls = 0,
         proxySetCalls = 0
-      const handler = (Store as any)._browserRootProxyHandler
+      const handler = _getBrowserRootProxyHandler()
       const origHandlerGet = handler.get
       const origHandlerSet = handler.set
       handler.get = function (...args: any[]) {
@@ -867,8 +827,6 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
       interface ProfileResult {
         proxyGet: number
         proxySet: number
-        storeMethods: number
-        storeDetail: [string, number][]
         dom: number
         domDetail: Record<string, number>
         total: number
@@ -877,7 +835,6 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
       const results: Record<string, ProfileResult> = {}
 
       function reset() {
-        for (const k of Object.keys(calls)) delete calls[k]
         proxyGetCalls = proxySetCalls = 0
         getByIdCalls = cnGet = cnSet = tcSet = 0
         insertBeforeCalls = childrenGet = 0
@@ -886,10 +843,6 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
       }
 
       function capture(label: string): ProfileResult {
-        const storeDetail = Object.entries(calls)
-          .filter(([, v]) => v > 0)
-          .sort((a, b) => b[1] - a[1])
-        const storeTotal = storeDetail.reduce((s, [, v]) => s + v, 0)
         const domDetail: Record<string, number> = {}
         if (getByIdCalls) domDetail.getElementById = getByIdCalls
         if (cnGet) domDetail['className.get'] = cnGet
@@ -904,12 +857,10 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
         if (idSet) domDetail['id.set'] = idSet
         if (innerHTMLSet) domDetail['innerHTML.set'] = innerHTMLSet
         const domTotal = Object.values(domDetail).reduce((s, v) => s + v, 0)
-        const total = proxyGetCalls + proxySetCalls + storeTotal + domTotal
+        const total = proxyGetCalls + proxySetCalls + domTotal
         const r: ProfileResult = {
           proxyGet: proxyGetCalls,
           proxySet: proxySetCalls,
-          storeMethods: storeTotal,
-          storeDetail,
           dom: domTotal,
           domDetail,
           total,
@@ -919,29 +870,25 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
       }
 
       function reportAll() {
-        console.log('\n╔═══════════════════════╤════════╤════════╤═════════╤════════╤════════╗')
-        console.log('║ Operation             │ proxy  │ proxy  │ store   │  DOM   │ TOTAL  ║')
-        console.log('║                       │  .get  │  .set  │ methods │        │        ║')
-        console.log('╠═══════════════════════╪════════╪════════╪═════════╪════════╪════════╣')
+        console.log('\n╔═══════════════════════╤════════╤════════╤════════╤════════╗')
+        console.log('║ Operation             │ proxy  │ proxy  │  DOM   │ TOTAL  ║')
+        console.log('║                       │  .get  │  .set  │        │        ║')
+        console.log('╠═══════════════════════╪════════╪════════╪════════╪════════╣')
         for (const [label, r] of Object.entries(results)) {
           console.log(
-            `║ ${label.padEnd(21)} │ ${String(r.proxyGet).padStart(6)} │ ${String(r.proxySet).padStart(6)} │ ${String(r.storeMethods).padStart(7)} │ ${String(r.dom).padStart(6)} │ ${String(r.total).padStart(6)} ║`,
+            `║ ${label.padEnd(21)} │ ${String(r.proxyGet).padStart(6)} │ ${String(r.proxySet).padStart(6)} │ ${String(r.dom).padStart(6)} │ ${String(r.total).padStart(6)} ║`,
           )
         }
-        console.log('╚═══════════════════════╧════════╧════════╧═════════╧════════╧════════╝')
+        console.log('╚═══════════════════════╧════════╧════════╧════════╧════════╝')
         for (const [label, r] of Object.entries(results)) {
+          if (!Object.keys(r.domDetail).length) continue
           console.log(`\n--- ${label} ---`)
-          if (r.storeDetail.length) {
-            console.log('  Store:', r.storeDetail.map(([n, c]) => `${n.replace('store.', '')}:${c}`).join(', '))
-          }
-          if (Object.keys(r.domDetail).length) {
-            console.log(
-              '  DOM:',
-              Object.entries(r.domDetail)
-                .map(([n, c]) => `${n}:${c}`)
-                .join(', '),
-            )
-          }
+          console.log(
+            '  DOM:',
+            Object.entries(r.domDetail)
+              .map(([n, c]) => `${n}:${c}`)
+              .join(', '),
+          )
         }
       }
 
@@ -1007,7 +954,6 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
       reportAll()
 
       // Restore all interceptors
-      for (const [name, orig] of Object.entries(originals)) rawStore[name] = orig
       handler.get = origHandlerGet
       handler.set = origHandlerSet
       document.getElementById = origGetById
@@ -1130,7 +1076,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
         const v1 = performance.now()
 
         const e0 = performance.now()
-        const rawOld = store.data.__getTarget || store.data
+        const rawOld = store.data[GEA_PROXY_GET_TARGET] || store.data
         store.data = rawOld.concat(buildRows(1000, startId + 1000))
         await flush()
         const e1 = performance.now()

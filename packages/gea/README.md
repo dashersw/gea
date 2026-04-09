@@ -5,7 +5,7 @@
 
 # Gea
 
-A batteries-included, reactive JavaScript UI framework with compile-time JSX and proxy-based stores. No virtual DOM — the Vite plugin analyzes your JSX at build time and generates surgical DOM patches that update only what changed. ~13 kb gzipped with the built-in router, ~10 kb without. Zero runtime dependencies.
+A batteries-included, reactive JavaScript UI framework with compile-time JSX and proxy-based stores. No virtual DOM — the Vite plugin analyzes your JSX at build time and generates surgical DOM patches that update only what changed. ~19 kb gzipped with the built-in router, ~15 kb without. Zero runtime dependencies.
 
 ## Philosophy
 
@@ -202,6 +202,45 @@ In this setup:
 This is exactly how JavaScript works. There is no `emit`, no `defineModel`, no callback wiring for object/array mutations. The framework doesn't add a layer of indirection — it respects the language's native pass-by-value and pass-by-reference semantics.
 
 For deep nesting (grandchild, great-grandchild, etc.), the same rules apply. As long as the same object reference is passed down, any descendant can mutate it and the change propagates up to every ancestor that observes it — because they all share the same proxy.
+
+### Passing components as props
+
+Pass components as props to build layouts with multiple named regions — the same idea other frameworks call "named slots," without a separate API.
+
+```jsx
+// Parent passes components as named props
+<Layout header={<Title />} sidebar={<Nav />} main={<Content />} />
+
+// Layout renders each region wherever it wants
+export default class Layout extends Component {
+  template({ header, sidebar, main }) {
+    return (
+      <div class="layout">
+        <aside>{sidebar}</aside>
+        <main>{main}</main>
+        <header>{header}</header>
+      </div>
+    )
+  }
+}
+```
+
+For a **single** default region, nest content inside the component tags and read `children` in the child:
+
+```jsx
+// Parent nests content between opening and closing tags
+<Card>
+  <h2>Title</h2>
+  <p>Body text goes here.</p>
+</Card>
+
+// Card renders whatever was nested inside it
+export default class Card extends Component {
+  template({ children }) {
+    return <div class="card">{children}</div>
+  }
+}
+```
 
 ### Computed Values
 

@@ -47,18 +47,19 @@ describe('restoreStoreState key sanitization', () => {
     assert.equal(store.name, 'Alice', 'name must be restored')
   })
 
-  it('skips internal props ending with underscore', () => {
+  it('skips Store implementation keys (trailing underscore is still user data)', () => {
     window.__GEA_STATE__ = {
       MyStore: {
-        _selfProxy_: 'injected',
+        _pendingChanges: 'injected',
         count: 7,
       },
     }
 
-    const store: Record<string, unknown> = { _selfProxy_: 'original', count: 0 }
+    const pending: unknown[] = []
+    const store: Record<string, unknown> = { _pendingChanges: pending, count: 0 }
     restoreStoreState({ MyStore: store })
 
-    assert.equal(store._selfProxy_, 'original', '_selfProxy_ must not be overwritten')
+    assert.equal(store._pendingChanges, pending, '_pendingChanges must not be overwritten from serialized state')
     assert.equal(store.count, 7, 'count must be restored')
   })
 
@@ -112,19 +113,21 @@ describe('restoreStoreState key sanitization', () => {
 
   it('skips multiple internal keys in a single serialized store', () => {
     window.__GEA_STATE__ = {
-      BigStore: JSON.parse('{"_observerRoot":"bad1","_selfProxy_":"bad2","constructor":"bad3","__proto__":{"polluted":true},"title":"safe","value":99}'),
+      BigStore: JSON.parse(
+        '{"_observerRoot":"bad1","_pathPartsCache":"bad2","constructor":"bad3","__proto__":{"polluted":true},"title":"safe","value":99}',
+      ),
     }
 
     const store: Record<string, unknown> = {
       _observerRoot: 'orig1',
-      _selfProxy_: 'orig2',
+      _pathPartsCache: 'orig2',
       title: '',
       value: 0,
     }
     restoreStoreState({ BigStore: store })
 
     assert.equal(store._observerRoot, 'orig1', '_observerRoot must not be overwritten')
-    assert.equal(store._selfProxy_, 'orig2', '_selfProxy_ must not be overwritten')
+    assert.equal(store._pathPartsCache, 'orig2', '_pathPartsCache must not be overwritten')
     assert.notEqual(store.constructor, 'bad3', 'constructor must not be overwritten')
     assert.equal(store.polluted, undefined, 'prototype must not be polluted')
     assert.equal(store.title, 'safe', 'title must be restored')

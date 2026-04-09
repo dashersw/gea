@@ -30,7 +30,7 @@ describe('user-provided id attributes', () => {
       comp.render(root)
 
       assert.equal(comp.el.id, 'my-app')
-      assert.equal(comp.el.getAttribute('data-gea-cid'), comp.id)
+      assert.equal(comp.el.getAttribute('data-gcc'), comp.id)
       assert.equal(comp.el.textContent?.trim(), 'Hello')
 
       comp.dispose()
@@ -111,7 +111,7 @@ describe('user-provided id attributes', () => {
       comp.render(root)
 
       assert.equal(comp.el.id, 'custom-123')
-      assert.equal(comp.el.getAttribute('data-gea-cid'), comp.id)
+      assert.equal(comp.el.getAttribute('data-gcc'), comp.id)
 
       comp.dispose()
       await flushMicrotasks()
@@ -146,7 +146,7 @@ describe('user-provided id attributes', () => {
       comp.render(root)
 
       assert.equal(comp.el.id, comp.id)
-      assert.equal(comp.el.getAttribute('data-gea-cid'), null)
+      assert.equal(comp.el.getAttribute('data-gcc'), null)
 
       comp.dispose()
       await flushMicrotasks()

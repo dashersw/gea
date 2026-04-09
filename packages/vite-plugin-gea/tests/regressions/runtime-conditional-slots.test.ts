@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
+import { GEA_REQUEST_RENDER, GEA_UPDATE_PROPS } from '@geajs/core'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import {
+  compileJsxComponent,
+  loadRuntimeModules,
+  transformGeaSourceToEvalBody,
+  buildEvalPrelude,
+  mergeEvalBindings,
+} from '../helpers/compile'
 
 test('conditional branches swap rendered elements when state flips', async () => {
   const restoreDom = installDom()
@@ -374,8 +381,8 @@ test('store-controlled conditional slot patches without full rerender; branch-on
     assert.ok(!view.el.querySelector('.add-form'), 'initially no add form')
 
     let rerenderCount = 0
-    const origRender = view.__geaRequestRender.bind(view)
-    view.__geaRequestRender = () => {
+    const origRender = view[GEA_REQUEST_RENDER].bind(view)
+    view[GEA_REQUEST_RENDER] = () => {
       rerenderCount++
       return origRender()
     }
@@ -464,8 +471,8 @@ test('local state attribute bindings and conditional slot patch without full rer
     await flushMicrotasks()
 
     let rerenders = 0
-    const origRender = view.__geaRequestRender.bind(view)
-    view.__geaRequestRender = () => {
+    const origRender = view[GEA_REQUEST_RENDER].bind(view)
+    view[GEA_REQUEST_RENDER] = () => {
       rerenders++
       return origRender()
     }
@@ -710,7 +717,7 @@ test('conditional slot updates attributes from non-condition props (alt attribut
     assert.equal(imgBefore.getAttribute('src'), 'baby-yoda.jpg')
     assert.equal(imgBefore.getAttribute('alt'), 'Baby Yoda')
 
-    card.__geaUpdateProps({ src: 'gaben.jpg', name: 'Lord Gaben', title: 'Character' })
+    card[GEA_UPDATE_PROPS]({ src: 'gaben.jpg', name: 'Lord Gaben', title: 'Character' })
     await flushMicrotasks()
 
     const imgAfter = card.el.querySelector('img')
@@ -817,6 +824,309 @@ test('ecommerce sibling pattern: single action flips cart drawer off and checkou
     assert.ok(root.querySelector('.modal-box'), 'checkout dialog should mount after openCheckout')
 
     app.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('conditional slot with compiled child: changing local state inside slot must not rerender dialog body (MutationObserver)', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-cond-compiled-child-norerender`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const ModalChild = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class ModalChild extends Component {
+          template({ children }) {
+            return (
+              <div class="modal-root">
+                <div class="modal-body">{children}</div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/ModalChild.jsx',
+      'ModalChild',
+      { Component },
+    )
+
+    const parentSource = `
+      import { Component } from '@geajs/core'
+      import ModalChild from './ModalChild.jsx'
+
+      export default class ParentView extends Component {
+        isOpen = false
+        editHours = 0
+
+        open() {
+          this.editHours = 4
+          this.isOpen = true
+        }
+
+        template() {
+          return (
+            <div class="parent-wrap">
+              <button class="open-btn" click={() => this.open()}>Open</button>
+              {this.isOpen && (
+                <ModalChild>
+                  <div class="dialog-content">
+                    <div class="bar" style={{ width: this.editHours * 10 + '%' }}></div>
+                    <span class="hours-label">{this.editHours}h logged</span>
+                    <input
+                      class="hours-input"
+                      type="number"
+                      value={this.editHours}
+                      input={(e) => { this.editHours = Number(e.target.value) || 0 }}
+                    />
+                  </div>
+                </ModalChild>
+              )}
+            </div>
+          )
+        }
+      }
+    `
+
+    const compiled = await transformGeaSourceToEvalBody(parentSource, '/virtual/ParentView.jsx')
+    const allBindings = mergeEvalBindings({ Component, ModalChild })
+    const evalBody = buildEvalPrelude() + compiled + '\nreturn ParentView;'
+    const ParentView = new Function(...Object.keys(allBindings), evalBody)(...Object.values(allBindings))
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new ParentView()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.equal(root.querySelector('.modal-root'), null, 'modal not visible initially')
+
+    view.open()
+    await flushMicrotasks()
+
+    const modalBody = root.querySelector('.modal-body') as HTMLElement
+    assert.ok(modalBody, 'modal body mounted after open()')
+    const barEl = root.querySelector('.bar') as HTMLElement
+    assert.ok(barEl, 'bar element exists')
+
+    modalBody.setAttribute('data-state', 'open')
+    barEl.setAttribute('data-zag', 'test')
+
+    const mutations: MutationRecord[] = []
+    const observer = new MutationObserver((list) => mutations.push(...list))
+    observer.observe(root.querySelector('.parent-wrap')!, { childList: true, subtree: true, attributes: true })
+
+    view.editHours = 8
+    await flushMicrotasks()
+    await new Promise((r) => setTimeout(r, 50))
+    observer.disconnect()
+
+    const attrMutations = mutations.filter((m) => m.type === 'attributes')
+    const childListMutations = mutations.filter((m) => m.type === 'childList')
+
+    const strippedAttrs = attrMutations.filter(
+      (m) => m.attributeName === 'data-state' || m.attributeName === 'data-zag',
+    )
+    assert.equal(
+      strippedAttrs.length,
+      0,
+      `runtime attrs must not be stripped; got ${strippedAttrs.length} attr mutations on ${strippedAttrs.map((m) => `${(m.target as Element).className}.${m.attributeName}`).join(', ')}`,
+    )
+    assert.equal(
+      childListMutations.length,
+      0,
+      `no childList mutations expected; got ${childListMutations.length}: ${childListMutations.map((m) => `target=${(m.target as Element).className || (m.target as Element).id}, added=${m.addedNodes.length}, removed=${m.removedNodes.length}`).join('; ')}`,
+    )
+
+    assert.equal(
+      root.querySelector('.hours-label')?.textContent,
+      '8h logged',
+      'hours label must reflect the updated value',
+    )
+    assert.equal(
+      (root.querySelector('.bar') as HTMLElement)?.style.width,
+      '80%',
+      'bar width must reflect the updated value',
+    )
+    assert.equal(modalBody.getAttribute('data-state'), 'open', 'data-state on modal-body must survive the patch')
+    assert.equal(barEl.getAttribute('data-zag'), 'test', 'data-zag on bar must survive the patch')
+
+    view.dispose()
+    await flushMicrotasks()
+  } finally {
+    restoreDom()
+  }
+})
+
+test('Jira-like time tracking: bar, labels, and inputs update in real-time via children diff-patch', async () => {
+  const restoreDom = installDom()
+
+  try {
+    const seed = `runtime-${Date.now()}-jira-tracking`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const DialogShell = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+
+        export default class DialogShell extends Component {
+          template({ children }) {
+            return (
+              <div class="dialog-root">
+                <div class="dialog-body">{children}</div>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/DialogShell.jsx',
+      'DialogShell',
+      { Component },
+    )
+
+    const parentSource = `
+      import { Component } from '@geajs/core'
+      import DialogShell from './DialogShell.jsx'
+
+      function getTrackingPercent(spent, remaining) {
+        const total = spent + remaining
+        return total > 0 ? Math.min(100, Math.round((spent / total) * 100)) : 0
+      }
+
+      export default class TrackingView extends Component {
+        isEditing = false
+        editTimeSpent = 0
+        editTimeRemaining = 0
+
+        startEdit() {
+          this.editTimeSpent = 4
+          this.editTimeRemaining = 12
+          this.isEditing = true
+        }
+
+        template() {
+          return (
+            <div class="tracking-view">
+              <button class="edit-btn" click={() => this.startEdit()}>Edit</button>
+              {this.isEditing && (
+                <DialogShell>
+                  <div class="tracking-dialog">
+                    <div class="tracking-bar">
+                      <div
+                        class="tracking-bar-fill"
+                        style={{ width: getTrackingPercent(this.editTimeSpent, this.editTimeRemaining) + '%' }}
+                      ></div>
+                    </div>
+                    <div class="tracking-values">
+                      <span class="logged-label">
+                        {this.editTimeSpent ? this.editTimeSpent + 'h logged' : 'No time logged'}
+                      </span>
+                      <span class="remaining-label">{this.editTimeRemaining}h remaining</span>
+                    </div>
+                    <input
+                      class="input-spent"
+                      type="number"
+                      value={this.editTimeSpent}
+                      input={(e) => { this.editTimeSpent = Number(e.target.value) || 0 }}
+                    />
+                    <input
+                      class="input-remaining"
+                      type="number"
+                      value={this.editTimeRemaining}
+                      input={(e) => { this.editTimeRemaining = Number(e.target.value) || 0 }}
+                    />
+                  </div>
+                </DialogShell>
+              )}
+            </div>
+          )
+        }
+      }
+    `
+
+    const compiled = await transformGeaSourceToEvalBody(parentSource, '/virtual/TrackingView.jsx')
+    const allBindings = mergeEvalBindings({ Component, DialogShell })
+    const evalBody = buildEvalPrelude() + compiled + '\nreturn TrackingView;'
+    const TrackingView = new Function(...Object.keys(allBindings), evalBody)(...Object.values(allBindings))
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+
+    const view = new TrackingView()
+    view.render(root)
+    await flushMicrotasks()
+
+    assert.equal(root.querySelector('.dialog-root'), null, 'dialog not visible initially')
+
+    // Open the dialog
+    view.startEdit()
+    await flushMicrotasks()
+
+    const dialogBody = root.querySelector('.dialog-body') as HTMLElement
+    assert.ok(dialogBody, 'dialog body mounted')
+
+    // Initial state: 4h spent, 12h remaining -> 25%
+    assert.equal(root.querySelector('.logged-label')?.textContent?.trim(), '4h logged', 'initial: 4h logged')
+    assert.equal(root.querySelector('.remaining-label')?.textContent?.trim(), '12h remaining', 'initial: 12h remaining')
+    const barFill = root.querySelector('.tracking-bar-fill') as HTMLElement
+    assert.equal(barFill?.style.width, '25%', 'initial bar: 25%')
+
+    // Simulate adding runtime attrs (Zag.js)
+    dialogBody.setAttribute('data-state', 'open')
+    barFill.setAttribute('data-zag-bar', 'active')
+
+    // --- Change editTimeSpent to 8 (8/20 = 40%) ---
+    view.editTimeSpent = 8
+    await flushMicrotasks()
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(
+      root.querySelector('.logged-label')?.textContent?.trim(),
+      '8h logged',
+      'after spent=8: text must update to 8h logged',
+    )
+    assert.equal(barFill?.style.width, '40%', 'after spent=8: bar must update to 40%')
+    assert.equal(
+      root.querySelector('.remaining-label')?.textContent?.trim(),
+      '12h remaining',
+      'remaining unchanged at 12h',
+    )
+
+    // --- Change editTimeRemaining to 2 (8/10 = 80%) ---
+    view.editTimeRemaining = 2
+    await flushMicrotasks()
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(barFill?.style.width, '80%', 'after remaining=2: bar must update to 80%')
+    assert.equal(
+      root.querySelector('.remaining-label')?.textContent?.trim(),
+      '2h remaining',
+      'remaining must update to 2h',
+    )
+
+    // --- Set spent to 0 -> "No time logged" ---
+    view.editTimeSpent = 0
+    await flushMicrotasks()
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(
+      root.querySelector('.logged-label')?.textContent?.trim(),
+      'No time logged',
+      'after spent=0: text must say No time logged',
+    )
+    assert.equal(barFill?.style.width, '0%', 'after spent=0: bar must be 0%')
+
+    // Runtime attrs must survive all patches
+    assert.equal(dialogBody.getAttribute('data-state'), 'open', 'data-state preserved through all updates')
+    assert.equal(barFill.getAttribute('data-zag-bar'), 'active', 'data-zag-bar preserved through all updates')
+
+    view.dispose()
     await flushMicrotasks()
   } finally {
     restoreDom()

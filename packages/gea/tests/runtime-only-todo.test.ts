@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../tests/helpers/jsdom-setup'
+import { GEA_OBSERVER_REMOVERS } from '../src/lib/symbols'
 
 async function loadModules() {
   const seed = `runtime-only-${Date.now()}-${Math.random()}`
@@ -111,7 +112,7 @@ describe('runtime-only todo app (string templates)', { concurrency: false }, () 
       }
 
       createdHooks() {
-        this.__observer_removers__.push(
+        this[GEA_OBSERVER_REMOVERS].push(
           store.observe('todos', () => {
             this.$('.todo-list').innerHTML = renderItems()
             this.$('.active-count').textContent = `${store.activeCount} items left`

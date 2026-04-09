@@ -55,10 +55,10 @@ test('Dynamic tabs: initial render — 4 tab titles, first active, template lite
     assert.equal(wrappers().length, 4)
     assert.ok(wrappers()[0]?.className.includes('active'), 'first content panel should be active')
 
-    const itemIds = buttons().map((b) => b.getAttribute('data-gea-item-id'))
+    const itemIds = buttons().map((b) => b.getAttribute('data-gid'))
     assert.ok(
       !itemIds.some((id) => id === '[object Object]' || id === '[Object object]'),
-      `data-gea-item-id must not be [object Object], got: ${itemIds.join(', ')}`,
+      `data-gid must not be [object Object], got: ${itemIds.join(', ')}`,
     )
 
     const firstHtml = wrappers()[0]?.innerHTML ?? ''

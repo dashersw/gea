@@ -21,8 +21,8 @@ features:
     details: No signals, hooks, dependency arrays, or compiler directives. Stores are classes. Components are classes or functions. Computed values are getters.
   - title: Compile-Time Reactivity
     details: The Vite plugin analyzes JSX at build time and generates surgical DOM patches — no virtual DOM, no diffing, no runtime overhead.
-  - title: "~13 kb Batteries Included"
-    details: State management and routing are built in — ~13 kb gzipped with the router, ~10 kb without. Zero runtime dependencies, zero decision fatigue.
+  - title: "~19 kb Batteries Included"
+    details: State management and routing are built in — ~19 kb gzipped with the router, ~15 kb without. Zero runtime dependencies, zero decision fatigue.
   - title: Proxy-Based Stores
     details: State lives in ordinary classes wrapped by a deep Proxy. Mutate properties directly — array methods, nested objects, everything just works.
   - title: JS-Native Props

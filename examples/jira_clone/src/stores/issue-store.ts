@@ -6,6 +6,11 @@ class IssueStore extends Store {
   issue: any = null
   isLoading = false
 
+  get timeRemaining(): number {
+    if (!this.issue) return 0
+    return Math.max(0, (this.issue.estimate || 0) - (this.issue.timeSpent || 0))
+  }
+
   async fetchIssue(issueId: string): Promise<void> {
     this.isLoading = true
     try {

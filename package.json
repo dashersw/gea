@@ -44,7 +44,7 @@
     "example:sheet-editor": "vite dev examples/sheet-editor",
     "example:website": "npm run dev -w gea-website",
     "vendor:e2e-babel": "node scripts/fetch-e2e-babel-vendor.mjs",
-    "test:e2e": "npx playwright test --config=tests/e2e/playwright.config.ts"
+    "test:e2e": "node tests/e2e/clear-stale-e2e-artifacts.mjs && npx playwright test --config=tests/e2e/playwright.config.ts"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.6.0",

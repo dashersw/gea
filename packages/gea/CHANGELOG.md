@@ -1,5 +1,105 @@
 # @geajs/core
 
+## 1.2.3
+
+### Patch Changes
+
+- [`9ff1122`](https://github.com/dashersw/gea/commit/9ff112258dd81f8eba93569b85f4a6f47c7da995) Thanks [@dashersw](https://github.com/dashersw)! - Fix stable handler references and compiled component lifecycle injection
+  - Store proxy now only binds prototype methods, preserving identity for instance field functions (fixes `removeEventListener` with handler references stored in `created()`)
+  - Compiler injects `created()`/`createdHooks()`/`setupLocalStateObservers()` into compiled component constructors after `super()`, so they run after class field initializers; non-compiled components retain lifecycle calls from the base constructor via `GEA_COMPILED` symbol guard
+  - `GEA_LIFECYCLE_CALLED` symbol prevents double lifecycle execution in compiled class hierarchies (e.g. `GestureView extends View extends Component`)
+  - Internal `__evts` property replaced with `GEA_EVENTS_CACHE` symbol
+
+## 1.2.1
+
+### Patch Changes
+
+- [`8935a33`](https://github.com/dashersw/gea/commit/8935a33ad8ace7527e39d19e80bfaed9ace0aae5) Thanks [@dashersw](https://github.com/dashersw)! - Support passing components as named props (e.g. `<Layout header={<Title />} />`)
+
+  Components passed as JSX prop values are now properly rendered and mounted in the child's template. Previously, they were stringified and HTML-escaped, producing escaped markup instead of live components.
+
+  Three changes make this work:
+  - **Compiler**: `collectComponentTags` now walks JSX attribute values, so component tags in props are registered as tracked child instances with proper lifecycle and event delegation.
+  - **Compiler**: Single-expression template literals in prop values and arrow function bodies are unwrapped, passing component instances directly instead of stringifying them.
+  - **Runtime**: `__escapeHtml` detects component instances (objects with a `template` method) and returns their HTML unescaped, while still escaping regular strings for XSS safety.
+
+  This also enables the render-prop pattern: `renderHeader={() => <Header />}` with `{props.renderHeader()}` in the child template.
+
+## 1.2.0
+
+### Minor Changes
+
+- [`0de2a3c`](https://github.com/dashersw/gea/commit/0de2a3ce5314d2480ed475a202e1089b09c49f8f) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/core (minor)
+
+  **Convert runtime internals to module-level functions with tree-shaking and performance optimizations.**
+
+  #### Architecture
+  - Replace ~25 symbol-keyed store instance methods with plain module-level functions, eliminating symbol dispatch overhead
+  - Convert component, router, and list subsystem methods to symbol-keyed functions with `/*#__PURE__*/` annotations for tree-shaking
+  - Thread `StoreInstancePrivate` through the entire reactivity pipeline to eliminate redundant `WeakMap.get()` lookups
+
+  #### Store performance optimizations
+  - **Targeted array index cache invalidation**: Per-index `arrayIndexProxyCache` eviction instead of full-array clear on single-element set/delete
+  - **Pipeline threading**: Pass private state (`p`) through `_deliverArrayBatch`, `_getObserverNode`, `_collectMatchingNodes`, `_notify`, `_normalizeBatch`, `_commitObjSet`, `_createProxy`, and `_rootPathPartsCache`
+  - **Pre-computed `shouldSkipReactiveWrapForPath`**: Evaluate once per proxy creation instead of on every get-trap invocation
+  - **Single global microtask scheduler**: Replace per-store `queueMicrotask` calls with a shared `_flushAllPending` function
+  - **Fast-path single-change batches**: Skip `Map` allocation in `_deliverTopLevelBatch` for the common single-property-update case
+
+  ### @geajs/vite-plugin (minor)
+
+  Update compiler codegen to emit the new module-level function calls and symbol-keyed method references from the core refactor.
+
+### Patch Changes
+
+- [`4fed17a`](https://github.com/dashersw/gea/commit/4fed17a2469b887261b8266b4aeb07b26e8ba81b) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **EVENT_NAMES**: Added missing `'drag'` event to the `EVENT_NAMES` Set in `event-helpers.ts`
+  - **getElementById in GEA_ON_PROP_CHANGE**: Extended `isCompilerGenerated` check to include computed `GEA_ON_PROP_CHANGE` methods so that `this.id` is cached as `const __id = this.id` before `getElementById` calls
+  - **Style map sentinel uses double quotes**: Replaced `jsExpr` template (which preserves single-quote style) with `t.binaryExpression` + `t.stringLiteral` for the `<!---->` sentinel appended to unresolved map `.join()` calls
+  - **Null guard for single-part observer keys**: When an observer key is a guard key and the method body contains `GEA_UPDATE_PROPS` calls, inject a null guard `if (store.prop == null) return` before those calls
+  - **Early-return guard observer**: Replaced hand-rolled rerender observer (missing `prev !== undefined` and `GEA_RENDERED` guard) with `generateRerenderObserver` for correct deduplication
+  - **Nested ternary conditional slot**: Fixed `extractHtmlTemplatesFromConditional` to preserve the full `C ? D : E` expression as the falsy branch when the alternate is itself a conditional
+  - **Children diff-patch**: Changed `emitInnerHTML` to use `Component[GEA_PATCH_NODE]` for in-place DOM diff-patching when the children prop updates, preserving existing DOM node references and runtime-added attributes instead of replacing via `innerHTML`
+
+  ### @geajs/core (patch)
+  - **dnd-manager symbol APIs**: Updated `DndManager._getComponentFromElement`, `_findCompiledArray`, and `_performTransfer` in `gea-ui` to use the correct GEA symbol APIs (`GEA_DOM_COMPONENT`, `geaListItemsSymbol`, `GEA_PARENT_COMPONENT`, `GEA_PROXY_GET_RAW_TARGET`) instead of legacy string property names
+
+- [`d04312e`](https://github.com/dashersw/gea/commit/d04312e2fcfd65dbd9ec9ac9f1cade624ec04898) Thanks [@dashersw](https://github.com/dashersw)! - Fix cascading flush failures: when an observer handler throws during `Store.flushAll()` or the global microtask flush, remaining stores in the batch are no longer skipped. Each store's flush is now isolated with try/catch so one error does not block other stores (e.g. dialog close) from updating.
+
+## 1.1.3
+
+### Patch Changes
+
+- [`ad460bb`](https://github.com/dashersw/gea/commit/ad460bbb29c2c72b9a134ce5d4b9a9dac6a986d6) Thanks [@dashersw](https://github.com/dashersw)! - Fix reactivity bugs preventing drag-and-drop across kanban columns
+  - **Compiler**: prevent `GEA_SYNC_MAP` and `GEA_PATCH_COND` calls from being swallowed by subprop change guards in `__onPropChange`, so map lists re-sync even when only a nested array (e.g. `taskIds`) changes
+  - **Runtime**: stop `GEA_SYNC_MAP` from bailing on empty map containers that share a parent with conditional slots
+  - **Runtime**: restrict `__observeList` append fast-path to fire only when the change targets the observed array itself, not nested arrays
+
+## 1.1.2
+
+### Patch Changes
+
+- [`d75459b`](https://github.com/dashersw/gea/commit/d75459b8bf2f94518b8a73bedeb1ccb4cb68489d) Thanks [@dashersw](https://github.com/dashersw)! - Fix event delegation for elements inside conditional branches: the compiler no longer generates duplicate handler selectors that overwrite root-element event handlers. Also fix nested conditional expressions (e.g. `store.x && <Component/>` inside a ternary branch) not being tracked reactively — they are now registered as separate conditional slots with independent observers.
+
+## 1.1.1
+
+Re-publish of 1.1.0 (version number was already claimed on npm).
+
+## 1.1.0
+
+### Minor Changes
+
+- [`20fe43c`](https://github.com/dashersw/gea/commit/20fe43c8cf86af3b47b5fd0bea36b0fb22cc85c5) Thanks [@dashersw](https://github.com/dashersw)! - Migrate Component and UI internals from string keys to Symbol keys for cleaner separation of engine state and user data. Update docs, README package tables, and examples list. Remove unused imports in vite-plugin.
+
+### Patch Changes
+
+- [`13fe40f`](https://github.com/dashersw/gea/commit/13fe40f1b21542535db837e6f81126b9674eb155) Thanks [@dashersw](https://github.com/dashersw)! - Fix DOM ordering when `.map()` and conditional slots are siblings in JSX
+
+  Previously, list items rendered by `.map()` were always inserted before the first conditional comment marker in the container. This broke JSX source order when a conditional preceded the map (e.g. `{cond && <Header />}` followed by `{items.map(...)}`), causing list items to appear above the header.
+
+  The compiler now records `afterCondSlotIndex` — the index of the first conditional slot that follows the map in JSX source order — and passes it to the runtime. The runtime uses this to find the exact marker to insert before, preserving the intended order regardless of how many conditionals appear before or after the map.
+
+- [`482eb6b`](https://github.com/dashersw/gea/commit/482eb6b87483d44977e56a03cd5f0e8240355f4a) Thanks [@dashersw](https://github.com/dashersw)! - Fix list reconciliation when stripping duplicate map output: walk to a keyed list ancestor so Card roots under keyed ProductCard rows strip correctly, while static compiled siblings (for example CommentCreate) remain. Improve DOM recovery of keyed rows from element hosts. Align store getter analysis, events, and SSR proxy serialization with the store naming refactor.
+
 ## 1.0.29
 
 ### Patch Changes

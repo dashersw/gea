@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { GEA_UPDATE_PROPS } from '@geajs/core'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
@@ -43,12 +44,12 @@ test('__onPropChange clears text when primitive prop becomes null (value || "")'
     const btn = root.querySelector('button.cell')
     assert.equal(btn?.textContent, 'X')
 
-    view.__geaUpdateProps({ value: null })
+    view[GEA_UPDATE_PROPS]({ value: null })
     await flushMicrotasks()
 
     assert.equal(btn?.textContent, '', 'textContent must clear when value is null')
 
-    view.__geaUpdateProps({ value: 'O' })
+    view[GEA_UPDATE_PROPS]({ value: 'O' })
     await flushMicrotasks()
     assert.equal(btn?.textContent, 'O')
   } finally {

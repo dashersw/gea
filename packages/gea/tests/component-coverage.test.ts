@@ -1,6 +1,50 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
+import {
+  GEA_APPLY_LIST_CHANGES,
+  GEA_CHILD_COMPONENTS,
+  GEA_CLONE_ITEM,
+  GEA_COMPILED_CHILD,
+  GEA_COMPONENT_CLASSES,
+  GEA_DOM_COMPILED_CHILD_ROOT,
+  GEA_DOM_ITEM,
+  GEA_DOM_KEY,
+  GEA_ELEMENT,
+  GEA_EXTRACT_COMPONENT_PROPS,
+  GEA_ID,
+  GEA_INSTANTIATE_CHILD_COMPONENTS,
+  GEA_MAP_CONFIG_COUNT,
+  GEA_MAP_CONFIG_PREV,
+  GEA_MOUNT_COMPILED_CHILD_COMPONENTS,
+  GEA_OBSERVER_REMOVERS,
+  GEA_ON_PROP_CHANGE,
+  GEA_PARENT_COMPONENT,
+  GEA_PATCH_COND,
+  GEA_PROXY_GET_RAW_TARGET,
+  GEA_PROXY_IS_PROXY,
+  GEA_PROP_BINDING_ATTR_PREFIX,
+  GEA_PROP_BINDINGS,
+  GEA_REGISTER_COND,
+  GEA_REGISTER_MAP,
+  GEA_RENDERED,
+  GEA_REQUEST_RENDER,
+  GEA_REACTIVE_PROPS,
+  GEA_SELF_LISTENERS,
+  GEA_SETUP_LOCAL_STATE_OBSERVERS,
+  GEA_SETUP_REFS,
+  GEA_STORE_ROOT,
+  GEA_SWAP_CHILD,
+  GEA_SYNC_ITEMS,
+  GEA_SYNC_MAP,
+  GEA_TEARDOWN_SELF_LISTENERS,
+  GEA_UPDATE_PROPS,
+  geaCondValueSymbol,
+} from '../src/lib/symbols'
+
+function engineThis(c: object): any {
+  return (c as any)[GEA_PROXY_GET_RAW_TARGET] ?? c
+}
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -109,13 +153,13 @@ describe('Component – props constructor', () => {
     }
     const c = new C({ user: store.user })
     assert.equal(c.props.user.name, 'Alice')
-    assert.ok(c.props.user.__isProxy, 'object prop should retain parent proxy')
+    assert.ok(c.props.user[GEA_PROXY_IS_PROXY], 'object prop should retain parent proxy')
   })
 
-  it('__onPropChange is called via __geaUpdateProps', () => {
+  it('[GEA_ON_PROP_CHANGE] is called via [GEA_UPDATE_PROPS]', () => {
     const calls: [string, any][] = []
     class D extends Component {
-      __onPropChange(prop: string, val: any) {
+      [GEA_ON_PROP_CHANGE](prop: string, val: any) {
         calls.push([prop, val])
       }
       template() {
@@ -123,7 +167,7 @@ describe('Component – props constructor', () => {
       }
     }
     const d = new D({ x: 1 })
-    d.__geaUpdateProps({ x: 99 })
+    d[GEA_UPDATE_PROPS]({ x: 99 })
     assert.ok(calls.some(([p, v]) => p === 'x' && v === 99))
   })
 })
@@ -217,10 +261,10 @@ describe('Component – __geaRequestRender', () => {
     r.render(container)
     assert.ok(renderCount > beforeRender)
     const beforeRerender = renderCount
-    r.__geaRequestRender()
+    r[GEA_REQUEST_RENDER]()
     assert.ok(renderCount > beforeRerender)
-    assert.ok(r.element_)
-    assert.equal(r.element_.parentNode, container)
+    assert.ok(r[GEA_ELEMENT])
+    assert.equal(r[GEA_ELEMENT].parentNode, container)
   })
 
   it('does nothing when element has no parent', () => {
@@ -230,7 +274,7 @@ describe('Component – __geaRequestRender', () => {
       }
     }
     const s = new S()
-    s.__geaRequestRender() // should not throw
+    s[GEA_REQUEST_RENDER]() // should not throw
   })
 
   it('preserves focus on re-render', () => {
@@ -249,8 +293,8 @@ describe('Component – __geaRequestRender', () => {
       input.value = 'hello'
       if (input.setSelectionRange) input.setSelectionRange(2, 2)
     }
-    t.__geaRequestRender()
-    assert.ok(t.element_)
+    t[GEA_REQUEST_RENDER]()
+    assert.ok(t[GEA_ELEMENT])
   })
 
   it('disposes non-compiled child components on re-render', () => {
@@ -274,14 +318,14 @@ describe('Component – __geaRequestRender', () => {
     document.body.appendChild(container)
     parent.render(container)
     const child = new Child()
-    parent.__childComponents.push(child)
-    parent.__geaRequestRender()
+    parent[GEA_CHILD_COMPONENTS].push(child)
+    parent[GEA_REQUEST_RENDER]()
     assert.equal(childDisposed, true)
   })
 
   it('skips dispose for compiled child components', () => {
     class CompiledChild extends Component {
-      __geaCompiledChild = true
+      [GEA_COMPILED_CHILD] = true
       template() {
         return '<div>compiled</div>'
       }
@@ -296,12 +340,12 @@ describe('Component – __geaRequestRender', () => {
     document.body.appendChild(container)
     parent.render(container)
     const cc = new CompiledChild()
-    cc.rendered_ = true
-    cc.element_ = document.createElement('div')
-    parent.__childComponents.push(cc)
-    parent.__geaRequestRender()
-    assert.equal(cc.rendered_, false)
-    assert.equal(cc.element_, null)
+    cc[GEA_RENDERED] = true
+    cc[GEA_ELEMENT] = document.createElement('div')
+    parent[GEA_CHILD_COMPONENTS].push(cc)
+    parent[GEA_REQUEST_RENDER]()
+    assert.equal(cc[GEA_RENDERED], false)
+    assert.equal(cc[GEA_ELEMENT], null)
   })
 
   it('calls onAfterRender and onAfterRenderHooks on re-render', () => {
@@ -326,7 +370,7 @@ describe('Component – __geaRequestRender', () => {
     assert.equal(hooksCalled, true)
     afterRenderCalled = false
     hooksCalled = false
-    u.__geaRequestRender()
+    u[GEA_REQUEST_RENDER]()
     assert.equal(afterRenderCalled, true)
     assert.equal(hooksCalled, true)
   })
@@ -346,10 +390,10 @@ describe('Component – __geaUpdateProps', () => {
     restoreDom()
   })
 
-  it('calls __onPropChange when defined', () => {
+  it('calls [GEA_ON_PROP_CHANGE] when defined', () => {
     const calls: [string, any][] = []
     class A extends Component {
-      __onPropChange(p: string, v: any) {
+      [GEA_ON_PROP_CHANGE](p: string, v: any) {
         calls.push([p, v])
       }
       template() {
@@ -357,15 +401,15 @@ describe('Component – __geaUpdateProps', () => {
       }
     }
     const a = new A({ x: 1 })
-    a.__geaUpdateProps({ x: 2 })
+    a[GEA_UPDATE_PROPS]({ x: 2 })
     assert.ok(calls.some(([p, v]) => p === 'x' && v === 2))
   })
 
-  it('calls __onPropChange for object props even when reference is same', () => {
+  it('calls [GEA_ON_PROP_CHANGE] for object props even when reference is same', () => {
     const calls: [string, any][] = []
     const obj = { a: 1 }
     class B extends Component {
-      __onPropChange(p: string, v: any) {
+      [GEA_ON_PROP_CHANGE](p: string, v: any) {
         calls.push([p, v])
       }
       template() {
@@ -373,22 +417,22 @@ describe('Component – __geaUpdateProps', () => {
       }
     }
     const b = new B({ data: obj })
-    b.__geaUpdateProps({ data: obj })
+    b[GEA_UPDATE_PROPS]({ data: obj })
     assert.ok(calls.length > 0)
   })
 
-  it('calls __geaRequestRender when no __onPropChange', () => {
+  it('calls [GEA_REQUEST_RENDER] when no [GEA_ON_PROP_CHANGE]', () => {
     let renderRequested = false
     class C extends Component {
       template() {
         return '<div></div>'
       }
-      __geaRequestRender() {
+      [GEA_REQUEST_RENDER]() {
         renderRequested = true
       }
     }
     const c = new C({ x: 1 })
-    c.__geaUpdateProps({ x: 2 })
+    c[GEA_UPDATE_PROPS]({ x: 2 })
     assert.equal(renderRequested, true)
   })
 
@@ -397,15 +441,15 @@ describe('Component – __geaUpdateProps', () => {
       template() {
         return '<div></div>'
       }
-      __onPropChange() {}
+      [GEA_ON_PROP_CHANGE]() {}
     }
     const d = new D({ x: 1 })
     const el = document.createElement('div')
-    el.id = d.id_
+    el.id = d[GEA_ID]
     document.body.appendChild(el)
-    d.__geaUpdateProps({ x: 2 })
-    assert.equal(d.rendered_, true)
-    assert.equal(d.element_, el)
+    d[GEA_UPDATE_PROPS]({ x: 2 })
+    assert.equal(d[GEA_RENDERED], true)
+    assert.equal(d[GEA_ELEMENT], el)
   })
 })
 
@@ -426,7 +470,7 @@ describe('Component – __geaSwapChild', () => {
   it('swaps child component at marker position', () => {
     class Parent extends Component {
       template() {
-        return '<div><template id="' + this.id_ + '-slot1"></template></div>'
+        return '<div><template id="' + this[GEA_ID] + '-slot1"></template></div>'
       }
     }
     class ChildA extends Component {
@@ -439,15 +483,15 @@ describe('Component – __geaSwapChild', () => {
     document.body.appendChild(container)
     parent.render(container)
     const childA = new ChildA()
-    childA.parentComponent = parent
-    parent.__geaSwapChild('slot1', childA)
-    assert.ok(parent.__childComponents.includes(childA))
+    engineThis(childA)[GEA_PARENT_COMPONENT] = parent
+    parent[GEA_SWAP_CHILD]('slot1', childA)
+    assert.ok(parent[GEA_CHILD_COMPONENTS].includes(childA))
   })
 
   it('removes old child before inserting new', () => {
     class Parent extends Component {
       template() {
-        return '<div><template id="' + this.id_ + '-slot1"></template></div>'
+        return '<div><template id="' + this[GEA_ID] + '-slot1"></template></div>'
       }
     }
     class Child extends Component {
@@ -460,18 +504,18 @@ describe('Component – __geaSwapChild', () => {
     document.body.appendChild(container)
     parent.render(container)
     const first = new Child()
-    first.parentComponent = parent
-    parent.__geaSwapChild('slot1', first)
+    engineThis(first)[GEA_PARENT_COMPONENT] = parent
+    parent[GEA_SWAP_CHILD]('slot1', first)
     const second = new Child()
-    second.parentComponent = parent
-    parent.__geaSwapChild('slot1', second)
-    assert.ok(second.element_)
+    engineThis(second)[GEA_PARENT_COMPONENT] = parent
+    parent[GEA_SWAP_CHILD]('slot1', second)
+    assert.ok(second[GEA_ELEMENT])
   })
 
   it('removes old child when new is falsy', () => {
     class Parent extends Component {
       template() {
-        return '<div><template id="' + this.id_ + '-slot1"></template></div>'
+        return '<div><template id="' + this[GEA_ID] + '-slot1"></template></div>'
       }
     }
     class Child extends Component {
@@ -484,9 +528,9 @@ describe('Component – __geaSwapChild', () => {
     document.body.appendChild(container)
     parent.render(container)
     const child = new Child()
-    child.parentComponent = parent
-    parent.__geaSwapChild('slot1', child)
-    parent.__geaSwapChild('slot1', null)
+    engineThis(child)[GEA_PARENT_COMPONENT] = parent
+    parent[GEA_SWAP_CHILD]('slot1', child)
+    parent[GEA_SWAP_CHILD]('slot1', null)
   })
 
   it('does nothing when marker not found', () => {
@@ -499,7 +543,7 @@ describe('Component – __geaSwapChild', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     parent.render(container)
-    parent.__geaSwapChild('nonexistent', null) // should not throw
+    parent[GEA_SWAP_CHILD]('nonexistent', null) // should not throw
   })
 })
 
@@ -520,15 +564,15 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
   it('registers and syncs a map', () => {
     class M extends Component {
       template() {
-        return '<div><ul id="list-' + this.id_ + '"></ul></div>'
+        return '<div><ul id="list-' + this[GEA_ID] + '"></ul></div>'
       }
     }
     const m = new M()
     const container = document.createElement('div')
     document.body.appendChild(container)
     m.render(container)
-    const list = document.getElementById('list-' + m.id_)!
-    m.__geaRegisterMap(
+    const list = document.getElementById('list-' + m[GEA_ID])!
+    m[GEA_REGISTER_MAP](
       0,
       'listContainer',
       () => list,
@@ -536,11 +580,11 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
       (item: any) => {
         const li = document.createElement('li')
         li.textContent = item
-        li.setAttribute('data-gea-item-id', item)
+        li.setAttribute('data-gid', item)
         return li
       },
     )
-    m.__geaSyncMap(0)
+    m[GEA_SYNC_MAP](0)
     assert.equal(list.children.length, 2)
   })
 
@@ -551,14 +595,14 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
       }
     }
     const n = new N()
-    n.__geaRegisterMap(
+    n[GEA_REGISTER_MAP](
       0,
       'c',
       () => null,
       () => [],
       () => document.createElement('div'),
     )
-    n.__geaSyncMap(0) // should not throw
+    n[GEA_SYNC_MAP](0) // should not throw
   })
 
   it('does nothing for unknown map index', () => {
@@ -571,14 +615,14 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     o.render(container)
-    o.__geaSyncMap(99) // should not throw
+    o[GEA_SYNC_MAP](99) // should not throw
   })
 
   it('re-resolves map container after DOM replacement so sync targets the live tree', () => {
     const data = ['a', 'b']
     class M extends Component {
       template() {
-        return '<div><ul id="map-' + this.id_ + '"></ul></div>'
+        return '<div><ul id="map-' + this[GEA_ID] + '"></ul></div>'
       }
     }
     const m = new M()
@@ -588,24 +632,24 @@ describe('Component – __geaRegisterMap and __geaSyncMap', () => {
     const createFn = (item: any) => {
       const li = document.createElement('li')
       li.textContent = item
-      li.setAttribute('data-gea-item-id', item)
+      li.setAttribute('data-gid', item)
       return li
     }
-    m.__geaRegisterMap(
+    m[GEA_REGISTER_MAP](
       0,
       'liveMapContainer',
-      () => document.getElementById('map-' + m.id_)!,
+      () => document.getElementById('map-' + m[GEA_ID])!,
       () => data,
       createFn,
     )
-    m.__geaSyncMap(0)
-    const firstList = document.getElementById('map-' + m.id_)!
+    m[GEA_SYNC_MAP](0)
+    const firstList = document.getElementById('map-' + m[GEA_ID])!
     assert.equal(firstList.children.length, 2)
-    m.element_.innerHTML = '<ul id="map-' + m.id_ + '"></ul>'
-    const secondList = document.getElementById('map-' + m.id_)!
+    m[GEA_ELEMENT].innerHTML = '<ul id="map-' + m[GEA_ID] + '"></ul>'
+    const secondList = document.getElementById('map-' + m[GEA_ID])!
     assert.notEqual(firstList, secondList)
     assert.equal(secondList.children.length, 0, 'fresh ul is empty before resync')
-    m.__geaSyncMap(0)
+    m[GEA_SYNC_MAP](0)
     assert.equal(secondList.children.length, 2, 'live list must repopulate after root HTML swap')
     assert.equal(firstList.isConnected, false)
   })
@@ -627,9 +671,9 @@ describe('Component – __geaSyncItems', () => {
 
   function mkItem(id: string) {
     const el = document.createElement('div')
-    el.setAttribute('data-gea-item-id', id)
+    el.setAttribute('data-gid', id)
     el.textContent = id
-    ;(el as any).__geaItem = id
+    ;(el as any)[GEA_DOM_ITEM] = id
     return el
   }
 
@@ -644,12 +688,12 @@ describe('Component – __geaSyncItems', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('1'))
     list.appendChild(mkItem('2'))
-    ;(list as any).__geaPrev = ['1', '2']
-    ;(list as any).__geaCount = 2
-    s.__geaSyncItems(list, ['1', '2', '3'], mkItem)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['1', '2']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 2
+    s[GEA_SYNC_ITEMS](list, ['1', '2', '3'], mkItem)
     assert.equal(list.children.length, 3)
   })
 
@@ -664,13 +708,13 @@ describe('Component – __geaSyncItems', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('1'))
     list.appendChild(mkItem('2'))
     list.appendChild(mkItem('3'))
-    ;(list as any).__geaPrev = ['1', '2', '3']
-    ;(list as any).__geaCount = 3
-    s.__geaSyncItems(list, ['1', '3'], mkItem)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['1', '2', '3']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 3
+    s[GEA_SYNC_ITEMS](list, ['1', '3'], mkItem)
     assert.equal(list.children.length, 2)
   })
 
@@ -685,11 +729,11 @@ describe('Component – __geaSyncItems', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('a'))
-    ;(list as any).__geaPrev = ['a']
-    ;(list as any).__geaCount = 1
-    s.__geaSyncItems(list, ['a'], mkItem)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['a']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 1
+    s[GEA_SYNC_ITEMS](list, ['a'], mkItem)
     assert.equal(list.children.length, 1)
   })
 
@@ -704,12 +748,12 @@ describe('Component – __geaSyncItems', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('a'))
     list.appendChild(mkItem('b'))
-    ;(list as any).__geaPrev = ['a', 'b']
-    ;(list as any).__geaCount = 2
-    s.__geaSyncItems(list, ['x', 'y', 'z'], mkItem)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['a', 'b']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 2
+    s[GEA_SYNC_ITEMS](list, ['x', 'y', 'z'], mkItem)
     assert.equal(list.children.length, 3)
   })
 
@@ -724,11 +768,11 @@ describe('Component – __geaSyncItems', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('x'))
     list.appendChild(mkItem('y'))
-    s.__geaSyncItems(list, ['x', 'y'], mkItem)
-    assert.equal((list as any).__geaPrev.length, 2)
+    s[GEA_SYNC_ITEMS](list, ['x', 'y'], mkItem)
+    assert.equal((list as any)[GEA_MAP_CONFIG_PREV].length, 2)
   })
 
   it('after empty-list placeholder, growing from zero removes placeholder and does not leave extra siblings', () => {
@@ -742,15 +786,15 @@ describe('Component – __geaSyncItems', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     const empty = document.createElement('div')
     empty.className = 'list-empty'
     empty.textContent = 'No items'
     list.appendChild(empty)
-    ;(list as any).__geaPrev = []
-    ;(list as any).__geaCount = 0
-    s.__geaSyncItems(list, ['a', 'b', 'c'], mkItem)
-    assert.equal(list.querySelectorAll('[data-gea-item-id]').length, 3)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = []
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 0
+    s[GEA_SYNC_ITEMS](list, ['a', 'b', 'c'], mkItem)
+    assert.equal(list.querySelectorAll('[data-gid]').length, 3)
     assert.equal(
       list.querySelectorAll('.list-empty').length,
       0,
@@ -786,11 +830,11 @@ describe('Component – __geaCloneItem', () => {
     c.render(container)
     const list = document.createElement('ul')
     const renderFn = (item: any) => `<li>${item.label}</li>`
-    const el1 = c.__geaCloneItem(list, { id: 1, label: 'a' }, renderFn, 'list1')
+    const el1 = c[GEA_CLONE_ITEM](list, { id: 1, label: 'a' }, renderFn, 'list1')
     assert.ok(el1)
-    assert.equal((el1 as any).__geaKey, '1')
-    const el2 = c.__geaCloneItem(list, { id: 2, label: 'b' }, renderFn, 'list1')
-    assert.equal((el2 as any).__geaKey, '2')
+    assert.equal((el1 as any)[GEA_DOM_KEY], '1')
+    const el2 = c[GEA_CLONE_ITEM](list, { id: 2, label: 'b' }, renderFn, 'list1')
+    assert.equal((el2 as any)[GEA_DOM_KEY], '2')
   })
 
   it('applies patches to cloned items', () => {
@@ -809,7 +853,7 @@ describe('Component – __geaCloneItem', () => {
       [[0], 'c', 'highlight'],
       [[0], 't', 'new text'],
     ]
-    const el = c.__geaCloneItem(list, { id: 1, label: 'x' }, renderFn, undefined, undefined, patches)
+    const el = c[GEA_CLONE_ITEM](list, { id: 1, label: 'x' }, renderFn, undefined, undefined, patches)
     const span = el.children[0]
     assert.equal(span.className, 'highlight')
     assert.equal(span.textContent, 'new text')
@@ -828,7 +872,7 @@ describe('Component – __geaCloneItem', () => {
     const list = document.createElement('ul')
     const renderFn = () => `<li><span data-x="old">text</span></li>`
     const patches = [[[0], 'data-x', null]]
-    const el = c.__geaCloneItem(list, { id: 1, label: '' }, renderFn, undefined, undefined, patches)
+    const el = c[GEA_CLONE_ITEM](list, { id: 1, label: '' }, renderFn, undefined, undefined, patches)
     assert.equal(el.children[0].hasAttribute('data-x'), false)
   })
 
@@ -844,8 +888,8 @@ describe('Component – __geaCloneItem', () => {
     c.render(container)
     const list = document.createElement('ul')
     const renderFn = () => `<li>item</li>`
-    const el = c.__geaCloneItem(list, { key: 'abc', label: '' }, renderFn, undefined, 'key')
-    assert.equal((el as any).__geaKey, 'abc')
+    const el = c[GEA_CLONE_ITEM](list, { key: 'abc', label: '' }, renderFn, undefined, 'key')
+    assert.equal((el as any)[GEA_DOM_KEY], 'abc')
   })
 })
 
@@ -866,94 +910,94 @@ describe('Component – __geaRegisterCond and __geaPatchCond', () => {
   it('patches conditional slot: truthy branch', () => {
     class C extends Component {
       template() {
-        return '<div><!--' + this.id_ + '-cond0--><!--' + this.id_ + '-cond0-end--></div>'
+        return '<div><!--' + this[GEA_ID] + '-cond0--><!--' + this[GEA_ID] + '-cond0-end--></div>'
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       0,
       'cond0',
       () => true,
       () => '<span>yes</span>',
       () => '<span>no</span>',
     )
-    const changed = c.__geaPatchCond(0)
+    const changed = c[GEA_PATCH_COND](0)
     assert.equal(changed, true)
-    const root = c.element_
+    const root = c[GEA_ELEMENT]
     assert.ok(root!.innerHTML.includes('yes'))
   })
 
   it('patches conditional slot: falsy branch', () => {
     class C extends Component {
       template() {
-        return '<div><!--' + this.id_ + '-cond1--><!--' + this.id_ + '-cond1-end--></div>'
+        return '<div><!--' + this[GEA_ID] + '-cond1--><!--' + this[GEA_ID] + '-cond1-end--></div>'
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       1,
       'cond1',
       () => false,
       () => '<span>yes</span>',
       () => '<span>no</span>',
     )
-    const changed = c.__geaPatchCond(1)
+    const changed = c[GEA_PATCH_COND](1)
     assert.equal(changed, true)
-    assert.ok(c.element_!.innerHTML.includes('no'))
+    assert.ok(c[GEA_ELEMENT]!.innerHTML.includes('no'))
   })
 
   it('does not patch when condition unchanged', () => {
     class C extends Component {
       template() {
-        return '<div><!--' + this.id_ + '-cond2--><!--' + this.id_ + '-cond2-end--></div>'
+        return '<div><!--' + this[GEA_ID] + '-cond2--><!--' + this[GEA_ID] + '-cond2-end--></div>'
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       2,
       'cond2',
       () => true,
       () => '<span>yes</span>',
       null,
     )
-    c.__geaPatchCond(2) // first call sets __geaCond_2
-    const changed = c.__geaPatchCond(2) // second call, same condition
+    c[GEA_PATCH_COND](2) // first call records cond state
+    const changed = c[GEA_PATCH_COND](2) // second call, same condition
     assert.equal(changed, false)
   })
 
-  it('__geaPatchCond invokes __setupRefs after patching (ref targets stay in sync)', () => {
+  it('[GEA_PATCH_COND] invokes [GEA_SETUP_REFS] after patching (ref targets stay in sync)', () => {
     let setupCalls = 0
     class C extends Component {
       template() {
-        return '<div><!--' + this.id_ + '-condRef--><!--' + this.id_ + '-condRef-end--></div>'
+        return '<div><!--' + this[GEA_ID] + '-condRef--><!--' + this[GEA_ID] + '-condRef-end--></div>'
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    ;(c as any).__setupRefs = () => {
+    ;(c as any)[GEA_SETUP_REFS] = () => {
       setupCalls++
     }
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       6,
       'condRef',
       () => true,
       () => '<span data-gea-ref="x">yes</span>',
       () => '<span>no</span>',
     )
-    c.__geaPatchCond(6)
+    c[GEA_PATCH_COND](6)
     assert.equal(setupCalls, 1)
-    c.__geaPatchCond(6)
+    c[GEA_PATCH_COND](6)
     assert.equal(setupCalls, 2)
   })
 
@@ -961,26 +1005,26 @@ describe('Component – __geaRegisterCond and __geaPatchCond', () => {
     let condition = true
     class C extends Component {
       template() {
-        return '<div><!--' + this.id_ + '-cond3--><!--' + this.id_ + '-cond3-end--></div>'
+        return '<div><!--' + this[GEA_ID] + '-cond3--><!--' + this[GEA_ID] + '-cond3-end--></div>'
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       3,
       'cond3',
       () => condition,
       () => '<span>T</span>',
       () => '<span>F</span>',
     )
-    c.__geaPatchCond(3)
-    assert.ok(c.element_!.innerHTML.includes('T'))
+    c[GEA_PATCH_COND](3)
+    assert.ok(c[GEA_ELEMENT]!.innerHTML.includes('T'))
     condition = false
-    c.__geaPatchCond(3)
-    assert.ok(c.element_!.innerHTML.includes('F'))
-    assert.ok(!c.element_!.innerHTML.includes('T'))
+    c[GEA_PATCH_COND](3)
+    assert.ok(c[GEA_ELEMENT]!.innerHTML.includes('F'))
+    assert.ok(!c[GEA_ELEMENT]!.innerHTML.includes('T'))
   })
 
   it('returns false for unregistered cond index', () => {
@@ -993,40 +1037,42 @@ describe('Component – __geaRegisterCond and __geaPatchCond', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    assert.equal(c.__geaPatchCond(99), false)
+    assert.equal(c[GEA_PATCH_COND](99), false)
   })
 
   it('handles null htmlFn (no content for branch)', () => {
     class C extends Component {
       template() {
-        return '<div><!--' + this.id_ + '-cond4--><!--' + this.id_ + '-cond4-end--></div>'
+        return '<div><!--' + this[GEA_ID] + '-cond4--><!--' + this[GEA_ID] + '-cond4-end--></div>'
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    c.__geaRegisterCond(4, 'cond4', () => true, null, null)
-    const changed = c.__geaPatchCond(4)
+    c[GEA_REGISTER_COND](4, 'cond4', () => true, null, null)
+    const changed = c[GEA_PATCH_COND](4)
     assert.equal(changed, true)
   })
 
   it('empty falsy reinjection removes placeholder but keeps keyed list rows between markers', () => {
     class C extends Component {
       template() {
-        return '<div><!--' + this.id_ + '-cond5--><p class="ph">empty</p><!--' + this.id_ + '-cond5-end--></div>'
+        return (
+          '<div><!--' + this[GEA_ID] + '-cond5--><p class="ph">empty</p><!--' + this[GEA_ID] + '-cond5-end--></div>'
+        )
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    const root = c.element_ as HTMLElement
+    const root = c[GEA_ELEMENT] as HTMLElement
     const endWalker = document.createTreeWalker(root, NodeFilter.SHOW_COMMENT)
     let endMarker: Comment | null = null
     let n: Comment | null = endWalker.nextNode() as Comment | null
     while (n) {
-      if (n.nodeValue === c.id_ + '-cond5-end') {
+      if (n.nodeValue === c[GEA_ID] + '-cond5-end') {
         endMarker = n
         break
       }
@@ -1034,24 +1080,24 @@ describe('Component – __geaRegisterCond and __geaPatchCond', () => {
     }
     assert.ok(endMarker)
     const row = document.createElement('div')
-    row.setAttribute('data-gea-item-id', '1')
+    row.setAttribute('data-gid', '1')
     row.textContent = 'row'
     root.insertBefore(row, endMarker)
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       5,
       'cond5',
       () => false,
       () => '<span>t</span>',
       () => '',
     )
-    ;(c as any).__geaCond_5 = true
-    c.__geaPatchCond(5)
-    assert.ok(root.querySelector('[data-gea-item-id="1"]'))
+    ;(c as any)[geaCondValueSymbol(5)] = true
+    c[GEA_PATCH_COND](5)
+    assert.ok(root.querySelector('[data-gid="1"]'))
     assert.equal(root.querySelector('.ph'), null)
   })
 })
 
-describe('Component – extractComponentProps_', () => {
+describe('Component – GEA_EXTRACT_COMPONENT_PROPS', () => {
   let restoreDom: () => void
   let Component: any
 
@@ -1075,22 +1121,23 @@ describe('Component – extractComponentProps_', () => {
     const el = document.createElement('div')
     el.setAttribute('data-prop-my-value', '42')
     el.setAttribute('data-prop-label', 'hello')
-    const props = a.extractComponentProps_(el)
+    const props = a[GEA_EXTRACT_COMPONENT_PROPS](el)
     assert.equal(props.myValue, 42)
     assert.equal(props.label, 'hello')
   })
 
-  it('resolves __gea_prop_ bindings', () => {
+  it('resolves GEA_PROP_BINDING_ATTR_PREFIX map tokens', () => {
     class A extends Component {
       template() {
         return '<div></div>'
       }
     }
     const a = new A()
-    a.__geaPropBindings.set('__gea_prop_0', { x: 1 })
+    const token = `${GEA_PROP_BINDING_ATTR_PREFIX}0`
+    a[GEA_PROP_BINDINGS].set(token, { x: 1 })
     const el = document.createElement('div')
-    el.setAttribute('data-prop-data', '__gea_prop_0')
-    const props = a.extractComponentProps_(el)
+    el.setAttribute('data-prop-data', token)
+    const props = a[GEA_EXTRACT_COMPONENT_PROPS](el)
     assert.deepEqual(props.data, { x: 1 })
   })
 
@@ -1101,12 +1148,12 @@ describe('Component – extractComponentProps_', () => {
       }
     }
     const a = new A()
-    const props = a.extractComponentProps_({} as any)
+    const props = a[GEA_EXTRACT_COMPONENT_PROPS]({} as any)
     assert.deepEqual(props, {})
   })
 })
 
-describe('Component – instantiateChildComponents_', () => {
+describe('Component – GEA_INSTANTIATE_CHILD_COMPONENTS', () => {
   let restoreDom: () => void
   let Component: any
   beforeEach(async () => {
@@ -1122,14 +1169,14 @@ describe('Component – instantiateChildComponents_', () => {
   it('skips elements already mounted', () => {
     class Parent extends Component {
       template() {
-        return '<div><child-w data-gea-component-mounted="true"></child-w></div>'
+        return '<div><child-w data-gcm="true"></child-w></div>'
       }
     }
     const parent = new Parent()
     const container = document.createElement('div')
     document.body.appendChild(container)
     parent.render(container)
-    assert.equal(parent.__childComponents.length, 0)
+    assert.equal(parent[GEA_CHILD_COMPONENTS].length, 0)
   })
 
   it('skips elements with __geaCompiledChildRoot property', () => {
@@ -1144,20 +1191,20 @@ describe('Component – instantiateChildComponents_', () => {
     // Mark the child element before render to simulate compiled child
     const el = parent.el
     const childEl = el?.querySelector('child-x')
-    if (childEl) (childEl as any).__geaCompiledChildRoot = true
+    if (childEl) (childEl as any)[GEA_DOM_COMPILED_CHILD_ROOT] = true
     parent.render(container)
-    assert.equal(parent.__childComponents.length, 0)
+    assert.equal(parent[GEA_CHILD_COMPONENTS].length, 0)
   })
 
-  it('does nothing when element_ is null', () => {
+  it('does nothing when GEA_ELEMENT is null', () => {
     class A extends Component {
       template() {
         return '<div></div>'
       }
     }
     const a = new A()
-    a.element_ = null
-    a.instantiateChildComponents_() // should not throw
+    a[GEA_ELEMENT] = null
+    a[GEA_INSTANTIATE_CHILD_COMPONENTS]() // should not throw
   })
 
   it('instantiates registered child by tag name', () => {
@@ -1177,7 +1224,7 @@ describe('Component – instantiateChildComponents_', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     parent.render(container)
-    assert.ok(parent.__childComponents.length > 0)
+    assert.ok(parent[GEA_CHILD_COMPONENTS].length > 0)
   })
 
   it('manually exercises instantiation for element in DOM', () => {
@@ -1197,8 +1244,8 @@ describe('Component – instantiateChildComponents_', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     parent.render(container)
-    assert.ok(parent.__childComponents.length > 0)
-    const child = parent.__childComponents[0]
+    assert.ok(parent[GEA_CHILD_COMPONENTS].length > 0)
+    const child = parent[GEA_CHILD_COMPONENTS][0]
     assert.ok(child.rendered)
   })
 
@@ -1212,11 +1259,11 @@ describe('Component – instantiateChildComponents_', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     parent.render(container)
-    assert.equal(parent.__childComponents.length, 0)
+    assert.equal(parent[GEA_CHILD_COMPONENTS].length, 0)
   })
 })
 
-describe('Component – mountCompiledChildComponents_', () => {
+describe('Component – GEA_MOUNT_COMPILED_CHILD_COMPONENTS', () => {
   let restoreDom: () => void
   let Component: any
 
@@ -1232,7 +1279,7 @@ describe('Component – mountCompiledChildComponents_', () => {
 
   it('mounts compiled child when its id exists in DOM', () => {
     class Child extends Component {
-      __geaCompiledChild = true
+      [GEA_COMPILED_CHILD] = true
       template() {
         return '<div>compiled</div>'
       }
@@ -1248,20 +1295,20 @@ describe('Component – mountCompiledChildComponents_', () => {
     document.body.appendChild(container)
     parent.render(container)
     const child = new Child()
-    child.parentComponent = parent
+    engineThis(child)[GEA_PARENT_COMPONENT] = parent
     parent.myChild = child
     const childEl = document.createElement('div')
     childEl.id = child.id
-    parent.element_.appendChild(childEl)
-    parent.mountCompiledChildComponents_()
-    assert.equal(child.rendered_, true)
-    assert.equal(child.element_, childEl)
-    assert.ok(parent.__childComponents.includes(child))
+    parent[GEA_ELEMENT].appendChild(childEl)
+    parent[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]()
+    assert.equal(child[GEA_RENDERED], true)
+    assert.equal(child[GEA_ELEMENT], childEl)
+    assert.ok(parent[GEA_CHILD_COMPONENTS].includes(child))
   })
 
   it('skips child when no matching DOM element exists', () => {
     class Child extends Component {
-      __geaCompiledChild = true
+      [GEA_COMPILED_CHILD] = true
       template() {
         return '<div>compiled</div>'
       }
@@ -1277,15 +1324,15 @@ describe('Component – mountCompiledChildComponents_', () => {
     document.body.appendChild(container)
     parent.render(container)
     const child = new Child()
-    child.parentComponent = parent
+    engineThis(child)[GEA_PARENT_COMPONENT] = parent
     parent.myChild = child
-    parent.mountCompiledChildComponents_()
-    assert.equal(child.rendered_, false)
+    parent[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]()
+    assert.equal(child[GEA_RENDERED], false)
   })
 
   it('collects from arrays of children', () => {
     class Child extends Component {
-      __geaCompiledChild = true
+      [GEA_COMPILED_CHILD] = true
       template() {
         return '<div>cc</div>'
       }
@@ -1301,23 +1348,23 @@ describe('Component – mountCompiledChildComponents_', () => {
     document.body.appendChild(container)
     parent.render(container)
     const c1 = new Child()
-    c1.parentComponent = parent
+    engineThis(c1)[GEA_PARENT_COMPONENT] = parent
     const c2 = new Child()
-    c2.parentComponent = parent
+    engineThis(c2)[GEA_PARENT_COMPONENT] = parent
     parent.myChildren = [c1, c2]
     const el1 = document.createElement('div')
     el1.id = c1.id
-    parent.element_.appendChild(el1)
+    parent[GEA_ELEMENT].appendChild(el1)
     const el2 = document.createElement('div')
     el2.id = c2.id
-    parent.element_.appendChild(el2)
-    parent.mountCompiledChildComponents_()
-    assert.equal(c1.rendered_, true)
-    assert.equal(c2.rendered_, true)
+    parent[GEA_ELEMENT].appendChild(el2)
+    parent[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]()
+    assert.equal(c1[GEA_RENDERED], true)
+    assert.equal(c2[GEA_RENDERED], true)
   })
 })
 
-describe('Component – __setupLocalStateObservers', () => {
+describe('Component – GEA_SETUP_LOCAL_STATE_OBSERVERS', () => {
   let restoreDom: () => void
   let Component: any
 
@@ -1331,20 +1378,17 @@ describe('Component – __setupLocalStateObservers', () => {
     restoreDom()
   })
 
-  it('calls __setupLocalStateObservers if defined', () => {
+  it('calls [GEA_SETUP_LOCAL_STATE_OBSERVERS] from constructor when defined', () => {
     let called = false
     class A extends Component {
-      __setupLocalStateObservers() {
+      [GEA_SETUP_LOCAL_STATE_OBSERVERS]() {
         called = true
       }
       template() {
         return '<div></div>'
       }
     }
-    const a = new A()
-    if (typeof a.__setupLocalStateObservers === 'function') {
-      a.__setupLocalStateObservers()
-    }
+    new A()
     assert.equal(called, true)
   })
 })
@@ -1371,7 +1415,7 @@ describe('Component – __reactiveProps', () => {
     }
     const a = new A()
     const obj = { x: 1, y: 2 }
-    const result = a.__reactiveProps(obj)
+    const result = a[GEA_REACTIVE_PROPS](obj)
     assert.equal(result, obj)
     assert.equal(result.x, 1)
   })
@@ -1398,7 +1442,7 @@ describe('Component – static register', () => {
       }
     }
     MyWidget.register('custom-widget')
-    assert.ok(Component.__componentClasses.has('MyWidget'))
+    assert.ok(Component[GEA_COMPONENT_CLASSES].has('MyWidget'))
   })
 })
 
@@ -1424,7 +1468,7 @@ describe('Component – __applyListChanges', () => {
     }
     const a = new A()
     const container = document.createElement('div')
-    a.__applyListChanges(container, ['a', 'b'], null, {
+    a[GEA_APPLY_LIST_CHANGES](container, ['a', 'b'], null, {
       arrayPathParts: ['items'],
       create: (item: any) => {
         const el = document.createElement('div')
@@ -1458,7 +1502,7 @@ describe('Component – el getter with existing DOM element', () => {
     }
     const a = new A()
     const existing = document.createElement('div')
-    existing.id = a.id_
+    existing.id = a[GEA_ID]
     existing.textContent = 'found'
     document.body.appendChild(existing)
     assert.equal(a.el, existing)
@@ -1483,22 +1527,22 @@ describe('Component – __geaPatchCond SVG namespace', () => {
   it('inserts content into SVG parent using createElementNS', () => {
     class C extends Component {
       template() {
-        return `<svg xmlns="http://www.w3.org/2000/svg"><!--${this.id_}-cond5--><!--${this.id_}-cond5-end--></svg>`
+        return `<svg xmlns="http://www.w3.org/2000/svg"><!--${this[GEA_ID]}-cond5--><!--${this[GEA_ID]}-cond5-end--></svg>`
       }
     }
     const c = new C()
     const container = document.createElement('div')
     document.body.appendChild(container)
     c.render(container)
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       5,
       'cond5',
       () => true,
       () => '<circle r="5"/>',
       null,
     )
-    c.__geaPatchCond(5)
-    assert.ok(c.element_!.innerHTML.includes('circle'))
+    c[GEA_PATCH_COND](5)
+    assert.ok(c[GEA_ELEMENT]!.innerHTML.includes('circle'))
   })
 })
 
@@ -1535,9 +1579,9 @@ describe('Component – __geaCloneItem fallback branch', () => {
       }
       return `<li>${item.label}</li>`
     }
-    const el = c.__geaCloneItem(list, { id: 1, label: 'a' }, renderFn)
+    const el = c[GEA_CLONE_ITEM](list, { id: 1, label: 'a' }, renderFn)
     assert.ok(el)
-    assert.equal((el as any).__geaKey, '1')
+    assert.equal((el as any)[GEA_DOM_KEY], '1')
   })
 })
 
@@ -1557,9 +1601,9 @@ describe('Component – __geaSyncItems same-length diff content', () => {
 
   function mkItem(id: string) {
     const el = document.createElement('div')
-    el.setAttribute('data-gea-item-id', id)
+    el.setAttribute('data-gid', id)
     el.textContent = id
-    ;(el as any).__geaItem = id
+    ;(el as any)[GEA_DOM_ITEM] = id
     return el
   }
 
@@ -1574,13 +1618,13 @@ describe('Component – __geaSyncItems same-length diff content', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('a'))
     list.appendChild(mkItem('b'))
-    ;(list as any).__geaPrev = ['a', 'b']
-    ;(list as any).__geaCount = 2
-    s.__geaSyncItems(list, ['x', 'y'], mkItem)
-    const ids = Array.from(list.querySelectorAll('[data-gea-item-id]')).map((el) => el.getAttribute('data-gea-item-id'))
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['a', 'b']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 2
+    s[GEA_SYNC_ITEMS](list, ['x', 'y'], mkItem)
+    const ids = Array.from(list.querySelectorAll('[data-gid]')).map((el) => el.getAttribute('data-gid'))
     assert.deepEqual(ids, ['x', 'y'])
   })
 
@@ -1595,18 +1639,18 @@ describe('Component – __geaSyncItems same-length diff content', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('a'))
     const comment = document.createComment('end-marker')
     list.appendChild(comment)
-    ;(list as any).__geaPrev = ['a']
-    ;(list as any).__geaCount = 1
-    s.__geaSyncItems(list, ['a', 'b'], mkItem)
-    assert.equal((list as any).__geaCount, 2)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['a']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 1
+    s[GEA_SYNC_ITEMS](list, ['a', 'b'], mkItem)
+    assert.equal((list as any)[GEA_MAP_CONFIG_COUNT], 2)
   })
 })
 
-describe('Component – teardownSelfListeners_', () => {
+describe('Component – GEA_TEARDOWN_SELF_LISTENERS', () => {
   let restoreDom: () => void
   let Component: any
 
@@ -1628,19 +1672,19 @@ describe('Component – teardownSelfListeners_', () => {
       }
     }
     const a = new A()
-    a.__selfListeners.push(() => {
+    a[GEA_SELF_LISTENERS].push(() => {
       called++
     })
-    a.__selfListeners.push(() => {
+    a[GEA_SELF_LISTENERS].push(() => {
       called++
     })
-    a.teardownSelfListeners_()
+    a[GEA_TEARDOWN_SELF_LISTENERS]()
     assert.equal(called, 2)
-    assert.equal(a.__selfListeners.length, 0)
+    assert.equal(a[GEA_SELF_LISTENERS].length, 0)
   })
 })
 
-describe('Component – extractComponentProps_ with missing binding', () => {
+describe('Component – GEA_EXTRACT_COMPONENT_PROPS with missing binding', () => {
   let restoreDom: () => void
   let Component: any
 
@@ -1654,27 +1698,18 @@ describe('Component – extractComponentProps_ with missing binding', () => {
     restoreDom()
   })
 
-  it('warns when binding is not found', () => {
-    const warnings: string[] = []
-    const origWarn = console.warn
-    console.warn = (...args: any[]) => {
-      warnings.push(args.join(' '))
-    }
-    try {
-      class A extends Component {
-        template() {
-          return '<div></div>'
-        }
+  it('returns undefined for missing binding', () => {
+    class A extends Component {
+      template() {
+        return '<div></div>'
       }
-      const a = new A()
-      a.__geaPropBindings = new Map()
-      const el = document.createElement('div')
-      el.setAttribute('data-prop-data', '__gea_prop_missing')
-      a.extractComponentProps_(el)
-      assert.ok(warnings.some((w) => w.includes('Prop binding not found')))
-    } finally {
-      console.warn = origWarn
     }
+    const a = new A()
+    a[GEA_PROP_BINDINGS] = new Map()
+    const el = document.createElement('div')
+    el.setAttribute('data-prop-data', `${GEA_PROP_BINDING_ATTR_PREFIX}missing`)
+    const props = a[GEA_EXTRACT_COMPONENT_PROPS](el)
+    assert.equal(props.data, undefined)
   })
 })
 
@@ -1745,12 +1780,12 @@ describe('Component – dispose cleans up observer removers', () => {
       }
     }
     const a = new A()
-    a.__observer_removers__.push(() => {
+    a[GEA_OBSERVER_REMOVERS].push(() => {
       removed = true
     })
     a.dispose()
     assert.equal(removed, true)
-    assert.equal(a.__observer_removers__.length, 0)
+    assert.equal(a[GEA_OBSERVER_REMOVERS].length, 0)
   })
 })
 
@@ -1772,31 +1807,31 @@ describe('Component – __geaRegisterMap and __geaSyncMap with changes', () => {
     let data = ['a', 'b', 'c']
     class M extends Component {
       template() {
-        return '<div><ul id="map-' + this.id_ + '"></ul></div>'
+        return '<div><ul id="map-' + this[GEA_ID] + '"></ul></div>'
       }
     }
     const m = new M()
     const container = document.createElement('div')
     document.body.appendChild(container)
     m.render(container)
-    const list = document.getElementById('map-' + m.id_)!
+    const list = document.getElementById('map-' + m[GEA_ID])!
     const createFn = (item: any) => {
       const li = document.createElement('li')
       li.textContent = item
-      li.setAttribute('data-gea-item-id', item)
+      li.setAttribute('data-gid', item)
       return li
     }
-    m.__geaRegisterMap(
+    m[GEA_REGISTER_MAP](
       0,
       'mapC',
       () => list,
       () => data,
       createFn,
     )
-    m.__geaSyncMap(0)
+    m[GEA_SYNC_MAP](0)
     assert.equal(list.children.length, 3)
     data = ['a', 'b', 'c', 'd']
-    m.__geaSyncMap(0)
+    m[GEA_SYNC_MAP](0)
     assert.equal(list.children.length, 4)
   })
 })
@@ -1828,7 +1863,7 @@ describe('Component – __geaCloneItem with setAttribute patch type', () => {
     const list = document.createElement('ul')
     const renderFn = () => `<li><span>text</span></li>`
     const patches = [[[0], 'data-custom', 'active']]
-    const el = c.__geaCloneItem(list, { id: 1 }, renderFn, undefined, undefined, patches)
+    const el = c[GEA_CLONE_ITEM](list, { id: 1 }, renderFn, undefined, undefined, patches)
     assert.equal(el.children[0].getAttribute('data-custom'), 'active')
   })
 
@@ -1845,7 +1880,7 @@ describe('Component – __geaCloneItem with setAttribute patch type', () => {
     const list = document.createElement('ul')
     const renderFn = () => `<li><span data-x="old">text</span></li>`
     const patches = [[[0], 'data-x', false]]
-    const el = c.__geaCloneItem(list, { id: 1 }, renderFn, undefined, undefined, patches)
+    const el = c[GEA_CLONE_ITEM](list, { id: 1 }, renderFn, undefined, undefined, patches)
     assert.equal(el.children[0].hasAttribute('data-x'), false)
   })
 })
@@ -1871,14 +1906,14 @@ describe('Component – __geaPatchCond with no root element', () => {
       }
     }
     const c = new C()
-    c.__geaRegisterCond(
+    c[GEA_REGISTER_COND](
       10,
       'cond10',
       () => true,
       () => '<span>x</span>',
       null,
     )
-    const result = c.__geaPatchCond(10)
+    const result = c[GEA_PATCH_COND](10)
     assert.equal(result, false)
   })
 })
@@ -1909,8 +1944,8 @@ describe('Component – __geaCloneItem with non-object item', () => {
     c.render(container)
     const list = document.createElement('ul')
     const renderFn = (item: any) => `<li>${item}</li>`
-    const el = c.__geaCloneItem(list, 'hello', renderFn)
-    assert.equal((el as any).__geaKey, 'hello')
+    const el = c[GEA_CLONE_ITEM](list, 'hello', renderFn)
+    assert.equal((el as any)[GEA_DOM_KEY], 'hello')
   })
 
   it('handles null item id gracefully', () => {
@@ -1925,8 +1960,8 @@ describe('Component – __geaCloneItem with non-object item', () => {
     c.render(container)
     const list = document.createElement('ul')
     const renderFn = (item: any) => `<li>${item?.label}</li>`
-    const el = c.__geaCloneItem(list, { id: null, label: 'test' }, renderFn)
-    assert.ok((el as any).__geaKey != null)
+    const el = c[GEA_CLONE_ITEM](list, { id: null, label: 'test' }, renderFn)
+    assert.ok((el as any)[GEA_DOM_KEY] != null)
   })
 })
 
@@ -1946,9 +1981,9 @@ describe('Component – __geaSyncItems with removal partial match', () => {
 
   function mkItem(id: string) {
     const el = document.createElement('div')
-    el.setAttribute('data-gea-item-id', id)
+    el.setAttribute('data-gid', id)
     el.textContent = id
-    ;(el as any).__geaItem = id
+    ;(el as any)[GEA_DOM_ITEM] = id
     return el
   }
 
@@ -1963,14 +1998,14 @@ describe('Component – __geaSyncItems with removal partial match', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('a'))
     list.appendChild(mkItem('b'))
     list.appendChild(mkItem('c'))
-    ;(list as any).__geaPrev = ['a', 'b', 'c']
-    ;(list as any).__geaCount = 3
-    s.__geaSyncItems(list, ['c', 'a', 'b'], mkItem)
-    assert.equal((list as any).__geaCount, 3)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['a', 'b', 'c']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 3
+    s[GEA_SYNC_ITEMS](list, ['c', 'a', 'b'], mkItem)
+    assert.equal((list as any)[GEA_MAP_CONFIG_COUNT], 3)
   })
 
   it('handles complete element removal', () => {
@@ -1984,13 +2019,13 @@ describe('Component – __geaSyncItems with removal partial match', () => {
     document.body.appendChild(container)
     s.render(container)
     const list = document.createElement('div')
-    s.element_!.appendChild(list)
+    s[GEA_ELEMENT]!.appendChild(list)
     list.appendChild(mkItem('a'))
     list.appendChild(mkItem('b'))
-    ;(list as any).__geaPrev = ['a', 'b']
-    ;(list as any).__geaCount = 2
-    s.__geaSyncItems(list, [], mkItem)
-    assert.equal((list as any).__geaCount, 0)
+    ;(list as any)[GEA_MAP_CONFIG_PREV] = ['a', 'b']
+    ;(list as any)[GEA_MAP_CONFIG_COUNT] = 2
+    s[GEA_SYNC_ITEMS](list, [], mkItem)
+    assert.equal((list as any)[GEA_MAP_CONFIG_COUNT], 0)
   })
 })
 
@@ -2008,7 +2043,7 @@ describe('Component – local state observer survives createdHooks clear', () =>
     restoreDom()
   })
 
-  it('__setupLocalStateObservers runs after createdHooks so observers are not cleared', async () => {
+  it('GEA_SETUP_LOCAL_STATE_OBSERVERS runs after createdHooks so observers are not cleared', async () => {
     let observerFired = false
     let syncMapCalled = false
 
@@ -2020,17 +2055,17 @@ describe('Component – local state observer survives createdHooks clear', () =>
       }
 
       createdHooks() {
-        if (!this.__observer_removers__) this.__observer_removers__ = []
-        this.__observer_removers__.forEach((fn: any) => fn())
-        this.__observer_removers__ = []
-        this.__geaRegisterMap(
+        if (!this[GEA_OBSERVER_REMOVERS]) this[GEA_OBSERVER_REMOVERS] = []
+        this[GEA_OBSERVER_REMOVERS].forEach((fn: any) => fn())
+        this[GEA_OBSERVER_REMOVERS] = []
+        this[GEA_REGISTER_MAP](
           0,
           '____unresolved_0_container',
           () => document.getElementById(this.id + '-list'),
           () => this.value || [],
           (item: any) => {
             const el = document.createElement('span')
-            el.setAttribute('data-gea-item-id', String(item))
+            el.setAttribute('data-gid', String(item))
             el.textContent = item
             return el
           },
@@ -2040,18 +2075,18 @@ describe('Component – local state observer survives createdHooks clear', () =>
       __observe_local_value() {
         observerFired = true
         syncMapCalled = true
-        this.__geaSyncMap(0)
+        this[GEA_SYNC_MAP](0)
       }
 
-      __setupLocalStateObservers() {
-        if (!this.__store) return
-        this.__observer_removers__.push(
-          this.__store.observe(['value'], (__v: any, __c: any) => this.__observe_local_value()),
+      [GEA_SETUP_LOCAL_STATE_OBSERVERS]() {
+        if (!this[GEA_STORE_ROOT]) return
+        this[GEA_OBSERVER_REMOVERS].push(
+          this[GEA_STORE_ROOT].observe(['value'], (__v: any, __c: any) => this.__observe_local_value()),
         )
       }
 
       template() {
-        return `<div id="${this.id}"><div id="${this.id}-list">${(this.value || []).map((v: string) => `<span data-gea-item-id="${v}">${v}</span>`).join('')}<!----></div></div>`
+        return `<div id="${this.id}"><div id="${this.id}-list">${(this.value || []).map((v: string) => `<span data-gid="${v}">${v}</span>`).join('')}<!----></div></div>`
       }
     }
 

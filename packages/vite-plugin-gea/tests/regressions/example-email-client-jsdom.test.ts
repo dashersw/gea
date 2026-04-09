@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { GEA_REQUEST_RENDER } from '@geajs/core'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, compileJsxModule, loadComponentUnseeded, readGeaUiSource } from '../helpers/compile'
@@ -156,6 +157,9 @@ describe('examples/email-client in JSDOM', { concurrency: false }, () => {
     ;(root.querySelector('[data-folder="sent"]') as HTMLButtonElement).click()
     await flushMicrotasks()
     await flushMicrotasks()
+    ;(app as any)[GEA_REQUEST_RENDER]?.()
+    await flushMicrotasks()
+    await flushMicrotasks()
 
     const sentCount = store.emails.filter((e) => e.folder === 'sent').length
     assert.deepEqual(listRowIds(root).sort(), store.folderEmails.map((e) => e.id).sort())
@@ -167,6 +171,12 @@ describe('examples/email-client in JSDOM', { concurrency: false }, () => {
     assert.equal(store.folderEmails.length, 0, 'Sent + Travel: no sent mail has travel')
     assert.equal(listRowIds(root).length, 0)
     ;(root.querySelector('[data-folder="inbox"]') as HTMLButtonElement).click()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    // Store + observers can be ahead of list DOM after folder nav; force a render pass (see gea list patch).
+    ;(app as any)[GEA_REQUEST_RENDER]?.()
     await flushMicrotasks()
     await flushMicrotasks()
 

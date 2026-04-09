@@ -15,30 +15,25 @@ npm install @geajs/core
 
 ## Tailwind CSS Setup
 
-### 1. Add @geajs/ui to your Tailwind content paths
+### 1. Install Tailwind and its Vite plugin
 
-```js
-// tailwind.config.js
-import geaPreset from '@geajs/ui/tailwind-preset'
+```bash
+npm install -D tailwindcss @tailwindcss/vite
+```
 
-export default {
-  presets: [geaPreset],
-  content: [
-    './src/**/*.{tsx,ts,jsx,js}',
-    './node_modules/@geajs/ui/dist/**/*.js',
-  ],
-}
+```ts
+// vite.config.ts
+import tailwindcss from '@tailwindcss/vite'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [tailwindcss()],
+})
 ```
 
 ### 2. Import the theme CSS
 
-In your main CSS file:
-
-```css
-@import '@geajs/ui/style.css';
-```
-
-Or in your entry point:
+Import once in your entry point. This sets up Tailwind, all semantic color tokens, and dark mode support — no `tailwind.config.js` needed.
 
 ```ts
 import '@geajs/ui/style.css'

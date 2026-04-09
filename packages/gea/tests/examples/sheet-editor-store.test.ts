@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach } from 'node:test'
+import { GEA_PROXY_GET_TARGET } from '../../src/lib/symbols'
 import { SheetStore } from '../../../../examples/sheet-editor/sheet-store'
 
 describe('examples/sheet-editor SheetStore', () => {
@@ -42,13 +43,13 @@ describe('examples/sheet-editor SheetStore', () => {
     s.setCellRaw('B1', '=A1+1')
     s.setCellRaw('C1', '=10')
 
-    const beforeB1 = s.computed.B1.__getTarget
-    const beforeC1 = s.computed.C1.__getTarget
+    const beforeB1 = s.computed.B1[GEA_PROXY_GET_TARGET]
+    const beforeC1 = s.computed.C1[GEA_PROXY_GET_TARGET]
 
     s.setCellRaw('A1', '2')
 
-    assert.notEqual(s.computed.B1.__getTarget, beforeB1, 'dependent formula should get a new computed entry')
-    assert.equal(s.computed.C1.__getTarget, beforeC1, 'unrelated formula should keep the same computed entry object')
+    assert.notEqual(s.computed.B1[GEA_PROXY_GET_TARGET], beforeB1, 'dependent formula should get a new computed entry')
+    assert.equal(s.computed.C1[GEA_PROXY_GET_TARGET], beforeC1, 'unrelated formula should keep the same computed entry object')
     assert.equal(s.displayText('B1'), '3')
     assert.equal(s.displayText('C1'), '10')
   })

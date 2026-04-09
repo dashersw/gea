@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import { transformComponentSource } from './regressions/plugin-helpers'
 
 describe('XSS prevention: dynamic text expression escaping', () => {
-  it('wraps dynamic member expression with __escapeHtml', () => {
+  it('wraps dynamic member expression with geaEscapeHtml', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
       export default class App extends Component {
@@ -15,12 +15,12 @@ describe('XSS prevention: dynamic text expression escaping', () => {
     `)
 
     assert.ok(
-      output.includes('__escapeHtml'),
-      'dynamic text expression should be wrapped with __escapeHtml, got: ' + output,
+      output.includes('geaEscapeHtml'),
+      'dynamic text expression should be wrapped with geaEscapeHtml, got: ' + output,
     )
   })
 
-  it('wraps dynamic call expression with __escapeHtml', () => {
+  it('wraps dynamic call expression with geaEscapeHtml', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
       export default class App extends Component {
@@ -31,7 +31,7 @@ describe('XSS prevention: dynamic text expression escaping', () => {
       }
     `)
 
-    assert.ok(output.includes('__escapeHtml'), 'dynamic call expression should be wrapped with __escapeHtml')
+    assert.ok(output.includes('geaEscapeHtml'), 'dynamic call expression should be wrapped with geaEscapeHtml')
   })
 
   it('does NOT escape static string literals (already escaped at compile time)', () => {
@@ -44,13 +44,13 @@ describe('XSS prevention: dynamic text expression escaping', () => {
       }
     `)
 
-    // Static strings are escaped at compile time, no runtime __escapeHtml needed
+    // Static strings are escaped at compile time, no runtime geaEscapeHtml needed
     assert.ok(output.includes('&lt;script&gt;'), 'static string should be HTML-escaped at compile time')
   })
 })
 
 describe('XSS prevention: children prop text values are escaped', () => {
-  it('wraps text children prop value with __escapeHtml so innerHTML is safe', () => {
+  it('wraps text children prop value with geaEscapeHtml so innerHTML is safe', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
       import Child from './Child'
@@ -63,17 +63,17 @@ describe('XSS prevention: children prop text values are escaped', () => {
       }
     `)
 
-    // The text expression this.label should be wrapped with __escapeHtml
+    // The text expression this.label should be wrapped with geaEscapeHtml
     // so even if children uses innerHTML, the value is already escaped
     assert.ok(
-      output.includes('__escapeHtml'),
-      'text expression in children should be wrapped with __escapeHtml, got: ' + output,
+      output.includes('geaEscapeHtml'),
+      'text expression in children should be wrapped with geaEscapeHtml, got: ' + output,
     )
   })
 })
 
 describe('XSS prevention: dangerous URL protocols sanitized', () => {
-  it('wraps dynamic href with __sanitizeAttr', () => {
+  it('wraps dynamic href with geaSanitizeAttr', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
       export default class App extends Component {
@@ -84,10 +84,10 @@ describe('XSS prevention: dangerous URL protocols sanitized', () => {
       }
     `)
 
-    assert.ok(output.includes('__sanitizeAttr'), 'dynamic href should be wrapped with __sanitizeAttr, got: ' + output)
+    assert.ok(output.includes('geaSanitizeAttr'), 'dynamic href should be wrapped with geaSanitizeAttr, got: ' + output)
   })
 
-  it('wraps dynamic src with __sanitizeAttr', () => {
+  it('wraps dynamic src with geaSanitizeAttr', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
       export default class App extends Component {
@@ -98,10 +98,10 @@ describe('XSS prevention: dangerous URL protocols sanitized', () => {
       }
     `)
 
-    assert.ok(output.includes('__sanitizeAttr'), 'dynamic src should be wrapped with __sanitizeAttr, got: ' + output)
+    assert.ok(output.includes('geaSanitizeAttr'), 'dynamic src should be wrapped with geaSanitizeAttr, got: ' + output)
   })
 
-  it('wraps dynamic action with __sanitizeAttr', () => {
+  it('wraps dynamic action with geaSanitizeAttr', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
       export default class App extends Component {
@@ -112,10 +112,13 @@ describe('XSS prevention: dangerous URL protocols sanitized', () => {
       }
     `)
 
-    assert.ok(output.includes('__sanitizeAttr'), 'dynamic action should be wrapped with __sanitizeAttr, got: ' + output)
+    assert.ok(
+      output.includes('geaSanitizeAttr'),
+      'dynamic action should be wrapped with geaSanitizeAttr, got: ' + output,
+    )
   })
 
-  it('does NOT wrap non-URL attributes with __sanitizeAttr', () => {
+  it('does NOT wrap non-URL attributes with geaSanitizeAttr', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
       export default class App extends Component {
@@ -126,7 +129,12 @@ describe('XSS prevention: dangerous URL protocols sanitized', () => {
       }
     `)
 
-    assert.ok(!output.includes('__sanitizeAttr'), 'non-URL attribute should NOT be wrapped with __sanitizeAttr')
+    // Compiler may import geaSanitizeAttr for other code paths; class must not *use* it.
+    assert.doesNotMatch(
+      output,
+      /geaSanitizeAttr\(\s*this\.cls\b/,
+      'non-URL class binding should NOT be passed through geaSanitizeAttr',
+    )
   })
 })
 
@@ -142,9 +150,9 @@ describe('XSS prevention: dangerouslySetInnerHTML', () => {
       }
     `)
 
-    // The expression should NOT be wrapped with __escapeHtml
+    // The expression should NOT be wrapped with geaEscapeHtml
     assert.ok(
-      !output.includes('__escapeHtml') || !output.includes('dangerouslySetInnerHTML'),
+      !output.includes('geaEscapeHtml') || !output.includes('dangerouslySetInnerHTML'),
       'dangerouslySetInnerHTML content should not be escaped',
     )
     // Should not render dangerouslySetInnerHTML as a DOM attribute
@@ -156,7 +164,7 @@ describe('XSS prevention: dangerouslySetInnerHTML', () => {
 })
 
 describe('XSS prevention: destructured children prop is not double-escaped', () => {
-  it('does not wrap destructured {children} with __escapeHtml in template', () => {
+  it('does not wrap destructured {children} with geaEscapeHtml in template', () => {
     const output = transformComponentSource(`
       import { Component } from '@geajs/core'
 
@@ -173,8 +181,8 @@ describe('XSS prevention: destructured children prop is not double-escaped', () 
 
     // children contains HTML from the parent component — must not be escaped
     assert.ok(
-      !output.includes('__escapeHtml(String(children))'),
-      'destructured children prop must not be wrapped with __escapeHtml, got: ' + output,
+      !output.includes('geaEscapeHtml(String(children))'),
+      'destructured children prop must not be wrapped with geaEscapeHtml, got: ' + output,
     )
     assert.ok(
       output.includes('${children}') || output.includes('${children ||'),

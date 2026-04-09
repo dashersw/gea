@@ -51,7 +51,8 @@ export default function Tabs({ tabs, activeTabIndex, onTabChange }: {
   )
 }
 `
-  const r = await plugin.transform!.call({} as never, src, '/virtual/tabs.tsx')
+  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform!.handler
+  const r = await transform!.call({} as never, src, '/virtual/tabs.tsx')
   const code = typeof r === 'string' ? r : r?.code
   assert.ok(code)
   const helper = code!.slice(code!.indexOf('__getMapItemFromEvent'), code!.indexOf('__getMapItemFromEvent') + 900)
@@ -67,7 +68,8 @@ export default function Tabs({ tabs, activeTabIndex, onTabChange }: {
 
 test('two sibling .map() blocks get distinct #__dc_* private fields', async () => {
   const plugin = geaPlugin()
-  const r = await plugin.transform!.call({} as never, TWO_MAPS_SOURCE, '/virtual/tabs.tsx')
+  const transform2 = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform!.handler
+  const r = await transform2!.call({} as never, TWO_MAPS_SOURCE, '/virtual/tabs.tsx')
   const code = typeof r === 'string' ? r : r?.code
   assert.ok(code)
   const dcFields = [...code!.matchAll(/#__(dc_[a-z0-9_]+)/gi)].map((m) => m[1])

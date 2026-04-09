@@ -242,6 +242,45 @@ export default class App extends Component {
 
 Pass callbacks as props from root components down to children rather than importing stores in every component.
 
+### Passing components as props
+
+Pass components as props to build layouts with multiple named regions — the same idea other frameworks call “named slots,” without a separate API.
+
+```jsx
+// Parent passes components as named props
+<Layout header={<Title />} sidebar={<Nav />} main={<Content />} />
+
+// Layout renders each region wherever it wants
+export default class Layout extends Component {
+  template({ header, sidebar, main }) {
+    return (
+      <div class="layout">
+        <aside>{sidebar}</aside>
+        <main>{main}</main>
+        <header>{header}</header>
+      </div>
+    )
+  }
+}
+```
+
+For a **single** default region, nest content inside the component tags and read `children` in the child:
+
+```jsx
+// Parent nests content between opening and closing tags
+<Card>
+  <h2>Title</h2>
+  <p>Body text goes here.</p>
+</Card>
+
+// Card renders whatever was nested inside it
+export default class Card extends Component {
+  template({ children }) {
+    return <div class="card">{children}</div>
+  }
+}
+```
+
 ## Props and Data Flow
 
 Gea's props follow standard JavaScript semantics. There are no framework-invented concepts like `emit`, `v-model`, or callback-based state lifting for parent-child communication. When a parent passes data to a child, it works exactly like passing arguments to a function:

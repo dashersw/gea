@@ -1,6 +1,14 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
+import {
+  GEA_ATTACH_BINDINGS,
+  GEA_ELEMENT,
+  GEA_INSTANTIATE_CHILD_COMPONENTS,
+  GEA_MOUNT_COMPILED_CHILD_COMPONENTS,
+  GEA_RENDERED,
+  GEA_SETUP_EVENT_DIRECTIVES,
+} from '@geajs/core'
 import { restoreStoreState, hydrate } from '../src/client.ts'
 import type { GeaComponentInstance } from '../src/types.ts'
 
@@ -27,7 +35,12 @@ function setupDOM(html: string) {
     Node: dom.window.Node,
     NodeFilter: dom.window.NodeFilter,
     Event: dom.window.Event,
-    MutationObserver: dom.window.MutationObserver || class { observe() {} disconnect() {} },
+    MutationObserver:
+      dom.window.MutationObserver ||
+      class {
+        observe() {}
+        disconnect() {}
+      },
     requestAnimationFrame: (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0),
     cancelAnimationFrame: (id: number) => clearTimeout(id),
   })
@@ -118,14 +131,15 @@ describe('hydrate', () => {
 
     class App implements GeaComponentInstance {
       props: Record<string, unknown>
-      constructor(props?: Record<string, unknown>) { this.props = props || {} }
-      template() { return '<div>app</div>' }
+      constructor(props?: Record<string, unknown>) {
+        this.props = props || {}
+      }
+      template() {
+        return '<div>app</div>'
+      }
     }
 
-    assert.throws(
-      () => hydrate(App, null),
-      { message: /target element not found/ },
-    )
+    assert.throws(() => hydrate(App, null), { message: /target element not found/ })
   })
 
   it('renders into empty container as fallback', () => {
@@ -133,8 +147,12 @@ describe('hydrate', () => {
 
     class App implements GeaComponentInstance {
       props: Record<string, unknown>
-      constructor(props?: Record<string, unknown>) { this.props = props || {} }
-      template() { return '<div>app content</div>' }
+      constructor(props?: Record<string, unknown>) {
+        this.props = props || {}
+      }
+      template() {
+        return '<div>app content</div>'
+      }
       render(el: Element) {
         el.innerHTML = this.template()
       }
@@ -151,18 +169,24 @@ describe('hydrate', () => {
     let reRendered = false
 
     class App implements GeaComponentInstance {
-      props: Record<string, unknown>
-      element_: Element | null = null
-      rendered_: boolean = false
-      constructor(props?: Record<string, unknown>) { this.props = props || {} }
-      template() { return '<div>app</div>' }
-      attachBindings_() {}
-      mountCompiledChildComponents_() {}
-      instantiateChildComponents_() {}
-      setupEventDirectives_() {}
+      props: Record<string, unknown>;
+      [GEA_ELEMENT]?: Element | null;
+      [GEA_RENDERED]?: boolean
+      constructor(props?: Record<string, unknown>) {
+        this.props = props || {}
+      }
+      template() {
+        return '<div>app</div>'
+      }
+      [GEA_ATTACH_BINDINGS]() {}
+      [GEA_MOUNT_COMPILED_CHILD_COMPONENTS]() {}
+      [GEA_INSTANTIATE_CHILD_COMPONENTS]() {}
+      [GEA_SETUP_EVENT_DIRECTIVES]() {}
       onAfterRender() {}
       onAfterRenderHooks() {}
-      __geaRequestRender() { reRendered = true }
+      __geaRequestRender() {
+        reRendered = true
+      }
     }
 
     const el = document.getElementById('app')!
@@ -173,30 +197,36 @@ describe('hydrate', () => {
   })
 
   it('preserves server-rendered DOM nodes without replacing them', () => {
-    setupDOM('<!doctype html><html><body><div id="app"><div id="0"><p id="server-paragraph">server content</p></div></div></body></html>')
+    setupDOM(
+      '<!doctype html><html><body><div id="app"><div id="0"><p id="server-paragraph">server content</p></div></div></body></html>',
+    )
 
     const serverParagraph = document.getElementById('server-paragraph')
 
     class App implements GeaComponentInstance {
-      props: Record<string, unknown>
-      element_: Element | null = null
-      rendered_: boolean = false
-      constructor(props?: Record<string, unknown>) { this.props = props || {} }
-      template() { return '<div id="0"><p id="server-paragraph">server content</p></div>' }
-      attachBindings_() {}
-      mountCompiledChildComponents_() {}
-      instantiateChildComponents_() {}
-      setupEventDirectives_() {}
+      props: Record<string, unknown>;
+      [GEA_ELEMENT]?: Element | null;
+      [GEA_RENDERED]?: boolean
+      constructor(props?: Record<string, unknown>) {
+        this.props = props || {}
+      }
+      template() {
+        return '<div id="0"><p id="server-paragraph">server content</p></div>'
+      }
+      [GEA_ATTACH_BINDINGS]() {}
+      [GEA_MOUNT_COMPILED_CHILD_COMPONENTS]() {}
+      [GEA_INSTANTIATE_CHILD_COMPONENTS]() {}
+      [GEA_SETUP_EVENT_DIRECTIVES]() {}
       onAfterRender() {}
       onAfterRenderHooks() {}
       __geaRequestRender() {
-        const el = this.element_
+        const el = this[GEA_ELEMENT]
         if (el && el.parentElement) {
           const newEl = document.createElement('div')
           newEl.id = '0'
           newEl.innerHTML = '<p id="server-paragraph">server content</p>'
           el.parentElement.replaceChild(newEl, el)
-          this.element_ = newEl
+          this[GEA_ELEMENT] = newEl
         }
       }
     }
@@ -205,11 +235,7 @@ describe('hydrate', () => {
     hydrate(App, el)
 
     const postHydrationParagraph = document.getElementById('server-paragraph')
-    assert.strictEqual(
-      postHydrationParagraph,
-      serverParagraph,
-      'Hydration should adopt existing DOM, not replace it',
-    )
+    assert.strictEqual(postHydrationParagraph, serverParagraph, 'Hydration should adopt existing DOM, not replace it')
   })
 
   it('restores store state before App construction', () => {
@@ -222,18 +248,20 @@ describe('hydrate', () => {
     let countAtConstruction = -1
 
     class App implements GeaComponentInstance {
-      props: Record<string, unknown>
-      element_: Element | null = null
-      rendered_: boolean = false
+      props: Record<string, unknown>;
+      [GEA_ELEMENT]?: Element | null;
+      [GEA_RENDERED]?: boolean
       constructor(props?: Record<string, unknown>) {
         this.props = props || {}
         countAtConstruction = countStore.count
       }
-      template() { return '<div>app</div>' }
-      attachBindings_() {}
-      mountCompiledChildComponents_() {}
-      instantiateChildComponents_() {}
-      setupEventDirectives_() {}
+      template() {
+        return '<div>app</div>'
+      }
+      [GEA_ATTACH_BINDINGS]() {}
+      [GEA_MOUNT_COMPILED_CHILD_COMPONENTS]() {}
+      [GEA_INSTANTIATE_CHILD_COMPONENTS]() {}
+      [GEA_SETUP_EVENT_DIRECTIVES]() {}
       onAfterRender() {}
       onAfterRenderHooks() {}
       __geaRequestRender() {}

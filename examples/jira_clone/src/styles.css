@@ -2425,6 +2425,7 @@ body {
 }
 
 .tracking-bar-fill {
+  width: 0;
   height: 100%;
   border-radius: 4px;
   background: var(--color-primary);
