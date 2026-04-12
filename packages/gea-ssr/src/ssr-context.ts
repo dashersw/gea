@@ -1,18 +1,24 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { GEA_PROXY_GET_RAW_TARGET, setUidProvider } from '@geajs/core'
+import { signal as createSignal, setUidProvider } from '@geajs/core'
 import { STORE_IMPL_OWN_KEYS } from './types'
 
 export { STORE_IMPL_OWN_KEYS } from './types'
 
-// Maps raw store target → cloned data overlay for the current request
+// ---------------------------------------------------------------------------
+// SSR contexts (AsyncLocalStorage)
+// ---------------------------------------------------------------------------
+
+// For plain-object stores: maps store → cloned data overlay
 const ssrContext = new AsyncLocalStorage<WeakMap<object, Record<string, unknown>>>()
+
+// For signal-based stores: maps store → Map<symbol, Signal>
+// Each SSR request gets its own Signal instances per store field.
+const ssrSignalContext = new AsyncLocalStorage<WeakMap<object, Map<symbol, any>>>()
 
 // Per-request UID counter for deterministic, isolated ID generation
 const ssrUidContext = new AsyncLocalStorage<{ counter: number }>()
 
-// Register SSR-scoped UID provider. When inside an SSR context (runInSSRContext),
-// UID generation uses a per-request counter. Outside SSR, returns null to fall
-// back to the global counter. This keeps @geajs/core free of node:async_hooks.
+// Register SSR-scoped UID provider.
 setUidProvider(
   () => {
     const ctx = ssrUidContext.getStore()
@@ -26,13 +32,21 @@ setUidProvider(
   },
 )
 
+// ---------------------------------------------------------------------------
+// Overlay helpers (plain-object stores)
+// ---------------------------------------------------------------------------
+
 /**
- * Called by Store Proxy get/set/delete handlers.
- * Returns the per-request data overlay for a store, or undefined if not in SSR context.
+ * Returns the per-request data overlay for a plain-object store,
+ * or undefined if not in SSR context.
  */
 export function resolveOverlay(target: object): Record<string, unknown> | undefined {
   return ssrContext.getStore()?.get(target)
 }
+
+// ---------------------------------------------------------------------------
+// Deep clone helpers
+// ---------------------------------------------------------------------------
 
 function isClonable(value: unknown): boolean {
   if (value === null || value === undefined) return true
@@ -80,7 +94,6 @@ export function deepClone(key: string, value: unknown): unknown {
         'Only primitives, plain objects, arrays, and Dates are supported in SSR store data.',
     )
   }
-  // Plain object — TypeScript knows value is Record<string, unknown>
   const result: Record<string, unknown> = {}
   for (const k of Object.keys(value)) {
     result[k] = deepClone(`${key}.${k}`, value[k])
@@ -88,12 +101,65 @@ export function deepClone(key: string, value: unknown): unknown {
   return result
 }
 
+// ---------------------------------------------------------------------------
+// Signal field helpers
+// ---------------------------------------------------------------------------
+
+const GEA_FIELD_PREFIX = 'gea.field.'
+
+/** Enumerate all compiled signal fields on a store object.
+ *  Returns a Map of fieldName → Signal instance.
+ *  If inside an SSR context with overridden signals, returns those instead. */
+export function getSignalFields(store: object): Map<string, any> {
+  const fields = new Map<string, any>()
+  const ssrOverrides = ssrSignalContext.getStore()?.get(store)
+
+  for (const sym of Object.getOwnPropertySymbols(store)) {
+    const desc = sym.description ?? ''
+    if (desc.startsWith(GEA_FIELD_PREFIX)) {
+      const fieldName = desc.slice(GEA_FIELD_PREFIX.length)
+      // Prefer SSR-context signal if available
+      const sig = ssrOverrides?.get(sym) ?? (store as any)[sym]
+      fields.set(fieldName, sig)
+    }
+  }
+  return fields
+}
+
+/** Check whether an object has signal fields (is a compiled v2 Store). */
+export function hasSignalFields(store: object): boolean {
+  for (const sym of Object.getOwnPropertySymbols(store)) {
+    const desc = sym.description ?? ''
+    if (desc.startsWith(GEA_FIELD_PREFIX)) return true
+  }
+  return false
+}
+
+// ---------------------------------------------------------------------------
+// cloneStoreData
+// ---------------------------------------------------------------------------
+
 /**
  * Deep-clone a store's serializable data properties into a plain object.
- * Throws on unsupported types instead of silently dropping them.
+ * Works with both signal-based stores and plain objects.
  */
 export function cloneStoreData(store: object): Record<string, unknown> {
   const data: Record<string, unknown> = {}
+
+  // Try signal fields first
+  const signals = getSignalFields(store)
+  if (signals.size > 0) {
+    for (const [fieldName, sig] of signals) {
+      if (fieldName === 'constructor') continue
+      const value = sig.peek()
+      if (typeof value === 'function') continue
+      assertClonable(fieldName, value)
+      data[fieldName] = deepClone(fieldName, value)
+    }
+    return data
+  }
+
+  // Fallback: plain object
   for (const key of Object.getOwnPropertyNames(store)) {
     if (key === 'constructor' || STORE_IMPL_OWN_KEYS.has(key)) continue
     const descriptor = Object.getOwnPropertyDescriptor(store, key)
@@ -105,33 +171,106 @@ export function cloneStoreData(store: object): Record<string, unknown> {
   return data
 }
 
-/**
- * Run a function inside an SSR context with per-request store data overlays.
- * All store reads/writes within fn (and its async continuations) are isolated.
- */
-/**
- * Get the raw target from a Store Proxy, or return the object as-is.
- */
-function unwrapProxy(store: object): object {
-  // Access GEA_PROXY_GET_RAW_TARGET via Reflect.get (not `in`) because the Store Proxy's
-  // `has` trap delegates internal props to Reflect.has on the raw target, which
-  // returns false since the symbol is synthetic — only the `get` trap handles it.
-  const raw: unknown = Reflect.get(store, GEA_PROXY_GET_RAW_TARGET)
-  if (typeof raw === 'object' && raw !== null) return raw
-  return store
-}
+// ---------------------------------------------------------------------------
+// runInSSRContext
+// ---------------------------------------------------------------------------
 
 /**
- * Run a function inside an SSR context with per-request store data overlays.
- * All store reads/writes within fn (and its async continuations) are isolated.
+ * Run a function inside an SSR context with per-request store data isolation.
+ *
+ * For signal-based stores: creates per-request Signal instances that are swapped
+ * into the store via Object.defineProperty getters backed by AsyncLocalStorage.
+ * This ensures concurrent SSR requests each see their own signal values.
+ *
+ * For plain-object stores: creates overlay maps accessible via resolveOverlay().
  */
+// Tracks which store+symbol pairs have SSR getters installed.
+// The getter delegates to AsyncLocalStorage for per-request resolution.
+// Once installed, getters stay in place (they fall back to the original
+// signal when no SSR context is active, so there's no performance impact).
+const _installedGetters = new WeakMap<object, Set<symbol>>()
+
 export function runInSSRContext<T>(stores: object[], fn: () => T | Promise<T>): T | Promise<T> {
-  const overlays = new WeakMap<object, Record<string, unknown>>()
+  const plainOverlays = new WeakMap<object, Record<string, unknown>>()
+  const signalOverrides = new WeakMap<object, Map<symbol, any>>()
+
   for (const store of stores) {
-    // Unwrap the Proxy to get the raw target — the Proxy handler passes
-    // the raw target to resolveOverlay, so the WeakMap key must match.
-    const raw = unwrapProxy(store)
-    overlays.set(raw, cloneStoreData(raw))
+    if (hasSignalFields(store)) {
+      // Signal-based store: create per-request signal clones
+      const overrideMap = new Map<symbol, any>()
+      let installedSet = _installedGetters.get(store)
+
+      for (const sym of Object.getOwnPropertySymbols(store)) {
+        const desc = sym.description ?? ''
+        if (!desc.startsWith(GEA_FIELD_PREFIX)) continue
+
+        const fieldName = desc.slice(GEA_FIELD_PREFIX.length)
+
+        // Read the ORIGINAL signal — if a getter is already installed,
+        // reading outside any SSR context returns the original signal.
+        const originalSig = (store as any)[sym]
+        if (!originalSig || typeof originalSig.peek !== 'function') continue
+
+        const originalValue = originalSig.peek()
+
+        // Create a new signal with a deep-cloned value for this request
+        let clonedValue: unknown
+        try {
+          clonedValue = typeof originalValue === 'function' ? originalValue : deepClone(fieldName, originalValue)
+        } catch {
+          clonedValue = originalValue
+        }
+        const requestSignal = createSignal(clonedValue)
+        overrideMap.set(sym, requestSignal)
+
+        // Install a getter/setter ONCE per store+symbol.
+        // The getter always delegates to ALS for the current request,
+        // falling back to the original signal when outside SSR.
+        if (!installedSet) {
+          installedSet = new Set()
+          _installedGetters.set(store, installedSet)
+        }
+        if (!installedSet.has(sym)) {
+          installedSet.add(sym)
+          Object.defineProperty(store, sym, {
+            get() {
+              const ctx = ssrSignalContext.getStore()
+              const overrides = ctx?.get(store)
+              return overrides?.get(sym) ?? originalSig
+            },
+            set(v: any) {
+              const ctx = ssrSignalContext.getStore()
+              const overrides = ctx?.get(store)
+              if (overrides) {
+                overrides.set(sym, v)
+              } else {
+                // Outside SSR — write directly to original signal property
+                // (this shouldn't normally happen, but handle gracefully)
+                installedSet!.delete(sym)
+                Object.defineProperty(store, sym, {
+                  value: v,
+                  writable: true,
+                  enumerable: false,
+                  configurable: true,
+                })
+              }
+            },
+            enumerable: false,
+            configurable: true,
+          })
+        }
+      }
+
+      signalOverrides.set(store, overrideMap)
+    } else {
+      // Plain-object store: use overlay map
+      plainOverlays.set(store, cloneStoreData(store))
+    }
   }
-  return ssrContext.run(overlays, () => ssrUidContext.run({ counter: 0 }, fn))
+
+  return ssrSignalContext.run(signalOverrides, () =>
+    ssrContext.run(plainOverlays, () =>
+      ssrUidContext.run({ counter: 0 }, fn),
+    ),
+  )
 }

@@ -1,17 +1,11 @@
 // Well-known symbols used by the component system, router, and UI packages.
 
-// Reactive proxy
-import { RAW } from './reactive/proxy.js';
-export { toRaw } from './reactive/proxy.js';
-export const GEA_PROXY_RAW = RAW;
-
 // Component internals
 export const GEA_ELEMENT = Symbol.for('gea.element');
 export const GEA_PARENT_COMPONENT = Symbol.for('gea.parentComponent');
 export const GEA_CHILD_COMPONENTS = Symbol.for('gea.childComponents');
 export const GEA_DOM_COMPONENT = Symbol.for('gea.domComponent');
 export const GEA_DOM_COMPILED_CHILD_ROOT = Symbol.for('gea.domCompiledChildRoot');
-export const GEA_PROXY_GET_RAW_TARGET = Symbol.for('gea.proxyGetRawTarget');
 
 // Component lifecycle / maps (used by zag-component)
 export const GEA_MAPS = Symbol.for('gea.maps');
@@ -48,11 +42,10 @@ export function geaListItemsSymbol(arrayPropName: string): symbol {
 }
 
 /**
- * Returns the raw (non-proxied) component instance.
- * Equivalent to the old `engineThis()` function.
+ * Returns the component instance as-is (v1 compat — previously unwrapped proxies).
  */
 export function engineThis<T extends object>(comp: T): T {
-  return (comp as any)[GEA_PROXY_RAW] ?? comp;
+  return comp;
 }
 
 /**

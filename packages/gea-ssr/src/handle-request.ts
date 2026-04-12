@@ -6,14 +6,8 @@ import { parseShell } from './shell'
 import { createSSRStream } from './stream'
 import { serializeHead } from './head'
 import type { GeaComponentConstructor, StoreRegistry, SSRContext, RouteMap } from './types'
-import { Store, Router } from '@geajs/core'
-import { createSSRRootProxyHandler } from './ssr-proxy-handler'
+import { Router } from '@geajs/core/router'
 import { resolveSSRRouter, runWithSSRRouter, createSSRRouterState } from './ssr-router-context'
-
-// Wire the SSR root proxy handler into Store (7 traps, overlay semantics)
-if (!Store.rootProxyHandlerFactory) {
-  Store.rootProxyHandlerFactory = createSSRRootProxyHandler
-}
 
 // Wire the SSR router resolver into the Router singleton proxy
 if (!Router._ssrRouterResolver) {

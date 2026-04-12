@@ -1,10 +1,6 @@
 import {
-  GEA_ATTACH_BINDINGS,
   GEA_ELEMENT,
-  GEA_INSTANTIATE_CHILD_COMPONENTS,
-  GEA_MOUNT_COMPILED_CHILD_COMPONENTS,
   GEA_RENDERED,
-  GEA_SETUP_EVENT_DIRECTIVES,
 } from '@geajs/core'
 
 // ---------------------------------------------------------------------------
@@ -40,9 +36,12 @@ export type StoreSnapshotEntry = [store: GeaStore, data: Record<string, unknown>
 /** Full snapshot array returned by `snapshotStores`. */
 export type StoreSnapshot = StoreSnapshotEntry[]
 
-/** Own keys on @geajs/core `Store` that are implementation details (not user data). */
+/** Own keys on @geajs/core `Store` that are implementation details (not user data).
+ *  In v2 (signal-based) there are no proxy caches or pending-change queues —
+ *  the set is kept for backward-compat sanitisation of serialized state on the
+ *  client (`restoreStoreState`) to guard against any v1 data that may have
+ *  been persisted or injected. */
 export const STORE_IMPL_OWN_KEYS = new Set([
-  // _selfProxy and most internals live on WeakMap / symbol keys — not enumerable string keys
   '_pendingChanges',
   '_pendingChangesPool',
   '_flushScheduled',
@@ -74,11 +73,7 @@ export interface GeaComponentInstance<P extends Record<string, unknown> = Record
   /** Full client-side render into a DOM element. */
   render?(element: Element): void
 
-  // Hydration lifecycle hooks (all optional; engine uses well-known symbols)
-  [GEA_ATTACH_BINDINGS]?: () => void
-  [GEA_MOUNT_COMPILED_CHILD_COMPONENTS]?: () => void
-  [GEA_INSTANTIATE_CHILD_COMPONENTS]?: () => void
-  [GEA_SETUP_EVENT_DIRECTIVES]?: () => void
+  // Hydration lifecycle hooks (all optional)
   onAfterRender?(): void
   onAfterRenderHooks?(): void
   __geaRequestRender?(): void

@@ -20,40 +20,27 @@ const _markerDesc: PropertyDescriptor = { value: true };
 // Cache: raw array → wrapped (so wrapArray returns the same ref each time)
 const arrayProxyCache = new WeakMap<object, any>();
 
-// Per-property signal symbol cache — reuse the same Symbol for each property name
-const signalSymbols = new Map<string, symbol>();
-function signalKey(key: string): symbol {
-  let s = signalSymbols.get(key);
-  if (!s) {
-    s = Symbol.for(`gea.sig.${key}`);
-    signalSymbols.set(key, s);
-  }
-  return s;
-}
+const SIG_PREFIX = '$$gea_s$';
 
 export function ensureItemSignal(obj: any, key: string): Signal<unknown> {
-  const sk = signalKey(key);
+  const sk = SIG_PREFIX + key;
   let s: Signal<unknown> | undefined = obj[sk];
   if (!s) {
     const raw = obj[key];
     s = signal(raw);
-    Object.defineProperty(obj, sk, { value: s, configurable: true });
+    obj[sk] = s;
     // If the value is an array, wrap it so that in-place mutations
     // (push/splice/etc) notify this signal automatically.
     if (Array.isArray(raw)) {
       wrapArray(raw, s as Signal<any>);
     }
     // Install getter/setter so mutations notify the signal.
-    // Skip non-configurable properties (e.g. Array.length).
-    const desc = Object.getOwnPropertyDescriptor(obj, key);
-    if (!desc || desc.configurable) {
-      Object.defineProperty(obj, key, {
-        get() { return s!.value; },
-        set(v: unknown) { s!.value = v; },
-        enumerable: true,
-        configurable: true,
-      });
-    }
+    Object.defineProperty(obj, key, {
+      get() { return s!.value; },
+      set(v: unknown) { s!.value = v; },
+      enumerable: true,
+      configurable: true,
+    });
   }
   return s;
 }

@@ -8,7 +8,6 @@ const SYM_QUERY = Symbol.for('gea.field.query')
 const SYM_HASH = Symbol.for('gea.field.hash')
 const SYM_MATCHES = Symbol.for('gea.field.matches')
 const SYM_ERROR = Symbol.for('gea.field.error')
-import { GEA_PROXY_RAW } from '../symbols.js'
 import type { RouteMap, RouterOptions, NavigationTarget, RouteComponent, ResolvedRoute } from './types'
 import { resolveRoute } from './resolve'
 import { runGuards } from './guard'
@@ -80,14 +79,10 @@ interface RouterPrivate {
   layouts: any[]
 }
 
-const _rp = new WeakMap<object, RouterPrivate>()
-
-function raw(r: Router): object {
-  return (r as any)[GEA_PROXY_RAW] ?? r
-}
+const SYM_RP = Symbol.for('gea.router.private')
 
 function rp(router: Router): RouterPrivate {
-  return _rp.get(raw(router))!
+  return (router as any)[SYM_RP]
 }
 
 export class Router<T extends RouteMap = RouteMap> extends Store {
@@ -139,7 +134,7 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
       queryModes: new Map(),
       layouts: [],
     }
-    _rp.set(raw(this), p)
+    ;(this as any)[SYM_RP] = p
 
     Link._router = this
     Outlet._router = this

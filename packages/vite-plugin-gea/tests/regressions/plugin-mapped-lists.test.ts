@@ -13,10 +13,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
-import {
-  transformComponentSource,
-  transformWithPlugin,
-} from './plugin-helpers'
+import { transformComponentSource, transformWithPlugin } from './plugin-helpers'
 
 test('store array .map() compiles to keyedList with item factory', () => {
   const output = transformComponentSource(`
@@ -424,11 +421,7 @@ test('component inside .map() with HTML wrapper compiles correctly', async () =>
     assert.ok(output, 'should produce compiled output')
 
     // v2 uses mount for Avatar component inside map HTML wrapper
-    assert.match(
-      output,
-      /mount\(Avatar/,
-      'Avatar inside .map() HTML wrapper must be instantiated via mount',
-    )
+    assert.match(output, /mount\(Avatar/, 'Avatar inside .map() HTML wrapper must be instantiated via mount')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -539,10 +532,7 @@ test('chained .filter().map() resolves store path for reactivity', async () => {
     )
     assert.ok(output, 'Should compile without errors')
     assert.match(output!, /keyedList\(/, 'Should use keyedList for chained array')
-    assert.ok(
-      output!.includes('.filter('),
-      'Filter call should be preserved in the output',
-    )
+    assert.ok(output!.includes('.filter('), 'Filter call should be preserved in the output')
   } finally {
     await rm(dir, { recursive: true })
   }
@@ -647,8 +637,7 @@ test('.map() with (item, index) callback exposes index inside the keyedList fact
 
   // v2 uses __indexGetter for the second parameter
   assert.match(output, /__indexGetter/, 'keyedList factory must accept index getter')
-  assert.match(output, /const index = __indexGetter\(\)/, 'index must be derived from getter')
-  // The index must be used in the reactive class and event handler
+  assert.doesNotMatch(output, /const index = __indexGetter\(\)/, 'index must NOT be captured as const (stale closure)')
   assert.match(output, /__props\.activeTabIndex/, 'activeTabIndex prop reference must appear in compiled output')
-  assert.match(output, /onTabChange\(index\)/, 'event handler must use index parameter')
+  assert.match(output, /onTabChange\(__indexGetter\(\)\)/, 'event handler must call __indexGetter() dynamically')
 })

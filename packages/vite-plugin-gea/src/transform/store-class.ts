@@ -53,22 +53,21 @@ export function transformStoreClass(
       }
 
       const fieldName = key.name
-      // Emit module-level: const _SIG_<name> = Symbol.for('gea.field.<name>')
-      const sigConstName = `_SIG_${fieldName.toUpperCase()}`
-      const sigConstId = t.identifier(sigConstName)
+      // Use string-keyed private property: this.$$gea_<name> = signal(initialValue)
+      const privateName = `$$gea_${fieldName}`
+      const privateId = t.identifier(privateName)
 
-      // [_SIG_<NAME>] = signal(initialValue)
+      // $$gea_<name> = signal(initialValue)
       const signalProp = t.classProperty(
-        sigConstId,
+        privateId,
         t.callExpression(t.identifier('signal'), [member.value]),
       )
-      signalProp.computed = true
       newMembers.push(signalProp)
 
-      // get fieldName() { return wrapSignalValue(this[_SIG_<NAME>]) }
+      // get fieldName() { return wrapSignalValue(this.$$gea_<name>) }
       const getterReturn = t.callExpression(
         t.identifier('wrapSignalValue'),
-        [t.memberExpression(t.thisExpression(), sigConstId, true)],
+        [t.memberExpression(t.thisExpression(), privateId, false)],
       )
       const getter = t.classMethod(
         'get',
@@ -78,7 +77,7 @@ export function transformStoreClass(
       )
       newMembers.push(getter)
 
-      // set fieldName(v) { this[_SIG_<NAME>].value = v }
+      // set fieldName(v) { this.$$gea_<name>.value = v }
       const setter = t.classMethod(
         'set',
         t.identifier(fieldName),
@@ -88,7 +87,7 @@ export function transformStoreClass(
             t.assignmentExpression(
               '=',
               t.memberExpression(
-                t.memberExpression(t.thisExpression(), sigConstId, true),
+                t.memberExpression(t.thisExpression(), privateId, false),
                 t.identifier('value'),
               ),
               t.identifier('v'),
@@ -100,7 +99,7 @@ export function transformStoreClass(
 
       // Track this constant for injection at module level
       if (!signalConstants) signalConstants = []
-      signalConstants.push({ name: sigConstName, fieldName })
+      signalConstants.push({ name: privateName, fieldName })
 
       transformed = true
       continue
@@ -164,15 +163,13 @@ export function transformStoreClass(
     // __wrapSignalValue handle all field types (primitives, arrays, objects)
     // at runtime, making the reactive proxy redundant.
     const compiledProp = t.classProperty(
-      t.identifier('GEA_COMPILED'),
+      t.identifier('$$gea_compiled'),
       t.booleanLiteral(true),
     )
     compiledProp.static = true
-    compiledProp.computed = true
     newMembers.unshift(compiledProp)
     classBody.body = newMembers
     usedHelpers.add('signal')
-    usedHelpers.add('GEA_COMPILED')
     usedHelpers.add('batch')
     usedHelpers.add('wrapSignalValue')
   }
@@ -286,13 +283,12 @@ function processStatements(
 
     if (!fieldName) continue
 
-    // Insert: this[Symbol.for('gea.field.<field>')]._notify()
-    // this[_SIG_<FIELD>]._notify()
-    const sigConstName = `_SIG_${fieldName.toUpperCase()}`
+    // Insert: this.$$gea_<field>._notify()
+    const privateName = `$$gea_${fieldName}`
     const notifyStmt = t.expressionStatement(
       t.callExpression(
         t.memberExpression(
-          t.memberExpression(t.thisExpression(), t.identifier(sigConstName), true),
+          t.memberExpression(t.thisExpression(), t.identifier(privateName), false),
           t.identifier('_notify'),
         ),
         [],

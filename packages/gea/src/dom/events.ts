@@ -3,7 +3,7 @@ import { batch } from '../signals/index.js';
 // Delegated events: single document-level listener per event type.
 // All handlers run inside batch() so multiple store mutations in one
 // event handler flush as a single update pass.
-const KEY_PREFIX = '__gea_';
+const KEY_PREFIX = '$$gea_';
 const installed = new Set<string>();
 
 // Non-bubbling events that must be attached directly to the element.
@@ -27,7 +27,7 @@ export function getCurrentTarget(): Node | null {
 }
 
 export function ensureDelegation(event: string): void {
-  if (NON_BUBBLING.has(event)) return; // non-bubbling events are handled per-element
+  if (NON_BUBBLING.has(event)) return;
   if (installed.has(event)) return;
   installed.add(event);
   document.addEventListener(event, (e) => {
@@ -36,8 +36,6 @@ export function ensureDelegation(event: string): void {
     while (n) {
       const h = n[key];
       if (h) {
-        // Set currentTarget via module-level variable for user code access.
-        // Using Object.defineProperty on a live event deoptimizes the V8 hidden class.
         _currentTarget = n;
         _ctDesc.value = n;
         Object.defineProperty(e, 'currentTarget', _ctDesc);
@@ -57,7 +55,6 @@ export function resetDelegation(): void {
 
 export function delegateEvent(el: Node, event: string, handler: EventListener): void {
   if (NON_BUBBLING.has(event)) {
-    // Non-bubbling events: attach directly to the element
     (el as EventTarget).addEventListener(event, (e) => batch(handler, e));
     return;
   }

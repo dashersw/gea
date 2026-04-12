@@ -140,13 +140,14 @@ export function keyedList(
     // Fast path: empty list (clear)
     if (newLen === 0) {
       if (oldLen > 0) {
-        // Remove only this list's nodes — don't clear the parent since sibling
-        // nodes (e.g. conditional branches sharing the same parent) must survive.
+        // Fast bulk DOM clear: remove anchor, clear textContent, re-add anchor
+        // This is much faster than removing nodes one by one
+        parent.textContent = '';
+        parent.appendChild(anchor);
+
+        // Dispose all entries
         for (let i = 0; i < oldLen; i++) {
-          const entry = keyMap.get(oldKeys[i])!;
-          const nodeToRemove = entry.node!;
-          disposeEntry(entry);
-          if (nodeToRemove.parentNode) parent.removeChild(nodeToRemove);
+          disposeEntry(keyMap.get(oldKeys[i])!);
         }
         keyMap.clear();
       }
@@ -282,14 +283,15 @@ export function keyedList(
         }
       }
       if (isFullReplace) {
-        // Bulk dispose all old entries and remove their DOM nodes
+        // Bulk dispose all old entries
         for (let i = 0; i < oldLen; i++) {
-          const entry = keyMap.get(oldKeys[i])!;
-          const nodeToRemove = entry.node!;
-          disposeEntry(entry);
-          if (nodeToRemove.parentNode) parent.removeChild(nodeToRemove);
+          disposeEntry(keyMap.get(oldKeys[i])!);
         }
         keyMap.clear();
+
+        // Bulk clear DOM and re-create all
+        parent.textContent = '';
+        parent.appendChild(anchor);
 
         // Create all new rows with effect stack management outside the loop
         // (saves 2×N effect stack ops for N rows)

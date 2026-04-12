@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sheet-editor",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "examples/sheet-editor/vite.config.ts"],
+      "port": 5312
+    }
+  ]
+}

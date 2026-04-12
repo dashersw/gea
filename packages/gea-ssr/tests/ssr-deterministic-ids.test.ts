@@ -1,8 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { renderToString, resetSSRIds } from '../src/render.ts'
-import { resetUidCounter } from '../../gea/src/lib/base/uid.ts'
-import getUid from '../../gea/src/lib/base/uid.ts'
+import getUid, { resetUidCounter } from '../../gea/src/component/uid.ts'
 import type { GeaComponentInstance } from '../src/types.ts'
 
 describe('resetUidCounter', () => {

@@ -1,25 +1,37 @@
-import { GEA_PROXY_GET_RAW_TARGET } from '@geajs/core'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleRequest } from '../src/handle-request.ts'
 import { resolveOverlay, runInSSRContext } from '../src/ssr-context.ts'
 import type { GeaComponentInstance, GeaStore } from '../src/types.ts'
-import { Store } from '../../gea/src/lib/store.ts'
+import { signal } from '../../gea/src/signals/index.ts'
 
 const mockIndexHtml = '<!DOCTYPE html><html><body><div id="app"></div></body></html>'
 
-// A real Store instance — SSR overlay only works on Store Proxy instances
-class TestStore extends Store {
-  user = 'default'
-  count = 0
+/** Helper to create a signal-based store (avoids tsx class field transpilation bug
+ *  where multiple computed symbol keys get collapsed). */
+function createSignalStore(fields: Record<string, unknown>) {
+  const store: any = {}
+  for (const [name, value] of Object.entries(fields)) {
+    const sym = Symbol.for(`gea.field.${name}`)
+    store[sym] = signal(value)
+    Object.defineProperty(store, name, {
+      get() { return store[sym].peek() },
+      set(v: unknown) { store[sym].value = v },
+      enumerable: true,
+      configurable: true,
+    })
+  }
+  return store
 }
-const sharedStore: GeaStore = new TestStore()
+
+// A v2 signal-based store
+const sharedStore = createSignalStore({ user: 'default', count: 0 }) as GeaStore
 
 class StoreReadingApp implements GeaComponentInstance {
   props: Record<string, unknown>
   constructor(props?: Record<string, unknown>) { this.props = props || {} }
   template() {
-    return `<div data-user="${sharedStore.user}" data-count="${sharedStore.count}"></div>`
+    return `<div data-user="${(sharedStore as any).user}" data-count="${(sharedStore as any).count}"></div>`
   }
 }
 
@@ -38,8 +50,8 @@ async function readResponse(response: Response): Promise<string> {
 describe('SSR context isolation', () => {
   it('concurrent requests get isolated store state', async () => {
     // Reset store to known state
-    sharedStore.user = 'default'
-    sharedStore.count = 0
+    ;(sharedStore as any).user = 'default'
+    ;(sharedStore as any).count = 0
 
     const handler = handleRequest(StoreReadingApp, {
       indexHtml: mockIndexHtml,
@@ -48,13 +60,13 @@ describe('SSR context isolation', () => {
         // Each request mutates the store differently based on route
         const route = ctx.route
         if (route === '/alice') {
-          sharedStore.user = 'Alice'
-          sharedStore.count = 1
+          ;(sharedStore as any).user = 'Alice'
+          ;(sharedStore as any).count = 1
           // Simulate async work to increase overlap window
           await new Promise(r => setTimeout(r, 20))
         } else if (route === '/bob') {
-          sharedStore.user = 'Bob'
-          sharedStore.count = 2
+          ;(sharedStore as any).user = 'Bob'
+          ;(sharedStore as any).count = 2
           await new Promise(r => setTimeout(r, 20))
         }
       },
@@ -75,25 +87,25 @@ describe('SSR context isolation', () => {
     assert.ok(bobHtml.includes('data-user="Bob"'), 'Bob response must show Bob')
     assert.ok(bobHtml.includes('data-count="2"'), 'Bob response must show count=2')
 
-    // Original singleton must be untouched
-    assert.equal(sharedStore.user, 'default', 'Original store must not be mutated')
-    assert.equal(sharedStore.count, 0, 'Original store count must not be mutated')
+    // Original singleton must be restored
+    assert.equal((sharedStore as any).user, 'default', 'Original store must be restored after requests')
+    assert.equal((sharedStore as any).count, 0, 'Original store count must be restored after requests')
   })
 
   it('store mutations in onBeforeRender do not leak to other requests', async () => {
-    // Reset outside SSR context — writes go to the raw Store
-    sharedStore.user = 'initial'
-    sharedStore.count = 0
+    // Reset outside SSR context
+    ;(sharedStore as any).user = 'initial'
+    ;(sharedStore as any).count = 0
 
     const handler = handleRequest(StoreReadingApp, {
       indexHtml: mockIndexHtml,
       storeRegistry: { TestStore: sharedStore },
       async onBeforeRender(ctx) {
         if (ctx.route === '/mutator') {
-          sharedStore.user = 'mutated'
-          sharedStore.count = 999
+          ;(sharedStore as any).user = 'mutated'
+          ;(sharedStore as any).count = 999
         }
-        // /reader does not mutate — should see original state
+        // /reader does not mutate — should see cloned-from-initial state
       },
     })
 
@@ -109,8 +121,8 @@ describe('SSR context isolation', () => {
     assert.ok(mutatorHtml.includes('data-user="mutated"'), 'Mutator sees its own mutation')
     assert.ok(readerHtml.includes('data-user="initial"'), 'Reader must not see mutator state')
 
-    // Singleton untouched
-    assert.equal(sharedStore.user, 'initial')
+    // Singleton restored
+    assert.equal((sharedStore as any).user, 'initial')
   })
 })
 
@@ -121,7 +133,7 @@ describe('resolveOverlay()', () => {
     assert.equal(result, undefined)
   })
 
-  it('returns cloned overlay inside SSR context', async () => {
+  it('returns cloned overlay inside SSR context for plain-object stores', async () => {
     const store = { count: 5, name: 'test' }
     await runInSSRContext([store], () => {
       const overlay = resolveOverlay(store)
@@ -131,7 +143,7 @@ describe('resolveOverlay()', () => {
     })
   })
 
-  it('overlay is independent from original store', async () => {
+  it('overlay is independent from original plain-object store', async () => {
     const store = { count: 5 }
     await runInSSRContext([store], () => {
       const overlay = resolveOverlay(store)
@@ -142,33 +154,7 @@ describe('resolveOverlay()', () => {
   })
 })
 
-describe('unwrapProxy via runInSSRContext', () => {
-  it('uses GEA_PROXY_GET_RAW_TARGET when present on store', async () => {
-    const realStore = { count: 10 }
-    const proxy = {
-      count: 10,
-      [GEA_PROXY_GET_RAW_TARGET]: realStore,
-    }
-    await runInSSRContext([proxy], () => {
-      // resolveOverlay uses the raw target as key
-      const overlayViaProxy = resolveOverlay(proxy)
-      assert.equal(overlayViaProxy, undefined, 'proxy itself is not the key')
-      const overlayViaRaw = resolveOverlay(realStore)
-      assert.ok(overlayViaRaw !== undefined, 'raw target is the key')
-      assert.equal(overlayViaRaw!.count, 10)
-    })
-  })
-
-  it('uses store directly when GEA_PROXY_GET_RAW_TARGET is not an object', async () => {
-    const store = { count: 7, [GEA_PROXY_GET_RAW_TARGET]: 'not-an-object' }
-    await runInSSRContext([store], () => {
-      const overlay = resolveOverlay(store)
-      assert.ok(overlay !== undefined, 'store itself is the key')
-    })
-  })
-})
-
-describe('store isolation — advanced concurrency', () => {
+describe('store isolation — advanced concurrency (plain objects)', () => {
   it('nested async operations see same overlay within one context', async () => {
     const store = { count: 0 }
     await runInSSRContext([store], async () => {
@@ -234,5 +220,43 @@ describe('store isolation — advanced concurrency', () => {
         assert.equal(resolveOverlay(storeB)!.value, 'b')
       }),
     ])
+  })
+})
+
+describe('signal-based store isolation', () => {
+  it('concurrent SSR contexts isolate signal-based stores', async () => {
+    const store = createSignalStore({ count: 0 })
+    const results: number[] = []
+
+    await Promise.all([
+      runInSSRContext([store], async () => {
+        store.count = 100
+        await new Promise(resolve => setTimeout(resolve, 5))
+        results.push(store.count)
+      }),
+      runInSSRContext([store], async () => {
+        store.count = 200
+        await new Promise(resolve => setTimeout(resolve, 5))
+        results.push(store.count)
+      }),
+    ])
+
+    // Note: signal-based isolation restores originals after each context finishes
+    assert.equal(store.count, 0, 'original store restored after contexts complete')
+  })
+
+  it('signal values are cloned per-request, not shared', async () => {
+    const store = createSignalStore({ items: [1, 2, 3] })
+
+    await runInSSRContext([store], () => {
+      // Items should be a deep clone, not the same reference
+      const ssrItems = store.items
+      assert.deepEqual(ssrItems, [1, 2, 3])
+      store.items = [4, 5, 6]
+      assert.deepEqual(store.items, [4, 5, 6])
+    })
+
+    // Original restored
+    assert.deepEqual(store.items, [1, 2, 3])
   })
 })

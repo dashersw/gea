@@ -14,14 +14,7 @@ export const ATTR_TO_PROP: Record<string, string> = {
 }
 
 /** Attributes that should be set as DOM properties rather than via setAttribute. */
-export const DOM_PROPERTIES = new Set([
-  'checked',
-  'value',
-  'disabled',
-  'selected',
-  'className',
-  'htmlFor',
-])
+export const DOM_PROPERTIES = new Set(['checked', 'value', 'disabled', 'selected', 'className', 'htmlFor'])
 
 /**
  * Lowercase event names recognised by the compiler.
@@ -83,16 +76,67 @@ export const DOM_EVENTS = new Set([
  */
 export function toEventName(attrName: string): string | null {
   // Direct match (lowercase)
-  if (DOM_EVENTS.has(attrName)) return attrName;
+  if (DOM_EVENTS.has(attrName)) return attrName
 
   // on-prefix: onMouseOver -> mouseover, onclick -> click
   if (attrName.startsWith('on') && attrName.length > 2) {
-    const lowered = attrName.slice(2).toLowerCase();
-    if (DOM_EVENTS.has(lowered)) return lowered;
+    const lowered = attrName.slice(2).toLowerCase()
+    if (DOM_EVENTS.has(lowered)) return lowered
   }
 
-  return null;
+  return null
 }
+
+export const SVG_CHILDREN = new Set([
+  'circle',
+  'clipPath',
+  'defs',
+  'ellipse',
+  'feBlend',
+  'feColorMatrix',
+  'feComponentTransfer',
+  'feComposite',
+  'feConvolveMatrix',
+  'feDiffuseLighting',
+  'feDisplacementMap',
+  'feDistantLight',
+  'feFlood',
+  'feFuncA',
+  'feFuncB',
+  'feFuncG',
+  'feFuncR',
+  'feGaussianBlur',
+  'feImage',
+  'feMerge',
+  'feMergeNode',
+  'feMorphology',
+  'feOffset',
+  'fePointLight',
+  'feSpecularLighting',
+  'feSpotLight',
+  'feTile',
+  'feTurbulence',
+  'filter',
+  'foreignObject',
+  'g',
+  'image',
+  'line',
+  'linearGradient',
+  'marker',
+  'mask',
+  'path',
+  'pattern',
+  'polygon',
+  'polyline',
+  'radialGradient',
+  'rect',
+  'stop',
+  'symbol',
+  'text',
+  'textPath',
+  'tspan',
+  'use',
+])
 
 /** Runtime helpers importable from "@geajs/core/runtime". */
 export type RuntimeHelper =

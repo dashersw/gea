@@ -1,7 +1,10 @@
-import { resetUidCounter, GEA_OBSERVER_REMOVERS, GEA_CHILD_COMPONENTS } from '@geajs/core'
+import { resetUidCounter, GEA_CHILD_COMPONENTS } from '@geajs/core'
 import type { GeaComponentConstructor } from './types'
 
 const SSR_UID_SEED = 0
+
+/** Symbol used by the component system to store effect dispose functions. */
+const GEA_OBSERVER_REMOVERS = Symbol.for('gea.observerRemovers')
 
 /** Reset the UID counter to the deterministic SSR seed.
  *  Call before renderToString and before hydrate to get matching IDs. */

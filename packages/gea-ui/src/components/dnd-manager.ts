@@ -1,7 +1,6 @@
 import {
   GEA_DOM_COMPONENT,
   GEA_PARENT_COMPONENT,
-  GEA_PROXY_GET_RAW_TARGET,
   stashComponentForTransfer,
 } from '@geajs/core'
 
@@ -15,9 +14,6 @@ const DRAG_THRESHOLD_SQ = 25
 const DRAGGABLE_SEL = '[data-draggable-id]'
 const DROPPABLE_SEL = '[data-droppable-id]'
 
-function _rawComp(comp: any): any {
-  return comp?.[GEA_PROXY_GET_RAW_TARGET] ?? comp
-}
 
 class DndManager {
   droppables = new Map<string, HTMLElement>()
@@ -350,8 +346,7 @@ class DndManager {
     const draggedComp = this._getComponentFromElement(sourceEl)
     if (!draggedComp) return
 
-    const rawDragged = _rawComp(draggedComp)
-    const sourceParent = rawDragged[GEA_PARENT_COMPONENT]
+    const sourceParent = draggedComp[GEA_PARENT_COMPONENT]
     if (!sourceParent) return
 
     const srcArr = this._findCompiledArray(sourceParent, draggedComp)
@@ -366,8 +361,7 @@ class DndManager {
       destArr.splice(destination.index, 0, draggedComp)
     }
 
-    // Update the parent component pointer on the raw instance (symbol-keyed, not string prop).
-    rawDragged[GEA_PARENT_COMPONENT] = destParent
+    draggedComp[GEA_PARENT_COMPONENT] = destParent
   }
 
   private _findCompiledArray(parent: any, child: any): { key: symbol; arr: any[]; index: number } | null {

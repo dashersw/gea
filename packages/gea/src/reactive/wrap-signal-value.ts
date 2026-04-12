@@ -16,5 +16,6 @@ export function wrapSignalValue<T>(sig: Signal<T>): T {
   const v = sig.value;
   if (v === null || typeof v !== 'object') return v;
   if (Array.isArray(v)) return wrapArray(v as any, sig as any) as T;
+  if (typeof Node !== 'undefined' && v instanceof Node) return v;
   return wrapObject(v as any, sig as any) as T;
 }

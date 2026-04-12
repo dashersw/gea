@@ -13,13 +13,11 @@ import { Store } from './store/index.js';
 const gea = { Store, Component, applyListChanges }
 export default gea
 export {
-  GEA_PROXY_RAW,
   GEA_ELEMENT,
   GEA_PARENT_COMPONENT,
   GEA_CHILD_COMPONENTS,
   GEA_DOM_COMPONENT,
   GEA_DOM_COMPILED_CHILD_ROOT,
-  GEA_PROXY_GET_RAW_TARGET,
   GEA_MAPS,
   GEA_SYNC_MAP,
   GEA_UPDATE_PROPS,
@@ -32,7 +30,6 @@ export {
   GEA_DOM_ITEM,
   GEA_DOM_KEY,
   geaListItemsSymbol,
-  toRaw,
   engineThis,
   stashComponentForTransfer,
 } from './symbols.js';

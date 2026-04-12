@@ -8,7 +8,6 @@ import {
   GEA_ELEMENT,
   GEA_IS_ROUTER_OUTLET,
   GEA_PARENT_COMPONENT,
-  GEA_PROXY_RAW,
   GEA_ROUTER_DEPTH,
   GEA_ROUTER_REF,
 } from '../symbols.js'
@@ -22,15 +21,10 @@ interface OutletPrivate {
   observerRemovers: Array<() => void>
 }
 
-const _op = new WeakMap<object, OutletPrivate>()
-
-function rawOutlet(o: Outlet): object {
-  return (o as any)[GEA_PROXY_RAW] ?? o
-}
+const SYM_OP = Symbol.for('gea.outlet.private')
 
 function op(outlet: Outlet): OutletPrivate {
-  const key = rawOutlet(outlet)
-  let p = _op.get(key)
+  let p = (outlet as any)[SYM_OP]
   if (!p) {
     p = {
       currentChild: null,
@@ -39,7 +33,7 @@ function op(outlet: Outlet): OutletPrivate {
       lastPath: undefined,
       observerRemovers: [],
     }
-    _op.set(key, p)
+    ;(outlet as any)[SYM_OP] = p
   }
   return p
 }

@@ -7,7 +7,6 @@ import {
   GEA_SET_PROPS,
   GEA_IS_ROUTER_OUTLET,
   GEA_PARENT_COMPONENT,
-  GEA_PROXY_RAW,
   GEA_ROUTER_DEPTH,
   GEA_ROUTER_REF,
 } from '../symbols.js'
@@ -24,15 +23,10 @@ interface RouterViewPrivate {
   routesApplied: boolean
 }
 
-const _rvp = new WeakMap<object, RouterViewPrivate>()
-
-function rawView(v: RouterView): object {
-  return (v as any)[GEA_PROXY_RAW] ?? v
-}
+const SYM_RVP = Symbol.for('gea.routerView.private')
 
 function rvp(view: RouterView): RouterViewPrivate {
-  const key = rawView(view)
-  let p = _rvp.get(key)
+  let p = (view as any)[SYM_RVP]
   if (!p) {
     p = {
       currentChild: null,
@@ -42,7 +36,7 @@ function rvp(view: RouterView): RouterViewPrivate {
       observerRemovers: [],
       routesApplied: false,
     }
-    _rvp.set(key, p)
+    ;(view as any)[SYM_RVP] = p
   }
   return p
 }

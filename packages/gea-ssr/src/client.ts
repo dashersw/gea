@@ -1,10 +1,6 @@
 import {
-  GEA_ATTACH_BINDINGS,
   GEA_ELEMENT,
-  GEA_INSTANTIATE_CHILD_COMPONENTS,
-  GEA_MOUNT_COMPILED_CHILD_COMPONENTS,
   GEA_RENDERED,
-  GEA_SETUP_EVENT_DIRECTIVES,
   resetUidCounter,
 } from '@geajs/core'
 import type { GeaComponentConstructor, StoreRegistry } from './types'
@@ -71,10 +67,15 @@ export function hydrate(
   ;(app as any)[GEA_RENDERED] = true
 
   // Attach reactivity bindings (observers, events)
-  if (typeof app[GEA_ATTACH_BINDINGS] === 'function') app[GEA_ATTACH_BINDINGS]()
-  if (typeof app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS] === 'function') app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]()
-  if (typeof app[GEA_INSTANTIATE_CHILD_COMPONENTS] === 'function') app[GEA_INSTANTIATE_CHILD_COMPONENTS]()
-  if (typeof app[GEA_SETUP_EVENT_DIRECTIVES] === 'function') app[GEA_SETUP_EVENT_DIRECTIVES]()
+  // v2: lifecycle hooks are invoked via well-known symbol keys when present
+  const attachBindings = (app as any)[Symbol.for('gea.attachBindings')]
+  if (typeof attachBindings === 'function') attachBindings.call(app)
+  const mountCompiled = (app as any)[Symbol.for('gea.mountCompiledChildComponents')]
+  if (typeof mountCompiled === 'function') mountCompiled.call(app)
+  const instantiateChildren = (app as any)[Symbol.for('gea.instantiateChildComponents')]
+  if (typeof instantiateChildren === 'function') instantiateChildren.call(app)
+  const setupEvents = (app as any)[Symbol.for('gea.setupEventDirectives')]
+  if (typeof setupEvents === 'function') setupEvents.call(app)
   if (typeof app.onAfterRender === 'function') app.onAfterRender()
   if (typeof app.onAfterRenderHooks === 'function') app.onAfterRenderHooks()
 

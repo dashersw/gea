@@ -21,7 +21,6 @@ let _snapDepth = 0;
  */
 class SignalImpl<T> implements Signal<T>, DepSet {
   _v: T;
-  _epoch: number = 0;
   _sub1: (() => void) | null = null;
   _subs: Set<() => void> | null = null;
 
@@ -35,7 +34,6 @@ class SignalImpl<T> implements Signal<T>, DepSet {
       this.add(active.fn);
       active.deps.push(this);
     }
-    _lastReadEpoch += this._epoch;
     return this._v;
   }
 
@@ -55,7 +53,6 @@ class SignalImpl<T> implements Signal<T>, DepSet {
   }
 
   _notify(): void {
-    this._epoch++;
     const subs = this._subs;
     const sub1 = this._sub1;
     if (subs) {
@@ -102,21 +99,6 @@ class SignalImpl<T> implements Signal<T>, DepSet {
       this._sub1 = null;
     }
   }
-}
-
-/**
- * Accumulated epoch of all signals read since the last `resetReadEpoch()`.
- * Used by the props proxy to detect when a parent signal has been notified
- * (even for in-place mutations that don't change the value reference).
- */
-let _lastReadEpoch = 0;
-
-export function resetReadEpoch(): void {
-  _lastReadEpoch = 0;
-}
-
-export function getReadEpoch(): number {
-  return _lastReadEpoch;
 }
 
 export function signal<T>(initialValue: T): Signal<T> {

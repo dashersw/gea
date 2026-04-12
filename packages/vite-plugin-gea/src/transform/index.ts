@@ -193,24 +193,7 @@ export function transformSource(source: string, id?: string): string | null {
   // Inject runtime import
   injectRuntimeImport(ast, usedHelpers)
 
-  // Inject signal constants at module level: const _SIG_FOO = Symbol.for('gea.field.foo')
-  if (allSignalConstants.length > 0) {
-    const constDecls = allSignalConstants.map(({ name, fieldName }) =>
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(name),
-          t.callExpression(
-            t.memberExpression(t.identifier('Symbol'), t.identifier('for')),
-            [t.stringLiteral(`gea.field.${fieldName}`)],
-          ),
-        ),
-      ]),
-    )
-    const firstNonImport = ast.program.body.findIndex(
-      (s) => !t.isImportDeclaration(s),
-    )
-    ast.program.body.splice(firstNonImport < 0 ? 0 : firstNonImport, 0, ...constDecls)
-  }
+  // No symbol constants needed — store fields use string-keyed properties ($$gea_<name>)
 
   // Inject template declarations at module level (after imports)
   if (templateDeclarations.length > 0) {

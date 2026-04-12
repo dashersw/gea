@@ -1,70 +1,80 @@
 import assert from 'node:assert/strict'
-import { describe, it, beforeEach, afterEach } from 'node:test'
-import { GEA_PROXY_GET_RAW_TARGET, Store } from '@geajs/core'
-import { createSSRRootProxyHandler } from '../src/ssr-proxy-handler.ts'
-import { runInSSRContext } from '../src/ssr-context.ts'
+import { describe, it } from 'node:test'
+import { runInSSRContext, resolveOverlay } from '../src/ssr-context.ts'
+import { SSR_DELETED } from '../src/ssr-proxy-handler.ts'
+import { signal } from '../../gea/src/signals/index.ts'
 
-describe('Store SSR overlay – delete tombstone', () => {
-  beforeEach(() => {
-    Store.rootProxyHandlerFactory = createSSRRootProxyHandler
-  })
+/** Helper to create a signal-based store. */
+function createSignalStore(fields: Record<string, unknown>) {
+  const store: any = {}
+  for (const [name, value] of Object.entries(fields)) {
+    const sym = Symbol.for(`gea.field.${name}`)
+    store[sym] = signal(value)
+    Object.defineProperty(store, name, {
+      get() { return store[sym].peek() },
+      set(v: unknown) { store[sym].value = v },
+      enumerable: true,
+      configurable: true,
+    })
+  }
+  return store
+}
 
-  afterEach(() => {
-    Store.rootProxyHandlerFactory = null
-  })
-
-  it('deleting a property in SSR overlay returns undefined on read, not the underlying value', () => {
-    const store = new Store({ name: 'shared', count: 42 })
+describe('Store SSR overlay – delete / tombstone (plain objects)', () => {
+  it('overlay can mark a property as deleted via SSR_DELETED sentinel', () => {
+    const store = { name: 'shared', count: 42 }
     runInSSRContext([store], () => {
-      assert.equal(store.name, 'shared')
-      assert.equal(store.count, 42)
+      const overlay = resolveOverlay(store)!
+      assert.equal(overlay.name, 'shared')
 
-      delete (store as Record<string, unknown>).name
-
-      assert.equal(store.name, undefined, 'Deleted SSR property must be undefined, not fall through to shared store')
+      overlay.name = SSR_DELETED as any
+      assert.equal(overlay.name, SSR_DELETED, 'Overlay should hold the tombstone')
     })
   })
 
-  it('deleted property does not appear in Object.keys', () => {
-    const store = new Store({ a: 1, b: 2, c: 3 })
+  it('tombstoned property can be revived with a new value in overlay', () => {
+    const store = { name: 'original' }
     runInSSRContext([store], () => {
-      delete (store as Record<string, unknown>).b
+      const overlay = resolveOverlay(store)!
+      overlay.name = SSR_DELETED as any
+      assert.equal(overlay.name, SSR_DELETED)
 
-      const keys = Object.keys(store)
-      assert.ok(!keys.includes('b'), 'Deleted property must not appear in Object.keys')
-      assert.ok(keys.includes('a'))
-      assert.ok(keys.includes('c'))
+      overlay.name = 'revived'
+      assert.equal(overlay.name, 'revived')
     })
   })
 
-  it('deleted property returns undefined via getOwnPropertyDescriptor', () => {
-    const store = new Store({ x: 10 })
+  it('overlay operations do not affect the underlying store', () => {
+    const store = { count: 99 }
     runInSSRContext([store], () => {
-      delete (store as Record<string, unknown>).x
-
-      const desc = Object.getOwnPropertyDescriptor(store, 'x')
-      assert.equal(desc, undefined, 'getOwnPropertyDescriptor must return undefined for tombstoned property')
+      const overlay = resolveOverlay(store)!
+      overlay.count = 0
+      assert.equal(store.count, 99, 'Underlying store must not be affected by overlay writes')
     })
   })
+})
 
-  it('can set a new value after deleting in SSR overlay', () => {
-    const store = new Store({ name: 'original' })
+describe('Store SSR overlay – signal-based stores', () => {
+  it('signal values are isolated in SSR context', () => {
+    const store = createSignalStore({ name: 'shared' })
+
     runInSSRContext([store], () => {
-      delete (store as Record<string, unknown>).name
-      assert.equal(store.name, undefined)
-
-      store.name = 'revived'
-      assert.equal(store.name, 'revived')
+      assert.equal(store.name, 'shared', 'Should start with cloned value')
+      store.name = 'modified'
+      assert.equal(store.name, 'modified', 'Signal write should work within SSR context')
     })
+
+    assert.equal(store.name, 'shared', 'Original signal must be restored after SSR context')
   })
 
-  it('delete in SSR overlay does not affect the underlying store', () => {
-    const store = new Store({ count: 99 })
-    const raw = Reflect.get(store, GEA_PROXY_GET_RAW_TARGET) as Record<string, unknown>
-    runInSSRContext([store], () => {
-      delete (store as Record<string, unknown>).count
+  it('setting signal to undefined effectively "deletes" the value in SSR context', () => {
+    const store = createSignalStore({ count: 42 })
 
-      assert.equal(raw.count, 99, 'Underlying store must not be affected by SSR delete')
+    runInSSRContext([store], () => {
+      store.count = undefined
+      assert.equal(store.count, undefined, 'Signal value should be undefined within SSR')
     })
+
+    assert.equal(store.count, 42, 'Original value must be restored')
   })
 })

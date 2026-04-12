@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { runInSSRContext } from '../src/ssr-context.ts'
-import getUid from '../../gea/src/lib/base/uid.ts'
+import getUid from '../../gea/src/component/uid.ts'
 
 describe('SSR UID isolation', () => {
   it('concurrent SSR contexts get independent UID sequences', async () => {

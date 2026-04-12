@@ -251,8 +251,8 @@ test('map event handler using only index provides index through __indexGetter', 
   // v2 passes __itemGetter and __indexGetter to the keyedList factory
   assert.match(output, /keyedList\(/)
   assert.match(output, /__indexGetter/)
-  assert.match(output, /const index = __indexGetter\(\)/)
-  assert.match(output, /this\.removeAt\(index\)/)
+  assert.doesNotMatch(output, /const index = __indexGetter\(\)/)
+  assert.match(output, /this\.removeAt\(__indexGetter\(\)\)/)
 })
 
 test('map event handler using only item provides item through __itemGetter', () => {
@@ -318,5 +318,5 @@ test('map event handler using both item and index receives both getters', () => 
   assert.match(output, /keyedList\(/)
   assert.match(output, /__itemGetter/)
   assert.match(output, /__indexGetter/)
-  assert.match(output, /this\.update\(item, index\)/)
+  assert.match(output, /this\.update\(item, __indexGetter\(\)\)/)
 })

@@ -5,12 +5,12 @@ export class Store {
    * the subscription.
    *
    * Works with compiled stores where field `foo` is transformed to
-   * `[Symbol.for('gea.field.foo')]` (a Signal instance) by the Gea compiler.
+   * `this.$$gea_foo` (a Signal instance) by the Gea compiler.
    */
-  observe(propertyName: string, callback: () => void): () => void {
-    const sig = (this as any)[Symbol.for(`gea.field.${propertyName}`)]
+  observe(propertyName: string, callback: (value: any) => void): () => void {
+    const sig = (this as any)[`$$gea_${propertyName}`]
     if (sig && typeof sig.subscribe === 'function') {
-      return sig.subscribe(callback)
+      return sig.subscribe(() => callback(sig.peek()))
     }
     // Fallback: no-op dispose if the property is not a compiled signal
     return () => {}

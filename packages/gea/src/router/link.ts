@@ -1,5 +1,5 @@
 import { Component } from '../component/component.js'
-import { GEA_PROXY_RAW, GEA_CREATE_TEMPLATE } from '../symbols.js'
+import { GEA_CREATE_TEMPLATE } from '../symbols.js'
 
 function escapeAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
@@ -22,18 +22,13 @@ interface LinkPrivate {
   observerRemover: (() => void) | null
 }
 
-const _lp = new WeakMap<object, LinkPrivate>()
-
-function rawLink(l: Link): object {
-  return (l as any)[GEA_PROXY_RAW] ?? l
-}
+const SYM_LP = Symbol.for('gea.link.private')
 
 function lp(link: Link): LinkPrivate {
-  const key = rawLink(link)
-  let p = _lp.get(key)
+  let p = (link as any)[SYM_LP]
   if (!p) {
     p = { clickHandler: null, observerRemover: null }
-    _lp.set(key, p)
+    ;(link as any)[SYM_LP] = p
   }
   return p
 }

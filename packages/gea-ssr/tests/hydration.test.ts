@@ -2,13 +2,15 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
 import {
-  GEA_ATTACH_BINDINGS,
   GEA_ELEMENT,
-  GEA_INSTANTIATE_CHILD_COMPONENTS,
-  GEA_MOUNT_COMPILED_CHILD_COMPONENTS,
   GEA_RENDERED,
-  GEA_SETUP_EVENT_DIRECTIVES,
 } from '@geajs/core'
+
+// v2: lifecycle symbols are not exported from @geajs/core, define locally for tests
+const GEA_ATTACH_BINDINGS = Symbol.for('gea.attachBindings')
+const GEA_MOUNT_COMPILED_CHILD_COMPONENTS = Symbol.for('gea.mountCompiledChildComponents')
+const GEA_INSTANTIATE_CHILD_COMPONENTS = Symbol.for('gea.instantiateChildComponents')
+const GEA_SETUP_EVENT_DIRECTIVES = Symbol.for('gea.setupEventDirectives')
 import { restoreStoreState, hydrate } from '../src/client.ts'
 import type { GeaComponentInstance } from '../src/types.ts'
 

@@ -7,6 +7,7 @@ import { classifyChildren } from './jsx-children.js'
 import { substituteExpression, exprToString } from './jsx-expression.js'
 import { isConditionalPattern, getConditionalParts } from './conditional.js'
 import { isKeyedListPattern, extractKeyedListInfo } from './keyed-list.js'
+import { SVG_CHILDREN } from '../utils.js'
 
 /** Check if an expression accesses `.children` (e.g., `props.children`) — may return DOM nodes */
 function isChildrenAccess(node: t.Expression): boolean {
@@ -23,14 +24,16 @@ function isPropSlotAccess(node: t.Expression, subs: SubstitutionMap): boolean {
   if (t.isMemberExpression(node) && t.isIdentifier(node.property)) {
     const obj = node.object
     if (t.isIdentifier(obj, { name: '__props' }) || t.isIdentifier(obj, { name: 'props' })) return true
-    if (t.isMemberExpression(obj) && t.isIdentifier(obj.property, { name: 'props' }) && t.isThisExpression(obj.object)) return true
+    if (t.isMemberExpression(obj) && t.isIdentifier(obj.property, { name: 'props' }) && t.isThisExpression(obj.object))
+      return true
   }
   // Destructured prop identifier — check if it maps to __props.X in substitutions
   if (t.isIdentifier(node) && subs.has(node.name)) {
     const sub = subs.get(node.name)!
     // Substitution can be a string like "__props.header" or an AST node
     if (typeof sub === 'string' && sub.startsWith('__props.')) return true
-    if (typeof sub !== 'string' && t.isMemberExpression(sub) && t.isIdentifier(sub.object, { name: '__props' })) return true
+    if (typeof sub !== 'string' && t.isMemberExpression(sub) && t.isIdentifier(sub.object, { name: '__props' }))
+      return true
   }
   // Call expression on a prop: props.renderX() or renderX()
   if (t.isCallExpression(node)) {
@@ -40,7 +43,8 @@ function isPropSlotAccess(node: t.Expression, subs: SubstitutionMap): boolean {
     if (t.isIdentifier(callee) && subs.has(callee.name)) {
       const sub = subs.get(callee.name)!
       if (typeof sub === 'string' && sub.startsWith('__props.')) return true
-      if (typeof sub !== 'string' && t.isMemberExpression(sub) && t.isIdentifier(sub.object, { name: '__props' })) return true
+      if (typeof sub !== 'string' && t.isMemberExpression(sub) && t.isIdentifier(sub.object, { name: '__props' }))
+        return true
     }
   }
   return false
@@ -60,7 +64,15 @@ function containsJSX(node: any): boolean {
   }
   if (node.type === 'JSXElement' || node.type === 'JSXFragment') return true
   for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' || key === 'leadingComments' || key === 'trailingComments') continue
+    if (
+      key === 'type' ||
+      key === 'start' ||
+      key === 'end' ||
+      key === 'loc' ||
+      key === 'leadingComments' ||
+      key === 'trailingComments'
+    )
+      continue
     if (containsJSX(node[key])) return true
   }
   return false
@@ -80,10 +92,7 @@ export interface TransformContext {
  * Transform a JSX element into an array of imperative DOM statements.
  * Returns [statements, resultIdentifier].
  */
-export function transformJSXElement(
-  jsxEl: t.JSXElement,
-  ctx: TransformContext,
-): [t.Statement[], t.Identifier] {
+export function transformJSXElement(jsxEl: t.JSXElement, ctx: TransformContext): [t.Statement[], t.Identifier] {
   const opening = jsxEl.openingElement
   const tagName = getTagName(opening)
 
@@ -117,8 +126,23 @@ type OrderedChild = {
   nextStaticElementIndex: number
 } & (
   | { kind: 'reactiveText'; childIndex: number; expression: t.Expression; sole?: boolean }
-  | { kind: 'conditional'; condition: t.Expression; element: t.JSXElement; elseElement?: t.JSXElement; fragment?: t.JSXFragment }
-  | { kind: 'keyedList'; collection: t.Expression; itemParam: t.Identifier; indexParam?: t.Identifier; keyExpression: t.Expression; element: t.JSXElement; guardCondition?: t.Expression; preStatements?: t.Statement[] }
+  | {
+      kind: 'conditional'
+      condition: t.Expression
+      element: t.JSXElement
+      elseElement?: t.JSXElement
+      fragment?: t.JSXFragment
+    }
+  | {
+      kind: 'keyedList'
+      collection: t.Expression
+      itemParam: t.Identifier
+      indexParam?: t.Identifier
+      keyExpression: t.Expression
+      element: t.JSXElement
+      guardCondition?: t.Expression
+      preStatements?: t.Statement[]
+    }
   | { kind: 'componentChild'; node: t.JSXElement }
   | { kind: 'dynamicContent'; expression: t.Expression }
 )
@@ -197,9 +221,15 @@ function analyzeStaticTree(
 
   // Check if this node has mixed static text + reactive text children
   // (exclude expressions that contain JSX — those become dynamicContent, not reactive text)
-  const hasReactiveText = children.some(c => c.kind === 'expression' &&
-    !isConditionalPattern(c.expression) && !isKeyedListPattern(c.expression) && !containsJSX(c.expression) && !isChildrenAccess(c.expression))
-  const hasStaticText = children.some(c => c.kind === 'text')
+  const hasReactiveText = children.some(
+    (c) =>
+      c.kind === 'expression' &&
+      !isConditionalPattern(c.expression) &&
+      !isKeyedListPattern(c.expression) &&
+      !containsJSX(c.expression) &&
+      !isChildrenAccess(c.expression),
+  )
+  const hasStaticText = children.some((c) => c.kind === 'text')
   const hasMixedText = hasReactiveText && hasStaticText
 
   // Check if this node has exactly ONE child that is a reactive text expression
@@ -212,7 +242,12 @@ function analyzeStaticTree(
       // If mixed with reactive text, record as a reactive text with static value
       // so it's appended in correct order during wiring, not baked into template
       if (hasMixedText) {
-        orderedChildren.push({ kind: 'reactiveText', childIndex: -1, expression: t.stringLiteral(child.value), nextStaticElementIndex: elementChildIndex })
+        orderedChildren.push({
+          kind: 'reactiveText',
+          childIndex: -1,
+          expression: t.stringLiteral(child.value),
+          nextStaticElementIndex: elementChildIndex,
+        })
       } else {
         html += escapeHtml(child.value)
       }
@@ -223,9 +258,10 @@ function analyzeStaticTree(
         orderedChildren.push({ kind: 'componentChild', node: child.node, nextStaticElementIndex: elementChildIndex })
       } else {
         // HTML element child — include in template and recurse
-        const childPath = elementChildIndex === 0
-          ? [...walkPath, 'firstElementChild' as WalkStep]
-          : buildSiblingPath(walkPath, elementChildIndex)
+        const childPath =
+          elementChildIndex === 0
+            ? [...walkPath, 'firstElementChild' as WalkStep]
+            : buildSiblingPath(walkPath, elementChildIndex)
         analyzeStaticTree(child.node, ctx, childPath, bindings, false)
         html += buildStaticHtmlForElement(child.node, ctx)
         elementChildIndex++
@@ -235,7 +271,14 @@ function analyzeStaticTree(
       if (isConditionalPattern(child.expression)) {
         const parts = getConditionalParts(child.expression)
         if (parts) {
-          orderedChildren.push({ kind: 'conditional', condition: parts.condition, element: parts.element, elseElement: parts.elseElement, fragment: parts.fragment, nextStaticElementIndex: elementChildIndex })
+          orderedChildren.push({
+            kind: 'conditional',
+            condition: parts.condition,
+            element: parts.element,
+            elseElement: parts.elseElement,
+            fragment: parts.fragment,
+            nextStaticElementIndex: elementChildIndex,
+          })
           // When alternate is a keyed list (e.g., `cond ? <Empty/> : items.map(...)`)
           // also emit the keyed list — they coexist: conditional shows/hides empty state,
           // keyed list independently manages items (empty collection → no items shown)
@@ -262,23 +305,41 @@ function analyzeStaticTree(
       // Check if expression contains JSX (e.g., .map() with JSX, ternaries with JSX)
       // These produce DOM nodes and need reactiveContent, not reactiveText
       if (containsJSX(child.expression)) {
-        orderedChildren.push({ kind: 'dynamicContent', expression: child.expression, nextStaticElementIndex: elementChildIndex })
+        orderedChildren.push({
+          kind: 'dynamicContent',
+          expression: child.expression,
+          nextStaticElementIndex: elementChildIndex,
+        })
         continue
       }
       // props.children may return DOM nodes — use reactiveContent to handle both text and DOM
       if (isChildrenAccess(child.expression)) {
-        orderedChildren.push({ kind: 'dynamicContent', expression: child.expression, nextStaticElementIndex: elementChildIndex })
+        orderedChildren.push({
+          kind: 'dynamicContent',
+          expression: child.expression,
+          nextStaticElementIndex: elementChildIndex,
+        })
         continue
       }
       // Sole prop access may carry a DOM node (e.g., header={<Title />}) — use reactiveContent.
       // Only promote to dynamicContent when the prop is the sole child (no sibling text).
       // Mixed content like "Hello, {name}!" should stay as reactiveText.
       if (isSoleReactiveText && isPropSlotAccess(child.expression, ctx.subs)) {
-        orderedChildren.push({ kind: 'dynamicContent', expression: child.expression, nextStaticElementIndex: elementChildIndex })
+        orderedChildren.push({
+          kind: 'dynamicContent',
+          expression: child.expression,
+          nextStaticElementIndex: elementChildIndex,
+        })
         continue
       }
       // Reactive text — record it, mark if sole child for textContent optimization
-      orderedChildren.push({ kind: 'reactiveText', childIndex: elementChildIndex, expression: child.expression, sole: isSoleReactiveText, nextStaticElementIndex: elementChildIndex })
+      orderedChildren.push({
+        kind: 'reactiveText',
+        childIndex: elementChildIndex,
+        expression: child.expression,
+        sole: isSoleReactiveText,
+        nextStaticElementIndex: elementChildIndex,
+      })
       // Add space placeholder in template for sole reactive text (enables .firstChild.data)
       if (isSoleReactiveText) {
         html += ' '
@@ -329,8 +390,8 @@ function buildStaticHtmlForElement(jsxEl: t.JSXElement, ctx: TransformContext): 
 
   const children = classifyChildren(jsxEl.children)
   // Check if this node has mixed static text + expressions
-  const hasExprChild = children.some(c => c.kind === 'expression')
-  const hasTextChild = children.some(c => c.kind === 'text')
+  const hasExprChild = children.some((c) => c.kind === 'expression')
+  const hasTextChild = children.some((c) => c.kind === 'text')
   const mixed = hasExprChild && hasTextChild
 
   for (const child of children) {
@@ -345,7 +406,8 @@ function buildStaticHtmlForElement(jsxEl: t.JSXElement, ctx: TransformContext): 
       }
     } else if (child.kind === 'expression') {
       // Add space placeholder for sole reactive text children (enables .firstChild.data)
-      const isSole = children.length === 1 && !isConditionalPattern(child.expression) && !isKeyedListPattern(child.expression)
+      const isSole =
+        children.length === 1 && !isConditionalPattern(child.expression) && !isKeyedListPattern(child.expression)
       if (isSole) html += ' '
     }
     // Other expressions (conditionals, keyed lists, components) are not in the template
@@ -385,8 +447,20 @@ function escapeHtml(text: string): string {
 }
 
 const VOID_ELEMENTS = new Set([
-  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-  'link', 'meta', 'param', 'source', 'track', 'wbr',
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
 ])
 
 function isVoidElement(tag: string): boolean {
@@ -419,22 +493,14 @@ function generateTreeWalkAndWiring(
       }
 
       nodeId = t.identifier(`__walk${walkVarCounter++}`)
-      stmts.push(
-        t.variableDeclaration('const', [
-          t.variableDeclarator(nodeId, expr),
-        ]),
-      )
+      stmts.push(t.variableDeclaration('const', [t.variableDeclarator(nodeId, expr)]))
     }
 
     // Wire dynamic attributes
     for (const attr of binding.dynamicAttrs) {
       // ref={this.myField} → this.myField = __elN (assign element to field)
       if (attr.name === 'ref') {
-        stmts.push(
-          t.expressionStatement(
-            t.assignmentExpression('=', attr.expression, nodeId),
-          ),
-        )
+        stmts.push(t.expressionStatement(t.assignmentExpression('=', attr.expression, nodeId)))
         continue
       }
       // Detect selector pattern: signal === id ? trueVal : falseVal
@@ -476,19 +542,12 @@ function generateTreeWalkAndWiring(
       let handler = evt.handler
       if (t.isMemberExpression(handler)) {
         const param = t.identifier('__e')
-        handler = t.arrowFunctionExpression(
-          [param],
-          t.callExpression(handler, [param]),
-        )
+        handler = t.arrowFunctionExpression([param], t.callExpression(handler, [param]))
       }
 
       stmts.push(
         t.expressionStatement(
-          t.callExpression(t.identifier('delegateEvent'), [
-            nodeId,
-            t.stringLiteral(evt.event),
-            handler,
-          ]),
+          t.callExpression(t.identifier('delegateEvent'), [nodeId, t.stringLiteral(evt.event), handler]),
         ),
       )
     }
@@ -505,11 +564,7 @@ function generateTreeWalkAndWiring(
           for (let i = 0; i < idx; i++) {
             refExpr = t.memberExpression(refExpr, t.identifier('nextElementSibling'))
           }
-          stmts.push(
-            t.variableDeclaration('const', [
-              t.variableDeclarator(refId, refExpr),
-            ]),
-          )
+          stmts.push(t.variableDeclaration('const', [t.variableDeclarator(refId, refExpr)]))
           refNodes.set(idx, refId)
         }
       }
@@ -526,37 +581,43 @@ function generateTreeWalkAndWiring(
           // Helper: insert a node at the correct position
           const insertNode = (childExpr: t.Expression) => {
             if (rtRefId) {
-              stmts.push(t.expressionStatement(t.callExpression(
-                t.memberExpression(nodeId, t.identifier('insertBefore')), [childExpr, rtRefId])))
+              stmts.push(
+                t.expressionStatement(
+                  t.callExpression(t.memberExpression(nodeId, t.identifier('insertBefore')), [childExpr, rtRefId]),
+                ),
+              )
             } else {
-              stmts.push(t.expressionStatement(t.callExpression(
-                t.memberExpression(nodeId, t.identifier('appendChild')), [childExpr])))
+              stmts.push(
+                t.expressionStatement(
+                  t.callExpression(t.memberExpression(nodeId, t.identifier('appendChild')), [childExpr]),
+                ),
+              )
             }
           }
 
           // Static string literal in mixed content
           if (t.isStringLiteral(substituted)) {
-            insertNode(t.callExpression(
-              t.memberExpression(t.identifier('document'), t.identifier('createTextNode')),
-              [substituted]))
+            insertNode(
+              t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createTextNode')), [
+                substituted,
+              ]),
+            )
           }
           // Cached local (like __id) that's the sole child — use textContent (no Text node creation)
           else if (t.isIdentifier(substituted) && substituted.name.startsWith('__') && rt.sole) {
             stmts.push(
               t.expressionStatement(
-                t.assignmentExpression(
-                  '=',
-                  t.memberExpression(nodeId, t.identifier('textContent')),
-                  substituted,
-                ),
+                t.assignmentExpression('=', t.memberExpression(nodeId, t.identifier('textContent')), substituted),
               ),
             )
           }
           // Cached local in mixed content
           else if (t.isIdentifier(substituted) && substituted.name.startsWith('__')) {
-            insertNode(t.callExpression(
-              t.memberExpression(t.identifier('document'), t.identifier('createTextNode')),
-              [t.callExpression(t.identifier('String'), [substituted])]))
+            insertNode(
+              t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createTextNode')), [
+                t.callExpression(t.identifier('String'), [substituted]),
+              ]),
+            )
           }
           // Reactive expression that's the sole child — use template placeholder + .firstChild.data
           else if (rt.sole) {
@@ -571,10 +632,7 @@ function generateTreeWalkAndWiring(
                     [t.identifier('__v')],
                     t.assignmentExpression(
                       '=',
-                      t.memberExpression(
-                        t.memberExpression(nodeId, t.identifier('firstChild')),
-                        t.identifier('data'),
-                      ),
+                      t.memberExpression(t.memberExpression(nodeId, t.identifier('firstChild')), t.identifier('data')),
                       t.identifier('__v'),
                     ),
                   ),
@@ -585,22 +643,40 @@ function generateTreeWalkAndWiring(
           // Reactive expression in mixed content
           else {
             ctx.usedHelpers.add('reactiveText')
-            insertNode(t.callExpression(t.identifier('reactiveText'), [
-              t.arrowFunctionExpression([], substituted)]))
+            insertNode(t.callExpression(t.identifier('reactiveText'), [t.arrowFunctionExpression([], substituted)]))
           }
           break
         }
 
         case 'conditional': {
           const condRefId = refNodes.get(child.nextStaticElementIndex)
-          const condStmts = transformConditional(child.condition, child.element, nodeId, ctx, child.elseElement, condRefId, child.fragment)
+          const condStmts = transformConditional(
+            child.condition,
+            child.element,
+            nodeId,
+            ctx,
+            child.elseElement,
+            condRefId,
+            child.fragment,
+          )
           stmts.push(...condStmts)
           break
         }
 
         case 'keyedList': {
           const listRefId = refNodes.get(child.nextStaticElementIndex)
-          const listStmts = transformKeyedList(child.collection, child.itemParam, child.keyExpression, child.element, nodeId, ctx, child.guardCondition, listRefId, child.preStatements, child.indexParam)
+          const listStmts = transformKeyedList(
+            child.collection,
+            child.itemParam,
+            child.keyExpression,
+            child.element,
+            nodeId,
+            ctx,
+            child.guardCondition,
+            listRefId,
+            child.preStatements,
+            child.indexParam,
+          )
           stmts.push(...listStmts)
           break
         }
@@ -613,20 +689,14 @@ function generateTreeWalkAndWiring(
             // Insert before the next static HTML element to preserve source order
             stmts.push(
               t.expressionStatement(
-                t.callExpression(
-                  t.memberExpression(nodeId, t.identifier('insertBefore')),
-                  [compId, refId],
-                ),
+                t.callExpression(t.memberExpression(nodeId, t.identifier('insertBefore')), [compId, refId]),
               ),
             )
           } else {
             // Component is after all static elements — appendChild
             stmts.push(
               t.expressionStatement(
-                t.callExpression(
-                  t.memberExpression(nodeId, t.identifier('appendChild')),
-                  [compId],
-                ),
+                t.callExpression(t.memberExpression(nodeId, t.identifier('appendChild')), [compId]),
               ),
             )
           }
@@ -642,10 +712,9 @@ function generateTreeWalkAndWiring(
             t.variableDeclaration('const', [
               t.variableDeclarator(
                 anchorId,
-                t.callExpression(
-                  t.memberExpression(t.identifier('document'), t.identifier('createComment')),
-                  [t.stringLiteral('')],
-                ),
+                t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createComment')), [
+                  t.stringLiteral(''),
+                ]),
               ),
             ]),
           )
@@ -655,19 +724,13 @@ function generateTreeWalkAndWiring(
           if (dcRefId) {
             stmts.push(
               t.expressionStatement(
-                t.callExpression(
-                  t.memberExpression(nodeId, t.identifier('insertBefore')),
-                  [anchorId, dcRefId],
-                ),
+                t.callExpression(t.memberExpression(nodeId, t.identifier('insertBefore')), [anchorId, dcRefId]),
               ),
             )
           } else {
             stmts.push(
               t.expressionStatement(
-                t.callExpression(
-                  t.memberExpression(nodeId, t.identifier('appendChild')),
-                  [anchorId],
-                ),
+                t.callExpression(t.memberExpression(nodeId, t.identifier('appendChild')), [anchorId]),
               ),
             )
           }
@@ -725,24 +788,18 @@ function transformHTMLElementWithTemplate(
   const tmplIdentifier = t.identifier(tmplId)
 
   ctx.usedHelpers.add('template')
+  const templateArgs: t.Expression[] = [t.stringLiteral(templateHtml)]
+  if (SVG_CHILDREN.has(tagName)) {
+    templateArgs.push(t.booleanLiteral(true))
+  }
   ctx.templateDeclarations.push(
     t.variableDeclaration('const', [
-      t.variableDeclarator(
-        tmplIdentifier,
-        t.callExpression(t.identifier('template'), [t.stringLiteral(templateHtml)]),
-      ),
+      t.variableDeclarator(tmplIdentifier, t.callExpression(t.identifier('template'), templateArgs)),
     ]),
   )
 
   // Clone: const __elN = _tmplN()
-  stmts.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        elIdentifier,
-        t.callExpression(tmplIdentifier, []),
-      ),
-    ]),
-  )
+  stmts.push(t.variableDeclaration('const', [t.variableDeclarator(elIdentifier, t.callExpression(tmplIdentifier, []))]))
 
   // Generate tree-walk and dynamic wiring
   const wiringStmts = generateTreeWalkAndWiring(elIdentifier, bindings, ctx)
@@ -767,10 +824,7 @@ function transformHTMLElementLegacy(
   ctx.usedHelpers.add('createElement')
   stmts.push(
     t.variableDeclaration('const', [
-      t.variableDeclarator(
-        elIdentifier,
-        t.callExpression(t.identifier('createElement'), [t.stringLiteral(tagName)]),
-      ),
+      t.variableDeclarator(elIdentifier, t.callExpression(t.identifier('createElement'), [t.stringLiteral(tagName)])),
     ]),
   )
 
@@ -808,18 +862,11 @@ function transformHTMLElementLegacy(
       let handler = attr.handler
       if (t.isMemberExpression(handler)) {
         const param = t.identifier('__e')
-        handler = t.arrowFunctionExpression(
-          [param],
-          t.callExpression(handler, [param]),
-        )
+        handler = t.arrowFunctionExpression([param], t.callExpression(handler, [param]))
       }
       stmts.push(
         t.expressionStatement(
-          t.callExpression(t.identifier('delegateEvent'), [
-            elIdentifier,
-            t.stringLiteral(attr.event),
-            handler,
-          ]),
+          t.callExpression(t.identifier('delegateEvent'), [elIdentifier, t.stringLiteral(attr.event), handler]),
         ),
       )
     }
@@ -832,22 +879,26 @@ function transformHTMLElementLegacy(
     if (child.kind === 'text') {
       stmts.push(
         t.expressionStatement(
-          t.callExpression(
-            t.memberExpression(elIdentifier, t.identifier('appendChild')),
-            [
-              t.callExpression(
-                t.memberExpression(t.identifier('document'), t.identifier('createTextNode')),
-                [t.stringLiteral(child.value)],
-              ),
-            ],
-          ),
+          t.callExpression(t.memberExpression(elIdentifier, t.identifier('appendChild')), [
+            t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createTextNode')), [
+              t.stringLiteral(child.value),
+            ]),
+          ]),
         ),
       )
     } else if (child.kind === 'expression') {
       if (isConditionalPattern(child.expression)) {
         const parts = getConditionalParts(child.expression)
         if (parts) {
-          const condStmts = transformConditional(parts.condition, parts.element, elIdentifier, ctx, parts.elseElement, undefined, parts.fragment)
+          const condStmts = transformConditional(
+            parts.condition,
+            parts.element,
+            elIdentifier,
+            ctx,
+            parts.elseElement,
+            undefined,
+            parts.fragment,
+          )
           stmts.push(...condStmts)
           continue
         }
@@ -856,7 +907,18 @@ function transformHTMLElementLegacy(
       if (isKeyedListPattern(child.expression)) {
         const info = extractKeyedListInfo(child.expression as t.CallExpression)
         if (info) {
-          const listStmts = transformKeyedList(info.collection, info.itemParam, info.keyExpression, info.element, elIdentifier, ctx, info.guardCondition, undefined, info.preStatements, info.indexParam)
+          const listStmts = transformKeyedList(
+            info.collection,
+            info.itemParam,
+            info.keyExpression,
+            info.element,
+            elIdentifier,
+            ctx,
+            info.guardCondition,
+            undefined,
+            info.preStatements,
+            info.indexParam,
+          )
           stmts.push(...listStmts)
           continue
         }
@@ -869,34 +931,35 @@ function transformHTMLElementLegacy(
         const anchorId = t.identifier(`__anchor${ctx.anchorCounter.value++}`)
         stmts.push(
           t.variableDeclaration('const', [
-            t.variableDeclarator(anchorId,
-              t.callExpression(
-                t.memberExpression(t.identifier('document'), t.identifier('createComment')),
-                [t.stringLiteral('')],
-              ),
+            t.variableDeclarator(
+              anchorId,
+              t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createComment')), [
+                t.stringLiteral(''),
+              ]),
             ),
           ]),
         )
-        stmts.push(t.expressionStatement(
-          t.callExpression(t.memberExpression(elIdentifier, t.identifier('appendChild')), [anchorId]),
-        ))
-        stmts.push(t.expressionStatement(
-          t.callExpression(t.identifier('reactiveContent'), [
-            elIdentifier, anchorId, t.arrowFunctionExpression([], substituted),
-          ]),
-        ))
+        stmts.push(
+          t.expressionStatement(
+            t.callExpression(t.memberExpression(elIdentifier, t.identifier('appendChild')), [anchorId]),
+          ),
+        )
+        stmts.push(
+          t.expressionStatement(
+            t.callExpression(t.identifier('reactiveContent'), [
+              elIdentifier,
+              anchorId,
+              t.arrowFunctionExpression([], substituted),
+            ]),
+          ),
+        )
       } else {
         ctx.usedHelpers.add('reactiveText')
         stmts.push(
           t.expressionStatement(
-            t.callExpression(
-              t.memberExpression(elIdentifier, t.identifier('appendChild')),
-              [
-                t.callExpression(t.identifier('reactiveText'), [
-                  t.arrowFunctionExpression([], substituted),
-                ]),
-              ],
-            ),
+            t.callExpression(t.memberExpression(elIdentifier, t.identifier('appendChild')), [
+              t.callExpression(t.identifier('reactiveText'), [t.arrowFunctionExpression([], substituted)]),
+            ]),
           ),
         )
       }
@@ -905,10 +968,7 @@ function transformHTMLElementLegacy(
       stmts.push(...childStmts)
       stmts.push(
         t.expressionStatement(
-          t.callExpression(
-            t.memberExpression(elIdentifier, t.identifier('appendChild')),
-            [childId],
-          ),
+          t.callExpression(t.memberExpression(elIdentifier, t.identifier('appendChild')), [childId]),
         ),
       )
     }
@@ -952,12 +1012,7 @@ function transformComponentElement(
     // the same __wrapObject proxy as the parent. Mutations via the proxy go to the parent.
     // Reassignment is local (one-way for primitives, local override for objects).
     const propKey = name.includes('-') ? t.stringLiteral(name) : t.identifier(name)
-    props.push(
-      t.objectProperty(
-        propKey,
-        t.arrowFunctionExpression([], valueExpr),
-      ),
-    )
+    props.push(t.objectProperty(propKey, t.arrowFunctionExpression([], valueExpr)))
   }
 
   // Process JSX children → children prop thunk
@@ -971,11 +1026,11 @@ function transformComponentElement(
         const textId = t.identifier(`__txt${ctx.elementCounter.value++}`)
         childBodyStmts.push(
           t.variableDeclaration('const', [
-            t.variableDeclarator(textId,
-              t.callExpression(
-                t.memberExpression(t.identifier('document'), t.identifier('createTextNode')),
-                [t.stringLiteral(child.value)],
-              ),
+            t.variableDeclarator(
+              textId,
+              t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createTextNode')), [
+                t.stringLiteral(child.value),
+              ]),
             ),
           ]),
         )
@@ -990,10 +1045,7 @@ function transformComponentElement(
         if (children.length === 1) {
           childBodyStmts.push(t.returnStatement(substituted))
           props.push(
-            t.objectProperty(
-              t.identifier('children'),
-              t.arrowFunctionExpression([], t.blockStatement(childBodyStmts)),
-            ),
+            t.objectProperty(t.identifier('children'), t.arrowFunctionExpression([], t.blockStatement(childBodyStmts))),
           )
           break
         }
@@ -1002,10 +1054,9 @@ function transformComponentElement(
         ctx.usedHelpers.add('reactiveText')
         childBodyStmts.push(
           t.variableDeclaration('const', [
-            t.variableDeclarator(textId,
-              t.callExpression(t.identifier('reactiveText'), [
-                t.arrowFunctionExpression([], substituted),
-              ]),
+            t.variableDeclarator(
+              textId,
+              t.callExpression(t.identifier('reactiveText'), [t.arrowFunctionExpression([], substituted)]),
             ),
           ]),
         )
@@ -1022,7 +1073,8 @@ function transformComponentElement(
         const fragId = t.identifier('__frag')
         childBodyStmts.unshift(
           t.variableDeclaration('const', [
-            t.variableDeclarator(fragId,
+            t.variableDeclarator(
+              fragId,
               t.callExpression(
                 t.memberExpression(t.identifier('document'), t.identifier('createDocumentFragment')),
                 [],
@@ -1032,22 +1084,14 @@ function transformComponentElement(
         )
         for (const cid of childIds) {
           childBodyStmts.push(
-            t.expressionStatement(
-              t.callExpression(
-                t.memberExpression(fragId, t.identifier('appendChild')),
-                [cid],
-              ),
-            ),
+            t.expressionStatement(t.callExpression(t.memberExpression(fragId, t.identifier('appendChild')), [cid])),
           )
         }
         returnExpr = fragId
       }
       childBodyStmts.push(t.returnStatement(returnExpr))
       props.push(
-        t.objectProperty(
-          t.identifier('children'),
-          t.arrowFunctionExpression([], t.blockStatement(childBodyStmts)),
-        ),
+        t.objectProperty(t.identifier('children'), t.arrowFunctionExpression([], t.blockStatement(childBodyStmts))),
       )
     }
   }
@@ -1056,10 +1100,7 @@ function transformComponentElement(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         compIdentifier,
-        t.callExpression(t.identifier('mount'), [
-          t.identifier(tagName),
-          t.objectExpression(props),
-        ]),
+        t.callExpression(t.identifier('mount'), [t.identifier(tagName), t.objectExpression(props)]),
       ),
     ]),
   )
@@ -1067,21 +1108,16 @@ function transformComponentElement(
   return [stmts, compIdentifier]
 }
 
-export function transformJSXFragment(
-  fragment: t.JSXFragment,
-  ctx: TransformContext,
-): [t.Statement[], t.Identifier] {
+export function transformJSXFragment(fragment: t.JSXFragment, ctx: TransformContext): [t.Statement[], t.Identifier] {
   const stmts: t.Statement[] = []
   const fragId = t.identifier(`__frag${ctx.elementCounter.value++}`)
 
   // const __fragN = document.createDocumentFragment()
   stmts.push(
     t.variableDeclaration('const', [
-      t.variableDeclarator(fragId,
-        t.callExpression(
-          t.memberExpression(t.identifier('document'), t.identifier('createDocumentFragment')),
-          [],
-        ),
+      t.variableDeclarator(
+        fragId,
+        t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createDocumentFragment')), []),
       ),
     ]),
   )
@@ -1092,37 +1128,27 @@ export function transformJSXFragment(
     if (child.kind === 'text') {
       stmts.push(
         t.expressionStatement(
-          t.callExpression(
-            t.memberExpression(fragId, t.identifier('appendChild')),
-            [t.callExpression(
-              t.memberExpression(t.identifier('document'), t.identifier('createTextNode')),
-              [t.stringLiteral(child.value)],
-            )],
-          ),
+          t.callExpression(t.memberExpression(fragId, t.identifier('appendChild')), [
+            t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createTextNode')), [
+              t.stringLiteral(child.value),
+            ]),
+          ]),
         ),
       )
     } else if (child.kind === 'element') {
       const [childStmts, childId] = transformJSXElement(child.node, ctx)
       stmts.push(...childStmts)
       stmts.push(
-        t.expressionStatement(
-          t.callExpression(
-            t.memberExpression(fragId, t.identifier('appendChild')),
-            [childId],
-          ),
-        ),
+        t.expressionStatement(t.callExpression(t.memberExpression(fragId, t.identifier('appendChild')), [childId])),
       )
     } else if (child.kind === 'expression') {
       const substituted = substituteExpression(child.expression, ctx.subs)
       ctx.usedHelpers.add('reactiveText')
       stmts.push(
         t.expressionStatement(
-          t.callExpression(
-            t.memberExpression(fragId, t.identifier('appendChild')),
-            [t.callExpression(t.identifier('reactiveText'), [
-              t.arrowFunctionExpression([], substituted),
-            ])],
-          ),
+          t.callExpression(t.memberExpression(fragId, t.identifier('appendChild')), [
+            t.callExpression(t.identifier('reactiveText'), [t.arrowFunctionExpression([], substituted)]),
+          ]),
         ),
       )
     }
@@ -1151,10 +1177,9 @@ function transformConditional(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         anchorIdentifier,
-        t.callExpression(
-          t.memberExpression(t.identifier('document'), t.identifier('createComment')),
-          [t.stringLiteral('')],
-        ),
+        t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createComment')), [
+          t.stringLiteral(''),
+        ]),
       ),
     ]),
   )
@@ -1163,19 +1188,13 @@ function transformConditional(
   if (refNode) {
     stmts.push(
       t.expressionStatement(
-        t.callExpression(
-          t.memberExpression(parentId, t.identifier('insertBefore')),
-          [anchorIdentifier, refNode],
-        ),
+        t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [anchorIdentifier, refNode]),
       ),
     )
   } else {
     stmts.push(
       t.expressionStatement(
-        t.callExpression(
-          t.memberExpression(parentId, t.identifier('appendChild')),
-          [anchorIdentifier],
-        ),
+        t.callExpression(t.memberExpression(parentId, t.identifier('appendChild')), [anchorIdentifier]),
       ),
     )
   }
@@ -1190,10 +1209,7 @@ function transformConditional(
   }
 
   // Build the create function body
-  const createBody = t.blockStatement([
-    ...elStmts,
-    t.returnStatement(elId),
-  ])
+  const createBody = t.blockStatement([...elStmts, t.returnStatement(elId)])
 
   // Substitute the condition
   const subCondition = substituteExpression(condition, ctx.subs)
@@ -1209,18 +1225,11 @@ function transformConditional(
   // If there's an else branch, transform it and add as 5th argument
   if (elseElement) {
     const [elseStmts, elseId] = transformJSXElement(elseElement, ctx)
-    const elseBody = t.blockStatement([
-      ...elseStmts,
-      t.returnStatement(elseId),
-    ])
+    const elseBody = t.blockStatement([...elseStmts, t.returnStatement(elseId)])
     args.push(t.arrowFunctionExpression([], elseBody))
   }
 
-  stmts.push(
-    t.expressionStatement(
-      t.callExpression(t.identifier('conditional'), args),
-    ),
-  )
+  stmts.push(t.expressionStatement(t.callExpression(t.identifier('conditional'), args)))
 
   return stmts
 }
@@ -1248,10 +1257,9 @@ function transformKeyedList(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         anchorIdentifier,
-        t.callExpression(
-          t.memberExpression(t.identifier('document'), t.identifier('createComment')),
-          [t.stringLiteral('')],
-        ),
+        t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createComment')), [
+          t.stringLiteral(''),
+        ]),
       ),
     ]),
   )
@@ -1260,19 +1268,13 @@ function transformKeyedList(
   if (refNode) {
     stmts.push(
       t.expressionStatement(
-        t.callExpression(
-          t.memberExpression(parentId, t.identifier('insertBefore')),
-          [anchorIdentifier, refNode],
-        ),
+        t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [anchorIdentifier, refNode]),
       ),
     )
   } else {
     stmts.push(
       t.expressionStatement(
-        t.callExpression(
-          t.memberExpression(parentId, t.identifier('appendChild')),
-          [anchorIdentifier],
-        ),
+        t.callExpression(t.memberExpression(parentId, t.identifier('appendChild')), [anchorIdentifier]),
       ),
     )
   }
@@ -1288,10 +1290,7 @@ function transformKeyedList(
   const keyFnParams: t.Identifier[] = [t.identifier(itemParam.name)]
   if (indexParam) keyFnParams.push(t.identifier(indexParam.name))
   const keyFn = preStatements
-    ? t.arrowFunctionExpression(
-        keyFnParams,
-        t.blockStatement([...preStatements, t.returnStatement(keyExpr)]),
-      )
+    ? t.arrowFunctionExpression(keyFnParams, t.blockStatement([...preStatements, t.returnStatement(keyExpr)]))
     : t.arrowFunctionExpression(keyFnParams, keyExpr)
 
   // Create function: (__itemGetter) => { const item = __itemGetter(); ... return __el/comp }
@@ -1324,28 +1323,21 @@ function transformKeyedList(
   const createBodyStmts: t.Statement[] = [
     // const item = __itemGetter()
     t.variableDeclaration('const', [
-      t.variableDeclarator(
-        t.identifier(itemParam.name),
-        t.callExpression(itemGetterParam, []),
-      ),
+      t.variableDeclarator(t.identifier(itemParam.name), t.callExpression(itemGetterParam, [])),
     ]),
   ]
-
-  // const i = __indexGetter() — if the .map() callback has an index param
-  if (indexParam && indexGetterParam) {
-    createBodyStmts.push(
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(indexParam.name),
-          t.callExpression(indexGetterParam, []),
-        ),
-      ]),
-    )
-  }
 
   // Include any pre-return statements from block body (e.g., local variable declarations)
   if (preStatements) {
     createBodyStmts.push(...preStatements)
+  }
+
+  // Replace index references with __indexGetter() calls so event handlers
+  // and reactive computations always read the current index, not a stale capture.
+  if (indexParam && indexGetterParam) {
+    for (const stmt of elStmts) {
+      replaceIdentifierWithExpr(stmt, indexParam.name, t.callExpression(indexGetterParam, []))
+    }
   }
 
   // Cache the key property: const __id = item.id
@@ -1412,10 +1404,9 @@ function transformKeyedList(
       t.ifStatement(
         t.unaryExpression('!', guardCondition),
         t.returnStatement(
-          t.callExpression(
-            t.memberExpression(t.identifier('document'), t.identifier('createComment')),
-            [t.stringLiteral('')],
-          ),
+          t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createComment')), [
+            t.stringLiteral(''),
+          ]),
         ),
       ),
     )
@@ -1426,9 +1417,7 @@ function transformKeyedList(
   const createBody = t.blockStatement(createBodyStmts)
 
   // keyedList(parent, __anchorN, () => collection, (item) => item.id, (__itemGetter, __indexGetter) => { ... })
-  const createFnParams = indexGetterParam
-    ? [itemGetterParam, indexGetterParam]
-    : [itemGetterParam]
+  const createFnParams = indexGetterParam ? [itemGetterParam, indexGetterParam] : [itemGetterParam]
   const keyedListArgs: t.Expression[] = [
     parentId,
     anchorIdentifier,
@@ -1440,11 +1429,7 @@ function transformKeyedList(
   if (!indexParam) {
     keyedListArgs.push(t.booleanLiteral(true))
   }
-  stmts.push(
-    t.expressionStatement(
-      t.callExpression(t.identifier('keyedList'), keyedListArgs),
-    ),
-  )
+  stmts.push(t.expressionStatement(t.callExpression(t.identifier('keyedList'), keyedListArgs)))
 
   return stmts
 }
@@ -1504,12 +1489,7 @@ function transformKeyedListComponentElement(
     // Replace references to the item param with __itemGetter() in prop thunks
     const thunkBody = replaceItemWithGetter(valueExpr, itemParam.name)
     const propKey = name.includes('-') ? t.stringLiteral(name) : t.identifier(name)
-    props.push(
-      t.objectProperty(
-        propKey,
-        t.arrowFunctionExpression([], thunkBody),
-      ),
-    )
+    props.push(t.objectProperty(propKey, t.arrowFunctionExpression([], thunkBody)))
   }
 
   // Process JSX children → children prop thunk
@@ -1523,11 +1503,11 @@ function transformKeyedListComponentElement(
         const textId = t.identifier(`__txt${ctx.elementCounter.value++}`)
         childBodyStmts.push(
           t.variableDeclaration('const', [
-            t.variableDeclarator(textId,
-              t.callExpression(
-                t.memberExpression(t.identifier('document'), t.identifier('createTextNode')),
-                [t.stringLiteral(child.value)],
-              ),
+            t.variableDeclarator(
+              textId,
+              t.callExpression(t.memberExpression(t.identifier('document'), t.identifier('createTextNode')), [
+                t.stringLiteral(child.value),
+              ]),
             ),
           ]),
         )
@@ -1542,10 +1522,7 @@ function transformKeyedListComponentElement(
         if (children.length === 1) {
           childBodyStmts.push(t.returnStatement(subExpr))
           props.push(
-            t.objectProperty(
-              t.identifier('children'),
-              t.arrowFunctionExpression([], t.blockStatement(childBodyStmts)),
-            ),
+            t.objectProperty(t.identifier('children'), t.arrowFunctionExpression([], t.blockStatement(childBodyStmts))),
           )
           break
         }
@@ -1553,10 +1530,9 @@ function transformKeyedListComponentElement(
         ctx.usedHelpers.add('reactiveText')
         childBodyStmts.push(
           t.variableDeclaration('const', [
-            t.variableDeclarator(textId,
-              t.callExpression(t.identifier('reactiveText'), [
-                t.arrowFunctionExpression([], subExpr),
-              ]),
+            t.variableDeclarator(
+              textId,
+              t.callExpression(t.identifier('reactiveText'), [t.arrowFunctionExpression([], subExpr)]),
             ),
           ]),
         )
@@ -1572,7 +1548,8 @@ function transformKeyedListComponentElement(
         const fragId = t.identifier('__frag')
         childBodyStmts.unshift(
           t.variableDeclaration('const', [
-            t.variableDeclarator(fragId,
+            t.variableDeclarator(
+              fragId,
               t.callExpression(
                 t.memberExpression(t.identifier('document'), t.identifier('createDocumentFragment')),
                 [],
@@ -1582,19 +1559,14 @@ function transformKeyedListComponentElement(
         )
         for (const cid of childIds) {
           childBodyStmts.push(
-            t.expressionStatement(
-              t.callExpression(t.memberExpression(fragId, t.identifier('appendChild')), [cid]),
-            ),
+            t.expressionStatement(t.callExpression(t.memberExpression(fragId, t.identifier('appendChild')), [cid])),
           )
         }
         returnExpr = fragId
       }
       childBodyStmts.push(t.returnStatement(returnExpr))
       props.push(
-        t.objectProperty(
-          t.identifier('children'),
-          t.arrowFunctionExpression([], t.blockStatement(childBodyStmts)),
-        ),
+        t.objectProperty(t.identifier('children'), t.arrowFunctionExpression([], t.blockStatement(childBodyStmts))),
       )
     }
   }
@@ -1603,10 +1575,7 @@ function transformKeyedListComponentElement(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         compIdentifier,
-        t.callExpression(t.identifier('mount'), [
-          t.identifier(tagName),
-          t.objectExpression(props),
-        ]),
+        t.callExpression(t.identifier('mount'), [t.identifier(tagName), t.objectExpression(props)]),
       ),
     ]),
   )
@@ -1654,7 +1623,6 @@ function replaceItemInNode(node: t.Node, itemName: string): t.Node {
       if (t.isObjectProperty(node) && key === 'key' && !node.computed) continue
       // Don't replace in arrow/function params
       if ((t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) && key === 'params') continue
-
       ;(node as any)[key] = replaceItemInNode(child, itemName)
     }
   }
@@ -1700,8 +1668,7 @@ function optimizeConstantComputations(stmts: t.Statement[]): void {
       replaceIdentifierByName(newAssignment, paramName, cachedName)
       // #5: Wrap the RHS in String() when assigning to .data
       // (.data expects a string; implicit conversion is slower than explicit)
-      if (t.isMemberExpression(newAssignment.left) &&
-          t.isIdentifier(newAssignment.left.property, { name: 'data' })) {
+      if (t.isMemberExpression(newAssignment.left) && t.isIdentifier(newAssignment.left.property, { name: 'data' })) {
         newAssignment.right = t.callExpression(t.identifier('String'), [newAssignment.right])
       }
       stmts[i] = t.expressionStatement(newAssignment)
@@ -1717,10 +1684,7 @@ function optimizeConstantComputations(stmts: t.Statement[]): void {
  * in keyed lists. Only merges consecutive computation() statements — any
  * non-computation statement breaks the run.
  */
-function mergeAdjacentComputations(
-  stmts: t.Statement[],
-  usedHelpers: Set<RuntimeHelper>,
-): void {
+function mergeAdjacentComputations(stmts: t.Statement[], usedHelpers: Set<RuntimeHelper>): void {
   // Find runs of consecutive computation() calls
   let runStart = -1
   let runLength = 0
@@ -1761,9 +1725,7 @@ function mergeAdjacentComputations(
     }
 
     const mergedCall = t.expressionStatement(
-      t.callExpression(t.identifier('mergedComputation'), [
-        t.arrayExpression(pairs),
-      ]),
+      t.callExpression(t.identifier('mergedComputation'), [t.arrayExpression(pairs)]),
     )
 
     stmts.splice(start, len, mergedCall)
@@ -1792,11 +1754,7 @@ function isComputationCall(stmt: t.Statement): boolean {
  * Before:  computation(() => item.label, setter)
  * After:   computation(() => __itemSignal(item, 'label').value, setter)
  */
-function transformItemSignalAccess(
-  stmts: t.Statement[],
-  itemParamName: string,
-  usedHelpers: Set<RuntimeHelper>,
-): void {
+function transformItemSignalAccess(stmts: t.Statement[], itemParamName: string, usedHelpers: Set<RuntimeHelper>): void {
   let transformed = false
 
   for (const stmt of stmts) {
@@ -1805,7 +1763,8 @@ function transformItemSignalAccess(
     if (!t.isCallExpression(expr)) continue
     // Match computation(), mergedComputation(), reactiveAttr(), reactiveText()
     const calleeName = t.isIdentifier(expr.callee) ? expr.callee.name : null
-    if (!calleeName || !['computation', 'mergedComputation', 'reactiveAttr', 'reactiveText'].includes(calleeName)) continue
+    if (!calleeName || !['computation', 'mergedComputation', 'reactiveAttr', 'reactiveText'].includes(calleeName))
+      continue
 
     // For reactiveAttr(el, name, getter): transform getter (3rd arg)
     if (calleeName === 'reactiveAttr' && expr.arguments.length === 3) {
@@ -1859,10 +1818,7 @@ function transformItemSignalAccess(
  * - Direct: () => item.prop  (body IS the MemberExpression)
  * - Nested: () => item.a + item.b  (body contains MemberExpressions)
  */
-function transformGetterBody(
-  getter: t.ArrowFunctionExpression,
-  itemName: string,
-): boolean {
+function transformGetterBody(getter: t.ArrowFunctionExpression, itemName: string): boolean {
   const body = getter.body
   // Direct case: () => item.prop
   if (isItemMember(body, itemName)) {
@@ -1874,18 +1830,17 @@ function transformGetterBody(
 }
 
 function isItemMember(node: any, itemName: string): boolean {
-  return t.isMemberExpression(node) &&
+  return (
+    t.isMemberExpression(node) &&
     !node.computed &&
     t.isIdentifier(node.object, { name: itemName }) &&
     t.isIdentifier(node.property)
+  )
 }
 
 function makeItemSignalAccess(itemName: string, prop: t.Identifier): t.MemberExpression {
   return t.memberExpression(
-    t.callExpression(t.identifier('itemSignal'), [
-      t.identifier(itemName),
-      t.stringLiteral(prop.name),
-    ]),
+    t.callExpression(t.identifier('itemSignal'), [t.identifier(itemName), t.stringLiteral(prop.name)]),
     t.identifier('value'),
   )
 }
@@ -1915,18 +1870,17 @@ function replaceItemMemberWithSignal(node: any, itemName: string): boolean {
     if (!child || typeof child !== 'object') continue
 
     // Check if child is item.prop MemberExpression
-    if (child.type === 'MemberExpression' &&
-        !child.computed &&
-        child.object?.type === 'Identifier' &&
-        child.object.name === itemName &&
-        child.property?.type === 'Identifier') {
+    if (
+      child.type === 'MemberExpression' &&
+      !child.computed &&
+      child.object?.type === 'Identifier' &&
+      child.object.name === itemName &&
+      child.property?.type === 'Identifier'
+    ) {
       const propName = child.property.name
       // Replace item.prop with __itemSignal(item, 'prop').value
       node[key] = t.memberExpression(
-        t.callExpression(t.identifier('itemSignal'), [
-          t.identifier(itemName),
-          t.stringLiteral(propName),
-        ]),
+        t.callExpression(t.identifier('itemSignal'), [t.identifier(itemName), t.stringLiteral(propName)]),
         t.identifier('value'),
       )
       changed = true
@@ -1959,12 +1913,7 @@ function replaceIdentifierByName(node: any, oldName: string, newName: string): v
  * Walk an AST node and replace `itemName.propName` with `cachedName`.
  * This caches the key property (like `id`) to avoid Proxy trap on every access.
  */
-function replaceItemPropWithCached(
-  node: any,
-  itemName: string,
-  propName: string,
-  cachedName: string,
-): void {
+function replaceItemPropWithCached(node: any, itemName: string, propName: string, cachedName: string): void {
   if (!node || typeof node !== 'object') return
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) replaceItemPropWithCached(node[i], itemName, propName, cachedName)
@@ -2002,9 +1951,9 @@ function replaceItemPropWithCached(
  * Also inlines the event expando assignment to avoid delegateEvent function call overhead.
  *
  * Before:  delegateEvent(__el0, "click", () => store.select(__id))
- * After:   __el0.__gea_d = __id; __el0.__gea_click = _h0
+ * After:   __el0.$$gea_d = __id; __el0.__gea_click = _h0
  *          // module level: ensureDelegation("click")
- *          //               const _h0 = (__e) => store.select(__e.currentTarget.__gea_d)
+ *          //               const _h0 = (__e) => store.select(__e.currentTarget.$$gea_d)
  */
 function hoistEventHandlers(
   stmts: t.Statement[],
@@ -2048,21 +1997,17 @@ function hoistEventHandlers(
     const handlerIdentifier = t.identifier(handlerId)
     const paramId = t.identifier('__e')
 
-    // Clone the handler body and replace cachedIdName with __e.currentTarget.__gea_d
+    // Clone the handler body and replace cachedIdName with __e.currentTarget.$$gea_d
     const hoistedBody = t.cloneDeep(handler.body) as t.Expression
-    replaceIdentifierWithExpr(hoistedBody, cachedIdName,
-      t.memberExpression(
-        t.memberExpression(paramId, t.identifier('currentTarget')),
-        t.identifier('__gea_d'),
-      ),
+    replaceIdentifierWithExpr(
+      hoistedBody,
+      cachedIdName,
+      t.memberExpression(t.memberExpression(paramId, t.identifier('currentTarget')), t.identifier('$$gea_d')),
     )
 
     ctx.templateDeclarations.push(
       t.variableDeclaration('const', [
-        t.variableDeclarator(
-          handlerIdentifier,
-          t.arrowFunctionExpression([paramId], hoistedBody),
-        ),
+        t.variableDeclarator(handlerIdentifier, t.arrowFunctionExpression([paramId], hoistedBody)),
       ]),
     )
 
@@ -2071,23 +2016,23 @@ function hoistEventHandlers(
       ensuredEvents.add(eventName)
       ctx.usedHelpers.add('ensureDelegation')
       ctx.templateDeclarations.push(
-        t.expressionStatement(
-          t.callExpression(t.identifier('ensureDelegation'), [t.stringLiteral(eventName)]),
-        ),
+        t.expressionStatement(t.callExpression(t.identifier('ensureDelegation'), [t.stringLiteral(eventName)])),
       )
     }
 
     // Replace the delegateEvent call with inline expando assignments:
-    // el.__gea_d = __id; el.__gea_<event> = _hoistedHandler
+    // el.$$gea_d = __id; el.__gea_<event> = _hoistedHandler
     const assignData = t.expressionStatement(
-      t.assignmentExpression('=',
-        t.memberExpression(elNode as t.Expression, t.identifier('__gea_d')),
+      t.assignmentExpression(
+        '=',
+        t.memberExpression(elNode as t.Expression, t.identifier('$$gea_d')),
         t.identifier(cachedIdName),
       ),
     )
     const assignHandler = t.expressionStatement(
-      t.assignmentExpression('=',
-        t.memberExpression(elNode as t.Expression, t.identifier(`__gea_${eventName}`)),
+      t.assignmentExpression(
+        '=',
+        t.memberExpression(elNode as t.Expression, t.identifier(`$$gea_${eventName}`)),
         handlerIdentifier,
       ),
     )
@@ -2150,10 +2095,7 @@ function replaceIdentifierWithExpr(node: any, name: string, replacement: t.Expre
  *          const __txt0 = __walk1.firstChild;
  *          computation(() => __sig0.value, (__v) => __txt0.data = __v)
  */
-function cacheComputationPaths(
-  stmts: t.Statement[],
-  ctx: TransformContext,
-): void {
+function cacheComputationPaths(stmts: t.Statement[], ctx: TransformContext): void {
   let sigCounter = 0
   let txtCounter = 0
 
@@ -2185,11 +2127,14 @@ function cacheComputationPaths(
     for (const [getter, setter] of pairs) {
       // #3: Cache ensureItemSignal(item, "prop") from getter
       // Pattern: () => ensureItemSignal(item, "prop").value
-      if (t.isArrowFunctionExpression(getter) && t.isMemberExpression(getter.body) &&
-          t.isIdentifier(getter.body.property, { name: 'value' }) &&
-          t.isCallExpression(getter.body.object) &&
-          (t.isIdentifier(getter.body.object.callee, { name: 'ensureItemSignal' }) ||
-           t.isIdentifier(getter.body.object.callee, { name: 'itemSignal' }))) {
+      if (
+        t.isArrowFunctionExpression(getter) &&
+        t.isMemberExpression(getter.body) &&
+        t.isIdentifier(getter.body.property, { name: 'value' }) &&
+        t.isCallExpression(getter.body.object) &&
+        (t.isIdentifier(getter.body.object.callee, { name: 'ensureItemSignal' }) ||
+          t.isIdentifier(getter.body.object.callee, { name: 'itemSignal' }))
+      ) {
         const sigId = `__sig${sigCounter++}`
         insertions.push(
           t.variableDeclaration('const', [
@@ -2205,11 +2150,14 @@ function cacheComputationPaths(
 
       // #4: Cache .firstChild text node from setter
       // Pattern: (__v) => expr.firstChild.data = __v
-      if (t.isArrowFunctionExpression(setter) && t.isAssignmentExpression(setter.body) &&
-          t.isMemberExpression(setter.body.left) &&
-          t.isIdentifier(setter.body.left.property, { name: 'data' }) &&
-          t.isMemberExpression(setter.body.left.object) &&
-          t.isIdentifier(setter.body.left.object.property, { name: 'firstChild' })) {
+      if (
+        t.isArrowFunctionExpression(setter) &&
+        t.isAssignmentExpression(setter.body) &&
+        t.isMemberExpression(setter.body.left) &&
+        t.isIdentifier(setter.body.left.property, { name: 'data' }) &&
+        t.isMemberExpression(setter.body.left.object) &&
+        t.isIdentifier(setter.body.left.object.property, { name: 'firstChild' })
+      ) {
         const txtId = `__txt${txtCounter++}`
         insertions.push(
           t.variableDeclaration('const', [
@@ -2275,17 +2223,14 @@ function detectSelectorPattern(expr: t.Expression): {
 
   // The MemberExpression should access a store property (e.g., store.selected)
   // For selectorAttr, we need the actual signal object, not a getter call.
-  // The compiled Store has `get selected() { return wrapSignalValue(this[_SIG_SELECTED]) }`
-  // So `store.selected` goes through the getter. We need `store[Symbol.for('gea.field.selected')]` (the signal itself).
+  // The compiled Store has `get selected() { return wrapSignalValue(this.$$gea_selected) }`
+  // So `store.selected` goes through the getter. We need `store.$$gea_selected` (the signal itself).
   if (!t.isMemberExpression(signalExpr) || !t.isIdentifier(signalExpr.property)) return null
   const propName = signalExpr.property.name
   const directSignalExpr = t.memberExpression(
     t.cloneNode(signalExpr.object),
-    t.callExpression(
-      t.memberExpression(t.identifier('Symbol'), t.identifier('for')),
-      [t.stringLiteral(`gea.field.${propName}`)],
-    ),
-    true,
+    t.identifier(`$$gea_${propName}`),
+    false,
   )
 
   // Consequent and alternate should be string literals (or at least expressions)
@@ -2333,10 +2278,7 @@ function convertToSignalEffect(stmts: t.Statement[], usedHelpers: Set<string>): 
     // Replace: computation(() => __sigN.value, setter) → signalEffect(__sigN, setter)
     usedHelpers.add('signalEffect')
     stmts[i] = t.expressionStatement(
-      t.callExpression(t.identifier('signalEffect'), [
-        t.identifier(sigName),
-        setter as t.Expression,
-      ]),
+      t.callExpression(t.identifier('signalEffect'), [t.identifier(sigName), setter as t.Expression]),
     )
   }
 }
@@ -2350,13 +2292,12 @@ function convertToSignalEffect(stmts: t.Statement[], usedHelpers: Set<string>): 
  * Only transforms nested property access on __props (not __props.X itself,
  * which goes through the props proxy thunks).
  */
-export function transformPropItemAccess(
-  stmts: t.Statement[],
-  usedHelpers: Set<RuntimeHelper>,
-): void {
+export function transformPropItemAccess(stmts: t.Statement[], usedHelpers: Set<RuntimeHelper>): void {
   let transformed = false
   for (const stmt of stmts) {
-    walkPropItemAccess(stmt, () => { transformed = true })
+    walkPropItemAccess(stmt, () => {
+      transformed = true
+    })
   }
   if (transformed) {
     usedHelpers.add('itemSignal')
@@ -2370,9 +2311,16 @@ export function transformPropItemAccess(
  */
 // Properties that should NOT be wrapped with __itemSignal (built-in, non-configurable, or methods)
 const SKIP_ITEM_SIGNAL_PROPS = new Set([
-  'length', 'constructor', 'prototype', '__proto__',
-  'toString', 'valueOf', 'toLocaleString', 'hasOwnProperty',
-  'isPrototypeOf', 'propertyIsEnumerable',
+  'length',
+  'constructor',
+  'prototype',
+  '__proto__',
+  'toString',
+  'valueOf',
+  'toLocaleString',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
 ])
 
 function isPropsItemAccess(node: t.MemberExpression): { propIdent: string; fieldName: string } | null {
@@ -2407,10 +2355,7 @@ function walkPropItemAccess(node: any, onTransform: () => void): void {
     const match = isPropsItemAccess(node)
     if (match) {
       // Transform to __itemSignal(__props.X, 'Y').value
-      const propsAccess = t.memberExpression(
-        t.identifier('__props'),
-        t.identifier(match.propIdent),
-      )
+      const propsAccess = t.memberExpression(t.identifier('__props'), t.identifier(match.propIdent))
       const itemSignalCall = t.callExpression(t.identifier('itemSignal'), [
         propsAccess,
         t.stringLiteral(match.fieldName),
@@ -2425,8 +2370,15 @@ function walkPropItemAccess(node: any, onTransform: () => void): void {
 
   // Generic recursion
   for (const key of Object.keys(node)) {
-    if (key === 'type' || key === 'start' || key === 'end' || key === 'loc' ||
-        key === 'leadingComments' || key === 'trailingComments') continue
+    if (
+      key === 'type' ||
+      key === 'start' ||
+      key === 'end' ||
+      key === 'loc' ||
+      key === 'leadingComments' ||
+      key === 'trailingComments'
+    )
+      continue
     const child = (node as any)[key]
     if (Array.isArray(child)) {
       for (const item of child) {

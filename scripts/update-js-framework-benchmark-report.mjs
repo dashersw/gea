@@ -18,6 +18,7 @@ const { values } = parseArgs({
     rebuild: { type: 'boolean', default: false },
     framework: { type: 'string', multiple: true, default: [] },
     benchmark: { type: 'string', multiple: true, default: [] },
+    count: { type: 'string', default: '' },
     headless: { type: 'boolean', default: true },
   },
   strict: false,
@@ -41,7 +42,11 @@ if (values.run) {
   const fwFlags = frameworks.map((f) => `--framework ${f}`).join(' ')
   const bmFlags = values.benchmark.map((b) => `--benchmark ${b}`).join(' ')
   const headless = values.headless ? '--headless' : ''
-  run(`node dist/benchmarkRunner.js ${fwFlags} ${bmFlags} ${headless}`.trim(), resolve(benchRoot, 'webdriver-ts'))
+  const countFlag = values.count ? `--count ${values.count}` : ''
+  run(
+    `node dist/benchmarkRunner.js ${fwFlags} ${bmFlags} ${headless} ${countFlag}`.trim(),
+    resolve(benchRoot, 'webdriver-ts'),
+  )
 }
 
 // Generate report
