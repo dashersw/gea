@@ -8,9 +8,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { JSDOM } from 'jsdom'
+import { GEA_DOM_COMPONENT } from '@geajs/core'
 
 import { geaPlugin } from '../src/index'
-import { buildEvalPrelude, mergeEvalBindings } from './helpers/compile'
+import { buildEvalPrelude, mergeEvalBindings, compileStore, loadRuntimeModules as loadRuntime } from './helpers/compile'
+import { resetDelegation } from '../../gea/src/dom/events'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -24,6 +26,9 @@ function installDom() {
     window: globalThis.window,
     document: globalThis.document,
     HTMLElement: globalThis.HTMLElement,
+    Element: (globalThis as any).Element,
+    DocumentFragment: (globalThis as any).DocumentFragment,
+    Text: (globalThis as any).Text,
     Node: globalThis.Node,
     NodeFilter: globalThis.NodeFilter,
     MutationObserver: globalThis.MutationObserver,
@@ -37,6 +42,9 @@ function installDom() {
     window: dom.window,
     document: dom.window.document,
     HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    DocumentFragment: dom.window.DocumentFragment,
+    Text: dom.window.Text,
     Node: dom.window.Node,
     NodeFilter: dom.window.NodeFilter,
     MutationObserver: dom.window.MutationObserver,
@@ -57,6 +65,20 @@ async function flushMicrotasks() {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+/** Get child component instance from a DOM element via [GEA_DOM_COMPONENT] */
+function getChild(root: Element, selector?: string): any {
+  if (selector) {
+    const el = root.querySelector(selector)
+    return el && (el as any)[GEA_DOM_COMPONENT]
+  }
+  // Find first element with [GEA_DOM_COMPONENT]
+  const all = root.querySelectorAll('*')
+  for (const el of all) {
+    if ((el as any)[GEA_DOM_COMPONENT]) return (el as any)[GEA_DOM_COMPONENT]
+  }
+  return undefined
+}
+
 async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
   const allBindings = mergeEvalBindings(bindings)
   const plugin = geaPlugin()
@@ -64,25 +86,40 @@ async function compileJsxComponent(source: string, id: string, className: string
   const result = await transform?.call({} as never, source, id)
   assert.ok(result)
 
-  const code = typeof result === 'string' ? result : result.code
+  let code = typeof result === 'string' ? result : result.code
+  // Convert @geajs/core/runtime imports to __geaRuntime destructuring
+  code = code.replace(
+    /import\s*\{([^}]+)\}\s*from\s*["']@geajs\/core\/runtime["']\s*;?/g,
+    (_m: string, names: string) => `const { ${names} } = __geaRuntime;`,
+  )
   const compiledSource = `${buildEvalPrelude()}${code
     .replace(/^import .*;$/gm, '')
+    .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
     .replaceAll('import.meta.hot', 'undefined')
     .replaceAll('import.meta.url', '""')
-    .replace(/export default class\s+/, 'class ')}
+    .replace(/export default class\s+/, 'class ')
+    .replace(/export class\s+/, 'class ')}
 return ${className};`
 
   return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings))
 }
 
+/**
+ * Create a compiled store from an initial state object.
+ * Replaces v1's `new Store({ field: value })` pattern.
+ */
+async function createCompiledStore(initialState: Record<string, unknown>, Store: any): Promise<any> {
+  const fields = Object.entries(initialState)
+    .map(([k, v]) => `  ${k} = ${JSON.stringify(v)}`)
+    .join('\n')
+  const source = `import { Store } from '@geajs/core'\nexport class S extends Store {\n${fields}\n}`
+  const S = await compileStore(source, '/virtual/store.ts', 'S', { Store })
+  return new S()
+}
+
 async function loadRuntimeModules(seed: string) {
-  const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager')
-  ComponentManager.instance = undefined
-  const [compMod, storeMod] = await Promise.all([
-    import(`../../gea/src/lib/base/component.tsx?${seed}`),
-    import(`../../gea/src/lib/store.ts?${seed}`),
-  ])
-  return [compMod, storeMod] as const
+  const [compMod, storeMod] = await loadRuntime(seed)
+  return [{ default: compMod.default }, { Store: storeMod.Store }] as const
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +131,7 @@ test('primitive number prop: parent change updates child', async () => {
   try {
     const seed = `twoway-${Date.now()}-num`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ count: 5 })
+    const store = await createCompiledStore({ count: 5 }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -132,11 +169,13 @@ test('primitive number prop: parent change updates child', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.val')?.textContent, '5')
+    const valEl = root.querySelector('.val')
+    assert.ok(valEl, '.val element must exist')
+    assert.equal(valEl?.textContent?.trim(), '5')
 
     store.count = 10
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.val')?.textContent, '10')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '10')
 
     view.dispose()
   } finally {
@@ -149,7 +188,7 @@ test('primitive string prop: parent change updates child', async () => {
   try {
     const seed = `twoway-${Date.now()}-str`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ name: 'Alice' })
+    const store = await createCompiledStore({ name: 'Alice' }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -187,11 +226,11 @@ test('primitive string prop: parent change updates child', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.val')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), 'Alice')
 
     store.name = 'Bob'
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.val')?.textContent, 'Bob')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), 'Bob')
 
     view.dispose()
   } finally {
@@ -204,7 +243,7 @@ test('primitive boolean prop: parent change updates child', async () => {
   try {
     const seed = `twoway-${Date.now()}-bool`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ active: true })
+    const store = await createCompiledStore({ active: true }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -242,11 +281,11 @@ test('primitive boolean prop: parent change updates child', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.val')?.textContent, 'yes')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), 'yes')
 
     store.active = false
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.val')?.textContent, 'no')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), 'no')
 
     view.dispose()
   } finally {
@@ -263,7 +302,7 @@ test('object prop: child mutation updates parent store', async () => {
   try {
     const seed = `twoway-${Date.now()}-obj-up`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' } })
+    const store = await createCompiledStore({ user: { name: 'Alice' } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -306,16 +345,16 @@ test('object prop: child mutation updates parent store', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Alice')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Alice')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Alice')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user.name = 'Bob'
     await flushMicrotasks()
 
     assert.equal(store.user.name, 'Bob', 'store should reflect child mutation')
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Bob')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Bob')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Bob')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Bob')
 
     view.dispose()
   } finally {
@@ -328,7 +367,7 @@ test('object prop: parent mutation updates child', async () => {
   try {
     const seed = `twoway-${Date.now()}-obj-down`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' } })
+    const store = await createCompiledStore({ user: { name: 'Alice' } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -366,11 +405,11 @@ test('object prop: parent mutation updates child', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Alice')
 
     store.user.name = 'Charlie'
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Charlie')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Charlie')
 
     view.dispose()
   } finally {
@@ -383,7 +422,7 @@ test('nested object prop: child deep mutation updates parent', async () => {
   try {
     const seed = `twoway-${Date.now()}-nested`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { address: { city: 'London' } } })
+    const store = await createCompiledStore({ user: { address: { city: 'London' } } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -426,16 +465,16 @@ test('nested object prop: child deep mutation updates parent', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-city')?.textContent, 'London')
-    assert.equal(view.el?.querySelector('.city')?.textContent, 'London')
+    assert.equal(root.querySelector('.parent-city')?.textContent?.trim(), 'London')
+    assert.equal(root.querySelector('.city')?.textContent?.trim(), 'London')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user.address.city = 'NYC'
     await flushMicrotasks()
 
     assert.equal(store.user.address.city, 'NYC', 'store should reflect deep mutation')
-    assert.equal(view.el?.querySelector('.parent-city')?.textContent, 'NYC')
-    assert.equal(view.el?.querySelector('.city')?.textContent, 'NYC')
+    assert.equal(root.querySelector('.parent-city')?.textContent?.trim(), 'NYC')
+    assert.equal(root.querySelector('.city')?.textContent?.trim(), 'NYC')
 
     view.dispose()
   } finally {
@@ -452,7 +491,7 @@ test('array prop: child push updates parent store', async () => {
   try {
     const seed = `twoway-${Date.now()}-arr-push`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ items: [{ id: 1 }, { id: 2 }] })
+    const store = await createCompiledStore({ items: [{ id: 1 }, { id: 2 }] }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -495,16 +534,16 @@ test('array prop: child push updates parent store', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '2')
-    assert.equal(view.el?.querySelector('.count')?.textContent, '2')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '2')
+    assert.equal(root.querySelector('.count')?.textContent?.trim(), '2')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.items.push({ id: 3 })
     await flushMicrotasks()
 
     assert.equal(store.items.length, 3, 'store array should grow')
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '3')
-    assert.equal(view.el?.querySelector('.count')?.textContent, '3')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '3')
+    assert.equal(root.querySelector('.count')?.textContent?.trim(), '3')
 
     view.dispose()
   } finally {
@@ -517,7 +556,7 @@ test('array prop: child splice updates parent store', async () => {
   try {
     const seed = `twoway-${Date.now()}-arr-splice`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ items: [{ id: 1 }, { id: 2 }, { id: 3 }] })
+    const store = await createCompiledStore({ items: [{ id: 1 }, { id: 2 }, { id: 3 }] }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -560,15 +599,15 @@ test('array prop: child splice updates parent store', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '3')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '3')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.items.splice(0, 1)
     await flushMicrotasks()
 
     assert.equal(store.items.length, 2, 'store array should shrink')
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '2')
-    assert.equal(view.el?.querySelector('.count')?.textContent, '2')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '2')
+    assert.equal(root.querySelector('.count')?.textContent?.trim(), '2')
 
     view.dispose()
   } finally {
@@ -581,7 +620,7 @@ test('array prop: parent push updates child', async () => {
   try {
     const seed = `twoway-${Date.now()}-arr-down`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ items: [{ id: 1 }] })
+    const store = await createCompiledStore({ items: [{ id: 1 }] }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -619,11 +658,11 @@ test('array prop: parent push updates child', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.count')?.textContent, '1')
+    assert.equal(root.querySelector('.count')?.textContent?.trim(), '1')
 
     store.items.push({ id: 2 })
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.count')?.textContent, '2')
+    assert.equal(root.querySelector('.count')?.textContent?.trim(), '2')
 
     view.dispose()
   } finally {
@@ -640,7 +679,7 @@ test('mixed props: primitive is one-way, object is two-way', async () => {
   try {
     const seed = `twoway-${Date.now()}-mixed`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ count: 1, user: { name: 'Alice' } })
+    const store = await createCompiledStore({ count: 1, user: { name: 'Alice' } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -688,20 +727,20 @@ test('mixed props: primitive is one-way, object is two-way', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.c-count')?.textContent, '1')
-    assert.equal(view.el?.querySelector('.c-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.c-count')?.textContent?.trim(), '1')
+    assert.equal(root.querySelector('.c-name')?.textContent?.trim(), 'Alice')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user.name = 'Bob'
     await flushMicrotasks()
 
     assert.equal(store.user.name, 'Bob', 'object prop mutation flows to parent')
-    assert.equal(view.el?.querySelector('.p-name')?.textContent, 'Bob')
-    assert.equal(view.el?.querySelector('.c-name')?.textContent, 'Bob')
+    assert.equal(root.querySelector('.p-name')?.textContent?.trim(), 'Bob')
+    assert.equal(root.querySelector('.c-name')?.textContent?.trim(), 'Bob')
 
     store.count = 99
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.c-count')?.textContent, '99', 'primitive prop flows parent → child')
+    assert.equal(root.querySelector('.c-count')?.textContent?.trim(), '99', 'primitive prop flows parent → child')
 
     view.dispose()
   } finally {
@@ -718,7 +757,7 @@ test('callback props are callable from child', async () => {
   try {
     const seed = `twoway-${Date.now()}-cb`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ value: 0 })
+    const store = await createCompiledStore({ value: 0 }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -760,14 +799,14 @@ test('callback props are callable from child', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.val')?.textContent, '0')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '0')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.onValueChange(42)
     await flushMicrotasks()
 
     assert.equal(store.value, 42, 'callback updated store')
-    assert.equal(view.el?.querySelector('.val')?.textContent, '42')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '42')
 
     view.dispose()
   } finally {
@@ -784,7 +823,7 @@ test('two children sharing same object prop: one mutates, both update', async ()
   try {
     const seed = `twoway-${Date.now()}-multi`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' } })
+    const store = await createCompiledStore({ user: { name: 'Alice' } }, Store)
 
     const ChildA = await compileJsxComponent(
       `
@@ -842,16 +881,16 @@ test('two children sharing same object prop: one mutates, both update', async ()
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.a-name')?.textContent, 'Alice')
-    assert.equal(view.el?.querySelector('.b-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.a-name')?.textContent?.trim(), 'Alice')
+    assert.equal(root.querySelector('.b-name')?.textContent?.trim(), 'Alice')
 
-    const childA = view._childA
+    const childA = getChild(root, '.a-name')
     childA.props.user.name = 'Eve'
     await flushMicrotasks()
 
     assert.equal(store.user.name, 'Eve')
-    assert.equal(view.el?.querySelector('.a-name')?.textContent, 'Eve')
-    assert.equal(view.el?.querySelector('.b-name')?.textContent, 'Eve')
+    assert.equal(root.querySelector('.a-name')?.textContent?.trim(), 'Eve')
+    assert.equal(root.querySelector('.b-name')?.textContent?.trim(), 'Eve')
 
     view.dispose()
   } finally {
@@ -868,7 +907,7 @@ test('object prop starts null, parent sets it later', async () => {
   try {
     const seed = `twoway-${Date.now()}-null`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ config: null as null | { theme: string } })
+    const store = await createCompiledStore({ config: null as null | { theme: string } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -906,11 +945,11 @@ test('object prop starts null, parent sets it later', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.theme')?.textContent, 'none')
+    assert.equal(root.querySelector('.theme')?.textContent?.trim(), 'none')
 
     store.config = { theme: 'dark' }
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.theme')?.textContent, 'dark')
+    assert.equal(root.querySelector('.theme')?.textContent?.trim(), 'dark')
 
     view.dispose()
   } finally {
@@ -923,7 +962,7 @@ test('object prop replaced with null', async () => {
   try {
     const seed = `twoway-${Date.now()}-to-null`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ config: { theme: 'light' } as null | { theme: string } })
+    const store = await createCompiledStore({ config: { theme: 'light' } as null | { theme: string } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -961,11 +1000,11 @@ test('object prop replaced with null', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.theme')?.textContent, 'light')
+    assert.equal(root.querySelector('.theme')?.textContent?.trim(), 'light')
 
     store.config = null
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.theme')?.textContent, 'none')
+    assert.equal(root.querySelector('.theme')?.textContent?.trim(), 'none')
 
     view.dispose()
   } finally {
@@ -982,7 +1021,7 @@ test('child reassigns primitive prop: parent store is unaffected, child DOM upda
   try {
     const seed = `twoway-${Date.now()}-prim-reassign`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ count: 5 })
+    const store = await createCompiledStore({ count: 5 }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -1020,15 +1059,15 @@ test('child reassigns primitive prop: parent store is unaffected, child DOM upda
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.val')?.textContent, '5')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '5')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.count = 99
     await flushMicrotasks()
 
     assert.equal(child.props.count, 99, 'child sees its own local change')
     assert.equal(store.count, 5, 'parent store is unaffected by child reassignment')
-    assert.equal(view.el?.querySelector('.val')?.textContent, '99', 'child DOM reflects the reassignment')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '99', 'child DOM reflects the reassignment')
 
     view.dispose()
   } finally {
@@ -1041,7 +1080,7 @@ test('child reassigns string prop: parent store is unaffected', async () => {
   try {
     const seed = `twoway-${Date.now()}-str-reassign`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ name: 'Alice' })
+    const store = await createCompiledStore({ name: 'Alice' }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -1079,7 +1118,7 @@ test('child reassigns string prop: parent store is unaffected', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
     child.props.name = 'Zed'
     await flushMicrotasks()
 
@@ -1097,7 +1136,7 @@ test('child reassigns boolean prop: parent store is unaffected', async () => {
   try {
     const seed = `twoway-${Date.now()}-bool-reassign`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ active: true })
+    const store = await createCompiledStore({ active: true }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -1135,7 +1174,7 @@ test('child reassigns boolean prop: parent store is unaffected', async () => {
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
     child.props.active = false
     await flushMicrotasks()
 
@@ -1153,7 +1192,7 @@ test('child reassigns object prop: parent store keeps original reference', async
   try {
     const seed = `twoway-${Date.now()}-obj-reassign`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' } })
+    const store = await createCompiledStore({ user: { name: 'Alice' } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -1196,16 +1235,16 @@ test('child reassigns object prop: parent store keeps original reference', async
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Alice')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Alice')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Alice')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user = { name: 'Imposter' }
     await flushMicrotasks()
 
     assert.equal(child.props.user.name, 'Imposter', 'child sees its own replacement object')
     assert.equal(store.user.name, 'Alice', 'parent store still has original object')
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Alice', 'parent DOM unchanged')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Alice', 'parent DOM unchanged')
 
     view.dispose()
   } finally {
@@ -1218,7 +1257,7 @@ test('child reassigns array prop: parent store keeps original array', async () =
   try {
     const seed = `twoway-${Date.now()}-arr-reassign`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ items: [{ id: 1 }, { id: 2 }] })
+    const store = await createCompiledStore({ items: [{ id: 1 }, { id: 2 }] }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -1256,7 +1295,7 @@ test('child reassigns array prop: parent store keeps original array', async () =
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
     assert.equal(store.items.length, 2)
 
     child.props.items = [{ id: 99 }]
@@ -1278,7 +1317,7 @@ test('child reassigns object prop then parent pushes update: parent wins', async
   try {
     const seed = `twoway-${Date.now()}-reassign-then-update`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' } })
+    const store = await createCompiledStore({ user: { name: 'Alice' } }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -1316,7 +1355,7 @@ test('child reassigns object prop then parent pushes update: parent wins', async
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user = { name: 'Imposter' }
     await flushMicrotasks()
 
@@ -1327,7 +1366,7 @@ test('child reassigns object prop then parent pushes update: parent wins', async
     await flushMicrotasks()
 
     assert.equal(child.props.user.name, 'Bob', 'parent update overwrites child local replacement')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Bob', 'child DOM shows parent value')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Bob', 'child DOM shows parent value')
 
     view.dispose()
   } finally {
@@ -1344,7 +1383,7 @@ test('3-level deep: grandchild mutation updates grandparent store and DOM', asyn
   try {
     const seed = `twoway-${Date.now()}-3lvl`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' } })
+    const store = await createCompiledStore({ user: { name: 'Alice' } }, Store)
 
     const GrandChild = await compileJsxComponent(
       `
@@ -1407,19 +1446,19 @@ test('3-level deep: grandchild mutation updates grandparent store and DOM', asyn
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.r-name')?.textContent, 'Alice')
-    assert.equal(view.el?.querySelector('.m-name')?.textContent, 'Alice')
-    assert.equal(view.el?.querySelector('.gc-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.r-name')?.textContent?.trim(), 'Alice')
+    assert.equal(root.querySelector('.m-name')?.textContent?.trim(), 'Alice')
+    assert.equal(root.querySelector('.gc-name')?.textContent?.trim(), 'Alice')
 
     const middle = view._middle
-    const grandchild = middle._grandChild
+    const grandchild = getChild(root)
     grandchild.props.user.name = 'Zara'
     await flushMicrotasks()
 
     assert.equal(store.user.name, 'Zara', 'grandparent store updated')
-    assert.equal(view.el?.querySelector('.r-name')?.textContent, 'Zara')
-    assert.equal(view.el?.querySelector('.m-name')?.textContent, 'Zara')
-    assert.equal(view.el?.querySelector('.gc-name')?.textContent, 'Zara')
+    assert.equal(root.querySelector('.r-name')?.textContent?.trim(), 'Zara')
+    assert.equal(root.querySelector('.m-name')?.textContent?.trim(), 'Zara')
+    assert.equal(root.querySelector('.gc-name')?.textContent?.trim(), 'Zara')
 
     view.dispose()
   } finally {
@@ -1432,7 +1471,7 @@ test('3-level deep: grandparent mutation cascades to grandchild DOM', async () =
   try {
     const seed = `twoway-${Date.now()}-3lvl-down`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' } })
+    const store = await createCompiledStore({ user: { name: 'Alice' } }, Store)
 
     const GrandChild = await compileJsxComponent(
       `
@@ -1485,11 +1524,11 @@ test('3-level deep: grandparent mutation cascades to grandchild DOM', async () =
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.gc-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.gc-name')?.textContent?.trim(), 'Alice')
 
     store.user.name = 'Maya'
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.gc-name')?.textContent, 'Maya')
+    assert.equal(root.querySelector('.gc-name')?.textContent?.trim(), 'Maya')
 
     view.dispose()
   } finally {
@@ -1502,7 +1541,7 @@ test('4-level deep: great-grandchild array push updates top-level store', async 
   try {
     const seed = `twoway-${Date.now()}-4lvl`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ items: [{ id: 1 }] })
+    const store = await createCompiledStore({ items: [{ id: 1 }] }, Store)
 
     const Level3 = await compileJsxComponent(
       `
@@ -1575,18 +1614,17 @@ test('4-level deep: great-grandchild array push updates top-level store', async 
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.r-count')?.textContent, '1')
-    assert.equal(view.el?.querySelector('.l3-count')?.textContent, '1')
+    assert.equal(root.querySelector('.r-count')?.textContent?.trim(), '1')
+    assert.equal(root.querySelector('.l3-count')?.textContent?.trim(), '1')
 
-    const level1 = view._level1
-    const level2 = level1._level2
-    const level3 = level2._level3
+    const level3 = getChild(root, '.l3-count')
+    assert.ok(level3, 'level3 instance found via GEA_DOM_COMPONENT')
     level3.props.items.push({ id: 2 })
     await flushMicrotasks()
 
     assert.equal(store.items.length, 2, 'top-level store array grew')
-    assert.equal(view.el?.querySelector('.r-count')?.textContent, '2')
-    assert.equal(view.el?.querySelector('.l3-count')?.textContent, '2')
+    assert.equal(root.querySelector('.r-count')?.textContent?.trim(), '2')
+    assert.equal(root.querySelector('.l3-count')?.textContent?.trim(), '2')
 
     view.dispose()
   } finally {
@@ -1645,14 +1683,14 @@ test('local state: parent passes own primitive to child, parent update flows dow
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '0')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '0')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '0')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '0')
 
     view.count = 7
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '7')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '7')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '7')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '7')
 
     view.dispose()
   } finally {
@@ -1707,16 +1745,16 @@ test('local state: parent passes own object to child, child mutation updates par
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Alice')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Alice')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Alice')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Alice')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user.name = 'Bob'
     await flushMicrotasks()
 
     assert.equal(view.user.name, 'Bob', 'parent state reflects child mutation')
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Bob')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Bob')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Bob')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Bob')
 
     view.dispose()
   } finally {
@@ -1771,16 +1809,16 @@ test('local state: parent passes own array to child, child push updates parent',
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '1')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '1')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '1')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '1')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.items.push({ id: 2 })
     await flushMicrotasks()
 
     assert.equal(view.items.length, 2, 'parent array grew via child push')
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '2')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '2')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '2')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '2')
 
     view.dispose()
   } finally {
@@ -1835,17 +1873,17 @@ test('local state: child reassigns primitive, child DOM updates, parent unaffect
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '5')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '5')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '5')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '5')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.count = 42
     await flushMicrotasks()
 
     assert.equal(child.props.count, 42, 'child sees its reassigned value')
     assert.equal(view.count, 5, 'parent state unaffected')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '42', 'child DOM updates')
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '5', 'parent DOM unchanged')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '42', 'child DOM updates')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '5', 'parent DOM unchanged')
 
     view.dispose()
   } finally {
@@ -1900,7 +1938,7 @@ test('local state: child reassigns object, parent unaffected, parent update over
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user = { name: 'Imposter' }
     await flushMicrotasks()
 
@@ -1911,7 +1949,7 @@ test('local state: child reassigns object, parent unaffected, parent update over
     await flushMicrotasks()
 
     assert.equal(child.props.user.name, 'Charlie', 'parent update overwrites child local reassignment')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Charlie')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Charlie')
 
     view.dispose()
   } finally {
@@ -1928,7 +1966,7 @@ test('child reassigns primitive multiple times: DOM updates each time', async ()
   try {
     const seed = `twoway-${Date.now()}-multi-reassign`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ count: 1 })
+    const store = await createCompiledStore({ count: 1 }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -1966,20 +2004,20 @@ test('child reassigns primitive multiple times: DOM updates each time', async ()
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
-    assert.equal(view.el?.querySelector('.val')?.textContent, '1')
+    const child = getChild(root)
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '1')
 
     child.props.count = 10
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.val')?.textContent, '10')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '10')
 
     child.props.count = 20
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.val')?.textContent, '20')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '20')
 
     child.props.count = 30
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.val')?.textContent, '30')
+    assert.equal(root.querySelector('.val')?.textContent?.trim(), '30')
 
     assert.equal(store.count, 1, 'parent store never changed')
 
@@ -1994,7 +2032,7 @@ test('child reassigns primitive, parent updates later: both DOMs correct', async
   try {
     const seed = `twoway-${Date.now()}-reassign-then-parent`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ count: 1 })
+    const store = await createCompiledStore({ count: 1 }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -2037,35 +2075,35 @@ test('child reassigns primitive, parent updates later: both DOMs correct', async
     view.render(root)
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-val')?.textContent, '1')
-    assert.equal(view.el?.querySelector('.child-val')?.textContent, '1')
+    assert.equal(root.querySelector('.parent-val')?.textContent?.trim(), '1')
+    assert.equal(root.querySelector('.child-val')?.textContent?.trim(), '1')
 
-    const child = view._child
+    const child = getChild(root)
     child.props.count = 99
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-val')?.textContent, '1', 'parent DOM unchanged')
-    assert.equal(view.el?.querySelector('.child-val')?.textContent, '99', 'child DOM shows local value')
+    assert.equal(root.querySelector('.parent-val')?.textContent?.trim(), '1', 'parent DOM unchanged')
+    assert.equal(root.querySelector('.child-val')?.textContent?.trim(), '99', 'child DOM shows local value')
 
     store.count = 50
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.parent-val')?.textContent, '50', 'parent DOM updates')
-    assert.equal(view.el?.querySelector('.child-val')?.textContent, '50', 'child DOM overwritten by parent update')
+    assert.equal(root.querySelector('.parent-val')?.textContent?.trim(), '50', 'parent DOM updates')
+    assert.equal(root.querySelector('.child-val')?.textContent?.trim(), '50', 'child DOM overwritten by parent update')
 
     child.props.count = 77
     await flushMicrotasks()
     assert.equal(
-      view.el?.querySelector('.child-val')?.textContent,
+      root.querySelector('.child-val')?.textContent?.trim(),
       '77',
       'child can still reassign after parent update',
     )
-    assert.equal(view.el?.querySelector('.parent-val')?.textContent, '50', 'parent DOM still at 50')
+    assert.equal(root.querySelector('.parent-val')?.textContent?.trim(), '50', 'parent DOM still at 50')
 
     store.count = 100
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.parent-val')?.textContent, '100', 'parent keeps updating')
-    assert.equal(view.el?.querySelector('.child-val')?.textContent, '100', 'child overwritten again')
+    assert.equal(root.querySelector('.parent-val')?.textContent?.trim(), '100', 'parent keeps updating')
+    assert.equal(root.querySelector('.child-val')?.textContent?.trim(), '100', 'child overwritten again')
 
     view.dispose()
   } finally {
@@ -2078,7 +2116,7 @@ test('parent DOM keeps updating independently after child reassigns', async () =
   try {
     const seed = `twoway-${Date.now()}-parent-independent`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ user: { name: 'Alice' }, count: 0 })
+    const store = await createCompiledStore({ user: { name: 'Alice' }, count: 0 }, Store)
 
     const Child = await compileJsxComponent(
       `
@@ -2122,20 +2160,20 @@ test('parent DOM keeps updating independently after child reassigns', async () =
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
     child.props.user = { name: 'Detached' }
     await flushMicrotasks()
 
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Detached')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Detached')
 
     store.count = 5
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '5', 'parent count updates normally')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '5', 'parent count updates normally')
 
     store.user.name = 'Bob'
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Bob', 'parent name updates normally')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Bob', 'child reconnects via parent prop refresh')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Bob', 'parent name updates normally')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Bob', 'child reconnects via parent prop refresh')
 
     view.dispose()
   } finally {
@@ -2190,26 +2228,26 @@ test('local state: child reassigns primitive, continues to get updates from pare
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
 
     child.props.count = 42
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '42', 'child DOM updates on reassign')
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '0', 'parent DOM unchanged')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '42', 'child DOM updates on reassign')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '0', 'parent DOM unchanged')
 
     view.count = 10
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '10', 'parent DOM updates')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '10', 'child overwritten by parent')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '10', 'parent DOM updates')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '10', 'child overwritten by parent')
 
     child.props.count = 88
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '88', 'child reassigns again after parent update')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '88', 'child reassigns again after parent update')
 
     view.count = 20
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.parent-count')?.textContent, '20')
-    assert.equal(view.el?.querySelector('.child-count')?.textContent, '20', 'parent overwrites again')
+    assert.equal(root.querySelector('.parent-count')?.textContent?.trim(), '20')
+    assert.equal(root.querySelector('.child-count')?.textContent?.trim(), '20', 'parent overwrites again')
 
     view.dispose()
   } finally {
@@ -2264,23 +2302,23 @@ test('local state: parent object mutations update both DOMs after child reassign
     view.render(root)
     await flushMicrotasks()
 
-    const child = view._child
+    const child = getChild(root)
 
     child.props.user = { name: 'Detached' }
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Detached')
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Alice', 'parent DOM unchanged')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Detached')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Alice', 'parent DOM unchanged')
 
     view.user.name = 'Bob'
     await flushMicrotasks()
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Bob', 'parent DOM updates')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Bob', 'child reconnects via prop refresh')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Bob', 'parent DOM updates')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Bob', 'child reconnects via prop refresh')
 
     child.props.user.name = 'Eve'
     await flushMicrotasks()
     assert.equal(view.user.name, 'Eve', 'child mutation flows back to parent after reconnect')
-    assert.equal(view.el?.querySelector('.parent-name')?.textContent, 'Eve')
-    assert.equal(view.el?.querySelector('.child-name')?.textContent, 'Eve')
+    assert.equal(root.querySelector('.parent-name')?.textContent?.trim(), 'Eve')
+    assert.equal(root.querySelector('.child-name')?.textContent?.trim(), 'Eve')
 
     view.dispose()
   } finally {

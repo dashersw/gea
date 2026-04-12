@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { transformComponentSource } from './plugin-helpers'
 
-test('root prop callback events do not leak as html attributes', () => {
+test('root prop callback events use delegateEvent, not html attributes', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -13,14 +13,15 @@ test('root prop callback events do not leak as html attributes', () => {
     }
   `)
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /this\.props\["onSelect"\]|this\.props\.onSelect/)
+  // v2 uses delegateEvent for click handlers
+  assert.match(output, /delegateEvent\(/)
+  assert.match(output, /__props\.onSelect/)
+  // Should not produce setAttribute for events
   assert.doesNotMatch(output, /setAttribute\("click"/)
   assert.doesNotMatch(output, /removeAttribute\("click"/)
-  assert.doesNotMatch(output, / click="\$\{/)
 })
 
-test('prop text patch preserves surrounding template text', () => {
+test('prop text uses reactiveText runtime helper', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -35,14 +36,12 @@ test('prop text patch preserves surrounding template text', () => {
     }
   `)
 
-  assert.match(output, /const __boundValue = `[\s\S]*Pay \$\$\$\{value\}[\s\S]*`;/)
-  // `${value}` does not read properties off value; nullish guard would skip clearing text when value becomes null.
-  assert.doesNotMatch(output, /if \(!\(value === null \|\| value === undefined\)\)/)
-  assert.match(output, /textContent = __boundValue/)
-  assert.doesNotMatch(output, /__geaPatchProp_totalPrice\(value\)[\s\S]*textContent = value/)
+  // v2 uses reactiveText() for dynamic text nodes
+  assert.match(output, /reactiveText/)
+  assert.match(output, /__props\.totalPrice/)
 })
 
-test('prop text patch keeps nullish guard when derived expr reads properties of value', () => {
+test('prop member access uses computation with itemSignal', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -57,11 +56,12 @@ test('prop text patch keeps nullish guard when derived expr reads properties of 
     }
   `)
 
-  assert.match(output, /GEA_ON_PROP_CHANGE/)
-  assert.match(output, /if \(!\(value === null \|\| value === undefined\)\)/)
+  // v2 uses itemSignal for deep property access on props
+  assert.match(output, /itemSignal/)
+  assert.match(output, /displayName/)
 })
 
-test('generated selectors distinguish repeated typed inputs', () => {
+test('generated walkers distinguish repeated typed inputs', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -83,14 +83,15 @@ test('generated selectors distinguish repeated typed inputs', () => {
     }
   `)
 
-  const selectors = Array.from(output.matchAll(/this\.\$\("([^"]+)"\)/g)).map((match) => match[1])
-  const bindingIds = Array.from(output.matchAll(/__gid\([^+]*\+\s*["']-([^"']+)["']\)/g)).map(
-    (match) => match[1],
-  )
-  assert.equal(new Set(selectors).size >= 2 || new Set(bindingIds).size >= 2, true)
+  // v2 uses separate walker variables (__walk0, __walk1) for distinct elements
+  assert.match(output, /reactiveAttr\(__walk0, "value"/)
+  assert.match(output, /reactiveAttr\(__walk1, "value"/)
+  // Both must reference different state
+  assert.match(output, /this\.first/)
+  assert.match(output, /this\.second/)
 })
 
-test('multiple handlers on one element reuse a single generated selector id', () => {
+test('multiple handlers on one element in map share the same DOM node', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import store from './store.ts'
@@ -116,14 +117,14 @@ test('multiple handlers on one element reuse a single generated selector id', ()
     }
   `)
 
-  const selectorIds = output.match(/input:\s*\{[\s\S]*?ev(\d+)[\s\S]*?keydown:\s*\{[\s\S]*?ev(\d+)/)
-  assert.ok(selectorIds, 'expected both event handlers to be emitted')
-  assert.equal(selectorIds[1], selectorIds[2], 'same element should reuse one generated selector across handlers')
-  assert.doesNotMatch(output, /id="\$\{this\.id \+ "-ev\d+"\}"\s+id="\$\{this\.id \+ "-ev\d+"\}"/)
-  assert.doesNotMatch(output, /data-ge="ev\d+"\s+data-ge="ev\d+"/)
+  // v2 uses keyedList for .map()
+  assert.match(output, /keyedList\(/)
+  // Both event handlers target the same element (__el1) via delegateEvent
+  assert.match(output, /delegateEvent\(__el1, "input"/)
+  assert.match(output, /delegateEvent\(__el1, "keydown"/)
 })
 
-test('conditional root html event handlers are preserved inside logical branches', () => {
+test('conditional root html event handlers are preserved inside conditional branches', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -138,11 +139,16 @@ test('conditional root html event handlers are preserved inside logical branches
     }
   `)
 
-  assert.match(output, /showBack && `<button class="btn btn-secondary" id="\$\{__id \+ "-ev\d+"\}">/)
-  assert.match(output, /get events\(\)\s*\{[\s\S]*click:\s*\{/)
+  // v2 uses conditional() for && patterns
+  assert.match(output, /conditional\(/)
+  // The condition reads showBack from props
+  assert.match(output, /__props\.showBack/)
+  // The click handler uses delegateEvent
+  assert.match(output, /delegateEvent\(/)
+  assert.match(output, /__props\.onBack/)
 })
 
-test('inline event handlers capture template-local setup statements', () => {
+test('inline event handlers are emitted as delegateEvent closures', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -155,19 +161,12 @@ test('inline event handlers capture template-local setup statements', () => {
     }
   `)
 
-  assert.match(output, /template\(props\) \{[\s\S]*return `<button/)
-  assert.doesNotMatch(
-    output,
-    /template\(props\) \{[\s\S]*onPay[\s\S]*return `<button/,
-    'onPay should be pruned from template',
-  )
-  assert.match(
-    output,
-    /__event_click_0\(e, targetComponent\) \{[\s\S]*const \{\s*value,\s*onPay\s*\} = this\.props;[\s\S]*const isValid = value\.trim\(\)\.length > 0;[\s\S]*isValid && onPay\(\);/,
-  )
+  // v2 emits [GEA_CREATE_TEMPLATE]() with props destructuring and delegateEvent
+  assert.match(output, /\[GEA_CREATE_TEMPLATE\]\(\)/)
+  assert.match(output, /delegateEvent\(__el0, "click", \(\) => isValid && onPay\(\)\)/)
 })
 
-test('template-scoped prop variables inside .map() are rewritten to this.props', () => {
+test('template-scoped prop variables inside .map() use __props reference', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -189,16 +188,14 @@ test('template-scoped prop variables inside .map() are rewritten to this.props',
     }
   `)
 
-  const renderMethod = output.match(/render\w*Item\(opt\)\s*\{([\s\S]*?)\n {2}\}/)
-  assert.ok(renderMethod, 'render item method must be generated')
-  const renderBody = renderMethod[1]
-  assert.match(renderBody, /this\.props\.\w+/, 'map item render must access props via this.props')
-  assert.match(renderBody, /\bvalue\b/, 'value must be in map item render')
-  assert.match(renderBody, /\bisMulti\b/, 'isMulti must be in map item render')
-  assert.match(renderBody, /\.trim\(\)/, 'dynamic template-literal class in map item should be trimmed')
+  // v2 uses keyedList for .map()
+  assert.match(output, /keyedList\(/)
+  // Inside the map callback, props are accessed via __props
+  assert.match(output, /__props\.isMulti/)
+  assert.match(output, /__props\.value/)
 })
 
-test('map callback render method includes template-local setup statements for free variables', () => {
+test('map callback with store-local setup references store directly', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import issueStore from './issue-store'
@@ -218,13 +215,12 @@ test('map callback render method includes template-local setup statements for fr
     }
   `)
 
-  const renderMethod = output.match(/render\w+Item\(comment\)\s*\{([\s\S]*?)\n {2}\}/)
-  assert.ok(renderMethod, 'render item method must be generated')
-  const renderBody = renderMethod![1]
-  assert.match(renderBody, /issueStore\.issue/, 'render method must re-derive issue from store')
+  // v2 uses keyedList; the map item factory should have access to issue via issueStore
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /issueStore/)
 })
 
-test('map event handler using only index skips helper and uses indexOf fast path', () => {
+test('map event handler using only index provides index through __indexGetter', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -252,17 +248,14 @@ test('map event handler using only index skips helper and uses indexOf fast path
     }
   `)
 
-  const eventMethod = output.match(/__event_click_\d+\(e,\s*targetComponent\)\s*\{([\s\S]*?)\n {2}\}/)
-  assert.ok(eventMethod, 'event handler method should be generated')
-  assert.doesNotMatch(
-    eventMethod![1],
-    /__getMapItemFromEvent/,
-    'index-only handler should not call __getMapItemFromEvent helper',
-  )
-  assert.match(eventMethod![1], /\.indexOf\(__el\[GEA_DOM_ITEM]\)/, 'should resolve index via indexOf on __geaItem')
+  // v2 passes __itemGetter and __indexGetter to the keyedList factory
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /__indexGetter/)
+  assert.match(output, /const index = __indexGetter\(\)/)
+  assert.match(output, /this\.removeAt\(index\)/)
 })
 
-test('map event handler using only item calls helper without indexOf', () => {
+test('map event handler using only item provides item through __itemGetter', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -288,14 +281,14 @@ test('map event handler using only item calls helper without indexOf', () => {
     }
   `)
 
-  assert.match(output, /__getMapItemFromEvent/, 'item-only handler should call __getMapItemFromEvent helper')
-
-  const eventMethod = output.match(/__event_click_\d+\(e,\s*targetComponent\)\s*\{([\s\S]*?)\n {2}\}/)
-  assert.ok(eventMethod, 'event handler method should be generated')
-  assert.doesNotMatch(eventMethod![1], /indexOf/, 'item-only handler should not use indexOf')
+  // v2 passes __itemGetter; item is derived from it
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /__itemGetter/)
+  assert.match(output, /const item = __itemGetter\(\)/)
+  assert.match(output, /this\.remove\(item\)/)
 })
 
-test('map event handler using both item and index calls helper and uses indexOf', () => {
+test('map event handler using both item and index receives both getters', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -321,6 +314,9 @@ test('map event handler using both item and index calls helper and uses indexOf'
     }
   `)
 
-  assert.match(output, /__getMapItemFromEvent/, 'both-needed handler should call __getMapItemFromEvent helper')
-  assert.match(output, /\.indexOf\(__el\[GEA_DOM_ITEM]\)/, 'should resolve index via indexOf on __geaItem')
+  // v2 passes both __itemGetter and __indexGetter
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /__itemGetter/)
+  assert.match(output, /__indexGetter/)
+  assert.match(output, /this\.update\(item, index\)/)
 })

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { matchRoute } from '../src/lib/router/match'
+import { matchRoute } from '../src/router/match'
 
 describe('matchRoute', () => {
   it('matches root path', () => {

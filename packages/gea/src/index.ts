@@ -1,46 +1,38 @@
-export {
-  default as Component,
-  __escapeHtml as geaEscapeHtml,
-  __sanitizeAttr as geaSanitizeAttr,
-  stashComponentForTransfer,
-} from './lib/base/component'
-export * from './lib/symbols'
-export { resetUidCounter, setUidProvider, clearUidProvider } from './lib/base/uid'
-export {
-  Store,
-  findPropertyDescriptor,
-  rootGetValue,
-  rootSetValue,
-  rootDeleteProperty,
-  isClassConstructorValue,
-} from './lib/store'
-export { h } from './lib/h'
-export type { DOMEvent } from './lib/types'
-export { default as ComponentManager } from './lib/base/component-manager'
-export { applyListChanges } from './lib/base/list'
-export type { ListConfig } from './lib/base/list'
-export { createRouter, Router, router, matchRoute, Link, Outlet, RouterView } from './lib/router'
-export type {
-  RouteMap,
-  RouteEntry,
-  RouteGroupConfig,
-  RouterOptions,
-  GuardFn,
-  GuardResult,
-  NavigationTarget,
-  InferRouteProps,
-} from './lib/router'
+export { Component } from './component/index.js';
+export { Store } from './store/index.js';
+export { signal, effect, computed, batch } from './signals/index.js';
+export { geaEscapeHtml as geaEscapeHtml, geaSanitizeAttr as geaSanitizeAttr } from './dom/xss.js';
+export { default as getUid, resetUidCounter, setUidProvider, clearUidProvider } from './component/uid.js';
 
-import Component from './lib/base/component'
-import { applyListChanges } from './lib/base/list'
-import { Store } from './lib/store'
-import { h } from './lib/h'
+// TODO: These are Gea v1 APIs — stub for compatibility, implement as needed
+export const ComponentManager = {} as any
+export function applyListChanges() {}
 
-const gea = {
-  Store,
-  Component,
-  applyListChanges,
-  h,
-}
-
+import { Component } from './component/index.js';
+import { Store } from './store/index.js';
+const gea = { Store, Component, applyListChanges }
 export default gea
+export {
+  GEA_PROXY_RAW,
+  GEA_ELEMENT,
+  GEA_PARENT_COMPONENT,
+  GEA_CHILD_COMPONENTS,
+  GEA_DOM_COMPONENT,
+  GEA_DOM_COMPILED_CHILD_ROOT,
+  GEA_PROXY_GET_RAW_TARGET,
+  GEA_MAPS,
+  GEA_SYNC_MAP,
+  GEA_UPDATE_PROPS,
+  GEA_ON_PROP_CHANGE,
+  GEA_IS_ROUTER_OUTLET,
+  GEA_ROUTER_DEPTH,
+  GEA_ROUTER_REF,
+  GEA_REQUEST_RENDER,
+  GEA_RENDERED,
+  GEA_DOM_ITEM,
+  GEA_DOM_KEY,
+  geaListItemsSymbol,
+  toRaw,
+  engineThis,
+  stashComponentForTransfer,
+} from './symbols.js';

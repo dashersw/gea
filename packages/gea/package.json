@@ -20,8 +20,13 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
     },
+    "./runtime": {
+      "source": "./src/runtime.ts",
+      "types": "./dist/runtime.d.mts",
+      "import": "./dist/runtime.mjs"
+    },
     "./router": {
-      "source": "./src/lib/router/index.ts",
+      "source": "./src/router/index.ts",
       "types": "./dist/router.d.mts",
       "import": "./dist/router.mjs"
     },

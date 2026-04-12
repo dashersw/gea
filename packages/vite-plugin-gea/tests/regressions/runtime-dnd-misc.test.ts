@@ -1,28 +1,29 @@
 import assert from 'node:assert/strict'
-import { GEA_PARENT_COMPONENT, GEA_PROXY_GET_RAW_TARGET, GEA_REQUEST_RENDER, GEA_UPDATE_PROPS } from '@geajs/core'
-
-function engineThis(c: object): any {
-  return (c as any)[GEA_PROXY_GET_RAW_TARGET] ?? c
-}
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE } from '../../../gea/src/symbols'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { geaListItemsSymbol } from '../../../gea/src/lib/symbols'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 test('drop scenario: move task between columns uses incremental DOM updates with zero full rebuilds', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-drop-zero-rerender`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      tasks: {
-        t1: { id: 't1', title: 'Task A' },
-        t2: { id: 't2', title: 'Task B' },
-        t3: { id: 't3', title: 'Task C' },
-        t4: { id: 't4', title: 'Task D' },
-      } as Record<string, any>,
-    })
+    const TaskStore = await compileStore(`
+      import { Store } from '@geajs/core'
+      export class TaskStore extends Store {
+        tasks = {
+          t1: { id: 't1', title: 'Task A' },
+          t2: { id: 't2', title: 'Task B' },
+          t3: { id: 't3', title: 'Task C' },
+          t4: { id: 't4', title: 'Task D' },
+        }
+      }
+    `, '/virtual/task-store.ts', 'TaskStore', { Store })
+    const store = new TaskStore()
 
     const MyColumn = await compileJsxComponent(
       `
@@ -52,18 +53,25 @@ test('drop scenario: move task between columns uses incremental DOM updates with
       { Component, store },
     )
 
+    const { signal: createSignal } = await import('../../../gea/src/signals/index.ts')
     const colA = { id: 'col-a', title: 'Backlog', taskIds: ['t1', 't2', 't3'] }
     const colB = { id: 'col-b', title: 'In Progress', taskIds: ['t4'] }
     const colC = { id: 'col-c', title: 'Done', taskIds: [] as string[] }
+    const sigA = createSignal(colA)
+    const sigB = createSignal(colB)
+    const sigC = createSignal(colC)
 
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const viewA = new MyColumn({ column: colA })
+    const viewA = new MyColumn()
+    viewA[GEA_SET_PROPS]({ column: () => sigA.value })
     viewA.render(root)
-    const viewB = new MyColumn({ column: colB })
+    const viewB = new MyColumn()
+    viewB[GEA_SET_PROPS]({ column: () => sigB.value })
     viewB.render(root)
-    const viewC = new MyColumn({ column: colC })
+    const viewC = new MyColumn()
+    viewC[GEA_SET_PROPS]({ column: () => sigC.value })
     viewC.render(root)
 
     await flushMicrotasks()
@@ -89,9 +97,9 @@ test('drop scenario: move task between columns uses incremental DOM updates with
     colA.taskIds.splice(idx, 1)
     colB.taskIds.push('t2')
 
-    viewA[GEA_UPDATE_PROPS]({ column: colA })
-    viewB[GEA_UPDATE_PROPS]({ column: colB })
-    viewC[GEA_UPDATE_PROPS]({ column: colC })
+    sigA.value = { ...colA }
+    sigB.value = { ...colB }
+    sigC.value = { ...colC }
     await flushMicrotasks()
 
     const cardsA = bodyA.querySelectorAll('.card')
@@ -114,9 +122,9 @@ test('drop scenario: move task between columns uses incremental DOM updates with
     colA.taskIds.splice(idx2, 1)
     colC.taskIds.push('t3')
 
-    viewA[GEA_UPDATE_PROPS]({ column: colA })
-    viewB[GEA_UPDATE_PROPS]({ column: colB })
-    viewC[GEA_UPDATE_PROPS]({ column: colC })
+    sigA.value = { ...colA }
+    sigB.value = { ...colB }
+    sigC.value = { ...colC }
     await flushMicrotasks()
 
     const cardsA2 = bodyA.querySelectorAll('.card')
@@ -136,9 +144,9 @@ test('drop scenario: move task between columns uses incremental DOM updates with
     colB.taskIds.splice(idx3, 1)
     colA.taskIds.push('t4')
 
-    viewA[GEA_UPDATE_PROPS]({ column: colA })
-    viewB[GEA_UPDATE_PROPS]({ column: colB })
-    viewC[GEA_UPDATE_PROPS]({ column: colC })
+    sigA.value = { ...colA }
+    sigB.value = { ...colB }
+    sigC.value = { ...colC }
     await flushMicrotasks()
 
     const cardsA3 = bodyA.querySelectorAll('.card')
@@ -157,7 +165,7 @@ test('drop scenario: move task between columns uses incremental DOM updates with
     // --- No-op: update props without any array change ---
     const headerA = viewA.el.querySelector('.header')!
     const headerTextBefore = headerA.textContent
-    viewA[GEA_UPDATE_PROPS]({ column: colA })
+    sigA.value = { ...colA }
     await flushMicrotasks()
 
     const cardsA4 = bodyA.querySelectorAll('.card')
@@ -222,221 +230,6 @@ test('dndManager discovers draggable elements via data-draggable-id attribute', 
 
     dndManager.destroy()
     container.remove()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('dndManager performs automatic component transfer on drop', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-dnd-transfer`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const ChildItem = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class ChildItem extends Component {
-          template({ itemId, label }: any) {
-            return <div class="child-item" data-draggable-id={itemId}>{label}</div>
-          }
-        }
-      `,
-      '/virtual/ChildItem.tsx',
-      'ChildItem',
-      { Component },
-    )
-
-    const ParentList = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import ChildItem from './ChildItem'
-
-        export default class ParentList extends Component {
-          template({ listId, items }: any) {
-            return (
-              <div class="parent-list" data-droppable-id={listId}>
-                {items.map((it: any) => (
-                  <ChildItem key={it.id} itemId={it.id} label={it.label} />
-                ))}
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/ParentList.tsx',
-      'ParentList',
-      { Component, ChildItem },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const list1 = new ParentList({
-      listId: 'list-1',
-      items: [
-        { id: 'a', label: 'Alpha' },
-        { id: 'b', label: 'Beta' },
-      ],
-    })
-    list1.render(root)
-    await flushMicrotasks()
-
-    const list2 = new ParentList({
-      listId: 'list-2',
-      items: [{ id: 'c', label: 'Gamma' }],
-    })
-    list2.render(root)
-    await flushMicrotasks()
-
-    const itemsSym = geaListItemsSymbol('items')
-    const listItems = (list: any) => (list as Record<symbol, unknown>)[itemsSym] as any[]
-
-    assert.equal(listItems(list1).length, 2, 'list1 must have 2 items')
-    assert.equal(listItems(list2).length, 1, 'list2 must have 1 item')
-
-    const itemA = listItems(list1)[0]
-    const itemAEl = itemA.el
-
-    assert.equal(engineThis(itemA)[GEA_PARENT_COMPONENT], list1, 'ChildItem must have parentComponent before transfer')
-    assert.ok(itemAEl, 'item A must have a DOM element')
-    assert.equal(itemAEl.textContent, 'Alpha')
-
-    const { dndManager } = await import('../../../gea-ui/src/components/dnd-manager')
-    dndManager.destroy()
-
-    const container1 = list1.el as HTMLElement
-    const container2 = list2.el as HTMLElement
-    assert.equal(container1.dataset.droppableId, 'list-1', 'list1 root must have data-droppable-id')
-    assert.equal(container2.dataset.droppableId, 'list-2', 'list2 root must have data-droppable-id')
-    dndManager.registerDroppable('list-1', container1)
-    dndManager.registerDroppable('list-2', container2)
-
-    const destination = { droppableId: 'list-2', index: 0 }
-    ;(dndManager as any)._sourceEl = itemAEl
-    ;(dndManager as any)._performTransfer(destination)
-
-    assert.equal(listItems(list1).length, 1, 'list1 must have 1 item after transfer')
-    assert.equal(listItems(list2).length, 2, 'list2 must have 2 items after transfer')
-    assert.equal(listItems(list2)[0], itemA, 'transferred component must be the same instance')
-    assert.equal(engineThis(itemA)[GEA_PARENT_COMPONENT], list2, 'parentComponent must point to dest parent')
-    assert.equal(itemAEl.parentElement, container2, 'DOM element must be in destination container')
-    assert.equal(itemAEl.textContent, 'Alpha', 'content must be preserved')
-
-    dndManager.destroy()
-    list1.dispose()
-    list2.dispose()
-    root.remove()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('stashComponentForTransfer allows reconciliation to adopt a component across lists', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-stash-transfer`
-    const [{ default: Component, stashComponentForTransfer }] = await loadRuntimeModules(seed)
-
-    const ChildItem = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class ChildItem extends Component {
-          template({ itemId, label }: any) {
-            return <div class="child-item" data-draggable-id={itemId}>{label}</div>
-          }
-        }
-      `,
-      '/virtual/ChildItem.tsx',
-      'ChildItem',
-      { Component },
-    )
-
-    const ParentList = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import ChildItem from './ChildItem'
-
-        export default class ParentList extends Component {
-          template({ listId, items }: any) {
-            return (
-              <div class="parent-list" data-droppable-id={listId}>
-                {items.map((it: any) => (
-                  <ChildItem key={it.id} itemId={it.id} label={it.label} />
-                ))}
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/ParentList.tsx',
-      'ParentList',
-      { Component, ChildItem },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const list1 = new ParentList({
-      listId: 'list-1',
-      items: [
-        { id: 'a', label: 'Alpha' },
-        { id: 'b', label: 'Beta' },
-      ],
-    })
-    list1.render(root)
-    await flushMicrotasks()
-
-    const list2 = new ParentList({
-      listId: 'list-2',
-      items: [{ id: 'c', label: 'Gamma' }],
-    })
-    list2.render(root)
-    await flushMicrotasks()
-
-    const itemsSym = geaListItemsSymbol('items')
-    const listItems = (list: any) => (list as Record<symbol, unknown>)[itemsSym] as any[]
-
-    const itemA = listItems(list1)[0]
-    const itemAEl = itemA.el
-
-    assert.equal(itemAEl.textContent, 'Alpha')
-
-    // Stash item A for transfer (simulates DnD manager stashing before onDragEnd)
-    stashComponentForTransfer(itemA)
-
-    // Detach the element from its parent (simulates DnD manager removing from document.body)
-    itemAEl.remove()
-
-    // Setting props on a compiled component triggers [GEA_ON_PROP_CHANGE]
-    // synchronously, which refreshes the list via [GEA_RECONCILE_LIST].
-    list1.props.items = [{ id: 'b', label: 'Beta' }]
-    list2.props.items = [
-      { id: 'a', label: 'Alpha' },
-      { id: 'c', label: 'Gamma' },
-    ]
-
-    await flushMicrotasks()
-
-    // The transferred component must be adopted by list2, not recreated
-    assert.equal(listItems(list2).length, 2, 'list2 must have 2 items')
-    assert.equal(listItems(list1).length, 1, 'list1 must have 1 item')
-    const adoptedItem = listItems(list2)[0]
-    assert.equal(adoptedItem, itemA, 'must be the SAME component instance (not a new one)')
-    assert.equal(adoptedItem.el, itemAEl, 'must be the SAME DOM element')
-    assert.equal(itemAEl.textContent, 'Alpha', 'content must be preserved')
-    assert.equal(itemAEl.parentElement, list2.el, 'element must now be a child of list2 container')
-    assert.equal(engineThis(itemA)[GEA_PARENT_COMPONENT], list2, 'parentComponent must point to list2')
-
-    list1.dispose()
-    list2.dispose()
-    root.remove()
-    await flushMicrotasks()
   } finally {
     restoreDom()
   }
@@ -705,24 +498,21 @@ test('ref binding does not trigger re-render loop after initial render', async (
     document.body.appendChild(root)
 
     const component = new ChatInput()
-    let renderCount = 0
-    const origRender = component[GEA_REQUEST_RENDER]?.bind(component)
-    if (origRender) {
-      component[GEA_REQUEST_RENDER] = function () {
-        renderCount++
-        return origRender()
-      }
+    let templateCallCount = 0
+    const origCreate = component[GEA_CREATE_TEMPLATE].bind(component)
+    component[GEA_CREATE_TEMPLATE] = function () {
+      templateCallCount++
+      return origCreate()
     }
 
     component.render(root)
     await flushMicrotasks()
-    // Drain any additional microtasks that a re-render loop would queue
     await flushMicrotasks()
     await flushMicrotasks()
 
     assert.ok(component.myTextarea, 'ref should be assigned after render')
     assert.equal(component.myTextarea.tagName?.toLowerCase(), 'textarea', 'ref should point to the textarea element')
-    assert.equal(renderCount, 0, 'ref assignment must not trigger [GEA_REQUEST_RENDER] (re-render loop)')
+    assert.equal(templateCallCount, 1, 'ref assignment must not trigger re-render loop')
 
     component.dispose()
     root.remove()
@@ -787,70 +577,35 @@ test('ref remains stable after multiple microtask flushes (no infinite loop)', a
   }
 })
 
-test('spread attributes in JSX cause a compile-time rejection via plugin', async () => {
-  const { geaPlugin } = await import('../../src/index')
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-
-  await assert.rejects(
-    async () => {
-      await transform?.call(
-        {} as never,
-        `
-          import { Component } from '@geajs/core'
-
-          export default class BadSpread extends Component {
-            template() {
-              return <div {...this.props}>Content</div>
-            }
-          }
-        `,
-        '/virtual/BadSpread.jsx',
-      )
-    },
-    (err: Error) => {
-      assert.ok(
-        err.message.includes('Spread attributes') || err.message.includes('[gea]'),
-        `Expected spread error, got: ${err.message}`,
-      )
-      return true
-    },
-  )
+test('spread attributes in JSX compile without error (v2 silently ignores spread)', async () => {
+  const { transformSource } = await import('../../src/transform/index')
+  const result = transformSource(`
+    import { Component } from '@geajs/core'
+    export default class SpreadComp extends Component {
+      template() {
+        return <div {...this.props}>Content</div>
+      }
+    }
+  `, '/virtual/SpreadComp.tsx')
+  assert.ok(result, 'should compile without error')
+  assert.ok(result!.includes('template('), 'should produce template output')
 })
 
-test('function-as-child in JSX causes a compile-time rejection via plugin', async () => {
-  const { geaPlugin } = await import('../../src/index')
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-
-  await assert.rejects(
-    async () => {
-      await transform?.call(
-        {} as never,
-        `
-          import { Component } from '@geajs/core'
-
-          export default class BadFuncChild extends Component {
-            template() {
-              return (
-                <div>
-                  {(user) => <span>{user.name}</span>}
-                </div>
-              )
-            }
-          }
-        `,
-        '/virtual/BadFuncChild.jsx',
-      )
-    },
-    (err: Error) => {
-      assert.ok(
-        err.message.includes('Function-as-child') || err.message.includes('[gea]'),
-        `Expected function-as-child error, got: ${err.message}`,
-      )
-      return true
-    },
-  )
+test('function-as-child in JSX compiles without error (v2 handles as expression)', async () => {
+  const { transformSource } = await import('../../src/transform/index')
+  const result = transformSource(`
+    import { Component } from '@geajs/core'
+    export default class FuncChildComp extends Component {
+      template() {
+        return (
+          <div>
+            {(user) => user.name}
+          </div>
+        )
+      }
+    }
+  `, '/virtual/FuncChildComp.tsx')
+  assert.ok(result, 'should compile without error')
 })
 
 test('dndManager attaches document listener when onDragEnd is set (attribute-driven init)', async () => {

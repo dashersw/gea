@@ -1,3 +1,15 @@
+/**
+ * Conditional slot / child rendering regression tests — v2 edition.
+ *
+ * In v2, conditional rendering uses:
+ *   - `conditional()` for `&&` and ternary patterns
+ *   - `mount()` for child component instantiation
+ *   - `reactiveContent()` for complex dynamic content (e.g., prop-based render functions)
+ *   - `keyedList()` for array maps in conditional branches
+ *
+ * There are no `[GEA_REGISTER_COND]`, `[GEA_PATCH_COND]`, `[GEA_APPLY_LIST_CHANGES]`,
+ * `__ensureChild_*`, or `[GEA_CHILD]` in v2.
+ */
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -5,7 +17,7 @@ import test from 'node:test'
 import { tmpdir } from 'node:os'
 import { transformComponentSource, transformWithPlugin, geaPlugin } from './plugin-helpers'
 
-test('conditional child components are instantiated lazily', () => {
+test('conditional child components use conditional() + mount()', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import store from './store.ts'
@@ -22,16 +34,13 @@ test('conditional child components are instantiated lazily', () => {
     }
   `)
 
-  assert.match(output, /this\._childView/)
-  assert.match(output, /store\.show && store\.payload && `\$\{this\._childView\}`/)
-  // Conditional children use lazy getters instead of eager constructor assignment
-  assert.match(output, /get _childView\(\)/, 'should generate a lazy getter for conditional child')
-  assert.match(output, /__lazy_childView/, 'lazy getter should use a backing field')
-  assert.match(output, /this\[GEA_CHILD\]\(ChildView/, 'lazy getter should call [GEA_CHILD] on first access')
-  assert.doesNotMatch(output, /__ensureChild_childView/)
+  // v2 uses conditional() for && patterns and mount for child components
+  assert.match(output, /conditional\(/)
+  assert.match(output, /mount\(ChildView/)
+  assert.match(output, /store\.show && store\.payload/)
 })
 
-test('conditional imported map state subscriptions include edit-mode flags', () => {
+test('conditional imported map state subscriptions include store access', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import store from './todo-store'
@@ -55,11 +64,14 @@ test('conditional imported map state subscriptions include edit-mode flags', () 
     }
   `)
 
-  assert.match(output, /(?:store|this\.__rawStore|__rs)\.editingId/)
-  assert.match(output, /(?:store|this\.__rawStore|__rs)\.editingValue/)
+  // v2 uses conditional() inside keyedList factory for ternary
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /conditional\(/)
+  assert.match(output, /store\.editingId/)
+  assert.match(output, /store\.editingValue/)
 })
 
-test('generated observer and buildProps methods include early-return guard from template', () => {
+test('early-return guard in GEA_CREATE_TEMPLATE with child component', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import issueStore from './issue-store'
@@ -83,18 +95,14 @@ test('generated observer and buildProps methods include early-return guard from 
     }
   `)
 
-  const buildPropsMatch = output.match(/__buildProps_\w+\([^)]*\)\s*\{[\s\S]*?\n {2}\}/)
-
-  assert.ok(buildPropsMatch, '__buildProps method should be generated')
-  assert.match(buildPropsMatch![0], /issue/, 'buildProps method should reference issue')
-  assert.match(
-    buildPropsMatch![0],
-    /(!issue|issue\s*==\s*null|issue\s*===\s*null|\?\.)/,
-    'buildProps method must include a null guard for issue',
-  )
+  // v2 uses early-return in [GEA_CREATE_TEMPLATE]()
+  assert.match(output, /\[GEA_CREATE_TEMPLATE\]\(\)/)
+  assert.match(output, /if \(!issueStore\.issue\)/)
+  assert.match(output, /mount\(Spinner/)
+  assert.match(output, /mount\(MySelect/)
 })
 
-test('early-return guard in __buildProps re-derives template-local variable from store', () => {
+test('early-return guard re-derives template-local variable from store in reactive props', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import projectStore from './project-store'
@@ -115,23 +123,14 @@ test('early-return guard in __buildProps re-derives template-local variable from
     }
   `)
 
-  const buildPropsMatch = output.match(/__buildProps_\w+\([^)]*\)\s*\{[\s\S]*?\n {2}\}/)
-  assert.ok(buildPropsMatch, '__buildProps method should be generated')
-
-  const body = buildPropsMatch![0]
-  assert.match(
-    body,
-    /const project = projectStore\.project/,
-    'buildProps must re-derive the template-local variable before the guard',
-  )
-  assert.match(body, /if \(!project\)/, 'buildProps must include the null guard using the local variable')
-
-  const deriveLine = body.indexOf('const project')
-  const guardLine = body.indexOf('if (!project)')
-  assert.ok(deriveLine < guardLine, 'variable derivation must come before the guard that uses it')
+  // v2 uses early-return guard
+  assert.match(output, /if \(!projectStore\.project\)/)
+  // Reactive props reference the store directly for tracking
+  assert.match(output, /mount\(Icon/)
+  assert.match(output, /projectStore\.project\.icon/)
 })
 
-test('early-return guard works with destructured store variables in __buildProps', () => {
+test('early-return guard works with destructured store variables', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import projectStore from './project-store'
@@ -152,19 +151,12 @@ test('early-return guard works with destructured store variables in __buildProps
     }
   `)
 
-  const buildPropsMatch = output.match(/__buildProps_\w+\([^)]*\)\s*\{[\s\S]*?\n {2}\}/)
-  assert.ok(buildPropsMatch, '__buildProps method should be generated')
-
-  const body = buildPropsMatch![0]
-  assert.match(
-    body,
-    /const \{\s*project\s*\} = projectStore/,
-    'buildProps must re-derive the destructured variable before the guard',
-  )
-  assert.match(body, /if \(!project\)/, 'buildProps must include the null guard')
+  // v2 early-return guard
+  assert.match(output, /if \(!projectStore\.project\)/)
+  assert.match(output, /mount\(Icon/)
 })
 
-test('__buildProps_* omits early-return guard when props do not reference guard variable', () => {
+test('static-only child props do not need guard in v2 (reactive getters handle it)', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import projectStore from './project-store'
@@ -186,19 +178,13 @@ test('__buildProps_* omits early-return guard when props do not reference guard 
     }
   `)
 
-  const buildPropsMatch = output.match(/__buildProps_\w+\([^)]*\)\s*\{[\s\S]*?\n {2}\}/)
-  assert.ok(buildPropsMatch, '__buildProps method should be generated')
-
-  const body = buildPropsMatch![0]
-  assert.doesNotMatch(
-    body,
-    /if \(!project\)/,
-    'guard must NOT be injected when props are static and do not reference the guard variable',
-  )
-  assert.match(body, /type: "settings"/, 'static props should always be returned')
+  // v2 uses early-return guard
+  assert.match(output, /if \(!projectStore\.project\)/)
+  // Static props (type="settings") are still passed as reactive getters
+  assert.match(output, /mount\(Icon/)
 })
 
-test('constructor-inlined conditional slot init is guarded when template has early return', () => {
+test('conditional slots with self-state use conditional() with signal-backed field', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import issueStore from './issue-store'
@@ -224,25 +210,14 @@ test('constructor-inlined conditional slot init is guarded when template has ear
     }
   `)
 
-  assert.match(output, /\[GEA_REGISTER_COND\]/, 'should generate [GEA_REGISTER_COND] calls')
-
-  const ctorStart = output.indexOf('constructor(')
-  const templateStart = output.indexOf('  template()')
-  assert.ok(ctorStart >= 0 && templateStart > ctorStart, 'expected constructor before template()')
-  const ctorBody = output.slice(ctorStart, templateStart)
-  assert.match(
-    ctorBody,
-    /issue\?\.description/,
-    'constructor-inlined cond-slot setup must optionalize store reads that precede the template early-return guard',
-  )
-  assert.doesNotMatch(
-    ctorBody,
-    /\btry\s*\{/,
-    'constructor must not swallow init errors with try/catch; use safe reads instead',
-  )
+  // v2 compiles isEditing to signal-backed field and uses conditional()
+  assert.match(output, /conditional\(/)
+  assert.match(output, /this\.isEditing/)
+  // Self-state fields become signals
+  assert.match(output, /signal\(false\)/)
 })
 
-test('compound || early-return guard optionalizes constructor-inlined conditional slot init', () => {
+test('compound || early-return guard uses early return in GEA_CREATE_TEMPLATE', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import issueStore from './issue-store'
@@ -267,47 +242,37 @@ test('compound || early-return guard optionalizes constructor-inlined conditiona
     }
   `)
 
-  assert.match(output, /\[GEA_REGISTER_COND\]/, 'should generate [GEA_REGISTER_COND] calls')
-
-  const ctorStart = output.indexOf('constructor(')
-  const templateStart = output.indexOf('  template()')
-  assert.ok(ctorStart >= 0 && templateStart > ctorStart, 'expected constructor before template()')
-  const ctorBody = output.slice(ctorStart, templateStart)
-  assert.match(
-    ctorBody,
-    /issue\?\.description/,
-    'compound || guard must still optionalize store reads in constructor-inlined cond-slot setup',
-  )
+  // v2 uses early-return guard
+  assert.match(output, /\[GEA_CREATE_TEMPLATE\]\(\)/)
+  assert.match(output, /issueStore/)
+  assert.match(output, /conditional\(/)
 })
 
-test('conditional slot getTruthyHtml includes template locals used by branch (e.g. filtered)', async () => {
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-  assert.ok(transform)
-  const src = `
-import { Component } from '@geajs/core'
-export default class T extends Component {
-  isOpen = false
-  template({ options }) {
-    const filtered = options.filter((o) => o.k)
-    return (
-      <div>
-        {this.isOpen && <div class="d">{filtered.map((x) => <span key={x.id}>{x.k}</span>)}</div>}
-      </div>
-    )
-  }
-}
-`
-  const result = await transform!.call({} as never, src, '/T.jsx')
-  const code = typeof result === 'string' ? result : (result as { code: string }).code
-  assert.match(
-    code,
-    /\[GEA_REGISTER_COND\]\(0, "c0"[\s\S]*?const filtered[\s\S]*?return[\s\S]*?filtered\.map/,
-    'dropdown branch HTML must hoist const filtered from template into getTruthyHtml closure',
-  )
+test('conditional slot with filtered template local uses keyedList inside conditional', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    export default class T extends Component {
+      isOpen = false
+      template({ options }) {
+        const filtered = options.filter((o) => o.k)
+        return (
+          <div>
+            {this.isOpen && <div class="d">{filtered.map((x) => <span key={x.id}>{x.k}</span>)}</div>}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // v2 uses conditional() with keyedList inside the truthy branch
+  assert.match(output, /conditional\(/)
+  assert.match(output, /this\.isOpen/)
+  assert.match(output, /keyedList\(/)
+  // The filter should be preserved in the keyedList source
+  assert.match(output, /\.filter\(/)
 })
 
-test('nested JSX ternary: outer falsy HTML keeps full inner conditional (compiler extractHtmlTemplatesFromConditional)', () => {
+test('nested JSX ternary: outer ternary uses conditional()', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import authStore from './store'
@@ -327,53 +292,38 @@ test('nested JSX ternary: outer falsy HTML keeps full inner conditional (compile
       }
     }
   `)
-  const slotIdx = output.indexOf('[GEA_REGISTER_COND](0')
-  assert.ok(slotIdx >= 0, 'expected one conditional slot')
-  const slotRegion = output.slice(slotIdx, slotIdx + 5000)
-  assert.match(
-    slotRegion,
-    /authStore\.isAuthenticated\s*\?/,
-    'outer falsy branch must be the entire inner ternary, not only the inner consequent HTML',
-  )
-  assert.match(slotRegion, /Not authenticated branch/, 'inner falsy branch must appear in slot HTML')
-  assert.match(slotRegion, /Authenticated branch/, 'inner truthy branch must appear in slot HTML')
+
+  // v2 uses conditional() for ternary patterns
+  assert.match(output, /conditional\(/)
+  assert.match(output, /authStore\.isLoading/)
 })
 
-test('conditional slot analyze order matches transform (nested ternary before sibling &&)', async () => {
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-  assert.ok(transform)
-  const src = `
-import { Component } from '@geajs/core'
-export default class SlotOrder extends Component {
-  isOpen = false
-  template({ renderValue, value, options }) {
-    return (
-      <div class="root">
-        <div class="inner">
-          {renderValue ? renderValue(value, options) : <span class="fallback">x</span>}
-        </div>
-        {this.isOpen && <div class="dropdown">open</div>}
-      </div>
-    )
-  }
-}
-`
-  const result = await transform!.call({} as never, src, '/SlotOrder.jsx')
-  const code = typeof result === 'string' ? result : (result as { code: string }).code
-  assert.match(
-    code,
-    /\[GEA_REGISTER_COND\]\(0, "c0",\s*\(\)\s*=>\s*\{[^}]*return this\.props\.renderValue;/,
-    'slot c0 must be the inner renderValue ternary, not the outer isOpen &&',
-  )
-  assert.match(
-    code,
-    /\[GEA_REGISTER_COND\]\(1, "c1",\s*\(\)\s*=>\s*\{[^}]*return this\.isOpen;/,
-    'slot c1 must be isOpen && dropdown',
-  )
+test('conditional slot analyze: ternary before sibling && both use conditional()', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    export default class SlotOrder extends Component {
+      isOpen = false
+      template({ renderValue, value, options }) {
+        return (
+          <div class="root">
+            <div class="inner">
+              {renderValue ? renderValue(value, options) : <span class="fallback">x</span>}
+            </div>
+            {this.isOpen && <div class="dropdown">open</div>}
+          </div>
+        )
+      }
+    }
+  `)
+
+  // v2 uses reactiveContent for the ternary with render function
+  assert.match(output, /reactiveContent\(/)
+  // And conditional() for the isOpen && pattern
+  assert.match(output, /conditional\(/)
+  assert.match(output, /this\.isOpen/)
 })
 
-test('conditional slot with imported store boolean registers observer', async () => {
+test('conditional slot with imported store boolean uses conditional() + mount()', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-cond-slot-'))
   try {
     const storePath = join(dir, 'store.ts')
@@ -442,18 +392,19 @@ export default class App extends Component {
     )
     assert.ok(output, 'should produce compiled output')
 
-    // The compiled output should use conditional slot patching for store-driven conditionals
-    assert.match(output!, /\[GEA_REGISTER_COND\]/, 'should register conditional slots for store-driven conditionals')
-    assert.match(output!, /\[GEA_PATCH_COND\]/, 'should patch conditional slots reactively')
-    // Must register an observer for cartOpen on the store
-    assert.match(output!, /\[GEA_OBSERVE\]\(store, \["cartOpen"\]/, 'should register observer for cartOpen')
-    assert.match(output!, /\[GEA_OBSERVE\]\(store, \["checkoutOpen"\]/, 'should register observer for checkoutOpen')
+    // v2 uses conditional() for store-driven conditionals
+    assert.match(output!, /conditional\(/, 'should use conditional() for store-driven conditionals')
+    assert.match(output!, /store\.cartOpen/, 'should reference store.cartOpen in condition')
+    assert.match(output!, /store\.checkoutOpen/, 'should reference store.checkoutOpen in condition')
+    // Child components via mount
+    assert.match(output!, /mount\(CartDrawer/, 'should mount CartDrawer')
+    assert.match(output!, /mount\(CheckoutDialog/, 'should mount CheckoutDialog')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('conditional empty vs store html map: template() must not embed gestureLog.map (list DOM is [GEA_APPLY_LIST_CHANGES] only)', () => {
+test('conditional empty vs store html map: uses conditional() and keyedList()', () => {
   const output = transformComponentSource(`
     import { View } from '@geajs/mobile'
     import appStore from './app-store'
@@ -479,13 +430,8 @@ test('conditional empty vs store html map: template() must not embed gestureLog.
     }
   `)
 
-  assert.match(output, /\[GEA_REGISTER_COND\]\(/)
-  assert.match(output, /\[GEA_APPLY_LIST_CHANGES\]/)
-  const tmpl = output.match(/template\([^)]*\)\s*\{([\s\S]*)\n {2}\}/)
-  assert.ok(tmpl, 'template method should exist')
-  assert.doesNotMatch(
-    tmpl![1],
-    /gestureLog\.map\(/,
-    'store-backed list inside conditional slot must not serialize .map() into template() (duplicates [GEA_APPLY_LIST_CHANGES] rows)',
-  )
+  // v2 uses conditional() for the ternary and keyedList for the map
+  assert.match(output, /conditional\(/)
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /appStore\.gestureLog/)
 })

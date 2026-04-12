@@ -54,6 +54,9 @@ export function installDom(url = 'http://localhost/'): () => void {
     CSS: (globalThis as typeof globalThis & { CSS?: unknown }).CSS,
     window: globalThis.window,
     document: globalThis.document,
+    Element: (globalThis as typeof globalThis & { Element?: typeof Element }).Element,
+    DocumentFragment: (globalThis as typeof globalThis & { DocumentFragment?: typeof DocumentFragment })
+      .DocumentFragment,
     HTMLElement: globalThis.HTMLElement,
     HTMLUnknownElement: (globalThis as typeof globalThis & { HTMLUnknownElement?: typeof HTMLElement })
       .HTMLUnknownElement,
@@ -79,6 +82,8 @@ export function installDom(url = 'http://localhost/'): () => void {
   Object.assign(globalThis, {
     window: dom.window,
     document: dom.window.document,
+    Element: dom.window.Element,
+    DocumentFragment: dom.window.DocumentFragment,
     HTMLElement: dom.window.HTMLElement,
     HTMLUnknownElement: dom.window.HTMLUnknownElement,
     Node: dom.window.Node,

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
-import { applyListChanges } from '../src/lib/base/list'
-import type { ListConfig } from '../src/lib/base/list'
-import type { StoreChange } from '../src/lib/store'
+import { keyedList } from '../src/dom/keyed-list'
+import { signal } from '../src/signals/signal'
+import { batch } from '../src/signals/batch'
+import { resetState } from '../src/signals/tracking'
+import { resetBatch } from '../src/signals/batch'
 
 let restoreDom: () => void
 
@@ -25,26 +27,40 @@ function installDom() {
   }
 }
 
-function createRow(text: string): HTMLElement {
-  const el = document.createElement('div')
-  el.textContent = text
-  el.setAttribute('data-gid', text)
-  return el
-}
-
-function makeConfig(arpp: string[] = ['items']): ListConfig {
-  return {
-    arpp,
-    create: (item: any) => createRow(String(item)),
-  }
-}
-
 function getTexts(container: HTMLElement): string[] {
-  return Array.from(container.children).map((el) => el.textContent || '')
+  // Skip the anchor text node -- only collect element children
+  return Array.from(container.childNodes)
+    .filter((n) => n.nodeType === 1)
+    .map((el) => el.textContent || '')
 }
 
-describe('applyListChanges', () => {
+function setup(initialItems: string[] = []) {
+  const container = document.createElement('div')
+  const anchor = document.createComment('')
+  container.appendChild(anchor)
+
+  const items = signal<string[]>(initialItems)
+
+  keyedList(
+    container,
+    anchor,
+    () => items.value,
+    (item) => item as string,
+    (getter) => {
+      const el = document.createElement('div')
+      el.textContent = getter() as string
+      return el
+    },
+    true,
+  )
+
+  return { container, items }
+}
+
+describe('keyedList', () => {
   beforeEach(() => {
+    resetState()
+    resetBatch()
     restoreDom = installDom()
   })
 
@@ -52,354 +68,210 @@ describe('applyListChanges', () => {
     restoreDom()
   })
 
-  describe('no changes (null) – rerenderInPlace', () => {
-    it('replaces existing rows', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('old1'))
-      container.appendChild(createRow('old2'))
-
-      applyListChanges(container, ['new1', 'new2', 'new3'], null, makeConfig())
-      assert.deepEqual(getTexts(container), ['new1', 'new2', 'new3'])
-    })
-
-    it('handles empty array', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('x'))
-      applyListChanges(container, [], null, makeConfig())
-      assert.equal(container.children.length, 0)
-    })
-
-    it('grows list when next is longer', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('1'))
-      applyListChanges(container, ['a', 'b', 'c'], null, makeConfig())
+  describe('initial render', () => {
+    it('renders items on first effect run', () => {
+      const { container } = setup(['a', 'b', 'c'])
       assert.deepEqual(getTexts(container), ['a', 'b', 'c'])
     })
 
-    it('shrinks list when next is shorter', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('a'))
-      container.appendChild(createRow('b'))
-      container.appendChild(createRow('c'))
-      applyListChanges(container, ['x'], null, makeConfig())
-      assert.deepEqual(getTexts(container), ['x'])
+    it('renders empty array as no children', () => {
+      const { container } = setup([])
+      assert.deepEqual(getTexts(container), [])
     })
   })
 
-  describe('empty changes array – rerenderInPlace', () => {
-    it('behaves same as null changes', () => {
-      const container = document.createElement('div')
-      applyListChanges(container, ['a', 'b'], [], makeConfig())
+  describe('full replacement', () => {
+    it('replaces all items when keys are completely different', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      assert.deepEqual(getTexts(container), ['a', 'b', 'c'])
+
+      items.value = ['x', 'y', 'z']
+      assert.deepEqual(getTexts(container), ['x', 'y', 'z'])
+    })
+
+    it('handles transition from empty to populated', () => {
+      const { container, items } = setup([])
+      assert.deepEqual(getTexts(container), [])
+
+      items.value = ['a', 'b']
       assert.deepEqual(getTexts(container), ['a', 'b'])
     })
+
+    it('handles transition from populated to empty', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      items.value = []
+      assert.deepEqual(getTexts(container), [])
+    })
   })
 
-  describe('append changes', () => {
+  describe('append', () => {
     it('appends new items at end', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('1'))
-      container.appendChild(createRow('2'))
+      const { container, items } = setup(['1', '2'])
+      assert.deepEqual(getTexts(container), ['1', '2'])
 
-      const changes: StoreChange[] = [
-        {
-          type: 'append',
-          property: '2',
-          target: [],
-          pathParts: ['items'],
-          start: 2,
-          count: 2,
-        },
-      ]
-
-      applyListChanges(container, ['1', '2', '3', '4'], changes, makeConfig())
+      items.value = ['1', '2', '3', '4']
       assert.deepEqual(getTexts(container), ['1', '2', '3', '4'])
     })
   })
 
-  describe('delete changes', () => {
-    it('removes rows at specified indices', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('a'))
-      container.appendChild(createRow('b'))
-      container.appendChild(createRow('c'))
-
-      const changes: StoreChange[] = [
-        {
-          type: 'delete',
-          property: '1',
-          target: [],
-          pathParts: ['items', '1'],
-          previousValue: 'b',
-        },
-      ]
-
-      applyListChanges(container, ['a', 'c'], changes, makeConfig())
+  describe('delete', () => {
+    it('removes item from the middle', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      items.value = ['a', 'c']
       assert.deepEqual(getTexts(container), ['a', 'c'])
     })
 
-    it('handles multiple deletes (sorted high-to-low)', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('a'))
-      container.appendChild(createRow('b'))
-      container.appendChild(createRow('c'))
-      container.appendChild(createRow('d'))
+    it('removes item from the beginning', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      items.value = ['b', 'c']
+      assert.deepEqual(getTexts(container), ['b', 'c'])
+    })
 
-      const changes: StoreChange[] = [
-        { type: 'delete', property: '3', target: [], pathParts: ['items', '3'], previousValue: 'd' },
-        { type: 'delete', property: '1', target: [], pathParts: ['items', '1'], previousValue: 'b' },
-      ]
+    it('removes item from the end', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      items.value = ['a', 'b']
+      assert.deepEqual(getTexts(container), ['a', 'b'])
+    })
 
-      applyListChanges(container, ['a', 'c'], changes, makeConfig())
+    it('removes multiple items', () => {
+      const { container, items } = setup(['a', 'b', 'c', 'd'])
+      items.value = ['a', 'c']
       assert.deepEqual(getTexts(container), ['a', 'c'])
     })
   })
 
-  describe('add changes', () => {
-    it('add at 0 rebuilds when first child is a non-list placeholder (same length as items)', () => {
-      const container = document.createElement('div')
-      const placeholder = document.createElement('div')
-      placeholder.className = 'gesture-log-empty'
-      placeholder.textContent = 'No gestures yet'
-      container.appendChild(placeholder)
-
-      const changes: StoreChange[] = [
-        {
-          type: 'add',
-          property: '0',
-          target: [],
-          pathParts: ['gestureLog', '0'],
-          newValue: 'first',
-        },
-      ]
-
-      applyListChanges(container, ['first'], changes, makeConfig(['gestureLog']))
-      assert.equal(container.children.length, 1)
-      assert.equal(container.children[0].getAttribute('data-gid'), 'first')
-      assert.equal(container.children[0].textContent, 'first')
+  describe('insert', () => {
+    it('inserts at the beginning', () => {
+      const { container, items } = setup(['a', 'b'])
+      items.value = ['new', 'a', 'b']
+      assert.deepEqual(getTexts(container), ['new', 'a', 'b'])
     })
 
-    it('inserts rows at specified positions', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('a'))
-      container.appendChild(createRow('c'))
-
-      const changes: StoreChange[] = [
-        {
-          type: 'add',
-          property: '1',
-          target: [],
-          pathParts: ['items', '1'],
-          newValue: 'b',
-        },
-      ]
-
-      applyListChanges(container, ['a', 'b', 'c'], changes, makeConfig())
+    it('inserts in the middle', () => {
+      const { container, items } = setup(['a', 'c'])
+      items.value = ['a', 'b', 'c']
       assert.deepEqual(getTexts(container), ['a', 'b', 'c'])
     })
   })
 
-  describe('reorder changes', () => {
-    it('reorders rows according to permutation', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('a'))
-      container.appendChild(createRow('b'))
-      container.appendChild(createRow('c'))
-
-      const changes: StoreChange[] = [
-        {
-          type: 'reorder',
-          property: 'items',
-          target: ['c', 'b', 'a'],
-          pathParts: ['items'],
-          permutation: [2, 1, 0],
-          newValue: ['c', 'b', 'a'],
-        },
-      ]
-
-      applyListChanges(container, ['c', 'b', 'a'], changes, makeConfig())
+  describe('swap', () => {
+    it('swaps two items', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      items.value = ['c', 'b', 'a']
       assert.deepEqual(getTexts(container), ['c', 'b', 'a'])
     })
-  })
 
-  describe('swap changes', () => {
-    it('swaps two rows', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('a'))
-      container.appendChild(createRow('b'))
-      container.appendChild(createRow('c'))
-
-      const changes: StoreChange[] = [
-        {
-          type: 'update',
-          property: '0',
-          target: [],
-          pathParts: ['items', '0'],
-          newValue: 'c',
-          previousValue: 'a',
-          arrayOp: 'swap',
-          otherIndex: 2,
-          opId: 'swap:0',
-        },
-        {
-          type: 'update',
-          property: '2',
-          target: [],
-          pathParts: ['items', '2'],
-          newValue: 'a',
-          previousValue: 'c',
-          arrayOp: 'swap',
-          otherIndex: 0,
-          opId: 'swap:0',
-        },
-      ]
-
-      applyListChanges(container, ['c', 'b', 'a'], changes, makeConfig())
-      assert.deepEqual(getTexts(container), ['c', 'b', 'a'])
+    it('swaps adjacent items', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      items.value = ['b', 'a', 'c']
+      assert.deepEqual(getTexts(container), ['b', 'a', 'c'])
     })
   })
 
-  describe('prop patches', () => {
-    it('patches individual item properties without rebuilding', () => {
-      const container = document.createElement('div')
-      const row = document.createElement('div')
-      row.className = 'item'
-      row.textContent = 'original'
-      container.appendChild(row)
+  describe('reorder', () => {
+    it('reorders items according to permutation', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      items.value = ['c', 'a', 'b']
+      assert.deepEqual(getTexts(container), ['c', 'a', 'b'])
+    })
 
-      const items = [{ label: 'updated', done: true }]
-      const config: ListConfig = {
-        arrayPathParts: ['items'],
-        create: () => document.createElement('div'),
-        propPatchers: {
-          label: [(rowEl, value) => (rowEl.textContent = value)],
-        },
-      }
-
-      const changes: StoreChange[] = [
-        {
-          type: 'update',
-          property: 'label',
-          target: items[0],
-          pathParts: ['items', '0', 'label'],
-          newValue: 'updated',
-          previousValue: 'original',
-          isArrayItemPropUpdate: true,
-          arrayPathParts: ['items'],
-          arrayIndex: 0,
-          leafPathParts: ['label'],
-        },
-      ]
-
-      applyListChanges(container, items, changes, config)
-      assert.equal(container.children[0].textContent, 'updated')
+    it('reverses entire list', () => {
+      const { container, items } = setup(['a', 'b', 'c', 'd'])
+      items.value = ['d', 'c', 'b', 'a']
+      assert.deepEqual(getTexts(container), ['d', 'c', 'b', 'a'])
     })
   })
 
-  describe('update on array path – full rebuild', () => {
-    it('rebuilds when full array is replaced', () => {
-      const container = document.createElement('div')
-      container.appendChild(createRow('old'))
+  describe('DOM node reuse', () => {
+    it('reuses DOM nodes for items with same keys', () => {
+      const { container, items } = setup(['a', 'b', 'c'])
+      const originalNodes = Array.from(container.childNodes).filter(
+        (n) => n.nodeType === 1,
+      )
 
-      const changes: StoreChange[] = [
-        {
-          type: 'update',
-          property: 'items',
-          target: {},
-          pathParts: ['items'],
-          newValue: ['x', 'y'],
-          previousValue: ['old'],
-        },
-      ]
+      items.value = ['c', 'b', 'a']
+      const reorderedNodes = Array.from(container.childNodes).filter(
+        (n) => n.nodeType === 1,
+      )
 
-      applyListChanges(container, ['x', 'y'], changes, makeConfig())
-      assert.deepEqual(getTexts(container), ['x', 'y'])
+      // Same DOM nodes, just reordered
+      assert.equal(reorderedNodes[0], originalNodes[2]) // 'c' was at index 2
+      assert.equal(reorderedNodes[1], originalNodes[1]) // 'b' stayed at index 1
+      assert.equal(reorderedNodes[2], originalNodes[0]) // 'a' was at index 0
     })
 
-    it('uses create path for root replacements even when render is available', () => {
-      const container = document.createElement('div')
-      const changes: StoreChange[] = [
-        {
-          type: 'update',
-          property: 'items',
-          target: {},
-          pathParts: ['items'],
-          newValue: ['x', 'y'],
-          previousValue: [],
-        },
-      ]
+    it('preserves existing nodes when appending', () => {
+      const { container, items } = setup(['a', 'b'])
+      const originalNodes = Array.from(container.childNodes).filter(
+        (n) => n.nodeType === 1,
+      )
 
-      let createCalls = 0
-      const config: ListConfig = {
-        arrayPathParts: ['items'],
-        create: (item: string) => {
-          createCalls++
-          return createRow(item)
-        },
-        render: (item: string) => `<div data-gid="${item}">${item}</div>`,
-      }
+      items.value = ['a', 'b', 'c']
+      const updatedNodes = Array.from(container.childNodes).filter(
+        (n) => n.nodeType === 1,
+      )
 
-      applyListChanges(container, ['x', 'y'], changes, config)
-      assert.deepEqual(getTexts(container), ['x', 'y'])
-      assert.equal(createCalls, 2)
-    })
-
-    it('patches rows in place for same-key root replacements when patchRow/getKey are available', () => {
-      const container = document.createElement('div')
-      const firstRow = document.createElement('div')
-      firstRow.setAttribute('data-gid', '1')
-      firstRow.textContent = 'row 1'
-      const secondRow = document.createElement('div')
-      secondRow.setAttribute('data-gid', '2')
-      secondRow.textContent = 'row 2'
-      container.appendChild(firstRow)
-      container.appendChild(secondRow)
-
-      const nextItems = [
-        { id: 1, label: 'updated 1' },
-        { id: 2, label: 'updated 2' },
-      ]
-      const prevItems = [
-        { id: 1, label: 'row 1' },
-        { id: 2, label: 'row 2' },
-      ]
-      const changes: StoreChange[] = [
-        {
-          type: 'update',
-          property: 'items',
-          target: {},
-          pathParts: ['items'],
-          newValue: nextItems,
-          previousValue: prevItems,
-        },
-      ]
-
-      const config: ListConfig = {
-        arrayPathParts: ['items'],
-        create: (item: { id: number; label: string }) => {
-          const el = document.createElement('div')
-          el.setAttribute('data-gid', String(item.id))
-          el.textContent = item.label
-          return el
-        },
-        getKey: (item: { id: number }) => String(item.id),
-        patchRow: (row, item) => {
-          row.textContent = item.label
-          row.setAttribute('data-gid', String(item.id))
-        },
-      }
-
-      applyListChanges(container, nextItems, changes, config)
-      assert.equal(container.children[0], firstRow)
-      assert.equal(container.children[1], secondRow)
-      assert.deepEqual(getTexts(container), ['updated 1', 'updated 2'])
+      assert.equal(updatedNodes[0], originalNodes[0])
+      assert.equal(updatedNodes[1], originalNodes[1])
+      assert.equal(updatedNodes.length, 3)
     })
   })
 
   describe('non-array input', () => {
-    it('treats non-array as empty', () => {
+    it('treats empty array assignment correctly', () => {
+      const { container, items } = setup(['a'])
+      items.value = []
+      assert.deepEqual(getTexts(container), [])
+    })
+  })
+
+  describe('batch updates', () => {
+    it('handles batched signal writes', () => {
+      const { container, items } = setup(['a', 'b'])
+      batch(() => {
+        items.value = ['x', 'y', 'z']
+      })
+      assert.deepEqual(getTexts(container), ['x', 'y', 'z'])
+    })
+  })
+
+  describe('keyed reconciliation with objects', () => {
+    it('reconciles keyed objects correctly', () => {
       const container = document.createElement('div')
-      applyListChanges(container, null as any, null, makeConfig())
-      assert.equal(container.children.length, 0)
+      const anchor = document.createComment('')
+      container.appendChild(anchor)
+
+      type Item = { id: number; label: string }
+      const items = signal<Item[]>([
+        { id: 1, label: 'one' },
+        { id: 2, label: 'two' },
+        { id: 3, label: 'three' },
+      ])
+
+      keyedList(
+        container,
+        anchor,
+        () => items.value,
+        (item) => (item as Item).id,
+        (getter) => {
+          const el = document.createElement('div')
+          const item = getter() as Item
+          el.textContent = item.label
+          el.setAttribute('data-id', String(item.id))
+          return el
+        },
+        true,
+      )
+
+      assert.deepEqual(getTexts(container), ['one', 'two', 'three'])
+
+      // Reorder by key
+      items.value = [
+        { id: 3, label: 'three' },
+        { id: 1, label: 'one' },
+        { id: 2, label: 'two' },
+      ]
+      assert.deepEqual(getTexts(container), ['three', 'one', 'two'])
     })
   })
 })

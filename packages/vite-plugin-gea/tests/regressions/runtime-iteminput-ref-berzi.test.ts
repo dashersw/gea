@@ -122,10 +122,10 @@ test('berzi App shape: ItemInput child under fragment + main still gets textarea
 
     const panel = root.querySelector('.send-item-panel') as HTMLElement | null
     assert.ok(panel, 'ItemInput root section must be in the DOM')
-    const itemInstance = (panel as HTMLElement & { [GEA_DOM_COMPONENT]?: unknown })[GEA_DOM_COMPONENT] as
+    const itemInstance = (panel as any)[GEA_DOM_COMPONENT] as
       | { trySubmitItem?: () => string; itemTextarea?: HTMLTextAreaElement | null }
       | undefined
-    assert.ok(itemInstance, 'section[GEA_DOM_COMPONENT] must be the ItemInput instance')
+    assert.ok(itemInstance, 'panel[GEA_DOM_COMPONENT] must be the ItemInput instance')
     assert.ok(itemInstance.itemTextarea, 'nested ItemInput must have textarea ref after render')
 
     assert.equal(itemInstance.trySubmitItem?.(), 'ref-is-set')

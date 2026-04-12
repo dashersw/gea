@@ -23,7 +23,7 @@ export function geaUiDevSourcePlugin(): Plugin {
 /** `@geajs/core/router` must resolve before the `@geajs/core` directory alias. */
 export function geaCoreAliases(packagesDir: string) {
   return [
-    { find: '@geajs/core/router', replacement: resolve(packagesDir, 'gea/src/lib/router/index.ts') },
+    { find: '@geajs/core/router', replacement: resolve(packagesDir, 'gea/src/router/index.ts') },
     { find: '@geajs/core', replacement: resolve(packagesDir, 'gea/src') },
   ]
 }

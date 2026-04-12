@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE } from '../../gea/src/symbols'
 import { after, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -6,8 +7,8 @@ import { dirname, join } from 'node:path'
 import { JSDOM } from 'jsdom'
 
 import { createBenchmarkHistoryEntry } from '../../../scripts/benchmark-history.mjs'
-import { GEA_PROXY_GET_TARGET } from '../../gea/src/lib/symbols'
-import { compileJsxComponent, loadRuntimeModules } from './helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from './helpers/compile'
+import { resetDelegation } from '../../gea/src/dom/events'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -263,12 +264,22 @@ class VanillaDerivedFilterBench {
 }
 
 // ---------------------------------------------------------------------------
-// Gea setup
+// Gea setup — v2: stores must be compiled (base Store is empty)
 // ---------------------------------------------------------------------------
 
 async function setupGea(seed: string) {
   const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-  const store = new Store({ data: [] as Array<{ id: number; label: string }> })
+
+  const BenchmarkStore = await compileStore(
+    `import { Store } from '@geajs/core'
+     export default class BenchmarkStore extends Store {
+       data = [] as Array<{ id: number; label: string }>
+     }`,
+    '/virtual/benchmark-store.ts',
+    'BenchmarkStore',
+    { Store },
+  )
+  const store = new BenchmarkStore()
 
   const fixturePath = join(__dirname, 'fixtures/benchmark-table.jsx')
   const Cls = await compileJsxComponent(
@@ -297,9 +308,63 @@ async function setupGea(seed: string) {
   return { store, view, root }
 }
 
+async function setupSelectRowGea(seed: string) {
+  const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+  const BenchmarkStore = await compileStore(
+    `import { Store } from '@geajs/core'
+     export default class BenchmarkStore extends Store {
+       data = [] as Array<{ id: number; label: string }>
+       selected = 0
+     }`,
+    '/virtual/benchmark-store.ts',
+    'BenchmarkStore',
+    { Store },
+  )
+  const store = new BenchmarkStore()
+
+  const selectRowFixturePath = join(__dirname, 'fixtures/benchmark-select-row.jsx')
+  const Cls = await compileJsxComponent(
+    `import { Component } from '@geajs/core'
+     import store from './benchmark-store.ts'
+     export default class T extends Component {
+       template() {
+         return (
+           <table><tbody id="tbody">
+             {store.data.map(item => (
+               <tr key={item.id} class={store.selected === item.id ? 'danger' : ''}>
+                 <td>{item.id}</td><td>{item.label}</td>
+               </tr>
+             ))}
+           </tbody></table>
+         )
+       }
+     }`,
+    selectRowFixturePath,
+    'T',
+    { Component, store },
+  )
+
+  const root = document.createElement('div')
+  document.body.appendChild(root)
+  const view = new Cls()
+  view.render(root)
+  return { store, view, root }
+}
+
 async function setupUnresolvedPropMapGea(seed: string, items: string[]) {
   const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-  const store = new Store({ activeId: null as string | null })
+
+  const BenchmarkStore = await compileStore(
+    `import { Store } from '@geajs/core'
+     export default class BenchmarkStore extends Store {
+       activeId = null as string | null
+     }`,
+    '/virtual/benchmark-store.ts',
+    'BenchmarkStore',
+    { Store },
+  )
+  const store = new BenchmarkStore()
 
   const fixturePath = join(__dirname, 'fixtures/benchmark-unresolved-props.jsx')
   const Cls = await compileJsxComponent(
@@ -325,7 +390,9 @@ async function setupUnresolvedPropMapGea(seed: string, items: string[]) {
 
   const root = document.createElement('div')
   document.body.appendChild(root)
-  const view = new Cls({ items })
+  const view = new Cls()
+  // v2: props are passed via __setProps with thunks
+  view[GEA_SET_PROPS]({ items: () => items })
   view.render(root)
   return { store, view, root }
 }
@@ -343,7 +410,18 @@ async function setupHelperDerivedFilterMapGea(
   items: Array<{ id: number; label: string; active: boolean }>,
 ) {
   const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-  const store = new Store({ items: items.map((item) => ({ ...item })) })
+
+  const BenchmarkStore = await compileStore(
+    `import { Store } from '@geajs/core'
+     export default class BenchmarkStore extends Store {
+       items = [] as Array<{ id: number; label: string; active: boolean }>
+     }`,
+    '/virtual/benchmark-store.ts',
+    'BenchmarkStore',
+    { Store },
+  )
+  const store = new BenchmarkStore()
+  store.items = items.map((item) => ({ ...item }))
 
   const fixturePath = join(__dirname, 'fixtures/benchmark-derived-filter.jsx')
   const Cls = await compileJsxComponent(
@@ -433,27 +511,11 @@ after(() => {
 // ---------------------------------------------------------------------------
 // Benchmark simulations
 // ---------------------------------------------------------------------------
-//
-// This suite runs the same operations in JSDOM for both vanilla DOM and gea
-// (compiled component + store) and reports gea/vanilla slowdown ratios.
-// It finishes in ~5–6s vs ~5min for the full browser benchmark.
-//
-// RELIABILITY:
-// - Ratios do NOT match the real benchmark numerically. In the browser, DOM/
-//   layout/paint dominate, so gea is only ~1.1–1.5x slower than vanilla. In
-//   JSDOM, vanilla DOM is cheap, so ratios are much higher (2–18x). That’s
-//   expected.
-// - Use the simulation for: (1) regression checks — re-run after a change and
-//   compare ratios; a big jump (e.g. remove row 1.8x → 15x) indicates a regression.
-//   (2) Relative ordering — which operations are costliest for gea (e.g.
-//   partial update vs remove row) correlates with real benchmark ordering.
-// - For final numbers and cross-framework comparison, run the full benchmark
-//   and the report (see skills/js-framework-benchmark-report/SKILL.md).
-//
 
 describe('benchmark simulation: gea vs vanilla slowdown', () => {
   test('01 create rows (1k)', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaBench(document.createElement('tbody'))
       document.body.appendChild(vanilla.tbody)
@@ -493,6 +555,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('02 replace all rows (1k)', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaBench(document.createElement('tbody'))
       document.body.appendChild(vanilla.tbody)
@@ -531,6 +594,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('03 partial update (1k, every 10th)', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaBench(document.createElement('tbody'))
       document.body.appendChild(vanilla.tbody)
@@ -548,6 +612,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
         const v1 = performance.now()
 
         const e0 = performance.now()
+        // v2: mutate item.label directly — triggers __s$label signal on same objects
         for (let i = 0; i < store.data.length; i += 10) {
           store.data[i].label += ' !!!'
         }
@@ -570,36 +635,9 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('04 select row', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
-      const [{ default: Component }, { Store }] = await loadRuntimeModules(`sim-select-${Date.now()}`)
-      const store = new Store({ data: [] as Array<{ id: number; label: string }>, selected: 0 })
-      const selectRowFixturePath = join(__dirname, 'fixtures/benchmark-select-row.jsx')
-
-      const Cls = await compileJsxComponent(
-        `import { Component } from '@geajs/core'
-         import store from './benchmark-store.ts'
-         export default class T extends Component {
-           template() {
-             return (
-               <table><tbody id="tbody">
-                 {store.data.map(item => (
-                   <tr key={item.id} class={store.selected === item.id ? 'danger' : ''}>
-                     <td>{item.id}</td><td>{item.label}</td>
-                   </tr>
-                 ))}
-               </tbody></table>
-             )
-           }
-         }`,
-        selectRowFixturePath,
-        'T',
-        { Component, store },
-      )
-
-      const root = document.createElement('div')
-      document.body.appendChild(root)
-      const view = new Cls()
-      view.render(root)
+      const { store } = await setupSelectRowGea(`sim-select-${Date.now()}`)
 
       store.data = buildRows(1000)
       await flush()
@@ -623,7 +661,8 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
         const e0 = performance.now()
         store.selected = selectId
-        ;(store as any).flushSync()
+        // v2: no flushSync — use async flush
+        await flush()
         const e1 = performance.now()
 
         if (run >= WARMUP) {
@@ -640,346 +679,9 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
     }
   })
 
-  test('04b comprehensive call profile — all benchmark ops', async () => {
-    const restoreDom = installDom()
-    try {
-      const seed = `sim-callcount-all-${Date.now()}`
-      const [{ default: Component }, storeModule] = await loadRuntimeModules(seed)
-      const { Store, _getBrowserRootProxyHandler } = storeModule as any
-      const store = new Store({ data: [] as Array<{ id: number; label: string }>, selected: 0 })
-      const fixturePath = join(__dirname, 'fixtures/benchmark-select-row.jsx')
-
-      const Cls = await compileJsxComponent(
-        `import { Component } from '@geajs/core'
-         import store from './benchmark-store.ts'
-         export default class T extends Component {
-           template() {
-             return (
-               <table><tbody id="tbody">
-                 {store.data.map(item => (
-                   <tr key={item.id} class={store.selected === item.id ? 'danger' : ''}>
-                     <td>{item.id}</td><td>{item.label}</td>
-                   </tr>
-                 ))}
-               </tbody></table>
-             )
-           }
-         }`,
-        fixturePath,
-        'T',
-        { Component, store },
-      )
-
-      const root = document.createElement('div')
-      document.body.appendChild(root)
-      const view = new Cls()
-      view.render(root)
-      store.data = buildRows(1000)
-      await flush()
-      store.selected = 1
-      await flush()
-
-      let proxyGetCalls = 0,
-        proxySetCalls = 0
-      const handler = _getBrowserRootProxyHandler()
-      const origHandlerGet = handler.get
-      const origHandlerSet = handler.set
-      handler.get = function (...args: any[]) {
-        proxyGetCalls++
-        return origHandlerGet.apply(this, args)
-      }
-      handler.set = function (...args: any[]) {
-        proxySetCalls++
-        return origHandlerSet.apply(this, args)
-      }
-
-      let getByIdCalls = 0
-      const origGetById = document.getElementById.bind(document)
-      document.getElementById = (id: string) => {
-        getByIdCalls++
-        return origGetById(id)
-      }
-
-      const elProto = (window as any).Element.prototype
-      const nodeProto = (window as any).Node.prototype
-
-      let cnGet = 0,
-        cnSet = 0
-      const cnDesc = Object.getOwnPropertyDescriptor(elProto, 'className')!
-      Object.defineProperty(elProto, 'className', {
-        get() {
-          cnGet++
-          return cnDesc.get!.call(this)
-        },
-        set(v: string) {
-          cnSet++
-          cnDesc.set!.call(this, v)
-        },
-        configurable: true,
-      })
-
-      let tcSet = 0
-      const tcDesc =
-        Object.getOwnPropertyDescriptor(nodeProto, 'textContent') ||
-        Object.getOwnPropertyDescriptor(elProto, 'textContent')
-      if (tcDesc) {
-        Object.defineProperty(nodeProto, 'textContent', {
-          get() {
-            return tcDesc.get!.call(this)
-          },
-          set(v: string) {
-            tcSet++
-            tcDesc.set!.call(this, v)
-          },
-          configurable: true,
-        })
-      }
-
-      let insertBeforeCalls = 0
-      const origInsertBefore = nodeProto.insertBefore
-      nodeProto.insertBefore = function (...args: any[]) {
-        insertBeforeCalls++
-        return origInsertBefore.apply(this, args)
-      }
-
-      let childrenGet = 0
-      const childrenDesc =
-        Object.getOwnPropertyDescriptor((window as any).HTMLElement.prototype, 'children') ||
-        Object.getOwnPropertyDescriptor(elProto, 'children')
-      if (childrenDesc) {
-        Object.defineProperty(elProto, 'children', {
-          get() {
-            childrenGet++
-            return childrenDesc.get!.call(this)
-          },
-          configurable: true,
-        })
-      }
-
-      let appendChildCalls = 0
-      const origAppendChild = nodeProto.appendChild
-      nodeProto.appendChild = function (...args: any[]) {
-        appendChildCalls++
-        return origAppendChild.apply(this, args)
-      }
-
-      let removeCalls = 0
-      const origRemove = elProto.remove
-      if (origRemove) {
-        elProto.remove = function () {
-          removeCalls++
-          return origRemove.call(this)
-        }
-      }
-
-      let cloneNodeCalls = 0
-      const origCloneNode = nodeProto.cloneNode
-      nodeProto.cloneNode = function (...args: any[]) {
-        cloneNodeCalls++
-        return origCloneNode.apply(this, args)
-      }
-
-      let idSet = 0
-      const idDesc = Object.getOwnPropertyDescriptor(elProto, 'id')
-      if (idDesc && idDesc.set) {
-        Object.defineProperty(elProto, 'id', {
-          get() {
-            return idDesc.get!.call(this)
-          },
-          set(v: string) {
-            idSet++
-            idDesc.set!.call(this, v)
-          },
-          configurable: true,
-        })
-      }
-
-      let innerHTMLSet = 0
-      const innerHTMLDesc = Object.getOwnPropertyDescriptor(elProto, 'innerHTML')
-      if (innerHTMLDesc && innerHTMLDesc.set) {
-        Object.defineProperty(elProto, 'innerHTML', {
-          get() {
-            return innerHTMLDesc.get!.call(this)
-          },
-          set(v: string) {
-            innerHTMLSet++
-            innerHTMLDesc.set!.call(this, v)
-          },
-          configurable: true,
-        })
-      }
-
-      let nodeValueSet = 0
-      const nvDesc = Object.getOwnPropertyDescriptor(nodeProto, 'nodeValue')
-      if (nvDesc && nvDesc.set) {
-        Object.defineProperty(nodeProto, 'nodeValue', {
-          get() {
-            return nvDesc.get!.call(this)
-          },
-          set(v: string) {
-            nodeValueSet++
-            nvDesc.set!.call(this, v)
-          },
-          configurable: true,
-        })
-      }
-
-      interface ProfileResult {
-        proxyGet: number
-        proxySet: number
-        dom: number
-        domDetail: Record<string, number>
-        total: number
-      }
-
-      const results: Record<string, ProfileResult> = {}
-
-      function reset() {
-        proxyGetCalls = proxySetCalls = 0
-        getByIdCalls = cnGet = cnSet = tcSet = 0
-        insertBeforeCalls = childrenGet = 0
-        appendChildCalls = removeCalls = cloneNodeCalls = 0
-        idSet = innerHTMLSet = nodeValueSet = 0
-      }
-
-      function capture(label: string): ProfileResult {
-        const domDetail: Record<string, number> = {}
-        if (getByIdCalls) domDetail.getElementById = getByIdCalls
-        if (cnGet) domDetail['className.get'] = cnGet
-        if (cnSet) domDetail['className.set'] = cnSet
-        if (tcSet) domDetail['textContent.set'] = tcSet
-        if (nodeValueSet) domDetail['nodeValue.set'] = nodeValueSet
-        if (insertBeforeCalls) domDetail.insertBefore = insertBeforeCalls
-        if (childrenGet) domDetail['children.get'] = childrenGet
-        if (appendChildCalls) domDetail.appendChild = appendChildCalls
-        if (removeCalls) domDetail['remove()'] = removeCalls
-        if (cloneNodeCalls) domDetail.cloneNode = cloneNodeCalls
-        if (idSet) domDetail['id.set'] = idSet
-        if (innerHTMLSet) domDetail['innerHTML.set'] = innerHTMLSet
-        const domTotal = Object.values(domDetail).reduce((s, v) => s + v, 0)
-        const total = proxyGetCalls + proxySetCalls + domTotal
-        const r: ProfileResult = {
-          proxyGet: proxyGetCalls,
-          proxySet: proxySetCalls,
-          dom: domTotal,
-          domDetail,
-          total,
-        }
-        results[label] = r
-        return r
-      }
-
-      function reportAll() {
-        console.log('\n╔═══════════════════════╤════════╤════════╤════════╤════════╗')
-        console.log('║ Operation             │ proxy  │ proxy  │  DOM   │ TOTAL  ║')
-        console.log('║                       │  .get  │  .set  │        │        ║')
-        console.log('╠═══════════════════════╪════════╪════════╪════════╪════════╣')
-        for (const [label, r] of Object.entries(results)) {
-          console.log(
-            `║ ${label.padEnd(21)} │ ${String(r.proxyGet).padStart(6)} │ ${String(r.proxySet).padStart(6)} │ ${String(r.dom).padStart(6)} │ ${String(r.total).padStart(6)} ║`,
-          )
-        }
-        console.log('╚═══════════════════════╧════════╧════════╧════════╧════════╝')
-        for (const [label, r] of Object.entries(results)) {
-          if (!Object.keys(r.domDetail).length) continue
-          console.log(`\n--- ${label} ---`)
-          console.log(
-            '  DOM:',
-            Object.entries(r.domDetail)
-              .map(([n, c]) => `${n}:${c}`)
-              .join(', '),
-          )
-        }
-      }
-
-      // === 1. SELECT ROW ===
-      reset()
-      store.selected = 5
-      await flush()
-      capture('SELECT')
-
-      // === 2. SWAP ROWS ===
-      reset()
-      const d = store.data
-      const tmp = d[1]
-      d[1] = d[998]
-      d[998] = tmp
-      await flush()
-      capture('SWAP')
-
-      // === 3. PARTIAL UPDATE (every 10th of 1000) ===
-      reset()
-      for (let i = 0; i < store.data.length; i += 10) {
-        store.data[i].label += ' !!!'
-      }
-      await flush()
-      capture('PARTIAL UPDATE')
-
-      // === 4. REMOVE ROW ===
-      reset()
-      store.data.splice(500, 1)
-      await flush()
-      capture('REMOVE')
-
-      // === 5. CLEAR ===
-      store.data = buildRows(1000)
-      await flush()
-      store.selected = 1
-      await flush()
-      reset()
-      store.data = []
-      await flush()
-      capture('CLEAR')
-
-      // === 6. CREATE 1000 (from empty) ===
-      reset()
-      store.data = buildRows(1000)
-      await flush()
-      capture('CREATE 1000')
-
-      // === 7. REPLACE 1000 ===
-      reset()
-      store.data = buildRows(1000, 2000)
-      await flush()
-      capture('REPLACE 1000')
-
-      // === 8. APPEND 1000 ===
-      store.data = buildRows(1000)
-      await flush()
-      reset()
-      store.data.push(...buildRows(1000, 2000))
-      await flush()
-      capture('APPEND 1000')
-
-      reportAll()
-
-      // Restore all interceptors
-      handler.get = origHandlerGet
-      handler.set = origHandlerSet
-      document.getElementById = origGetById
-      Object.defineProperty(elProto, 'className', cnDesc)
-      if (tcDesc) Object.defineProperty(nodeProto, 'textContent', tcDesc)
-      nodeProto.insertBefore = origInsertBefore
-      if (childrenDesc) {
-        const target = Object.getOwnPropertyDescriptor((window as any).HTMLElement.prototype, 'children')
-          ? (window as any).HTMLElement.prototype
-          : elProto
-        Object.defineProperty(target, 'children', childrenDesc)
-      }
-      nodeProto.appendChild = origAppendChild
-      if (origRemove) elProto.remove = origRemove
-      nodeProto.cloneNode = origCloneNode
-      if (idDesc) Object.defineProperty(elProto, 'id', idDesc)
-      if (innerHTMLDesc) Object.defineProperty(elProto, 'innerHTML', innerHTMLDesc)
-      if (nvDesc) Object.defineProperty(nodeProto, 'nodeValue', nvDesc)
-    } finally {
-      await cleanupDelay()
-      restoreDom()
-    }
-  })
-
   test('05 swap rows', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaBench(document.createElement('tbody'))
       document.body.appendChild(vanilla.tbody)
@@ -997,9 +699,12 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
         const v1 = performance.now()
 
         const e0 = performance.now()
-        const tmp = store.data[1]
-        store.data[1] = store.data[998]
-        store.data[998] = tmp
+        // v2: swap via array replacement with same items reordered
+        const d = [...store.data]
+        const tmp = d[1]
+        d[1] = d[998]
+        d[998] = tmp
+        store.data = d
         await flush()
         const e1 = performance.now()
 
@@ -1019,6 +724,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('07 remove row', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaBench(document.createElement('tbody'))
       document.body.appendChild(vanilla.tbody)
@@ -1037,6 +743,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
         const v1 = performance.now()
 
         const e0 = performance.now()
+        // v2: use wrapped array splice
         store.data.splice(500, 1)
         await flush()
         const e1 = performance.now()
@@ -1057,6 +764,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('08 append rows (1k to 1k)', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaBench(document.createElement('tbody'))
       document.body.appendChild(vanilla.tbody)
@@ -1076,8 +784,8 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
         const v1 = performance.now()
 
         const e0 = performance.now()
-        const rawOld = store.data[GEA_PROXY_GET_TARGET] || store.data
-        store.data = rawOld.concat(buildRows(1000, startId + 1000))
+        // v2: concat and replace — no proxy unwrap needed
+        store.data = store.data.concat(buildRows(1000, startId + 1000))
         await flush()
         const e1 = performance.now()
 
@@ -1097,6 +805,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('09 clear rows (1k)', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaBench(document.createElement('tbody'))
       document.body.appendChild(vanilla.tbody)
@@ -1140,6 +849,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('10 unresolved prop map active-class toggle', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const vanilla = new VanillaClassToggleBench(document.createElement('div'))
       document.body.appendChild(vanilla.tbody)
@@ -1161,7 +871,8 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
         const e0 = performance.now()
         store.activeId = items[activeIndex]
-        ;(store as any).flushSync()
+        // v2: no flushSync — use async flush
+        await flush()
         const e1 = performance.now()
 
         if (run >= WARMUP) {
@@ -1182,6 +893,7 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
 
   test('11 helper-derived filter toggle', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const rows = buildFilterToggleRows(1000)
       const vanilla = new VanillaDerivedFilterBench(document.createElement('tbody'))

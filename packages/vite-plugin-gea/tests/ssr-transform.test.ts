@@ -1,73 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import babelGenerator from '@babel/generator'
-import { parseSource } from '../src/parse/parser'
-import { transformComponentFile } from '../src/codegen/generator'
+import { transformSource } from '../src/transform/index.ts'
 
-const generate = 'default' in babelGenerator ? babelGenerator.default : babelGenerator
+/**
+ * v2 compiler does NOT have a separate SSR mode.
+ * These tests verify that transformSource correctly compiles components
+ * that reference child components — the v2 equivalent of what SSR/client
+ * transforms tested in v1 (child component instantiation vs list builder).
+ *
+ * In v2, child components in .map() are compiled with mount inside keyedList,
+ * and standalone child components are compiled with mount directly.
+ */
 
-function transformComponentSSR(source: string, knownComponentImports?: Set<string>): string {
-  const parsed = parseSource(source)
-  assert.ok(parsed)
-  assert.ok(parsed.componentClassName)
-
-  const original = parseSource(source)
-  assert.ok(original)
-  const storeImports = new Map<string, string>()
-
-  parsed.imports.forEach((importSource, localName) => {
-    if (parsed.importKinds.get(localName) !== 'default') return
-    if (/store/i.test(importSource)) storeImports.set(localName, importSource)
-  })
-
-  const transformed = transformComponentFile(
-    parsed.ast,
-    parsed.imports,
-    storeImports,
-    parsed.componentClassName,
-    '/virtual/test-component.jsx',
-    original.ast,
-    new Set(),
-    knownComponentImports,
-    true, // ssr = true
-  )
-
-  assert.equal(transformed, true)
-  return generate(parsed.ast).code
-}
-
-function transformComponentClient(source: string, knownComponentImports?: Set<string>): string {
-  const parsed = parseSource(source)
-  assert.ok(parsed)
-  assert.ok(parsed.componentClassName)
-
-  const original = parseSource(source)
-  assert.ok(original)
-  const storeImports = new Map<string, string>()
-
-  parsed.imports.forEach((importSource, localName) => {
-    if (parsed.importKinds.get(localName) !== 'default') return
-    if (/store/i.test(importSource)) storeImports.set(localName, importSource)
-  })
-
-  const transformed = transformComponentFile(
-    parsed.ast,
-    parsed.imports,
-    storeImports,
-    parsed.componentClassName,
-    '/virtual/test-component.jsx',
-    original.ast,
-    new Set(),
-    knownComponentImports,
-    false, // ssr = false
-  )
-
-  assert.equal(transformed, true)
-  return generate(parsed.ast).code
-}
-
-test('SSR: root component in .map() is instantiated inline for server rendering', () => {
+test('child component in .map() is compiled with mount inside keyedList', () => {
   const source = `
     import { Component } from '@geajs/core'
     import todoStore from './todo-store'
@@ -88,41 +34,55 @@ test('SSR: root component in .map() is instantiated inline for server rendering'
     }
   `
 
-  const output = transformComponentSSR(source)
+  const output = transformSource(source, '/virtual/TodoApp.jsx')
 
-  // SSR must instantiate components so template() runs and produces HTML
+  assert.ok(output, 'should return transformed code')
+
+  // v2 compiles child components in .map() using mount inside keyedList
   assert.ok(
-    output.includes('new TodoItem'),
-    'SSR output should instantiate TodoItem for server rendering.\nGot:\n' + output,
+    output.includes('mount'),
+    'output should use mount for child component.\nGot:\n' + output,
+  )
+  assert.ok(
+    output.includes('keyedList'),
+    'output should use keyedList for .map().\nGot:\n' + output,
+  )
+  assert.ok(
+    output.includes('TodoItem'),
+    'output should reference TodoItem component.\nGot:\n' + output,
   )
 })
 
-test('Client: root component in .map() compiles into list builder for reconciliation', () => {
+test('standalone child component compiles with mount', () => {
   const source = `
     import { Component } from '@geajs/core'
     import todoStore from './todo-store'
-    import TodoItem from './components/TodoItem'
+    import Header from './components/Header'
 
     export default class TodoApp extends Component {
       template() {
         return (
           <div class="todo-app">
-            <ul>
-              {todoStore.todos.map((todo) => (
-                <TodoItem key={todo.id} todo={todo} />
-              ))}
-            </ul>
+            <Header title="My Todos" />
+            <p>{todoStore.count} items</p>
           </div>
         )
       }
     }
   `
 
-  const output = transformComponentClient(source)
+  const output = transformSource(source, '/virtual/TodoApp.jsx')
 
-  // Client compiler builds list items via compiled child pattern, not custom element tags
+  assert.ok(output, 'should return transformed code')
+
+  // v2 compiles standalone child components using mount
   assert.ok(
-    output.includes('_buildTodosItems') || output.includes('__itemProps_todos'),
-    'Client output should compile map children into list builder.\nGot:\n' + output,
+    output.includes('mount(Header'),
+    'output should use mount(Header, ...) for standalone child component.\nGot:\n' + output,
+  )
+  // Props are passed as thunks
+  assert.ok(
+    output.includes('title'),
+    'output should pass title prop.\nGot:\n' + output,
   )
 })

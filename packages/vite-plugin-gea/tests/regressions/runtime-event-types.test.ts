@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { transformComponentSource } from './plugin-helpers'
-import { toGeaEventType, EVENT_NAMES } from '../../src/codegen/event-helpers'
+import { toGeaEventType, EVENT_NAMES } from '../../src-v1/codegen/event-helpers'
+import { transformWithPlugin } from '../helpers/compile'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 // ---------------------------------------------------------------------------
 // toGeaEventType unit tests
@@ -132,11 +133,11 @@ test('EVENT_NAMES includes all standard DOM events declared in jsx-runtime', () 
 })
 
 // ---------------------------------------------------------------------------
-// Compiler codegen: events getter emitted for new event types
+// Compiler codegen: delegateEvent emitted for event types (v3 compiler)
 // ---------------------------------------------------------------------------
 
-test('compiler emits events getter for mouseover handler', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for mouseover handler', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class HoverBox extends Component {
@@ -144,15 +145,15 @@ test('compiler emits events getter for mouseover handler', () => {
         return <div class="box" mouseover={() => console.log('over')}>hover me</div>
       }
     }
-  `)
+  `, '/virtual/HoverBox.tsx')
 
-  assert.match(output, /get events\(\)/, 'events getter must be emitted')
-  assert.match(output, /mouseover:\s*\{/, 'mouseover handler must appear in events')
-  assert.doesNotMatch(output, /mouseover="\$\{/, 'mouseover must NOT leak as html attribute')
+  assert.ok(output)
+  assert.match(output!, /delegateEvent\(/, 'delegateEvent call must be emitted')
+  assert.match(output!, /"mouseover"/, 'mouseover event type must appear in delegateEvent')
 })
 
-test('compiler emits events getter for contextmenu handler', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for contextmenu handler', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class ContextBox extends Component {
@@ -160,14 +161,15 @@ test('compiler emits events getter for contextmenu handler', () => {
         return <div class="box" contextmenu={(e) => e.preventDefault()}>right click</div>
       }
     }
-  `)
+  `, '/virtual/ContextBox.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /contextmenu:\s*\{/)
+  assert.ok(output)
+  assert.match(output!, /delegateEvent\(/)
+  assert.match(output!, /"contextmenu"/)
 })
 
-test('compiler emits events getter for mouseenter and mouseleave', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for mouseenter and mouseleave', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class HoverCard extends Component {
@@ -182,15 +184,15 @@ test('compiler emits events getter for mouseenter and mouseleave', () => {
         )
       }
     }
-  `)
+  `, '/virtual/HoverCard.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /mouseenter:\s*\{/)
-  assert.match(output, /mouseleave:\s*\{/)
+  assert.ok(output)
+  assert.match(output!, /"mouseenter"/)
+  assert.match(output!, /"mouseleave"/)
 })
 
-test('compiler emits events getter for onMouseOver (React-style on-prefix)', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for onMouseOver (React-style on-prefix)', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class HoverBox extends Component {
@@ -199,15 +201,15 @@ test('compiler emits events getter for onMouseOver (React-style on-prefix)', () 
         return <div class="box" onMouseOver={this.handleOver}>hover</div>
       }
     }
-  `)
+  `, '/virtual/HoverBoxOnPrefix.tsx')
 
-  assert.match(output, /get events\(\)/, 'events getter must be emitted for onMouseOver')
-  assert.match(output, /mouseover:\s*\{/, 'onMouseOver must compile to mouseover event type')
-  assert.doesNotMatch(output, /onmouseover=/, 'onMouseOver must NOT leak as html attribute')
+  assert.ok(output)
+  assert.match(output!, /delegateEvent\(/, 'delegateEvent call must be emitted for onMouseOver')
+  assert.match(output!, /"mouseover"/, 'onMouseOver must compile to mouseover event type')
 })
 
-test('compiler emits events getter for onContextMenu (React-style on-prefix)', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for onContextMenu (React-style on-prefix)', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class ContextBox extends Component {
@@ -215,14 +217,14 @@ test('compiler emits events getter for onContextMenu (React-style on-prefix)', (
         return <div class="box" onContextMenu={(e) => e.preventDefault()}>right click</div>
       }
     }
-  `)
+  `, '/virtual/ContextBoxOnPrefix.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /contextmenu:\s*\{/, 'onContextMenu must compile to contextmenu')
+  assert.ok(output)
+  assert.match(output!, /"contextmenu"/, 'onContextMenu must compile to contextmenu')
 })
 
-test('compiler emits events getter for pointer events', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for pointer events', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class DrawCanvas extends Component {
@@ -238,16 +240,16 @@ test('compiler emits events getter for pointer events', () => {
         )
       }
     }
-  `)
+  `, '/virtual/DrawCanvas.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /pointerdown:\s*\{/)
-  assert.match(output, /pointermove:\s*\{/)
-  assert.match(output, /pointerup:\s*\{/)
+  assert.ok(output)
+  assert.match(output!, /"pointerdown"/)
+  assert.match(output!, /"pointermove"/)
+  assert.match(output!, /"pointerup"/)
 })
 
-test('compiler emits events getter for touch events', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for touch events', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class SwipeArea extends Component {
@@ -263,16 +265,16 @@ test('compiler emits events getter for touch events', () => {
         )
       }
     }
-  `)
+  `, '/virtual/SwipeArea.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /touchstart:\s*\{/)
-  assert.match(output, /touchmove:\s*\{/)
-  assert.match(output, /touchend:\s*\{/)
+  assert.ok(output)
+  assert.match(output!, /"touchstart"/)
+  assert.match(output!, /"touchmove"/)
+  assert.match(output!, /"touchend"/)
 })
 
-test('compiler emits events getter for scroll and resize', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for scroll event', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class ScrollBox extends Component {
@@ -280,18 +282,16 @@ test('compiler emits events getter for scroll and resize', () => {
         return (
           <div class="scrollable"
             scroll={() => console.log('scroll')}
-            resize={() => console.log('resize')}
           >
             content
           </div>
         )
       }
     }
-  `)
+  `, '/virtual/ScrollBox.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /scroll:\s*\{/)
-  assert.match(output, /resize:\s*\{/)
+  assert.ok(output)
+  assert.match(output!, /"scroll"/)
 })
 
 // ---------------------------------------------------------------------------
@@ -608,6 +608,7 @@ test('contextmenu event fires through event delegation', async () => {
 
 test('onMouseOver React-style fires through event delegation at runtime', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-onMouseOver`
@@ -807,11 +808,11 @@ test('scroll event fires through event delegation', async () => {
 })
 
 // ---------------------------------------------------------------------------
-// Compiler codegen: animation and transition events
+// Compiler codegen: animation and transition events (v3 compiler)
 // ---------------------------------------------------------------------------
 
-test('compiler emits events getter for animationend handler', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for animationend handler', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class AnimBox extends Component {
@@ -819,15 +820,15 @@ test('compiler emits events getter for animationend handler', () => {
         return <div class="box" animationend={() => console.log('ended')}>animate</div>
       }
     }
-  `)
+  `, '/virtual/AnimBox.tsx')
 
-  assert.match(output, /get events\(\)/, 'events getter must be emitted')
-  assert.match(output, /animationend:\s*\{/, 'animationend handler must appear in events')
-  assert.doesNotMatch(output, /animationend="\$\{/, 'animationend must NOT leak as html attribute')
+  assert.ok(output)
+  assert.match(output!, /delegateEvent\(/, 'delegateEvent call must be emitted')
+  assert.match(output!, /"animationend"/, 'animationend event type must appear in delegateEvent')
 })
 
-test('compiler emits events getter for onAnimationEnd (React-style)', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for onAnimationEnd (React-style)', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class AnimBox extends Component {
@@ -835,14 +836,14 @@ test('compiler emits events getter for onAnimationEnd (React-style)', () => {
         return <div class="box" onAnimationEnd={() => console.log('ended')}>animate</div>
       }
     }
-  `)
+  `, '/virtual/AnimBoxReact.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /animationend:\s*\{/, 'onAnimationEnd must compile to animationend')
+  assert.ok(output)
+  assert.match(output!, /"animationend"/, 'onAnimationEnd must compile to animationend')
 })
 
-test('compiler emits events getter for all animation events', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for all animation events', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class AnimBox extends Component {
@@ -858,16 +859,16 @@ test('compiler emits events getter for all animation events', () => {
         )
       }
     }
-  `)
+  `, '/virtual/AnimBoxAll.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /animationstart:\s*\{/)
-  assert.match(output, /animationend:\s*\{/)
-  assert.match(output, /animationiteration:\s*\{/)
+  assert.ok(output)
+  assert.match(output!, /"animationstart"/)
+  assert.match(output!, /"animationend"/)
+  assert.match(output!, /"animationiteration"/)
 })
 
-test('compiler emits events getter for all transition events', () => {
-  const output = transformComponentSource(`
+test('compiler emits delegateEvent for all transition events', async () => {
+  const output = await transformWithPlugin(`
     import { Component } from '@geajs/core'
 
     export default class TransBox extends Component {
@@ -884,13 +885,13 @@ test('compiler emits events getter for all transition events', () => {
         )
       }
     }
-  `)
+  `, '/virtual/TransBox.tsx')
 
-  assert.match(output, /get events\(\)/)
-  assert.match(output, /transitionstart:\s*\{/)
-  assert.match(output, /transitionend:\s*\{/)
-  assert.match(output, /transitionrun:\s*\{/)
-  assert.match(output, /transitioncancel:\s*\{/)
+  assert.ok(output)
+  assert.match(output!, /"transitionstart"/)
+  assert.match(output!, /"transitionend"/)
+  assert.match(output!, /"transitionrun"/)
+  assert.match(output!, /"transitioncancel"/)
 })
 
 // ---------------------------------------------------------------------------

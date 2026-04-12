@@ -19,7 +19,8 @@ import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 import { describe, it } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -58,9 +59,18 @@ export default class NotificationsStore extends Store {
 `,
         )
 
-        const { default: NotificationsStore } = await import(
-          `${pathToFileURL(join(dir, 'notifications-store.ts')).href}?${seed}`
-        )
+        const [, { Store }] = await loadRuntimeModules(seed)
+        resetDelegation()
+        const NotificationsStore = await compileStore(`import { Store } from '@geajs/core'
+export default class NotificationsStore extends Store {
+  notifications = [
+    { id: 'test1', type: 'success', text: 'Test notification 1' },
+    { id: 'test2', type: 'success', text: 'Test notification 2' },
+  ]
+  get stack() { return this.notifications }
+  get duration() { return 5000 }
+  remove(id) { this.notifications = this.notifications.filter(n => n.id !== id) }
+}`, join(dir, 'notifications-store.ts'), 'NotificationsStore', { Store })
         const store = new NotificationsStore()
 
         const NotificationDisplay = await compileJsxComponent(
@@ -142,9 +152,18 @@ export default class NotificationsStore extends Store {
 `,
         )
 
-        const { default: NotificationsStore } = await import(
-          `${pathToFileURL(join(dir, 'notifications-store.ts')).href}?${seed}`
-        )
+        const [, { Store }] = await loadRuntimeModules(seed)
+        resetDelegation()
+        const NotificationsStore = await compileStore(`import { Store } from '@geajs/core'
+export default class NotificationsStore extends Store {
+  notifications = [
+    { id: 'test1', type: 'success', text: 'Test notification 1' },
+    { id: 'test2', type: 'success', text: 'Test notification 2' },
+  ]
+  get stack() { return this.notifications }
+  get duration() { return 5000 }
+  remove(id) { this.notifications = this.notifications.filter(n => n.id !== id) }
+}`, join(dir, 'notifications-store.ts'), 'NotificationsStore', { Store })
         const store = new NotificationsStore()
 
         const NotificationDisplay = await compileJsxComponent(

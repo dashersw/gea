@@ -3,10 +3,13 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadComponentUnseeded } from '../helpers/compile'
 import { readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 
 async function mountRouterSimple(seed: string) {
   const Component = await loadComponentUnseeded()
-  const { router, Link, RouterView } = await import(`../../../gea/src/lib/router/index.ts?${seed}`)
+  const { createRouter, Link, RouterView } = await import(`../../../gea/src/router/index.ts?${seed}`)
+  const router = createRouter({})
+  Link._router = router
 
   const Home = await compileJsxComponent(
     readExampleFile('router-simple/src/views/Home.tsx'),
@@ -51,10 +54,11 @@ async function mountRouterSimple(seed: string) {
 describe('examples/router-simple in JSDOM (ported from router-simple.spec)', { concurrency: false }, () => {
   let restoreDom: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
-  let router: { dispose: () => void }
+  let app: { dispose?: () => void }
+  let router: { dispose?: () => void }
 
   beforeEach(async () => {
+    resetDelegation()
     restoreDom = installDom('http://localhost/')
     const m = await mountRouterSimple(`ex-rs-${Date.now()}-${Math.random()}`)
     app = m.app
@@ -63,8 +67,8 @@ describe('examples/router-simple in JSDOM (ported from router-simple.spec)', { c
   })
 
   afterEach(async () => {
-    app.dispose()
-    router.dispose()
+    try { app.dispose?.() } catch {}
+    try { router.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     restoreDom()
@@ -94,12 +98,13 @@ describe('examples/router-simple in JSDOM (ported from router-simple.spec)', { c
   })
 
   it('unknown route 404', async () => {
-    app.dispose()
-    router.dispose()
+    try { app.dispose?.() } catch {}
+    try { router.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     restoreDom()
 
+    resetDelegation()
     restoreDom = installDom('http://localhost/this-does-not-exist')
     const m = await mountRouterSimple(`ex-rs-404-${Date.now()}-${Math.random()}`)
     app = m.app

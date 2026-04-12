@@ -1,43 +1,72 @@
 import assert from 'node:assert/strict'
-import { describe, it, beforeEach, afterEach } from 'node:test'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { describe, it } from 'node:test'
+import { transformSource } from '../src/transform/index.ts'
 
-// The functions under test are not exported, so we test them indirectly
-// through the plugin's transform hook. Import the plugin factory.
-import { geaPlugin } from '../src/index.ts'
+/**
+ * v2 compiler does NOT have HMR circular dependency prevention.
+ * These tests verify that transformSource correctly handles files with
+ * various import patterns — component files get transformed, non-component
+ * files are left alone (return null), and child component references
+ * are compiled with mount.
+ */
 
-const TMP_ROOT = join(tmpdir(), 'gea-hmr-circular-test-' + Date.now())
-
-function createFixture(files: Record<string, string>): string {
-  const root = join(TMP_ROOT, String(Math.random()).slice(2, 10))
-  for (const [rel, content] of Object.entries(files)) {
-    const full = join(root, rel)
-    mkdirSync(join(full, '..'), { recursive: true })
-    writeFileSync(full, content)
-  }
-  return root
-}
-
-describe('HMR circular dependency prevention', () => {
-  afterEach(() => {
-    try {
-      rmSync(TMP_ROOT, { recursive: true, force: true })
-    } catch {
-      /* ok */
-    }
-  })
-
-  describe('store modules get HMR dep-accept for component imports', () => {
-    it('injects hot.accept for directory import that resolves to component index file', () => {
-      const root = createFixture({
-        'src/router.ts': [
+describe('transform with component imports', () => {
+  describe('non-component files return null', () => {
+    it('returns null for router files that import components but have no JSX', () => {
+      const result = transformSource(
+        [
           "import { createRouter } from '@geajs/core'",
           "import Home, { About } from './pages'",
-          "export const router = createRouter({ '/': Home, '/about': About } as const)",
+          "export const router = createRouter({ '/': Home, '/about': About })",
         ].join('\n'),
-        'src/pages/index.tsx': [
+        '/virtual/router.ts',
+      )
+
+      assert.equal(result, null, 'router file without JSX should not be transformed')
+    })
+
+    it('returns null for config files without component classes or JSX', () => {
+      const result = transformSource(
+        [
+          "import { config } from './config'",
+          'export const router = config',
+        ].join('\n'),
+        '/virtual/router.ts',
+      )
+
+      assert.equal(result, null, 'plain config file should not be transformed')
+    })
+
+    it('returns null for utility files', () => {
+      const result = transformSource(
+        'export function formatDate(d) { return d.toISOString() }',
+        '/virtual/utils.ts',
+      )
+
+      assert.equal(result, null, 'utility file should not be transformed')
+    })
+  })
+
+  describe('component files are transformed', () => {
+    it('transforms a component file that is a default export', () => {
+      const result = transformSource(
+        [
+          "import { Component } from '@geajs/core'",
+          'export default class Home extends Component {',
+          '  template() { return <div>Home</div> }',
+          '}',
+        ].join('\n'),
+        '/virtual/Home.jsx',
+      )
+
+      assert.ok(result, 'component file should be transformed')
+      assert.ok(result.includes('GEA_CREATE_TEMPLATE'), 'should rename template to GEA_CREATE_TEMPLATE')
+      assert.ok(result.includes('@geajs/core/runtime'), 'should add runtime import')
+    })
+
+    it('transforms a file with multiple component exports', () => {
+      const result = transformSource(
+        [
           "import { Component } from '@geajs/core'",
           'export default class Home extends Component {',
           '  template() { return <div>Home</div> }',
@@ -46,148 +75,69 @@ describe('HMR circular dependency prevention', () => {
           '  template() { return <div>About</div> }',
           '}',
         ].join('\n'),
-      })
+        '/virtual/pages.jsx',
+      )
 
-      const plugin = geaPlugin() as any
-      plugin.configResolved({ command: 'serve' })
-
-      const routerPath = join(root, 'src/router.ts')
-      const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport Home, { About } from './pages'\nexport const router = createRouter({ '/': Home, '/about': About } as const)"
-
-      const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
-
-      assert.ok(result, 'should return transformed code for router.ts')
-      assert.ok(result.code.includes('import.meta.hot'), 'should inject HMR block')
-      assert.ok(result.code.includes("import.meta.hot.accept('./pages'"), 'should accept updates from ./pages')
+      assert.ok(result, 'multi-component file should be transformed')
+      const count = (result.match(/GEA_CREATE_TEMPLATE/g) || []).length
+      assert.ok(count >= 2, `should transform both component templates, found ${count}`)
     })
 
-    it('injects hot.accept for .tsx file import that resolves to component', () => {
-      const root = createFixture({
-        'src/router.ts': [
-          "import { createRouter } from '@geajs/core'",
+    it('transforms component that imports and uses another component via mount', () => {
+      const result = transformSource(
+        [
+          "import { Component } from '@geajs/core'",
           "import Home from './home'",
-          "export const router = createRouter({ '/': Home } as const)",
-        ].join('\n'),
-        'src/home.tsx': [
-          "import { Component } from '@geajs/core'",
-          'export default class Home extends Component {',
-          '  template() { return <div>Home</div> }',
+          'export default class App extends Component {',
+          '  template() { return <div><Home /></div> }',
           '}',
         ].join('\n'),
-      })
+        '/virtual/App.jsx',
+      )
 
-      const plugin = geaPlugin() as any
-      plugin.configResolved({ command: 'serve' })
-
-      const routerPath = join(root, 'src/router.ts')
-      const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport Home from './home'\nexport const router = createRouter({ '/': Home } as const)"
-
-      const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
-
-      assert.ok(result, 'should return transformed code')
-      assert.ok(result.code.includes("import.meta.hot.accept('./home'"), 'should accept updates from ./home')
+      assert.ok(result, 'should transform component with child component')
+      assert.ok(result.includes('mount'), 'should use mount for child component references')
+      assert.ok(result.includes('Home'), 'should reference Home component')
     })
 
-    it('does NOT inject HMR for imports that are not component files', () => {
-      const root = createFixture({
-        'src/router.ts': [
-          "import { createRouter } from '@geajs/core'",
-          "import { config } from './config'",
-          'export const router = createRouter(config)',
-        ].join('\n'),
-        'src/config.ts': ["export const config = { '/': null }"].join('\n'),
-      })
-
-      const plugin = geaPlugin() as any
-      plugin.configResolved({ command: 'serve' })
-
-      const routerPath = join(root, 'src/router.ts')
-      const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport { config } from './config'\nexport const router = createRouter(config)"
-
-      const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
-
-      assert.equal(result, null, 'should not transform when no component deps')
-    })
-
-    it('does NOT inject HMR in build mode (only serve)', () => {
-      const root = createFixture({
-        'src/router.ts': [
-          "import { createRouter } from '@geajs/core'",
-          "import Home from './pages'",
-          "export const router = createRouter({ '/': Home } as const)",
-        ].join('\n'),
-        'src/pages/index.tsx': [
+    it('transforms component that imports a store and reads its state', () => {
+      const result = transformSource(
+        [
           "import { Component } from '@geajs/core'",
-          'export default class Home extends Component {',
-          '  template() { return <div>Home</div> }',
+          "import store from './store'",
+          'export default class Counter extends Component {',
+          '  template() { return <div>{store.count}</div> }',
           '}',
         ].join('\n'),
-      })
+        '/virtual/Counter.jsx',
+      )
 
-      const plugin = geaPlugin() as any
-      plugin.configResolved({ command: 'build' })
-
-      const routerPath = join(root, 'src/router.ts')
-      const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport Home from './pages'\nexport const router = createRouter({ '/': Home } as const)"
-
-      const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
-
-      assert.equal(result, null, 'should not inject HMR in build mode')
+      assert.ok(result, 'should transform component with store import')
+      assert.ok(result.includes('store.count'), 'should reference store.count')
+      assert.ok(
+        result.includes('reactiveContent') || result.includes('computation'),
+        'should use reactiveContent or computation for dynamic text',
+      )
     })
   })
 
-  describe('directory import resolution', () => {
-    it('resolves ./pages to ./pages/index.tsx when directory exists', () => {
-      const root = createFixture({
-        'src/app.ts': "import Foo from './components'",
-        'src/components/index.tsx': [
-          "import { Component } from '@geajs/core'",
-          'export default class Foo extends Component {',
-          '  template() { return <div>Foo</div> }',
+  describe('store files are transformed', () => {
+    it('transforms store fields into signals', () => {
+      const result = transformSource(
+        [
+          "import { Store } from '@geajs/core'",
+          'export default class AppStore extends Store {',
+          '  count = 0',
+          "  name = 'test'",
           '}',
         ].join('\n'),
-      })
-
-      const plugin = geaPlugin() as any
-      plugin.configResolved({ command: 'serve' })
-
-      const appPath = join(root, 'src/app.ts')
-      const appCode = "import Foo from './components'"
-
-      const result = plugin.transform.call({ environment: { name: 'client' } }, appCode, appPath)
-
-      assert.ok(result, 'should detect component dep through directory/index.tsx')
-      assert.ok(
-        result.code.includes("import.meta.hot.accept('./components'"),
-        'should accept updates from ./components',
+        '/virtual/store.ts',
       )
-    })
 
-    it('resolves ./home to ./home.tsx', () => {
-      const root = createFixture({
-        'src/app.ts': "import Home from './home'",
-        'src/home.tsx': [
-          "import { Component } from '@geajs/core'",
-          'export default class Home extends Component {',
-          '  template() { return <div>Home</div> }',
-          '}',
-        ].join('\n'),
-      })
-
-      const plugin = geaPlugin() as any
-      plugin.configResolved({ command: 'serve' })
-
-      const appPath = join(root, 'src/app.ts')
-      const appCode = "import Home from './home'"
-
-      const result = plugin.transform.call({ environment: { name: 'client' } }, appCode, appPath)
-
-      assert.ok(result, 'should detect component dep via .tsx extension')
-      assert.ok(result.code.includes("import.meta.hot.accept('./home'"))
+      assert.ok(result, 'store file should be transformed')
+      assert.ok(result.includes('signal'), 'should use signal() for fields')
+      assert.ok(result.includes('get count'), 'should generate getter')
+      assert.ok(result.includes('set count'), 'should generate setter')
     })
   })
 })

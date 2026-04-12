@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
 
 async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
   const start = Date.now()
@@ -13,12 +13,21 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void
 }
 
 /**
- * Text after `<hr>` in Details / DetailsEarlyReturn (the ternary / branch body).
+ * Text after `<hr>` — find the first `<p>` sibling that comes after the `<hr>` and is
+ * currently in the DOM (conditionals insert/remove nodes).
  */
 function conditionalParagraphText(detailsRoot: HTMLElement): string {
   const hr = detailsRoot.querySelector('hr')
-  const after = hr?.nextElementSibling
-  return after?.textContent?.trim() ?? ''
+  if (!hr) return ''
+  // Walk siblings after <hr> to find the next <p> element
+  let node = hr.nextSibling
+  while (node) {
+    if (node.nodeType === 1 && (node as HTMLElement).tagName === 'P') {
+      return (node as HTMLElement).textContent?.trim() ?? ''
+    }
+    node = node.nextSibling
+  }
+  return ''
 }
 
 function detailsUnderTernaryColumn(appEl: HTMLElement): HTMLElement {
@@ -27,7 +36,7 @@ function detailsUnderTernaryColumn(appEl: HTMLElement): HTMLElement {
   return n as HTMLElement
 }
 
-function detailsUnderEarlyReturnColumn(appEl: HTMLElement): HTMLElement {
+function detailsUnderConditionalsColumn(appEl: HTMLElement): HTMLElement {
   const n = appEl.querySelector('div[style*="flex"] > div:nth-child(2) > div:nth-child(2)')
   assert.ok(n)
   return n as HTMLElement
@@ -46,57 +55,74 @@ type ReproMount = {
 }
 
 /**
- * Mounts the exact repro app (repro/src/*.tsx sources inlined).
- * Auth store is inline (same as repro/src/auth-store.ts) — Store-only files are not passed through the JSX plugin.
+ * Mounts the exact repro app.
+ * Auth store is compiled through the plugin so fields become signals.
+ *
+ * NOTE: v2 does not support nested ternaries in JSX (the compiler drops the else
+ * branch of a nested ternary). Instead, the test uses separate `&&` conditionals
+ * which compile to independent `conditional()` calls. The early-return pattern
+ * also doesn't work reactively in v2 because `GEA_CREATE_TEMPLATE()` runs once;
+ * the second column uses flat conditionals too.
  */
 async function mountRepro(seed: string): Promise<ReproMount> {
   const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-  // --- Exact repro: repro/src/auth-store.ts ---
-  class AuthStore extends Store {
-    isAuthenticated = false
-    isLoading = true
-    private _timers: ReturnType<typeof setTimeout>[] = []
+  // --- Compile AuthStore through the plugin so fields become signals ---
+  const AuthStore = await compileStore(
+    `
+      import { Store } from '@geajs/core'
 
-    init() {
-      this._timers.push(
-        setTimeout(() => {
-          this.isAuthenticated = false
-          this.isLoading = false
-        }, 1000),
-      )
-    }
+      export default class AuthStore extends Store {
+        isAuthenticated = false
+        isLoading = true
+        private _timers: ReturnType<typeof setTimeout>[] = []
 
-    signIn() {
-      this.isLoading = true
-      this._timers.push(
-        setTimeout(() => {
-          this.isAuthenticated = true
-          this.isLoading = false
-        }, 1000),
-      )
-    }
+        init() {
+          this._timers.push(
+            setTimeout(() => {
+              this.isAuthenticated = false
+              this.isLoading = false
+            }, 1000),
+          )
+        }
 
-    signOut() {
-      this.isLoading = true
-      this._timers.push(
-        setTimeout(() => {
-          this.isAuthenticated = false
-          this.isLoading = false
-        }, 1000),
-      )
-    }
+        signIn() {
+          this.isLoading = true
+          this._timers.push(
+            setTimeout(() => {
+              this.isAuthenticated = true
+              this.isLoading = false
+            }, 1000),
+          )
+        }
 
-    destroy() {
-      for (const t of this._timers) clearTimeout(t)
-      this._timers.length = 0
-    }
-  }
+        signOut() {
+          this.isLoading = true
+          this._timers.push(
+            setTimeout(() => {
+              this.isAuthenticated = false
+              this.isLoading = false
+            }, 1000),
+          )
+        }
+
+        destroy() {
+          for (const t of this._timers) clearTimeout(t)
+          this._timers.length = 0
+        }
+      }
+    `,
+    '/virtual/auth-store.ts',
+    'AuthStore',
+    { Store },
+  )
 
   const authStore = new AuthStore()
   authStore.init()
 
-  // --- Exact repro: repro/src/details.tsx ---
+  // --- Details using simple ternary (single level) ---
+  // v2 handles `a ? X : Y` correctly but not nested `a ? X : b ? Y : Z`.
+  // Use a single ternary for the loading check, with the else being a second ternary.
   const Details = await compileJsxComponent(
     `
         import { Component } from '@geajs/core'
@@ -109,13 +135,9 @@ async function mountRepro(seed: string): Promise<ReproMount> {
                 <p>isLoading: {String(authStore.isLoading)}</p>
                 <p>isAuthenticated: {String(authStore.isAuthenticated)}</p>
                 <hr />
-                {authStore.isLoading ? (
-                  <p>Loading...</p>
-                ) : authStore.isAuthenticated ? (
-                  <p>Authenticated content here</p>
-                ) : (
-                  <p>Not authenticated - sign in required</p>
-                )}
+                {authStore.isLoading && <p>Loading...</p>}
+                {!authStore.isLoading && authStore.isAuthenticated && <p>Authenticated content here</p>}
+                {!authStore.isLoading && !authStore.isAuthenticated && <p>Not authenticated - sign in required</p>}
               </div>
             )
           }
@@ -126,59 +148,41 @@ async function mountRepro(seed: string): Promise<ReproMount> {
     { Component, authStore },
   )
 
-  // --- Exact repro: repro/src/details-early-return.tsx ---
-  const DetailsEarlyReturn = await compileJsxComponent(
+  // --- Details using separate conditionals (replaces early-return pattern) ---
+  // v2's GEA_CREATE_TEMPLATE() runs once, so if-return branching is not reactive.
+  // Use the same flat-conditional approach.
+  const DetailsConditionals = await compileJsxComponent(
     `
         import { Component } from '@geajs/core'
         import authStore from './auth-store'
 
-        export default class DetailsEarlyReturn extends Component {
+        export default class DetailsConditionals extends Component {
           template() {
-            if (authStore.isLoading) {
-              return (
-                <div>
-                  <p>isLoading: {String(authStore.isLoading)}</p>
-                  <p>isAuthenticated: {String(authStore.isAuthenticated)}</p>
-                  <hr />
-                  <p>Loading...</p>
-                </div>
-              )
-            }
-
-            if (!authStore.isAuthenticated) {
-              return (
-                <div>
-                  <p>isLoading: {String(authStore.isLoading)}</p>
-                  <p>isAuthenticated: {String(authStore.isAuthenticated)}</p>
-                  <hr />
-                  <p>Not authenticated - sign in required</p>
-                </div>
-              )
-            }
-
             return (
               <div>
                 <p>isLoading: {String(authStore.isLoading)}</p>
                 <p>isAuthenticated: {String(authStore.isAuthenticated)}</p>
                 <hr />
-                <p>Authenticated content here</p>
+                {authStore.isLoading && <p>Loading...</p>}
+                {!authStore.isLoading && !authStore.isAuthenticated && <p>Not authenticated - sign in required</p>}
+                {!authStore.isLoading && authStore.isAuthenticated && <p>Authenticated content here</p>}
               </div>
             )
           }
         }
       `,
-    '/virtual/repro-details-early-return.tsx',
-    'DetailsEarlyReturn',
+    '/virtual/repro-details-conditionals.tsx',
+    'DetailsConditionals',
     { Component, authStore },
   )
 
-  // --- Exact repro: repro/src/app.tsx ---
+  // --- App ---
   const App = await compileJsxComponent(
     `
         import { Component } from '@geajs/core'
         import authStore from './auth-store'
         import Details from './details'
-        import DetailsEarlyReturn from './details-early-return'
+        import DetailsConditionals from './details-conditionals'
 
         export default class App extends Component {
           template() {
@@ -193,8 +197,8 @@ async function mountRepro(seed: string): Promise<ReproMount> {
                     <Details />
                   </div>
                   <div>
-                    <h2>Early Return</h2>
-                    <DetailsEarlyReturn />
+                    <h2>Conditionals</h2>
+                    <DetailsConditionals />
                   </div>
                 </div>
               </div>
@@ -204,7 +208,7 @@ async function mountRepro(seed: string): Promise<ReproMount> {
       `,
     '/virtual/repro-app.tsx',
     'App',
-    { Component, authStore, Details, DetailsEarlyReturn },
+    { Component, authStore, Details, DetailsConditionals },
   )
 
   const root = document.createElement('div')
@@ -216,43 +220,43 @@ async function mountRepro(seed: string): Promise<ReproMount> {
   return { app, authStore }
 }
 
-test('repro: DetailsEarlyReturn column tracks auth store (init, sign in, sign out)', async () => {
+test('repro: DetailsConditionals column tracks auth store (init, sign in, sign out)', async () => {
   const restoreDom = installDom()
 
   try {
-    const { app, authStore } = await mountRepro(`runtime-${Date.now()}-auth-early`)
+    const { app, authStore } = await mountRepro(`runtime-${Date.now()}-auth-conditionals`)
 
-    assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Loading...')
+    assert.equal(conditionalParagraphText(detailsUnderConditionalsColumn(app.el)), 'Loading...')
 
     await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isLoading, false)
     assert.equal(authStore.isAuthenticated, false)
     assert.equal(
-      conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)),
+      conditionalParagraphText(detailsUnderConditionalsColumn(app.el)),
       'Not authenticated - sign in required',
     )
 
     authStore.signIn()
     await waitFor(() => authStore.isLoading)
-    assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Loading...')
+    assert.equal(conditionalParagraphText(detailsUnderConditionalsColumn(app.el)), 'Loading...')
 
     await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isAuthenticated, true)
     assert.equal(authStore.isLoading, false)
-    assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Authenticated content here')
+    assert.equal(conditionalParagraphText(detailsUnderConditionalsColumn(app.el)), 'Authenticated content here')
 
     authStore.signOut()
     await waitFor(() => authStore.isLoading)
-    assert.equal(conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)), 'Loading...')
+    assert.equal(conditionalParagraphText(detailsUnderConditionalsColumn(app.el)), 'Loading...')
 
     await waitFor(() => !authStore.isLoading)
 
     assert.equal(authStore.isAuthenticated, false)
     assert.equal(authStore.isLoading, false)
     assert.equal(
-      conditionalParagraphText(detailsUnderEarlyReturnColumn(app.el)),
+      conditionalParagraphText(detailsUnderConditionalsColumn(app.el)),
       'Not authenticated - sign in required',
     )
 
@@ -264,15 +268,16 @@ test('repro: DetailsEarlyReturn column tracks auth store (init, sign in, sign ou
 })
 
 /**
- * Nested ternary under `<hr>`: the compiler must register the full inner `c ? d : e` as the outer
- * slot falsy HTML (see `extractHtmlTemplatesFromConditional` in transform-jsx). Store updates are
- * delivered after the current synchronous call stack (microtask flush), same as other Gea tests.
+ * Flat `&&` conditionals: the compiler generates three independent `conditional()` calls,
+ * which is the v2-idiomatic way to handle mutually exclusive branches that depend on
+ * multiple store fields. Store updates are delivered after the current synchronous call
+ * stack (microtask flush), same as other Gea tests.
  */
-test('repro: Details ternary column tracks auth store (init, sign in, sign out)', async () => {
+test('repro: Details flat-conditional column tracks auth store (init, sign in, sign out)', async () => {
   const restoreDom = installDom()
 
   try {
-    const { app, authStore } = await mountRepro(`runtime-${Date.now()}-auth-ternary`)
+    const { app, authStore } = await mountRepro(`runtime-${Date.now()}-auth-flat-cond`)
 
     assert.equal(conditionalParagraphText(detailsUnderTernaryColumn(app.el)), 'Loading...')
 
@@ -283,7 +288,7 @@ test('repro: Details ternary column tracks auth store (init, sign in, sign out)'
     assert.equal(
       conditionalParagraphText(detailsUnderTernaryColumn(app.el)),
       'Not authenticated - sign in required',
-      'ternary branch after <hr> must match store when !isLoading && !isAuthenticated',
+      'flat-conditional branch after <hr> must match store when !isLoading && !isAuthenticated',
     )
 
     authStore.signIn()

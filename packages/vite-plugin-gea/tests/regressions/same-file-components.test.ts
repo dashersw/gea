@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxModule, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxModule, compileStore, loadRuntimeModules } from '../helpers/compile'
 
 /**
  * Regression: multiple component classes in the same file should be compiled
@@ -134,7 +134,21 @@ test('same-file component with reactive store updates correctly', async () => {
   try {
     const seed = `runtime-${Date.now()}-same-file-reactive`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ count: 0 })
+
+    // In v2, Store fields must be compiled to signals — use compileStore
+    const CounterStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+
+        export default class CounterStore extends Store {
+          count = 0
+        }
+      `,
+      '/virtual/CounterStore.ts',
+      'CounterStore',
+      { Store },
+    )
+    const store = new CounterStore()
 
     const module = await compileJsxModule(
       `

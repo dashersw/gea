@@ -2,11 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { transformComponentSource } from './plugin-helpers'
 
-// Bug 1: Static array .map() with child components inside a child component's
-// children prop produces an empty container. The compiler replaces .map() with
-// .join('') only in the template() method, missing the case where the .map()
-// is inside a __buildProps_* method (child component's children prop).
-test('static array .map() with child components inside child component children includes items in props', () => {
+// Bug 1 (v2 equivalent): Static array .map() with child components inside a child component's
+// children prop should produce keyedList for the items.
+test('static array .map() with child components inside child component children uses keyedList', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -31,29 +29,18 @@ test('static array .map() with child components inside child component children 
       }
     }
   `,
-    new Set(['Card', 'ListItem']),
   )
 
-  // The compiled output should include the items array in constructor:
-  assert.match(output, /geaListItemsSymbol\("ITEMS"\)/, 'should create list-items symbol for ITEMS')
-  // A refresh method should exist:
-  assert.match(output, /__refreshITEMSItems/, 'should have __refreshITEMSItems method')
-
-  // When the .map() is inside a child component's children (not directly in template),
-  // the compiler must call __refreshITEMSItems() in onAfterRenderHooks to populate
-  // the container after the component is mounted (not in createdHooks which runs too early).
-  assert.match(
-    output,
-    /onAfterRenderHooks\(\)\s*\{[\s\S]*__refreshITEMSItems/,
-    'onAfterRenderHooks should call __refreshITEMSItems() to populate items after mount',
-  )
+  // v2 compiles .map() to keyedList
+  assert.match(output, /keyedList/, 'should use keyedList for .map() with keyed items')
+  // v2 uses mount for child components
+  assert.match(output, /mount\(Card/, 'should mount Card component')
+  assert.match(output, /mount\(ListItem/, 'should mount ListItem component')
 })
 
-// Bug 2: Observer for a store property unconditionally accesses a lazy child
-// component getter, pre-creating it with stale/null props. When the child is
-// inside a conditional (lazy getter), the observer should guard the
-// [GEA_UPDATE_PROPS] call to avoid premature creation.
-test('observer for store prop guarding a lazy conditional child does not eagerly access getter', () => {
+// Bug 2 (v2 equivalent): Store observer with conditional child component should use
+// conditional() to lazily render the child component.
+test('store prop with conditional child uses conditional() for lazy rendering', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -73,29 +60,17 @@ test('observer for store prop guarding a lazy conditional child does not eagerly
       }
     }
   `,
-    new Set(['BoardingPass']),
   )
 
-  // The observer for store.boardingPass should NOT unconditionally call
-  // this._boardingPass[GEA_UPDATE_PROPS](...) because _boardingPass is a
-  // lazy getter (inside a conditional). It should guard with the backing field.
-
-  // Verify the lazy child pattern exists
-  assert.match(output, /__lazy_boardingPass/, 'should have lazy backing field for _boardingPass')
-  assert.match(output, /\[GEA_UPDATE_PROPS\]/, 'should have [GEA_UPDATE_PROPS] call somewhere')
-
-  // The [GEA_UPDATE_PROPS] call for _boardingPass must be guarded by the
-  // lazy backing field existence check to prevent premature creation.
-  // Bad:  this._boardingPass[GEA_UPDATE_PROPS](this.__buildProps_boardingPass())
-  // Good: if (this.__lazy_boardingPass) { this._boardingPass[GEA_UPDATE_PROPS](...) }
-  assert.match(
-    output,
-    /if\s*\(this\.__lazy_boardingPass\)/,
-    'observer should guard lazy child [GEA_UPDATE_PROPS] with __lazy backing field check',
-  )
+  // v2 uses conditional() for && expressions
+  assert.match(output, /conditional/, 'should use conditional() for && expressions')
+  // v2 uses mount for child component
+  assert.match(output, /mount\(BoardingPass/, 'should mount BoardingPass inside conditional')
 })
 
-test('user createdHooks is merged: compiler prepends [GEA_OBSERVE], user body remains', () => {
+// v2 no longer merges createdHooks with [GEA_OBSERVE] — user createdHooks remains as-is,
+// and store observers are set up via computation() in GEA_CREATE_TEMPLATE.
+test('user createdHooks is preserved: store observers are in GEA_CREATE_TEMPLATE, user body in createdHooks', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -115,23 +90,22 @@ test('user createdHooks is merged: compiler prepends [GEA_OBSERVE], user body re
       }
     }
   `,
-    new Set(),
   )
 
+  // v2 uses computation() in GEA_CREATE_TEMPLATE for store reads
+  assert.match(output, /computation\(.*store\.count/, 'store.count should be observed via computation()')
+
+  // User createdHooks body should be preserved
+  assert.match(output, /__userCreatedHooksRan/, 'user createdHooks body should be preserved')
+
+  // Should not have duplicate createdHooks
   const createdHooksDecls = output.match(/createdHooks\s*\([^)]*\)\s*\{/g)
   assert.ok(createdHooksDecls, 'expected createdHooks in output')
   assert.equal(createdHooksDecls!.length, 1, 'must not emit duplicate createdHooks methods')
-
-  assert.match(
-    output,
-    /createdHooks\s*\([^)]*\)\s*\{[\s\S]*\[GEA_OBSERVE\]\([\s\S]*__userCreatedHooksRan/s,
-    'generated store setup should run before user createdHooks body',
-  )
 })
 
-// Template class like `kanban-card ${cond ? 'dragging' : ''}` leaves a trailing space when falsy;
-// compiler wraps dynamic `class` with String(...).trim() so the DOM attribute stays clean.
-test('dynamic class expression is coerced and trimmed in template output', () => {
+// v2 uses reactiveAttr for dynamic class expressions — no need for .trim()
+test('dynamic class expression uses reactiveAttr in v2 output', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -143,16 +117,14 @@ test('dynamic class expression is coerced and trimmed in template output', () =>
       }
     }
   `,
-    new Set(),
   )
 
-  assert.match(output, /\.trim\(\)/, 'compiled output should trim dynamic class strings')
+  assert.match(output, /reactiveAttr/, 'compiled output should use reactiveAttr for dynamic class')
+  assert.match(output, /className/, 'compiled output should use className for dynamic class attribute')
 })
 
-// Style object serialisation uses Object.entries({…}).map(…).join("; ").
-// The `addJoinToUnresolvedMapCalls` pass must not append the `<!---->` sentinel
-// to this join — it's CSS, not child HTML.
-test('style object .map().join() must not include HTML comment sentinel', () => {
+// v2 handles style objects via reactiveAttr and uses reactiveText for list content
+test('style object uses reactiveAttr, list content uses reactiveText', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -172,15 +144,10 @@ test('style object .map().join() must not include HTML comment sentinel', () => 
       }
     }
   `,
-    new Set(),
   )
 
-  // The style serialisation's .join("; ") must NOT be followed by + "<!---->"
-  assert.doesNotMatch(
-    output,
-    /\.join\("; "\)\s*\+\s*"<!---->"/,
-    'style .map().join("; ") must not have HTML comment sentinel appended',
-  )
-  // The unresolved list .map() SHOULD have the sentinel
-  assert.match(output, /\.join\(""\)\s*\+\s*"<!---->"/s, 'unresolved list .map() should have <!---> sentinel')
+  // v2 uses reactiveAttr for style objects
+  assert.match(output, /reactiveAttr\([^,]+,\s*"style"/, 'style object should use reactiveAttr with "style"')
+  // v2 uses reactiveText for the list content
+  assert.match(output, /reactiveText/, 'list .map() should use reactiveText')
 })

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import getUid from '../src/lib/base/uid'
+import getUid from '../src/component/uid'
 
 describe('getUid', () => {
   it('returns a string', () => {

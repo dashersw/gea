@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadComponentUnseeded } from '../helpers/compile'
-import { readExampleFile } from '../helpers/example-paths'
+import { compileJsxComponent, compileStore, loadComponentUnseeded, loadRuntimeModules } from '../helpers/compile'
+import { examplePath, readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 
 async function mountRouterV2(seed: string) {
   const Component = await loadComponentUnseeded()
-  const { router, Link, RouterView, Outlet } = await import(`../../../gea/src/lib/router/index.ts?${seed}`)
-  const { default: authStore } = await import('../../../../examples/router-v2/src/stores/auth-store.ts')
+  const [, { Store }] = await loadRuntimeModules(seed)
+  const { createRouter, Link, RouterView, Outlet } = await import(`../../../gea/src/router/index.ts?${seed}`)
+  const router = createRouter({})
+  const AuthStoreClass = await compileStore(
+    readExampleFile('router-v2/src/stores/auth-store.ts'),
+    examplePath('router-v2/src/stores/auth-store.ts'),
+    'AuthStore',
+    { Store },
+  )
+  const authStore = new AuthStoreClass()
   authStore.logout()
 
   const AuthGuard = () => (authStore.user ? (true as const) : '/login')
@@ -112,10 +121,11 @@ async function mountRouterV2(seed: string) {
 describe('examples/router-v2 in JSDOM (ported from router-v2.spec)', { concurrency: false }, () => {
   let restoreDom: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
-  let router: { dispose: () => void }
+  let app: { dispose?: () => void }
+  let router: { dispose?: () => void }
 
   beforeEach(async () => {
+    resetDelegation()
     restoreDom = installDom('http://localhost/')
     const m = await mountRouterV2(`ex-rv2-${Date.now()}-${Math.random()}`)
     app = m.app
@@ -124,8 +134,8 @@ describe('examples/router-v2 in JSDOM (ported from router-v2.spec)', { concurren
   })
 
   afterEach(async () => {
-    app.dispose()
-    router.dispose()
+    try { app.dispose?.() } catch {}
+    try { router.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     restoreDom()

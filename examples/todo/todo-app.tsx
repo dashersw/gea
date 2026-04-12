@@ -12,7 +12,7 @@ export default class TodoApp extends Component {
     return (
       <div class="todo-app">
         <h1>Todo</h1>
-        <TodoInput draft={todoStore.draft} onDraftChange={todoStore.setDraft} onAdd={() => todoStore.add()} />
+        <TodoInput draft={todoStore.draft} onDraftChange={(e: Event) => todoStore.setDraft(e)} onAdd={() => todoStore.add()} />
         <ul class="todo-list">
           {filteredTodos.map((todo) => (
             <TodoItem

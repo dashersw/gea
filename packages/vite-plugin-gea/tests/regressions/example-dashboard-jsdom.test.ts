@@ -3,6 +3,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, compileJsxModule, loadComponentUnseeded, readGeaUiSource } from '../helpers/compile'
 import { readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 
 function shimResizeObserver() {
   const prev = globalThis.ResizeObserver
@@ -114,9 +115,10 @@ describe('examples/dashboard in JSDOM (ported from dashboard.spec)', { concurren
   let restoreDom: () => void
   let restoreRO: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
+  let app: { dispose?: () => void }
 
   beforeEach(async () => {
+    resetDelegation()
     restoreDom = installDom()
     restoreRO = shimResizeObserver()
     const m = await mountDashboard()
@@ -125,7 +127,7 @@ describe('examples/dashboard in JSDOM (ported from dashboard.spec)', { concurren
   })
 
   afterEach(async () => {
-    app.dispose()
+    try { app.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     restoreRO()

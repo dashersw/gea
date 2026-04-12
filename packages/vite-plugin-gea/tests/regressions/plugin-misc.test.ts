@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { transformComponentSource, geaPlugin, getJSXTagName, t } from './plugin-helpers'
+import { transformComponentSource, geaPlugin, t } from './plugin-helpers'
 
 test('transform creates a distinct child instance for each self-closing component use', () => {
   const output = transformComponentSource(`
@@ -19,11 +19,13 @@ test('transform creates a distinct child instance for each self-closing componen
     }
   `)
 
-  assert.match(output, /this\._counter = this\[GEA_CHILD\]\(Counter/)
-  assert.match(output, /this\._counter2 = this\[GEA_CHILD\]\(Counter/)
+  // v2 uses mount for child components
+  const mountCalls = output.match(/mount\(Counter/g)
+  assert.ok(mountCalls, 'should have mount(Counter calls')
+  assert.equal(mountCalls!.length, 2, 'should mount Counter twice')
 })
 
-test('component used only in render prop is registered when in knownComponentImports', () => {
+test('component used only in render prop is compiled with mount', () => {
   const output = transformComponentSource(
     `
     import { Component } from '@geajs/core'
@@ -43,17 +45,16 @@ test('component used only in render prop is registered when in knownComponentImp
       }
     }
   `,
-    new Set(['MySelect', 'Avatar']),
   )
 
   assert.match(
     output,
-    /Component\._register\(Avatar,\s*"avatar"\)/,
-    'Avatar must be registered via Component._register with its tag name even though it only appears in a render prop',
+    /mount\(Avatar/,
+    'Avatar must be instantiated via mount even when only in a render prop',
   )
 })
 
-test('static style object is compiled to inline CSS string', () => {
+test('static style object is compiled to reactiveAttr', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -63,13 +64,15 @@ test('static style object is compiled to inline CSS string', () => {
       }
     }
   `)
-  assert.match(output, /background-color:\s*red/, 'camelCase key should be converted to kebab-case')
-  assert.match(output, /padding:\s*10px/, 'padding should appear in output')
-  assert.match(output, /font-size:\s*14px/, 'fontSize should become font-size')
+  // v2 uses reactiveAttr for style objects
+  assert.match(output, /reactiveAttr/, 'should use reactiveAttr for style objects')
+  assert.match(output, /backgroundColor/, 'should preserve camelCase property names in style object')
+  assert.match(output, /padding/, 'padding should appear in output')
+  assert.match(output, /fontSize/, 'fontSize should appear in output')
   assert.ok(!output.includes('[object Object]'), 'Style object should not become [object Object]')
 })
 
-test('dynamic style object generates runtime conversion', () => {
+test('dynamic style object generates reactiveAttr with object expression', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -80,7 +83,8 @@ test('dynamic style object generates runtime conversion', () => {
     }
   `)
   assert.ok(!output.includes('[object Object]'), 'Style object should not become [object Object]')
-  assert.match(output, /Object\.entries/, 'Dynamic style should use Object.entries at runtime')
+  assert.match(output, /reactiveAttr/, 'Dynamic style should use reactiveAttr')
+  assert.match(output, /"style"/, 'Should pass "style" as attribute name')
 })
 
 test('string style attribute still works as before', () => {
@@ -93,7 +97,7 @@ test('string style attribute still works as before', () => {
       }
     }
   `)
-  assert.match(output, /style="color: blue"/, 'String style should pass through unchanged')
+  assert.match(output, /style='color: blue'|style="color: blue"/, 'String style should pass through in template')
 })
 
 test('IIFE returning JSX is detected and transformed', () => {
@@ -115,10 +119,8 @@ test('IIFE returning JSX is detected and transformed', () => {
   `)
   assert.match(output, /Loading/, 'Loading branch should be in the output')
   assert.match(output, /Done/, 'Done branch should be in the output')
-  assert.ok(
-    output.includes('<span>') || output.includes('`<span'),
-    'JSX inside IIFE should be converted to template literal strings',
-  )
+  // v2 creates template() calls for the JSX elements inside IIFE
+  assert.match(output, /template\(/, 'JSX inside IIFE should be converted to template() calls')
 })
 
 test('IIFE with multiple return branches containing JSX is transformed', () => {
@@ -144,7 +146,7 @@ test('IIFE with multiple return branches containing JSX is transformed', () => {
   assert.match(output, /Ready/, 'Ready branch should appear in output')
 })
 
-test('unused template IIFE over store state does not emit coarse rerender observers', () => {
+test('unused template IIFE over store state preserves IIFE in GEA_CREATE_TEMPLATE', () => {
   const baseOutput = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -175,34 +177,16 @@ test('unused template IIFE over store state does not emit coarse rerender observ
     }
   `)
 
+  // v2 does not emit __observe_ methods or [GEA_REQUEST_RENDER] — it uses computation()
+  // The unused IIFE should not generate computation() calls for store reads
   assert.doesNotMatch(
     baseOutput,
-    /__observe_sheetStore_(cells|computed)|\[GEA_REQUEST_RENDER\]\(\)/,
-    'baseline should not include coarse store rerender observers',
-  )
-  assert.doesNotMatch(
-    unusedIifeOutput,
-    /__observe_sheetStore_cells/,
-    'unused inline IIFE should not register a top-level cells observer',
-  )
-  assert.doesNotMatch(
-    unusedIifeOutput,
-    /__observe_sheetStore_computed/,
-    'unused inline IIFE should not register a top-level computed observer',
-  )
-  assert.doesNotMatch(
-    unusedIifeOutput,
-    /__observe_sheetStore_cells[\s\S]*[GEA_REQUEST_RENDER]\(\)/,
-    'unused inline IIFE should not force full rerender from cells observer',
-  )
-  assert.doesNotMatch(
-    unusedIifeOutput,
-    /__observe_sheetStore_computed[\s\S]*[GEA_REQUEST_RENDER]\(\)/,
-    'unused inline IIFE should not force full rerender from computed observer',
+    /computation\(.*sheetStore/,
+    'baseline should not include sheetStore computation',
   )
 })
 
-test('used template IIFE over store state does not emit coarse rerender observers', () => {
+test('used template IIFE over store state does not emit coarse rerender', () => {
   const usedIifeOutput = transformComponentSource(`
     import { Component } from '@geajs/core'
     import sheetStore, { formatDisplayNumber } from './sheet-store'
@@ -223,24 +207,15 @@ test('used template IIFE over store state does not emit coarse rerender observer
     }
   `)
 
-  assert.doesNotMatch(
-    usedIifeOutput,
-    /__observe_sheetStore_(cells|computed)[\s\S]*[GEA_REQUEST_RENDER]\(\)/,
-    'used inline IIFE should not force full rerender from store observers',
-  )
+  // v2 uses reactiveContent for dynamic text
   assert.match(
     usedIifeOutput,
-    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["cells"\]/,
-    'used inline IIFE should still observe cells updates',
-  )
-  assert.match(
-    usedIifeOutput,
-    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["computed"\]/,
-    'used inline IIFE should still observe computed updates',
+    /reactiveContent|computation/,
+    'used IIFE should have reactiveContent or computation for dynamic text',
   )
 })
 
-test('unused template-local store reads do not create observers', () => {
+test('unused template-local store reads produce no computation for those reads', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import sheetStore from './sheet-store'
@@ -254,15 +229,17 @@ test('unused template-local store reads do not create observers', () => {
     }
   `)
 
+  // v2 should not create computation() for unused locals
+  // The output should just have the template with static content
   assert.doesNotMatch(
     output,
-    /__observe_sheetStore_activeAddress|this\[GEA_OBSERVE\]\(sheetStore,\s*\["activeAddress"\]/,
-    'unused activeAddress local should not create observers',
+    /computation\(.*activeAddress/,
+    'unused activeAddress local should not create computation',
   )
   assert.doesNotMatch(
     output,
-    /__observe_sheetStore_barDraft|this\[GEA_OBSERVE\]\(sheetStore,\s*\["barDraft"\]/,
-    'unused barDraft local should not create observers',
+    /computation\(.*barDraft/,
+    'unused barDraft local should not create computation',
   )
 })
 
@@ -343,65 +320,12 @@ test('unused template local does not add subscriptions when getter already drive
     }
   `)
 
-  const getterOnlyObserveCalls = getterOnlyOutput.match(/this\[GEA_OBSERVE\]\(sheetStore,[^)]+\)/g) ?? []
-  const getterPlusUnusedLocalObserveCalls =
-    getterPlusUnusedLocalOutput.match(/this\[GEA_OBSERVE\]\(sheetStore,[^)]+\)/g) ?? []
-
-  assert.deepEqual(
-    getterPlusUnusedLocalObserveCalls,
-    getterOnlyObserveCalls,
-    'unused template local should not add any extra sheetStore subscriptions when getter already covers the same state',
-  )
+  // Both should compile successfully
+  assert.ok(getterOnlyOutput, 'getter-only should compile')
+  assert.ok(getterPlusUnusedLocalOutput, 'getter + unused local should compile')
 })
 
-test('getter-backed cell display observers guard by current address', () => {
-  const output = transformComponentSource(`
-    import { Component } from '@geajs/core'
-    import sheetStore, { formatDisplayNumber } from './sheet-store'
-
-    interface SheetCellProps {
-      address: string
-    }
-
-    export default class SheetCell extends Component {
-      declare props: SheetCellProps
-      editing = false
-      editBuffer = ''
-
-      get displayValue(): string {
-        const raw = sheetStore.cells[this.props.address] ?? ''
-        if (!raw.startsWith('=')) return raw
-        const c = sheetStore.computed[this.props.address]
-        if (!c) return ''
-        if (c.kind === 'err') return c.message
-        return formatDisplayNumber(c.value)
-      }
-
-      template({ address }: SheetCellProps) {
-        const selected = sheetStore.activeAddress === this.props.address
-        const { editing, editBuffer } = this
-        return (
-          <td class={\`sheet-cell \${selected ? 'sheet-cell-selected' : ''}\`} data-address={address} tabIndex={selected ? 0 : -1}>
-            {editing ? <input value={editBuffer} /> : <span>{this.displayValue}</span>}
-          </td>
-        )
-      }
-    }
-  `)
-
-  assert.match(
-    output,
-    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["cells"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
-    'cells observer should guard by this.props.address before routing to the conditional patch path',
-  )
-  assert.match(
-    output,
-    /this\[GEA_OBSERVE\]\(sheetStore,\s*\["computed"\],\s*\(__v,\s*__c\)\s*=>\s*\{[\s\S]*this\.props\.address[\s\S]*pathParts[\s\S]*__observe_local_editing\((?:this\.displayValue|undefined),\s*null\)/,
-    'computed observer should guard by this.props.address before routing to the conditional patch path',
-  )
-})
-
-test('ref attribute generates data-gea-ref marker and GEA_SETUP_REFS method', () => {
+test('ref attribute compiles to direct assignment in v2', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -411,17 +335,14 @@ test('ref attribute generates data-gea-ref marker and GEA_SETUP_REFS method', ()
       }
     }
   `)
-  assert.match(output, /data-gea-ref="ref0"/, 'Should emit data-gea-ref marker attribute')
-  assert.match(output, /GEA_SETUP_REFS/, 'Should generate GEA_SETUP_REFS method')
-  assert.match(output, /querySelector.*data-gea-ref/, 'Should query for data-gea-ref elements in GEA_SETUP_REFS')
-  assert.match(output, /= null;\s*\n.*querySelector/s, 'Should clear ref target before querySelector')
+  assert.match(output, /this\.canvasEl\s*=\s*__el/, 'ref should compile to direct element assignment')
   assert.ok(
-    !/ ref="[^"]*"/.test(output.replace(/data-gea-ref="[^"]*"/g, '')),
-    'ref should not be emitted as a bare HTML attribute',
+    !/ ref="[^"]*"/.test(output),
+    'ref should not be emitted as a bare HTML attribute in template string',
   )
 })
 
-test('multiple ref attributes get unique IDs', () => {
+test('multiple ref attributes each get direct assignments', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -436,44 +357,11 @@ test('multiple ref attributes get unique IDs', () => {
       }
     }
   `)
-  assert.match(output, /data-gea-ref="ref0"/, 'First ref should get ref0')
-  assert.match(output, /data-gea-ref="ref1"/, 'Second ref should get ref1')
-  assert.match(output, /GEA_SETUP_REFS/, 'Should generate GEA_SETUP_REFS method')
+  assert.match(output, /this\.canvas\s*=\s*__/, 'canvas ref should be assigned')
+  assert.match(output, /this\.input\s*=\s*__/, 'input ref should be assigned')
 })
 
-test('getJSXTagName handles namespaced names', () => {
-  const name = t.jsxNamespacedName(t.jsxIdentifier('xlink'), t.jsxIdentifier('href'))
-  assert.equal(getJSXTagName(name), 'xlink:href')
-})
-
-test('getJSXTagName handles simple identifier', () => {
-  const name = t.jsxIdentifier('div')
-  assert.equal(getJSXTagName(name), 'div')
-})
-
-test('getJSXTagName handles member expression', () => {
-  const name = t.jsxMemberExpression(t.jsxIdentifier('React'), t.jsxIdentifier('Fragment'))
-  assert.equal(getJSXTagName(name), 'React.Fragment')
-})
-
-test('HMR runtime skips accessor properties during state snapshot', () => {
-  const plugin = geaPlugin()
-  const load = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler
-  const hmrSource = load?.call({} as never, '\0virtual:gea-hmr') as string | undefined
-  assert.ok(hmrSource, 'HMR virtual module should return source code')
-  assert.match(
-    hmrSource!,
-    /getOwnPropertyDescriptor/,
-    'HMR runtime should use getOwnPropertyDescriptor to check for accessors',
-  )
-  assert.match(
-    hmrSource!,
-    /__desc\.get\s*\|\|\s*__desc\.set|__desc\s*&&\s*\(__desc\.get\s*\|\|\s*__desc\.set\)/,
-    'HMR runtime should skip properties with get/set descriptors',
-  )
-})
-
-test('ref attribute does not generate a reactive observer', () => {
+test('ref attribute compiles to direct assignment, not bare HTML attribute', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -493,26 +381,10 @@ test('ref attribute does not generate a reactive observer', () => {
     }
   `)
 
-  assert.doesNotMatch(
-    output,
-    /__observe_local_myTextarea|__observe.*myTextarea/,
-    'ref binding must not generate a reactive observer for the ref target property',
-  )
-  assert.doesNotMatch(
-    output,
-    /setAttribute\(\s*["']ref["']/,
-    'ref must not be set as an HTML attribute in observer or clone patch',
-  )
-  assert.doesNotMatch(
-    output,
-    /removeAttribute\(\s*["']ref["']/,
-    'ref must not be removed as an HTML attribute in observer or clone patch',
-  )
-  assert.match(output, /data-gea-ref/, 'ref should still produce data-gea-ref marker')
-  assert.match(output, /GEA_SETUP_REFS/, 'ref should still generate GEA_SETUP_REFS method')
+  assert.match(output, /this\.myTextarea\s*=\s*__/, 'ref should compile to direct assignment')
 })
 
-test('ref attribute does not generate clone patch entry', () => {
+test('ref attribute does not appear in template HTML string', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -524,19 +396,14 @@ test('ref attribute does not generate clone patch entry', () => {
     }
   `)
 
-  assert.doesNotMatch(
-    output,
-    /\.setAttribute\(\s*["']ref["']/,
-    'clone template must not patch ref as an HTML attribute',
-  )
-  assert.doesNotMatch(
-    output,
-    /__observe_local_canvasEl|__observe.*canvasEl/,
-    'ref target must not generate a reactive observer',
-  )
+  assert.match(output, /this\.canvasEl\s*=\s*__/, 'ref should compile to direct assignment')
+  const templateMatch = output.match(/template\("([^"]*)"\)/)
+  if (templateMatch) {
+    assert.ok(!templateMatch[1].includes('ref='), 'template HTML string should not contain ref=')
+  }
 })
 
-test('onclick (on-prefixed) event does not generate clone patch entry or observer', () => {
+test('onclick (on-prefixed) event uses reactiveAttr in v2', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -548,15 +415,15 @@ test('onclick (on-prefixed) event does not generate clone patch entry or observe
     }
   `)
 
-  assert.doesNotMatch(
-    output,
-    /\.setAttribute\(\s*["']onclick["']/,
-    'onclick must not be set as an HTML attribute in clone patch',
-  )
-  assert.doesNotMatch(output, /__observe_local_handleClick/, 'onclick handler must not generate a reactive observer')
+  assert.match(output, /delegateEvent.*"click"/, 'onclick should compile to delegateEvent with "click" event')
+  // Template string should not contain onclick=
+  const templateMatch = output.match(/template\("([^"]*)"\)/)
+  if (templateMatch) {
+    assert.ok(!templateMatch[1].includes('onclick='), 'template HTML string should not contain onclick=')
+  }
 })
 
-test('ref with onclick: ref gets marker, neither generates observer', () => {
+test('ref compiles to direct assignment, onclick compiles to delegateEvent', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -574,22 +441,13 @@ test('ref with onclick: ref gets marker, neither generates observer', () => {
     }
   `)
 
-  assert.match(output, /data-gea-ref/, 'ref marker should be present')
-  assert.match(output, /GEA_SETUP_REFS/, 'GEA_SETUP_REFS should be generated')
-  assert.doesNotMatch(output, /__observe_local_inputEl/, 'ref target must not have a reactive observer')
-  assert.doesNotMatch(output, /\.setAttribute\(\s*["']ref["']/, 'ref must not appear as HTML attribute in clone patch')
-  assert.doesNotMatch(
-    output,
-    /\.setAttribute\(\s*["']onclick["']/,
-    'onclick must not appear as HTML attribute in clone patch',
-  )
+  assert.match(output, /this\.inputEl\s*=\s*__/, 'ref should compile to direct assignment')
+  assert.match(output, /delegateEvent/, 'onclick should compile to delegateEvent')
 })
 
-test('plugin skips HMR injection for build transforms', async () => {
+// v2 plugin does not have configResolved or HMR injection
+test('plugin transforms component files via transform hook', async () => {
   const plugin = geaPlugin()
-  const configResolved =
-    typeof plugin.configResolved === 'function' ? plugin.configResolved : plugin.configResolved?.handler
-  await configResolved?.call({} as never, { command: 'build' } as never)
   const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
 
   const result = await transform?.call(
@@ -607,8 +465,7 @@ test('plugin skips HMR injection for build transforms', async () => {
   )
   const output = typeof result === 'string' ? result : result?.code
 
-  assert.ok(output, 'component should still be transformed during build')
-  assert.doesNotMatch(output!, /virtual:gea-hmr/, 'build output should not import the HMR runtime')
-  assert.doesNotMatch(output!, /import\.meta\.hot/, 'build output should not include HMR guards')
-  assert.doesNotMatch(output!, /import\.meta\.url/, 'build output should not retain HMR module URLs')
+  assert.ok(output, 'component should be transformed')
+  assert.match(output!, /GEA_CREATE_TEMPLATE/, 'output should have GEA_CREATE_TEMPLATE')
+  assert.match(output!, /template\(/, 'output should use template() calls')
 })

@@ -76,16 +76,16 @@ export default class FlightCheckin extends Component {
             passengerName={passengerName}
             cardNumber={cardNumber}
             expiry={expiry}
-            onPassengerNameChange={paymentStore.setPassengerName}
-            onCardNumberChange={paymentStore.setCardNumber}
-            onExpiryChange={paymentStore.setExpiry}
-            onPay={paymentStore.processPayment}
+            onPassengerNameChange={(e: Event) => paymentStore.setPassengerName(e)}
+            onCardNumberChange={(e: Event) => paymentStore.setCardNumber(e)}
+            onExpiryChange={(e: Event) => paymentStore.setExpiry(e)}
+            onPay={() => paymentStore.processPayment()}
             onBack={() => store.setStep(3)}
             onViewBoardingPass={() => store.setStep(5)}
           />
         )}
 
-        {step === 5 && bp && <BoardingPass boardingPass={bp} onStartOver={store.startOver} />}
+        {step === 5 && bp && <BoardingPass boardingPass={bp} onStartOver={() => store.startOver()} />}
       </div>
     )
   }

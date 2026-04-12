@@ -12,82 +12,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { JSDOM } from 'jsdom'
+import { installDom, flushMicrotasks } from '../../../tests/helpers/jsdom-setup'
+import { compileJsxComponent, loadRuntimeModules } from './helpers/compile'
+import { GEA_DOM_COMPONENT } from '@geajs/core'
 
-import { geaPlugin } from '../src/index'
-import { buildEvalPrelude, mergeEvalBindings } from './helpers/compile'
-
-function installDom() {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>')
-  const requestAnimationFrame = (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0)
-  const cancelAnimationFrame = (id: number) => clearTimeout(id)
-
-  dom.window.requestAnimationFrame = requestAnimationFrame
-  dom.window.cancelAnimationFrame = cancelAnimationFrame
-
-  const previous = {
-    window: globalThis.window,
-    document: globalThis.document,
-    HTMLElement: globalThis.HTMLElement,
-    Node: globalThis.Node,
-    NodeFilter: globalThis.NodeFilter,
-    MutationObserver: globalThis.MutationObserver,
-    Event: globalThis.Event,
-    CustomEvent: globalThis.CustomEvent,
-    requestAnimationFrame: globalThis.requestAnimationFrame,
-    cancelAnimationFrame: globalThis.cancelAnimationFrame,
-  }
-
-  Object.assign(globalThis, {
-    window: dom.window,
-    document: dom.window.document,
-    HTMLElement: dom.window.HTMLElement,
-    Node: dom.window.Node,
-    NodeFilter: dom.window.NodeFilter,
-    MutationObserver: dom.window.MutationObserver,
-    Event: dom.window.Event,
-    CustomEvent: dom.window.CustomEvent,
-    requestAnimationFrame,
-    cancelAnimationFrame,
-  })
-
-  return () => {
-    Object.assign(globalThis, previous)
-    dom.window.close()
-  }
-}
-
-async function flushMicrotasks() {
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  await new Promise((resolve) => setTimeout(resolve, 0))
-}
-
-async function compileJsxComponent(source: string, id: string, className: string, bindings: Record<string, unknown>) {
-  const allBindings = mergeEvalBindings(bindings)
-  const plugin = geaPlugin()
-  const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
-  const result = await transform?.call({} as never, source, id)
-  assert.ok(result)
-
-  const code = typeof result === 'string' ? result : result.code
-  const compiledSource = `${buildEvalPrelude()}${code
-    .replace(/^import .*;$/gm, '')
-    .replaceAll('import.meta.hot', 'undefined')
-    .replaceAll('import.meta.url', '""')
-    .replace(/export default class\s+/, 'class ')}
-return ${className};`
-
-  return new Function(...Object.keys(allBindings), compiledSource)(...Object.values(allBindings))
-}
-
-async function loadRuntimeModules(seed: string) {
-  const { default: ComponentManager } = await import('../../gea/src/lib/base/component-manager')
-  ComponentManager.instance = undefined
-  const [compMod, storeMod] = await Promise.all([
-    import(`../../gea/src/lib/base/component.tsx?${seed}`),
-    import(`../../gea/src/lib/store.ts?${seed}`),
-  ])
-  return [compMod, storeMod] as const
+/** Retrieve the component instance stored on a DOM node by mountComponent. */
+function getInstance(node: any): any {
+  return node?.[GEA_DOM_COMPONENT]
 }
 
 // ---------------------------------------------------------------------------
@@ -150,9 +81,9 @@ test('radio-group pattern: onValueChange callback captured in created() updates 
     await flushMicrotasks()
 
     assert.equal(view.el?.querySelector('.display')?.textContent, 'pro', 'initial parent display')
-    assert.equal(view.el?.querySelector('.radio')?.textContent, 'pro', 'initial child display')
+    assert.equal(view.el?.querySelector('.radio')?.textContent?.trim(), 'pro', 'initial child display')
 
-    const child = (view as any)._radioChild
+    const child = getInstance(view.el?.querySelector('.radio'))
     assert.ok(child, 'child instance exists')
     assert.ok(typeof child._fireCallback === 'function', 'callback was captured in created()')
 
@@ -227,12 +158,12 @@ test('radio-group pattern: child display updates after parent prop refresh', asy
     view.render(root)
     await flushMicrotasks()
 
-    const child = (view as any)._radioChild
+    const child = getInstance(view.el?.querySelector('.radio'))
     child._fireCallback('enterprise')
     await flushMicrotasks()
 
     assert.equal(
-      view.el?.querySelector('.radio')?.textContent,
+      view.el?.querySelector('.radio')?.textContent?.trim(),
       'enterprise',
       'child DOM text must update after parent refreshes props',
     )
@@ -304,7 +235,7 @@ test('slider pattern: onValueChange with array value updates parent DOM', async 
 
     assert.equal(view.el?.querySelector('.display')?.textContent, '50', 'initial display')
 
-    const child = (view as any)._sliderChild
+    const child = getInstance(view.el?.querySelector('.slider'))
     assert.ok(typeof child._fireCallback === 'function', 'callback was captured')
 
     child._fireCallback([30])
@@ -383,7 +314,7 @@ test('slider range pattern: two-value array updates both parent values', async (
     assert.equal(view.el?.querySelector('.min')?.textContent, '20', 'initial min')
     assert.equal(view.el?.querySelector('.max')?.textContent, '80', 'initial max')
 
-    const child = (view as any)._sliderChild
+    const child = getInstance(view.el?.querySelector('.slider'))
     child._fireCallback([10, 60])
     await flushMicrotasks()
 
@@ -459,7 +390,7 @@ test('number-input pattern: onValueChange updates parent DOM', async () => {
 
     assert.equal(view.el?.querySelector('.display')?.textContent, '5', 'initial display')
 
-    const child = (view as any)._numberChild
+    const child = getInstance(view.el?.querySelector('.number-input'))
     child._fireCallback('6')
     await flushMicrotasks()
 
@@ -540,7 +471,7 @@ test('multiple rapid onValueChange callbacks all update parent correctly', async
     view.render(root)
     await flushMicrotasks()
 
-    const child = (view as any)._child
+    const child = getInstance(view.el?.querySelector('.child'))
 
     child._fireCallback('b')
     await flushMicrotasks()
@@ -630,7 +561,7 @@ test('child DOM is not fully re-rendered when parent refreshes props', async () 
     // Set a marker attribute on the child DOM element
     childEl.setAttribute('data-marker', 'stable')
 
-    const child = (view as any)._child
+    const child = getInstance(childEl)
     child._fireCallback('updated')
     await flushMicrotasks()
 
@@ -706,7 +637,7 @@ test('callback prop remains callable after parent refreshes child props', async 
     view.render(root)
     await flushMicrotasks()
 
-    const child = (view as any)._child
+    const child = getInstance(view.el?.querySelector('.child'))
 
     // First callback fires and triggers parent prop refresh
     child._fireCallback('second')
@@ -789,21 +720,21 @@ test('callback works when child uses template(props) not template({ value })', a
     await flushMicrotasks()
 
     assert.equal(view.el?.querySelector('.out')?.textContent, 'alpha')
-    assert.equal(view.el?.querySelector('.zag')?.textContent, 'alpha')
+    assert.equal(view.el?.querySelector('.zag')?.textContent?.trim(), 'alpha')
 
-    const child = (view as any)._zagLike
+    const child = getInstance(view.el?.querySelector('.zag'))
     child._fireCallback('beta')
     await flushMicrotasks()
 
     assert.equal(view.el?.querySelector('.out')?.textContent, 'beta', 'parent DOM must update')
-    assert.equal(view.el?.querySelector('.zag')?.textContent, 'beta', 'child DOM must update')
+    assert.equal(view.el?.querySelector('.zag')?.textContent?.trim(), 'beta', 'child DOM must update')
 
     // fire again to verify stability
     child._fireCallback('gamma')
     await flushMicrotasks()
 
     assert.equal(view.el?.querySelector('.out')?.textContent, 'gamma')
-    assert.equal(view.el?.querySelector('.zag')?.textContent, 'gamma')
+    assert.equal(view.el?.querySelector('.zag')?.textContent?.trim(), 'gamma')
 
     view.dispose()
   } finally {
@@ -876,12 +807,12 @@ test('zag pattern: child sets this.value AND fires callback — parent DOM updat
 
     assert.equal(view.el?.querySelector('.display')?.textContent, 'pro')
 
-    const child = (view as any)._zagChild
+    const child = getInstance(view.el?.querySelector('.zag-child'))
     child._onValueChange('enterprise')
     await flushMicrotasks()
 
     assert.equal(view.el?.querySelector('.display')?.textContent, 'enterprise', 'parent DOM must update')
-    assert.equal(view.el?.querySelector('.zag-child')?.textContent, 'enterprise', 'child DOM must reflect updated prop')
+    assert.equal(view.el?.querySelector('.zag-child')?.textContent?.trim(), 'enterprise', 'child DOM must reflect updated prop')
     assert.equal(child.value, 'enterprise', 'child local value must be set')
 
     view.dispose()
@@ -948,7 +879,7 @@ test('zag pattern: second callback after prop refresh still works', async () => 
     view.render(root)
     await flushMicrotasks()
 
-    const child = (view as any)._zagChild
+    const child = getInstance(view.el?.querySelector('.zag-child'))
 
     child._onValueChange('pro')
     await flushMicrotasks()
@@ -957,7 +888,7 @@ test('zag pattern: second callback after prop refresh still works', async () => 
     child._onValueChange('enterprise')
     await flushMicrotasks()
     assert.equal(view.el?.querySelector('.display')?.textContent, 'enterprise')
-    assert.equal(view.el?.querySelector('.zag-child')?.textContent, 'enterprise')
+    assert.equal(view.el?.querySelector('.zag-child')?.textContent?.trim(), 'enterprise')
 
     view.dispose()
   } finally {
@@ -1050,7 +981,7 @@ test('radio-group map: callback + items refresh does not destroy item DOM', asyn
     // Mark a DOM element to check stability
     items![1].setAttribute('data-marker', 'stable')
 
-    const child = (view as any)._radioLike
+    const child = getInstance(view.el?.querySelector('.radio-root'))
     child._onValueChange('enterprise')
     await flushMicrotasks()
 
@@ -1141,7 +1072,7 @@ test('child with props.class: prop refresh patches class without full re-render'
     assert.ok(childEl)
     childEl.setAttribute('data-zag', 'bound')
 
-    const child = (view as any)._styledChild
+    const child = getInstance(childEl)
     child._onValueChange('updated')
     await flushMicrotasks()
 

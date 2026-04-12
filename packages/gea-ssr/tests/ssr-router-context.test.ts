@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { Router } from '../../gea/src/lib/router/router.ts'
-import { router } from '../../gea/src/lib/router/index.ts'
+import { Router } from '../../gea/src/router/router.ts'
+import { router } from '../../gea/src/router/index.ts'
 import { resolveSSRRouter, runWithSSRRouter, createSSRRouterState } from '../src/ssr-router-context.ts'
 import type { ServerRouteResult } from '../src/server-router.ts'
 

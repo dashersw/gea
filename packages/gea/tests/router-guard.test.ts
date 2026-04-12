@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { runGuards } from '../src/lib/router/guard'
+import { runGuards } from '../src/router/guard'
 import NoAccess from '../../../examples/router-v2/src/views/NotFound'
 
 describe('runGuards', () => {

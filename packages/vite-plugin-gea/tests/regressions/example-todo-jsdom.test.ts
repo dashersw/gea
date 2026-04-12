@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
 import { readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 
 async function mountTodoApp(seed: string) {
-  const { TodoStore } = await import('../../../../examples/todo/todo-store.ts')
-  const [{ default: Component }] = await loadRuntimeModules(seed)
+  const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+  const TodoStore = await compileStore(
+    readExampleFile('todo/todo-store.ts'),
+    '/virtual/examples/todo/todo-store.ts',
+    'TodoStore',
+    { Store },
+  )
 
   const TodoInput = await compileJsxComponent(
     readExampleFile('todo/components/TodoInput.tsx'),
@@ -64,9 +71,10 @@ function typeSequentially(el: HTMLInputElement, text: string) {
 describe('examples/todo app in JSDOM (ported from todo.spec)', { concurrency: false }, () => {
   let restoreDom: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
+  let app: { dispose?: () => void }
 
   beforeEach(async () => {
+    resetDelegation()
     restoreDom = installDom()
     const seed = `ex-todo-${Date.now()}-${Math.random()}`
     const m = await mountTodoApp(seed)
@@ -75,7 +83,7 @@ describe('examples/todo app in JSDOM (ported from todo.spec)', { concurrency: fa
   })
 
   afterEach(async () => {
-    app.dispose()
+    try { app.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     restoreDom()

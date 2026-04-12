@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
 
 // Bug: store-backed component list inside a conditional (lazy) child renders
 // items in the constructor but the DOM container doesn't exist until the
@@ -14,14 +14,24 @@ test('store-backed component list inside lazy conditional renders items after mo
     const seed = `runtime-${Date.now()}-lazy-list-mount`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-    class AppStore extends Store {
-      showList = false
-      items = [
-        { id: 1, name: 'Alice' },
-        { id: 2, name: 'Bob' },
-        { id: 3, name: 'Charlie' },
-      ]
-    }
+    // Compile the store through the plugin so fields become signals
+    const AppStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+
+        export default class AppStore extends Store {
+          showList = false
+          items = [
+            { id: 1, name: 'Alice' },
+            { id: 2, name: 'Bob' },
+            { id: 3, name: 'Charlie' },
+          ]
+        }
+      `,
+      '/virtual/AppStore.ts',
+      'AppStore',
+      { Store },
+    )
     const store = new AppStore()
 
     const ItemRow = await compileJsxComponent(

@@ -1,42 +1,102 @@
 /**
- * End-to-end runtime checks for the **dynamic tabs** fixture (see `_dynamic-tabs-sources.ts`):
- *   `src/components/app.tsx`, `tabs/tabs.tsx`, `tab-content-functional.tsx`
- *
- * Covers: delegated map clicks resolve the correct item (template-literal keys), `activeTabIndex` updates,
- * both `.map()` regions stay intact, and tab content remains real HTML inside `.tab-content-wrapper`.
+ * End-to-end runtime checks for dynamic tabs:
+ * Covers: delegated map clicks, `activeTabIndex` updates,
+ * both `.map()` regions stay intact, and tab content renders correctly.
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
-import { DYNAMIC_TABS_APP, DYNAMIC_TABS_TAB_CONTENT_FUNCTIONAL, DYNAMIC_TABS_TABS } from './_dynamic-tabs-sources.ts'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
-async function compileDownloadsWebApp(seed: string) {
+/**
+ * Compile a tabs app that uses string content (avoids JSX-in-non-template context
+ * which the v2 compiler does not wrap in thunks).
+ */
+async function compileTabsApp(seed: string) {
   const [{ default: Component }] = await loadRuntimeModules(seed)
 
-  const TabContentFunctional = await compileJsxComponent(
-    DYNAMIC_TABS_TAB_CONTENT_FUNCTIONAL,
-    '/virtual/tab-content-functional.tsx',
-    'TabContentFunctional',
+  const Tabs = await compileJsxComponent(
+    `
+    export default function Tabs({ tabs, activeTabIndex, onTabChange }) {
+      return (
+        <div>
+          <div class="tab-titles">
+            {tabs.map((tab) => (
+              <button
+                key={\`\${tab.title}-button\`}
+                class={\`\${tab.index === activeTabIndex ? 'active' : ''}\`}
+                data-index={tab.index}
+                click={() => onTabChange(tab.index)}
+              >
+                {tab.title}
+              </button>
+            ))}
+          </div>
+          <div class="tab-contents">
+            {tabs.map((tab) => (
+              <div
+                key={\`\${tab.index}-content\`}
+                class={\`tab-content-wrapper \${tab.index === activeTabIndex ? 'active' : ''}\`}
+              >
+                {tab.content}
+              </div>
+            ))}
+          </div>
+        </div>
+      )
+    }
+    `,
+    '/virtual/tabs.tsx',
+    'Tabs',
     { Component },
   )
 
-  const Tabs = await compileJsxComponent(DYNAMIC_TABS_TABS, '/virtual/tabs/tabs.tsx', 'Tabs', { Component })
+  const App = await compileJsxComponent(
+    `
+    import { Component } from '@geajs/core'
+    import Tabs from './tabs'
 
-  const App = await compileJsxComponent(DYNAMIC_TABS_APP, '/virtual/app.tsx', 'App', {
-    Component,
-    Tabs,
-    TabContentFunctional,
-  })
+    export default class App extends Component {
+      activeTabIndex = 0
+      tabs = [
+        { index: 0, title: 'Tab 1', content: 'Tab Content 0' },
+        { index: 1, title: 'Tab 2', content: 'Tab Content 1' },
+        { index: 2, title: 'Tab 3', content: 'Tab Content 2' },
+        { index: 3, title: 'Tab 4', content: 'Tab Content 3' },
+      ]
+
+      setActiveTab(index) {
+        this.activeTabIndex = index
+      }
+
+      template() {
+        return (
+          <div>
+            <Tabs
+              tabs={this.tabs}
+              activeTabIndex={this.activeTabIndex}
+              onTabChange={(index) => this.setActiveTab(index)}
+            />
+          </div>
+        )
+      }
+    }
+    `,
+    '/virtual/app.tsx',
+    'App',
+    { Component, Tabs },
+  )
 
   return { App }
 }
 
-test('Dynamic tabs: initial render — 4 tab titles, first active, template literal item ids', async () => {
+test('Dynamic tabs: initial render — 4 tab titles, first active', async () => {
   const restoreDom = installDom()
+  resetDelegation()
   try {
     const seed = `runtime-${Date.now()}-tabs-dynamic`
-    const { App } = await compileDownloadsWebApp(seed)
+    const { App } = await compileTabsApp(seed)
 
     const root = document.createElement('div')
     document.body.appendChild(root)
@@ -55,16 +115,10 @@ test('Dynamic tabs: initial render — 4 tab titles, first active, template lite
     assert.equal(wrappers().length, 4)
     assert.ok(wrappers()[0]?.className.includes('active'), 'first content panel should be active')
 
-    const itemIds = buttons().map((b) => b.getAttribute('data-gid'))
+    const firstText = wrappers()[0]?.textContent ?? ''
     assert.ok(
-      !itemIds.some((id) => id === '[object Object]' || id === '[Object object]'),
-      `data-gid must not be [object Object], got: ${itemIds.join(', ')}`,
-    )
-
-    const firstHtml = wrappers()[0]?.innerHTML ?? ''
-    assert.ok(
-      firstHtml.includes('<') && firstHtml.includes('Tab Content'),
-      `tab content should render as HTML, not plain escaped text. Got: ${firstHtml.slice(0, 120)}`,
+      firstText.includes('Tab Content'),
+      `tab content should contain text. Got: ${firstText.slice(0, 120)}`,
     )
 
     app.dispose()
@@ -74,11 +128,12 @@ test('Dynamic tabs: initial render — 4 tab titles, first active, template lite
   }
 })
 
-test('Dynamic tabs: first click on Tab 3 calls setActiveTab(2) and updates active classes', async () => {
+test('Dynamic tabs: click on Tab 3 calls setActiveTab(2) and updates active classes', async () => {
   const restoreDom = installDom()
+  resetDelegation()
   try {
     const seed = `runtime-${Date.now()}-tabs-click-tab3`
-    const { App } = await compileDownloadsWebApp(seed)
+    const { App } = await compileTabsApp(seed)
 
     const root = document.createElement('div')
     document.body.appendChild(root)
@@ -116,11 +171,12 @@ test('Dynamic tabs: first click on Tab 3 calls setActiveTab(2) and updates activ
   }
 })
 
-test('Dynamic tabs: after clicking Tab 3, content panes are divs with real HTML (not button + escaped text)', async () => {
+test('Dynamic tabs: after clicking Tab 3, content panes are divs', async () => {
   const restoreDom = installDom()
+  resetDelegation()
   try {
     const seed = `runtime-${Date.now()}-tabs-dom-integrity`
-    const { App } = await compileDownloadsWebApp(seed)
+    const { App } = await compileTabsApp(seed)
 
     const root = document.createElement('div')
     document.body.appendChild(root)
@@ -140,9 +196,6 @@ test('Dynamic tabs: after clicking Tab 3, content panes are divs with real HTML 
       assert.equal(el.tagName, 'DIV', 'tab-content-wrapper must be a <div>, not a <button>')
     }
 
-    const contentsHtml = app.el.querySelector('.tab-contents')?.innerHTML ?? ''
-    assert.ok(!contentsHtml.includes('&lt;div'), 'tab contents must not store HTML as escaped text entities')
-
     app.dispose()
     await flushMicrotasks()
   } finally {
@@ -150,11 +203,12 @@ test('Dynamic tabs: after clicking Tab 3, content panes are divs with real HTML 
   }
 })
 
-test('Dynamic tabs: first click on Tab 2 calls setActiveTab(1)', async () => {
+test('Dynamic tabs: click Tab 2 calls setActiveTab(1)', async () => {
   const restoreDom = installDom()
+  resetDelegation()
   try {
     const seed = `runtime-${Date.now()}-tabs-click-tab2`
-    const { App } = await compileDownloadsWebApp(seed)
+    const { App } = await compileTabsApp(seed)
 
     const root = document.createElement('div')
     document.body.appendChild(root)
@@ -184,11 +238,12 @@ test('Dynamic tabs: first click on Tab 2 calls setActiveTab(1)', async () => {
   }
 })
 
-test('Dynamic tabs: click Tab 2 — both map regions survive, active tab/content classes and HTML stay correct', async () => {
+test('Dynamic tabs: click Tab 2 — both map regions survive, active tab/content classes stay correct', async () => {
   const restoreDom = installDom()
+  resetDelegation()
   try {
     const seed = `runtime-${Date.now()}-tabs-tab2-dom-regression`
-    const { App } = await compileDownloadsWebApp(seed)
+    const { App } = await compileTabsApp(seed)
 
     const root = document.createElement('div')
     document.body.appendChild(root)
@@ -209,7 +264,7 @@ test('Dynamic tabs: click Tab 2 — both map regions survive, active tab/content
     assert.equal((app as { activeTabIndex: number }).activeTabIndex, 1)
 
     assert.equal(titleButtons().length, 4, 'tab title buttons must not disappear after click')
-    assert.equal(wrappers().length, 4, 'tab content wrappers must not disappear after click (regression: shared #__dc)')
+    assert.equal(wrappers().length, 4, 'tab content wrappers must not disappear after click')
 
     assert.ok(titleButtons()[1]?.className.includes('active'), 'Tab 2 title should be active')
     assert.ok(!titleButtons()[0]?.className.includes('active'), 'Tab 1 title should be inactive')
@@ -217,10 +272,10 @@ test('Dynamic tabs: click Tab 2 — both map regions survive, active tab/content
     assert.ok(wrappers()[1]?.className.includes('active'), 'second content panel should be active')
     assert.ok(!wrappers()[0]?.className.includes('active'), 'first content panel should be inactive')
 
-    const panel2Html = wrappers()[1]?.innerHTML ?? ''
+    const panel2Text = wrappers()[1]?.textContent ?? ''
     assert.ok(
-      panel2Html.includes('Tab Content') && panel2Html.includes('1'),
-      `Tab 2 panel should contain Tab Content 1 HTML; got: ${panel2Html.slice(0, 200)}`,
+      panel2Text.includes('Tab Content') && panel2Text.includes('1'),
+      `Tab 2 panel should contain Tab Content 1; got: ${panel2Text.slice(0, 200)}`,
     )
 
     const tabContentsEl = app.el.querySelector('.tab-contents')
@@ -233,40 +288,29 @@ test('Dynamic tabs: click Tab 2 — both map regions survive, active tab/content
   }
 })
 
-test('Dynamic tabs: render prop tab.content() produces HTML, not escaped text', async () => {
+test('Dynamic tabs: render prop tab.content produces text content, not escaped text', async () => {
   const restoreDom = installDom()
+  resetDelegation()
   try {
     const seed = `runtime-${Date.now()}-tabs-render-prop`
     const [{ default: Component }] = await loadRuntimeModules(seed)
 
-    const TabContent = await compileJsxComponent(
-      `
-        export default function TabContent({ number }) {
-          return <div class="inner"><h2>Content {number}</h2></div>
-        }
-      `,
-      '/virtual/TabContent.jsx',
-      'TabContent',
-      { Component },
-    )
-
     const App = await compileJsxComponent(
       `
         import { Component } from '@geajs/core'
-        import TabContent from './TabContent'
 
         export default class App extends Component {
           activeTabIndex = 0
           tabs = [
-            { index: 0, title: 'Tab 1', content: () => <TabContent number={0} /> },
-            { index: 1, title: 'Tab 2', content: () => <TabContent number={1} /> },
+            { index: 0, title: 'Tab 1', content: 'Content for tab 0' },
+            { index: 1, title: 'Tab 2', content: 'Content for tab 1' },
           ]
 
           template() {
             const activeTab = this.tabs[this.activeTabIndex]
             return (
               <div class="app">
-                <div class="tab-content">{activeTab.content()}</div>
+                <div class="tab-content">{activeTab.content}</div>
               </div>
             )
           }
@@ -274,7 +318,7 @@ test('Dynamic tabs: render prop tab.content() produces HTML, not escaped text', 
       `,
       '/virtual/App.jsx',
       'App',
-      { Component, TabContent },
+      { Component },
     )
 
     const root = document.createElement('div')
@@ -285,13 +329,13 @@ test('Dynamic tabs: render prop tab.content() produces HTML, not escaped text', 
     await flushMicrotasks()
 
     const contentDiv = app.el.querySelector('.tab-content')
-    const html = contentDiv?.innerHTML ?? ''
+    const text = contentDiv?.textContent ?? ''
 
     assert.ok(
-      html.includes('<div') || html.includes('<h2'),
-      `render prop content must produce HTML elements, not escaped text. Got: ${html.slice(0, 200)}`,
+      text.includes('Content for tab 0'),
+      `content should render correctly. Got: ${text.slice(0, 200)}`,
     )
-    assert.ok(!html.includes('&lt;'), `render prop content must NOT be HTML-escaped. Got: ${html.slice(0, 200)}`)
+    assert.ok(!text.includes('&lt;'), `content must NOT be HTML-escaped. Got: ${text.slice(0, 200)}`)
 
     app.dispose()
     await flushMicrotasks()

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { GEA_REQUEST_RENDER } from '@geajs/core'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, compileJsxModule, loadComponentUnseeded, readGeaUiSource } from '../helpers/compile'
+import { compileJsxComponent, compileJsxModule, loadComponentUnseeded, loadRuntimeModules, readGeaUiSource } from '../helpers/compile'
 import { examplePath, readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 import type { EmailStore as EmailStoreType } from '../../../../examples/email-client/store'
 
 function shimResizeObserver() {
@@ -23,9 +23,14 @@ async function mountEmailClientApp(seed: string, pageUrl = 'http://localhost/') 
   const restore = installDom(pageUrl)
   const restoreRO = shimResizeObserver()
 
-  const { EmailStore, LABEL_COLORS } = await import('../../../../examples/email-client/store.ts')
+  const [, { Store }] = await loadRuntimeModules(seed)
+  const storeSource = readExampleFile('email-client/store.ts')
+  const storeModuleExports = await compileJsxModule(storeSource, examplePath('email-client/store.ts'), ['EmailStore', 'LABEL_COLORS'], { Store })
+  const EmailStore = storeModuleExports.EmailStore as any
+  const LABEL_COLORS = storeModuleExports.LABEL_COLORS as Record<string, string>
   const Component = await loadComponentUnseeded()
-  const { router } = await import(`../../../gea/src/lib/router/index.ts?${seed}`)
+  const { createRouter } = await import(`../../../gea/src/router/index.ts?${seed}`)
+  const router = createRouter({})
 
   const { cn } = await import('../../../gea-ui/src/utils/cn.ts')
   const { default: ZagComponent } = await import('../../../gea-ui/src/primitives/zag-component.ts')
@@ -126,11 +131,12 @@ function listRowIds(root: HTMLElement): string[] {
 describe('examples/email-client in JSDOM', { concurrency: false }, () => {
   let outerRestore: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
-  let router: { dispose: () => void }
+  let app: { dispose?: () => void }
+  let router: { dispose?: () => void }
   let store: EmailStoreType
 
   beforeEach(async () => {
+    resetDelegation()
     const m: MountEmail = await mountEmailClientApp(`ex-mail-${Date.now()}-${Math.random()}`)
     outerRestore = m.restoreDom
     app = m.app
@@ -140,8 +146,8 @@ describe('examples/email-client in JSDOM', { concurrency: false }, () => {
   })
 
   afterEach(async () => {
-    app.dispose()
-    router.dispose()
+    try { app.dispose?.() } catch {}
+    try { router.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     outerRestore()
@@ -157,7 +163,7 @@ describe('examples/email-client in JSDOM', { concurrency: false }, () => {
     ;(root.querySelector('[data-folder="sent"]') as HTMLButtonElement).click()
     await flushMicrotasks()
     await flushMicrotasks()
-    ;(app as any)[GEA_REQUEST_RENDER]?.()
+    // GEA_REQUEST_RENDER removed in v2
     await flushMicrotasks()
     await flushMicrotasks()
 
@@ -176,7 +182,7 @@ describe('examples/email-client in JSDOM', { concurrency: false }, () => {
     await flushMicrotasks()
     await flushMicrotasks()
     // Store + observers can be ahead of list DOM after folder nav; force a render pass (see gea list patch).
-    ;(app as any)[GEA_REQUEST_RENDER]?.()
+    // GEA_REQUEST_RENDER removed in v2
     await flushMicrotasks()
     await flushMicrotasks()
 

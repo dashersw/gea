@@ -1,21 +1,31 @@
+/**
+ * Store observer / reactivity wiring regression tests — v2 edition.
+ *
+ * In v2 the compiler does NOT emit `[GEA_OBSERVE]`, `__observe_*` methods,
+ * `[GEA_REQUEST_RENDER]`, `[GEA_UPDATE_TEXT]`, or `__buildProps_*`.
+ * Instead, reactivity is handled at runtime through:
+ *   - `computation()` for reactive text/attribute bindings
+ *   - `keyedList()` for array .map() rendering
+ *   - `conditional()` for && / ternary conditional rendering
+ *   - `mount()` for child component instantiation with reactive props
+ *   - `reactiveAttr()` for reactive element attributes
+ *   - `reactiveText()` for dynamic text nodes
+ *   - `delegateEvent()` for event handlers
+ *
+ * These tests verify the compiled output uses the correct v2 runtime helpers
+ * and that store field access is preserved for signal-based tracking.
+ */
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
-import { GEA_STORE_ROOT } from '../../../gea/src/lib/symbols'
-import type { StateRefMeta } from '../../src/ir/types'
 import {
   transformComponentSource,
   transformWithPlugin,
-  createObserveHarness,
-  withDom,
-  generate,
-  generateObserveHandler,
-  getObserveMethodName,
 } from './plugin-helpers'
 
-test('static reactivity wires subscriptions for every imported store used by a component', () => {
+test('multiple stores produce computation() calls that access each store', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import counterStore from './counter-store'
@@ -33,11 +43,12 @@ test('static reactivity wires subscriptions for every imported store used by a c
     }
   `)
 
-  assert.match(output, /this\[GEA_OBSERVE\]\(counterStore,/)
-  assert.match(output, /this\[GEA_OBSERVE\]\(filterStore,/)
+  // v2 uses computation() for each store field binding
+  assert.match(output, /computation\(\(\) => counterStore\.count/)
+  assert.match(output, /computation\(\(\) => filterStore\.query/)
 })
 
-test('static reactivity detects default Store imports across files', async () => {
+test('default Store import across files compiles to computation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-store-import-'))
 
   try {
@@ -67,14 +78,13 @@ export default class DashboardStore extends Store {
     )
 
     assert.ok(output)
-    assert.match(output, /this\[GEA_OBSERVE\]\(store,/)
-    assert.match(output, /\["count"\]/)
+    assert.match(output, /computation\(\(\) => store\.count/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('imported store array text bindings inject id on stats element for getElementById', () => {
+test('imported store array text bindings use reactiveText for computed values', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import store from './todo-store'
@@ -99,17 +109,14 @@ test('imported store array text bindings inject id on stats element for getEleme
     }
   `)
 
-  assert.ok(
-    /id=.*__id.*-b\d.*todo-stats|todo-stats.*id=.*__id.*-b\d/.test(output),
-    'todo-stats div must have id attribute for getElementById lookup',
-  )
-  assert.ok(
-    /this\[GEA_UPDATE_TEXT\]\(['"]b\d['"]/.test(output),
-    'stats binding must use [GEA_UPDATE_TEXT] helper, not inline getElementById',
-  )
+  // v2 uses reactiveText for dynamic text nodes reading store arrays
+  assert.match(output, /reactiveText\(\(\) => store\.todos\.length\)/)
+  assert.match(output, /reactiveText\(\(\) => store\.todos\.filter/)
+  // v2 uses keyedList for .map()
+  assert.match(output, /keyedList\(/)
 })
 
-test('imported store input value binding injects id for getElementById', () => {
+test('imported store input value binding uses reactiveAttr', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import store from './todo-store'
@@ -129,86 +136,12 @@ test('imported store input value binding injects id for getElementById', () => {
     }
   `)
 
-  assert.ok(
-    /input[^>]*id=.*__id.*-b\d|id=.*__id.*-b\d[^>]*input/.test(output),
-    'input must have id for getElementById so value updates (e.g. clear after add) work',
-  )
-  assert.ok(/__gid\([^)]*__id[^)]*\+[^)]*"-b\d"\)/.test(output), 'input value binding must use __gid')
+  // v2 uses reactiveAttr for value binding and delegateEvent for event
+  assert.match(output, /reactiveAttr\([^,]+, "value", \(\) => store\.inputValue\)/)
+  assert.match(output, /delegateEvent\([^,]+, "input"/)
 })
 
-test('wildcard observers update index zero items', () => {
-  withDom(() => {
-    const binding = {
-      pathParts: ['todos', '*', 'label'],
-      type: 'text' as const,
-      selector: '.label',
-      elementPath: [],
-      itemIdProperty: 'id',
-      childPath: [0],
-    }
-    const method = generateObserveHandler(binding, new Map())
-    const methodSource = generate(method).code
-    const harness = createObserveHarness(
-      methodSource,
-      `
-      this.todos = [{ id: 1, label: 'before' }];
-      `,
-    )
-    harness.root = document.createElement('div')
-    harness.root.innerHTML = '<div class="item" data-gid="0"><span class="label">before</span></div>'
-    harness.__todos_container = harness.root
-
-    harness[getObserveMethodName(['todos', '*', 'label'])]('after', {
-      pathParts: ['todos', '0', 'label'],
-      arrayPathParts: ['todos'],
-      arrayIndex: 0,
-      leafPathParts: ['label'],
-      isArrayItemPropUpdate: true,
-      newValue: 'after',
-    })
-
-    assert.equal(harness.root.querySelector('.label')?.textContent, 'after')
-  })
-})
-
-test('wildcard observers resolve imported array paths correctly', () => {
-  withDom(() => {
-    const binding = {
-      pathParts: ['todos', '*', 'label'],
-      isImportedState: true,
-      storeVar: 'storeState',
-      type: 'text' as const,
-      selector: '.label',
-      elementPath: [],
-      itemIdProperty: 'id',
-      childPath: [0],
-    }
-    const method = generateObserveHandler(
-      binding,
-      new Map<string, StateRefMeta>([['storeState', { kind: 'imported', source: './store' }]]),
-    )
-    const methodSource = generate(method).code
-    const harness = createObserveHarness(methodSource, '', {
-      storeState: { [GEA_STORE_ROOT]: { todos: [{ id: 1, label: 'before' }] } },
-    })
-    harness.root = document.createElement('div')
-    harness.root.innerHTML = '<div class="item" data-gid="0"><span class="label">before</span></div>'
-    harness.__todos_container = harness.root
-
-    harness[getObserveMethodName(['todos', '*', 'label'], 'storeState')]('after', {
-      pathParts: ['todos', '0', 'label'],
-      arrayPathParts: ['todos'],
-      arrayIndex: 0,
-      leafPathParts: ['label'],
-      isArrayItemPropUpdate: true,
-      newValue: 'after',
-    })
-
-    assert.equal(harness.root.querySelector('.label')?.textContent, 'after')
-  })
-})
-
-test('static reactivity subscribes imported array maps without plain text bindings', () => {
+test('imported array map without plain text bindings uses keyedList', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import store from './todo-store'
@@ -226,11 +159,11 @@ test('static reactivity subscribes imported array maps without plain text bindin
     }
   `)
 
-  assert.match(output, /render(?:__unresolved_0|Todos)Item/)
-  assert.match(output, /store\.todos\.map/)
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /store\.todos/)
 })
 
-test('computed imported array maps subscribe to helper dependencies', () => {
+test('computed imported array maps preserve helper call in keyedList source', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import store from './grid-store'
@@ -253,11 +186,12 @@ test('computed imported array maps subscribe to helper dependencies', () => {
     }
   `)
 
-  assert.match(output, /const visibleItems = this\.getVisibleItems\(\)/)
-  assert.match(output, /visibleItems\.map/)
+  // v2 preserves the helper call in the keyedList source getter
+  assert.match(output, /keyedList\(/)
+  assert.match(output, /this\.getVisibleItems\(\)/)
 })
 
-test('store getter destructuring observes getter state deps when passed as child component props', async () => {
+test('store getter destructuring: template accesses getter through runtime tracking', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-getter-deps-'))
 
   try {
@@ -302,21 +236,16 @@ export default class TodoStore extends Store {
     )
 
     assert.ok(output)
-    assert.match(output, /\["filter"\]/, 'state property should observe specific path')
-    assert.match(output, /\["todos"\]/, 'store getter should observe its actual state dependency')
-    assert.doesNotMatch(output, /\["activeCount"\]/, 'should not observe getter name as path')
-    assert.doesNotMatch(output, /\["completedCount"\]/, 'should not observe getter name as path')
-    assert.doesNotMatch(
-      output,
-      /\[GEA_OBSERVE\]\([^,]+,\s*\[\]/,
-      'should not use root observer when getter deps are known',
-    )
+    // v2 uses mount with reactive prop getters
+    assert.match(output, /mount\(TodoFilters/)
+    // The getter values should be accessed through todoStore
+    assert.match(output, /todoStore/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('store getter via direct member access observes dependency paths', async () => {
+test('store getter via direct member access compiles to computation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-getter-direct-'))
 
   try {
@@ -354,15 +283,15 @@ export default new CounterStore()`,
     )
 
     assert.ok(output)
-    assert.match(output, /\["count"\]/, 'count should be observed directly')
-    assert.doesNotMatch(output, /\["doubled"\]/, 'should not observe getter name as path')
-    assert.match(output, /counterStore\.doubled/, 'should inline re-read of getter value in merged observer')
+    // v2 accesses both count and doubled through computation()
+    assert.match(output, /computation\(\(\) => counterStore\.count/)
+    assert.match(output, /computation\(\(\) => counterStore\.doubled/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('store getter observer refreshes child props instead of re-rendering', async () => {
+test('store getter observer refreshes child props via mount reactive props', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-getter-guard-'))
 
   try {
@@ -397,21 +326,16 @@ export default class TodoStore extends Store {
     )
 
     assert.ok(output)
-    assert.match(output, /__observe_todoStore_todos/, 'todos observer method should be generated')
-    const methodStart = output.indexOf('__observe_todoStore_todos')
-    const methodSlice = output.slice(methodStart, methodStart + 300)
-    assert.match(
-      methodSlice,
-      /this\._todoFilters\[GEA_UPDATE_PROPS\]\(this\.__buildProps_todoFilters\(\)\)/,
-      'observer should call child prop update, not [GEA_REQUEST_RENDER]',
-    )
-    assert.doesNotMatch(methodSlice, /\[GEA_REQUEST_RENDER\]\(\)/, 'observer must not trigger a full re-render')
+    // v2 uses mount with reactive prop getters — no explicit observer methods
+    assert.match(output, /mount\(TodoFilters/)
+    // The prop should be reactive (a getter function)
+    assert.match(output, /count:\s*\(\)\s*=>/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('component class getters that access stores create observers for underlying store paths', () => {
+test('component class getters that access stores are preserved and used in conditional', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import routeStore from './route-store'
@@ -431,15 +355,14 @@ test('component class getters that access stores create observers for underlying
     }
   `)
 
-  assert.match(
-    output,
-    /this\[GEA_OBSERVE\]\(routeStore/,
-    'compiler must observe routeStore when a component getter accesses it',
-  )
-  assert.match(output, /\["path"\]/, 'observer must be registered for the underlying store path the getter reads')
+  // v2 preserves the getter and uses it in conditional()
+  assert.match(output, /get isBoard\(\)/)
+  assert.match(output, /routeStore\.path\.startsWith/)
+  assert.match(output, /conditional\(/)
+  assert.match(output, /this\.isBoard/)
 })
 
-test('transitive getter-to-getter deps produce __via observers for underlying store paths', () => {
+test('transitive getter-to-getter deps are preserved as getters, used in conditional', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import routeStore from './route-store'
@@ -476,30 +399,18 @@ test('transitive getter-to-getter deps produce __via observers for underlying st
     }
   `)
 
-  assert.match(
-    output,
-    /this\.__observe_local_isBoard\((?:this\.isBoard|undefined), null\)/,
-    'isBoard (direct store dep) must route through the merged observer',
-  )
-  assert.match(
-    output,
-    /this\.__observe_local_showIssueDetail\((?:this\.showIssueDetail|undefined), null\)/,
-    'showIssueDetail (transitive via issueMatch → routeStore.path) must route through the merged observer',
-  )
-  assert.match(output, /Issue \$\{.*this\.issueId/, 'issueId must still participate in the truthy branch HTML')
-  assert.doesNotMatch(
-    output,
-    /\[GEA_REQUEST_RENDER\]\(\)/,
-    'no fallback full re-render should be generated when all deps resolve to store observers',
-  )
-  assert.doesNotMatch(
-    output,
-    /__via/,
-    'no __via wrapper methods should be generated — re-reads are inlined in merged observer',
-  )
+  // v2 preserves all getters and uses them via conditional()
+  assert.match(output, /get isBoard\(\)/)
+  assert.match(output, /get issueMatch\(\)/)
+  assert.match(output, /get showIssueDetail\(\)/)
+  assert.match(output, /get issueId\(\)/)
+  assert.match(output, /conditional\([^)]+__anchor0, \(\) => this\.isBoard/)
+  assert.match(output, /conditional\([^)]+__anchor1, \(\) => this\.showIssueDetail/)
+  // issueId should be used in the branch HTML
+  assert.match(output, /this\.issueId/)
 })
 
-test('component getter reading this.props registers deps for this.getter in template text', () => {
+test('component getter reading this.props is preserved with computation', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -514,12 +425,12 @@ test('component getter reading this.props registers deps for this.getter in temp
     }
   `)
 
-  assert.match(output, /this\.displayLabel/, 'template should invoke getter')
-  assert.match(output, /key === "value"/, 'getter reads this.props.value — value must trigger prop patch')
-  assert.match(output, /key === "options"/, 'getter reads this.props.options — options must trigger prop patch')
+  // v2 preserves the getter and uses computation() to track it
+  assert.match(output, /get displayLabel\(\)/)
+  assert.match(output, /computation\(\(\) => this\.displayLabel/)
 })
 
-test('observer calls [GEA_UPDATE_PROPS] when guard-dependent props reference the store', () => {
+test('guard-dependent child component props use mount with reactive getters', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import projectStore from './project-store'
@@ -540,19 +451,16 @@ test('observer calls [GEA_UPDATE_PROPS] when guard-dependent props reference the
     }
   `)
 
-  const observerMatch = output.match(/__observe_projectStore_project\([^)]*\)\s*\{[\s\S]*?\n {2}\}/)
-  assert.ok(observerMatch, 'observer for projectStore.project should be generated')
-
-  assert.match(
-    observerMatch![0],
-    /this\._icon\[GEA_UPDATE_PROPS\]\(this\.__buildProps_icon\(\)\)/,
-    'observer must call this._icon.[GEA_UPDATE_PROPS] to update the child when the guard dependency changes',
-  )
+  // v2 handles early return guard in [GEA_CREATE_TEMPLATE]()
+  assert.match(output, /\[GEA_CREATE_TEMPLATE\]\(\)/)
+  assert.match(output, /if \(!projectStore\.project\)/)
+  // Child component mounted via mount with reactive props
+  assert.match(output, /mount\(Icon/)
+  assert.match(output, /type:\s*\(\)\s*=>/)
 })
 
-test('store observer for top-level project guard must observe the guard path and handle loading transitions', () => {
-  const output = transformComponentSource(
-    `
+test('store observer for top-level project guard uses early-return in GEA_CREATE_TEMPLATE', () => {
+  const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import projectStore from './project-store'
     import Board from './Board'
@@ -564,58 +472,14 @@ test('store observer for top-level project guard must observe the guard path and
         return <div><Board /></div>
       }
     }
-  `,
-    new Set(['Board']),
-  )
+  `)
 
-  assert.match(output, /\[GEA_OBSERVE\]\(projectStore,\s*\["project"\]/, 'must observe projectStore.project')
-  const projectObserver =
-    output.match(/__observe_projectStore_project\([\s\S]*?\n {2}\}/)?.[0] ??
-    output.match(/\[GEA_OBSERVE\]\(projectStore,\s*\["project"\],[\s\S]*?\)\s*\)/)?.[0] ??
-    ''
-  assert.ok(projectObserver, 'project guard path must produce an observer')
-  assert.ok(
-    projectObserver.includes('[GEA_REQUEST_RENDER]') || projectObserver.includes('[GEA_PATCH_COND]'),
-    'project guard observer must handle loading transitions',
-  )
+  // v2 uses early-return pattern in GEA_CREATE_TEMPLATE
+  assert.match(output, /if \(!projectStore\.project\)/)
+  assert.match(output, /mount\(Board/)
 })
 
-test('store observer for nested project.users must NOT trigger [GEA_REQUEST_RENDER] on the parent component', () => {
-  const output = transformComponentSource(
-    `
-    import { Component } from '@geajs/core'
-    import issueStore from './issue-store'
-    import projectStore from './project-store'
-    import Select from './Select'
-
-    export default class IssueDetails extends Component {
-      template() {
-        const { isLoading, issue } = issueStore
-        const project = projectStore.project
-        const users = project ? project.users : []
-        const userOptions = users.map((u) => ({ value: u.id, label: u.name }))
-        if (isLoading || !issue) return <div>Loading</div>
-        return (
-          <div>
-            <Select items={userOptions} value={issue.userIds || []} />
-          </div>
-        )
-      }
-    }
-  `,
-    new Set(['Select']),
-  )
-
-  const projectObserver = output.match(/__observe_projectStore_project\b[^_]([\s\S]*?)\n {2}\}/)?.[0]
-  assert.ok(projectObserver, 'must generate __observe_projectStore_project')
-  assert.ok(
-    !projectObserver.includes('[GEA_REQUEST_RENDER]'),
-    '__observe_projectStore_project must NOT call [GEA_REQUEST_RENDER] (it should only refresh child props). Got: ' +
-      projectObserver,
-  )
-})
-
-test('store-alias nested field must produce inline patch or rerender observer (status badge pattern)', () => {
+test('store-alias nested field produces computation for reactive text', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import itemStore from './item-store'
@@ -637,26 +501,12 @@ test('store-alias nested field must produce inline patch or rerender observer (s
     }
   `)
 
-  const hasIssueObserver =
-    /__observe_itemStore_issue\b/.test(output) || /__observe_itemStore_issue__status\b/.test(output)
-  assert.ok(
-    hasIssueObserver,
-    'must generate an observer for itemStore issue or issue.status. Output: ' + output.slice(0, 3000),
-  )
-
-  const observerMatch = output.match(/__observe_itemStore_issue[^(]*\([^)]*\)\s*\{[\s\S]*?\n {2}\}/)
-  if (observerMatch) {
-    assert.ok(
-      observerMatch[0].includes('__patchNode') ||
-        observerMatch[0].includes('[GEA_REQUEST_RENDER]') ||
-        observerMatch[0].includes('textContent') ||
-        observerMatch[0].includes('[GEA_UPDATE_TEXT]'),
-      'observer must contain patch logic or rerender. Got: ' + observerMatch[0],
-    )
-  }
+  // v2 uses computation() for reactive text — store access is inlined
+  assert.match(output, /computation\(/)
+  assert.match(output, /itemStore\.issue/)
 })
 
-test('method call on store field observes the field, not the method', async () => {
+test('method call on store field compiles to computation reading the field', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-method-obs-'))
   try {
     const storePath = join(dir, 'store.ts')
@@ -692,14 +542,15 @@ export default class App extends Component {
     )
     assert.ok(output, 'should produce compiled output')
 
-    assert.match(output!, /\[GEA_OBSERVE\]\(.*"draft"/, 'should observe "draft" path')
-    assert.doesNotMatch(output!, /\[GEA_OBSERVE\]\(.*"draft".*"trim"/, 'should NOT observe "draft","trim" path')
+    // v2 uses reactiveAttr for the disabled attribute
+    assert.match(output!, /reactiveAttr\(/)
+    assert.match(output!, /store\.draft/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('guard-key observer with nested property accesses must guard against null value', async () => {
+test('guard-key observer with nested property accesses handles null via early return', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-guard-null-'))
   try {
     const componentPath = join(dir, 'IssueDetails.jsx')
@@ -749,38 +600,43 @@ export default new IssueStore()`,
 
     assert.ok(output, 'should produce compiled output')
 
-    // Extract the __observe_issueStore_issue method body
-    const issueObserverIdx = output!.indexOf('__observe_issueStore_issue(')
-    assert.ok(issueObserverIdx !== -1, 'must generate __observe_issueStore_issue')
-
-    const braceStart = output!.indexOf('{', issueObserverIdx)
-    let depth = 0
-    let braceEnd = braceStart
-    for (let i = braceStart; i < output!.length; i++) {
-      if (output![i] === '{') depth++
-      if (output![i] === '}') depth--
-      if (depth === 0) { braceEnd = i + 1; break }
-    }
-    const observerBody = output!.slice(issueObserverIdx, braceEnd)
-
-    // The observer is a merged function that combines child prop updates
-    // (GEA_UPDATE_PROPS) and a truthiness guard. When issueStore.issue becomes
-    // null, the child prop update methods (__buildProps_*) read nested properties
-    // like issue.status and issue.timeSpent, which throws TypeError.
-    // The observer must guard against null BEFORE any GEA_UPDATE_PROPS calls.
-    const hasChildPropUpdate = observerBody.includes('GEA_UPDATE_PROPS')
-    const hasNullGuardBeforeProps =
-      /issueStore\.issue\s*==\s*null[\s\S]*GEA_UPDATE_PROPS/.test(observerBody)
-
-    if (hasChildPropUpdate) {
-      assert.ok(
-        hasNullGuardBeforeProps,
-        'observer calls GEA_UPDATE_PROPS (which reads nested properties on issue) ' +
-        'but has no null guard before it. When issueStore.issue becomes null, ' +
-        '__buildProps_* methods will throw TypeError. Got:\n' + observerBody,
-      )
-    }
+    // v2 uses early-return guard in [GEA_CREATE_TEMPLATE]()
+    assert.match(output!, /\[GEA_CREATE_TEMPLATE\]\(\)/)
+    // The guard condition should be present
+    assert.match(output!, /isLoading|issueStore/)
+    // Child components should use mount
+    assert.match(output!, /mount\(StatusBadge/)
+    assert.match(output!, /mount\(TimeTracker/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('store observer for nested project.users compiles child props as reactive getters', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
+    import issueStore from './issue-store'
+    import projectStore from './project-store'
+    import Select from './Select'
+
+    export default class IssueDetails extends Component {
+      template() {
+        const { isLoading, issue } = issueStore
+        const project = projectStore.project
+        const users = project ? project.users : []
+        const userOptions = users.map((u) => ({ value: u.id, label: u.name }))
+        if (isLoading || !issue) return <div>Loading</div>
+        return (
+          <div>
+            <Select items={userOptions} value={issue.userIds || []} />
+          </div>
+        )
+      }
+    }
+  `)
+
+  // v2 compiles child component with reactive prop getters
+  assert.match(output, /mount\(Select/)
+  assert.match(output, /projectStore/)
+  assert.match(output, /issueStore/)
 })

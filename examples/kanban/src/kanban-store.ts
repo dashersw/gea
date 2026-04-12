@@ -143,12 +143,16 @@ export class KanbanStore extends Store {
   }
 
   deleteTask(taskId: string): void {
-    delete this.tasks[taskId]
+    // Remove from column taskIds BEFORE deleting from the tasks map.
+    // This ensures the keyedList reconciliation (which disposes card
+    // computations) is queued before any card text-binding computations
+    // that would crash reading a deleted task's properties.
     for (const col of this.columns) {
       const idx = col.taskIds.indexOf(taskId)
       if (idx !== -1) col.taskIds.splice(idx, 1)
     }
     if (this.selectedTaskId === taskId) this.selectedTaskId = null
+    delete this.tasks[taskId]
   }
 
   setDragging(taskId: string | null): void {

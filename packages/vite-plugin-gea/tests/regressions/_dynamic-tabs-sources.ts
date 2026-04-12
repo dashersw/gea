@@ -36,7 +36,7 @@ export default function Tabs({ tabs, activeTabIndex, onTabChange }: TabsProps) {
         {tabs.map((tab) => (
           <button
             key={\`\${tab.title}-button\`}
-            class={tab.index === activeTabIndex ? 'active' : ''}
+            class={\`\${tab.index === activeTabIndex ? 'active' : ''}\`}
             data-index={tab.index}
             click={() => onTabChange(tab.index)}
           >

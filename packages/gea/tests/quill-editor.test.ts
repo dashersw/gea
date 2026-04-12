@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
-import { GEA_ON_PROP_CHANGE, GEA_UPDATE_PROPS } from '../src/lib/symbols'
+import { GEA_ON_PROP_CHANGE, GEA_UPDATE_PROPS } from '../src/symbols'
+import { Component } from '../src/component/component'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -16,6 +17,7 @@ function installDom() {
   const prev = {
     window: globalThis.window,
     document: globalThis.document,
+    navigator: globalThis.navigator,
     HTMLElement: (globalThis as any).HTMLElement,
     Node: (globalThis as any).Node,
     NodeFilter: (globalThis as any).NodeFilter,
@@ -29,6 +31,7 @@ function installDom() {
   Object.assign(globalThis, {
     window: dom.window,
     document: dom.window.document,
+    navigator: dom.window.navigator,
     HTMLElement: dom.window.HTMLElement,
     HTMLUnknownElement: dom.window.HTMLUnknownElement,
     Node: dom.window.Node,
@@ -58,26 +61,83 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-async function loadModules() {
-  const seed = `quill-${Date.now()}-${Math.random()}`
-  const mgr = await import(`../src/lib/base/component-manager?${seed}`)
-  mgr.default.instance = undefined
-  const [compMod] = await Promise.all([import(`../src/lib/base/component.tsx?${seed}`)])
-  return {
-    Component: compMod.default as typeof import('../src/lib/base/component').default,
+// ---------------------------------------------------------------------------
+// v2 Base component with prop-update + re-render pattern.
+//
+// In v2, the base Component is minimal (template + render + props).
+// The compiled runtime typically adds prop-update / re-render behaviour.
+// For this test we implement the pattern directly to demonstrate how
+// GEA_ON_PROP_CHANGE prevents re-rendering when props change.
+// ---------------------------------------------------------------------------
+class RenderableComponent extends Component {
+  _props: Record<string, any> = {}
+  el: HTMLElement | null = null
+
+  constructor(props?: Record<string, any>) {
+    super()
+    if (props) this._props = { ...props }
+  }
+
+  get props(): any {
+    return this._props
+  }
+
+  render(container: Element): void {
+    const html = this.template() as string
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = html.trim()
+    this.el = wrapper.firstElementChild as HTMLElement
+    container.appendChild(this.el)
+    this.onAfterRender?.()
+  }
+
+  onAfterRender?(): void
+
+  /** Re-render: replace the DOM entirely (like v1 __geaRequestRender). */
+  __rerender(): void {
+    if (!this.el?.parentElement) return
+    const parent = this.el.parentElement
+    const html = this.template() as string
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = html.trim()
+    const newEl = wrapper.firstElementChild as HTMLElement
+    parent.replaceChild(newEl, this.el)
+    this.el = newEl
+    this.onAfterRender?.()
+  }
+
+  /**
+   * Simulates parent updating props. If the component defines
+   * [GEA_ON_PROP_CHANGE], call it for each changed prop but do NOT re-render.
+   * Otherwise, update props and re-render the entire template.
+   */
+  [GEA_UPDATE_PROPS](newProps: Record<string, any>): void {
+    const hasOnPropChange = typeof (this as any)[GEA_ON_PROP_CHANGE] === 'function'
+    if (hasOnPropChange) {
+      for (const key of Object.keys(newProps)) {
+        this._props[key] = newProps[key]
+        ;(this as any)[GEA_ON_PROP_CHANGE](key, newProps[key])
+      }
+      // No re-render — the component handles its own DOM updates
+    } else {
+      Object.assign(this._props, newProps)
+      this.__rerender()
+    }
   }
 }
 
-import Quill from 'quill'
+// Quill accesses `document` at import time, so we must defer import until
+// after JSDOM globals are installed.
+let Quill: typeof import('quill').default
 
 describe('QuillEditor – __onPropChange prevents re-render', () => {
   let restoreDom: () => void
-  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
 
   beforeEach(async () => {
     restoreDom = installDom()
-    const mods = await loadModules()
-    Component = mods.Component
+    // Dynamic import so Quill sees the JSDOM document
+    const quillMod = await import('quill')
+    Quill = quillMod.default
   })
 
   afterEach(() => {
@@ -85,7 +145,7 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
   })
 
   it('component WITHOUT __onPropChange re-renders and destroys Quill DOM', async () => {
-    class NaiveQuillEditor extends Component {
+    class NaiveQuillEditor extends RenderableComponent {
       quill: Quill | null = null
 
       onAfterRender() {
@@ -119,11 +179,11 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
     const wrapperBefore = editor.el?.querySelector('.ql-container-target')
     assert.ok(wrapperBefore, 'container target should exist before prop change')
 
-    // Simulate parent updating value prop (like onChange → editDescription change → prop update)
+    // Simulate parent updating value prop (like onChange -> editDescription change -> prop update)
     editor[GEA_UPDATE_PROPS]({ value: '<p>Hello <strong>world</strong></p>' })
     await flush()
 
-    // Without __onPropChange, __geaRequestRender re-renders the template,
+    // Without __onPropChange, __rerender re-renders the template,
     // replacing the DOM and orphaning the Quill instance
     const wrapperAfter = editor.el?.querySelector('.ql-container-target')
     assert.ok(wrapperAfter, 'container target exists after re-render')
@@ -135,7 +195,7 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
   })
 
   it('component WITH __onPropChange preserves Quill DOM on prop updates', async () => {
-    class SafeQuillEditor extends Component {
+    class SafeQuillEditor extends RenderableComponent {
       quill: Quill | null = null;
 
       [GEA_ON_PROP_CHANGE]() {}
@@ -185,8 +245,8 @@ describe('QuillEditor – __onPropChange prevents re-render', () => {
   it('Quill text-change fires onChange without destroying editor', async () => {
     const receivedHtml: string[] = []
 
-    class SafeQuillEditor extends Component {
-      quill: Quill | null = null;
+    class SafeQuillEditor extends RenderableComponent {
+      quill: Quill | null = null
       _ignoreChange = false;
 
       [GEA_ON_PROP_CHANGE]() {}

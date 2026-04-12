@@ -3,237 +3,144 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { tmpdir } from 'node:os'
-import { transformComponentSource, transformWithPlugin, parseSource, t } from './plugin-helpers'
+import { transformComponentSource, transformWithPlugin, t } from './plugin-helpers'
 
-test('spread attributes throw a compile error', () => {
-  assert.throws(
-    () =>
-      transformComponentSource(`
-        import { Component } from '@geajs/core'
+// v2 compiler handles spread attributes gracefully (no longer throws)
+test('spread attributes compile without errors in v2', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
 
-        export default class Card extends Component {
-          template() {
-            return <div {...this.props} class="card">Hello</div>
-          }
-        }
-      `),
-    (err: Error) => {
-      assert.ok(err.message.includes('[gea]'), 'Error should be prefixed with [gea]')
-      assert.ok(err.message.includes('Spread attributes'), 'Error should mention spread attributes')
-      assert.ok(err.message.includes('not supported'), 'Error should say not supported')
-      return true
-    },
-  )
+    export default class Card extends Component {
+      template() {
+        return <div {...this.props} class="card">Hello</div>
+      }
+    }
+  `)
+  assert.ok(output, 'spread attributes should compile successfully in v2')
+  assert.match(output, /GEA_CREATE_TEMPLATE/, 'output should have GEA_CREATE_TEMPLATE method')
 })
 
-test('spread attributes error includes the element tag name', () => {
-  assert.throws(
-    () =>
-      transformComponentSource(`
-        import { Component } from '@geajs/core'
+// v2 compiler handles dynamic component tags (uppercase variables treated as components)
+test('dynamic component tags compile without errors in v2', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
 
-        export default class Btn extends Component {
-          template() {
-            return <button {...this.attrs}>Click</button>
-          }
-        }
-      `),
-    (err: Error) => {
-      assert.ok(err.message.includes('button'), `Error should include the tag name "button", got: ${err.message}`)
-      return true
-    },
-  )
+    export default class Wrapper extends Component {
+      template() {
+        const Tag = this.as || 'div'
+        return <Tag class="wrapper">Content</Tag>
+      }
+    }
+  `)
+  assert.ok(output, 'dynamic component tags should compile in v2')
+  assert.match(output, /GEA_CREATE_TEMPLATE/, 'output should have GEA_CREATE_TEMPLATE method')
 })
 
-test('dynamic component tags throw a compile error', () => {
-  assert.throws(
-    () =>
-      transformComponentSource(`
-        import { Component } from '@geajs/core'
+// v2 compiler handles function-as-child (transforms the arrow function)
+test('function-as-child compiles without error in v2', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
 
-        export default class Wrapper extends Component {
-          template() {
-            const Tag = this.as || 'div'
-            return <Tag class="wrapper">Content</Tag>
-          }
-        }
-      `),
-    (err: Error) => {
-      assert.ok(err.message.includes('[gea]'), 'Error should be prefixed with [gea]')
-      assert.ok(err.message.includes('not imported'), 'Error should mention the component is not imported')
-      assert.ok(err.message.includes('Tag'), `Error should include the tag name "Tag", got: ${err.message}`)
-      return true
-    },
-  )
+    export default class App extends Component {
+      template() {
+        return (
+          <div>
+            {(user) => <span>{user.name}</span>}
+          </div>
+        )
+      }
+    }
+  `)
+  assert.ok(output, 'function-as-child should compile in v2')
+  assert.match(output, /template/, 'output should use template() calls')
 })
 
-test('function-as-child throws a compile error', () => {
-  assert.throws(
-    () =>
-      transformComponentSource(`
-        import { Component } from '@geajs/core'
+// v2 compiler handles function expression as child
+test('function expression as child compiles without error in v2', () => {
+  const output = transformComponentSource(`
+    import { Component } from '@geajs/core'
 
-        export default class App extends Component {
-          template() {
-            return (
-              <div>
-                {(user) => <span>{user.name}</span>}
-              </div>
-            )
-          }
-        }
-      `),
-    (err: Error) => {
-      assert.ok(err.message.includes('[gea]'), 'Error should be prefixed with [gea]')
-      assert.ok(
-        err.message.includes('Function-as-child'),
-        `Error should mention function-as-child, got: ${err.message}`,
-      )
-      return true
-    },
-  )
+    export default class App extends Component {
+      template() {
+        return (
+          <div>
+            {function(ctx) { return <span>{ctx.name}</span> }}
+          </div>
+        )
+      }
+    }
+  `)
+  assert.ok(output, 'function expression as child should compile in v2')
 })
 
-test('function expression as child also throws', () => {
-  assert.throws(
-    () =>
-      transformComponentSource(`
-        import { Component } from '@geajs/core'
-
-        export default class App extends Component {
-          template() {
-            return (
-              <div>
-                {function(ctx) { return <span>{ctx.name}</span> }}
-              </div>
-            )
-          }
-        }
-      `),
-    (err: Error) => {
-      assert.ok(err.message.includes('Function-as-child'), `Expected function-as-child error, got: ${err.message}`)
-      return true
-    },
-  )
+// v2 compiler handles named JSX component exports
+test('named JSX component exports compile in v2', () => {
+  const output = transformComponentSource(`
+    export const Header = ({ title }) => <h1>{title}</h1>
+    export default function App() {
+      return <div><Header title="hi" /></div>
+    }
+  `)
+  assert.ok(output, 'named JSX component exports should compile in v2')
+  assert.match(output, /template/, 'output should use template() calls')
 })
 
-test('named JSX component exports throw a compile error', () => {
-  assert.throws(
-    () => {
-      parseSource(`
-        export const Header = ({ title }) => <h1>{title}</h1>
-        export default function App() {
-          return <div><Header title="hi" /></div>
-        }
-      `)
-    },
-    (err: Error) => {
-      assert.ok(err.message.includes('[gea]'), 'Error should be prefixed with [gea]')
-      assert.ok(err.message.includes('Header'), `Error should include component name, got: ${err.message}`)
-      assert.ok(
-        err.message.includes('Named JSX component export'),
-        `Error should mention named export, got: ${err.message}`,
-      )
-      return true
-    },
-  )
+// v2 compiler handles named function declaration export returning JSX
+test('named function declaration export returning JSX compiles in v2', () => {
+  const output = transformComponentSource(`
+    export function Sidebar() {
+      return <nav>Links</nav>
+    }
+    export default function App() {
+      return <div>Main</div>
+    }
+  `)
+  assert.ok(output, 'named function export should compile in v2')
 })
 
-test('named function declaration export returning JSX throws', () => {
-  assert.throws(
-    () => {
-      parseSource(`
-        export function Sidebar() {
-          return <nav>Links</nav>
-        }
-        export default function App() {
-          return <div>Main</div>
-        }
-      `)
-    },
-    (err: Error) => {
-      assert.ok(err.message.includes('Sidebar'), `Error should include "Sidebar", got: ${err.message}`)
-      return true
-    },
-  )
-})
-
-test('named export of non-JSX function does not throw', () => {
-  const result = parseSource(`
+// v2 compiles non-JSX named exports without issue
+test('named export of non-JSX function with JSX default export compiles', () => {
+  const result = transformComponentSource(`
     export const add = (a, b) => a + b
     export default function App() {
       return <div>Main</div>
     }
   `)
-  assert.ok(result, 'parseSource should succeed for non-JSX named exports')
+  assert.ok(result, 'transformComponentSource should succeed for non-JSX named exports alongside JSX')
 })
 
-test('fragments as .map() item roots throw a compile error (key validation catches fragments first)', async () => {
+// v2 compiler handles fragments in .map()
+test('fragments in .map() compile without errors in v2', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-frag-test-'))
   try {
     const storePath = join(dir, 'store.ts')
     await writeFile(storePath, 'export default { items: [{ id: 1, term: "a", def: "b" }] }')
-    await assert.rejects(
-      async () =>
-        await transformWithPlugin(
-          `
-            import { Component } from '@geajs/core'
-            import store from './store'
+    const output = await transformWithPlugin(
+      `
+        import { Component } from '@geajs/core'
+        import store from './store'
 
-            export default class DefinitionList extends Component {
-              template() {
-                return (
-                  <dl>
-                    {store.items.map(item => (
-                      <>
-                        <dt key={item.id}>{item.term}</dt>
-                        <dd>{item.def}</dd>
-                      </>
-                    ))}
-                  </dl>
-                )
-              }
-            }
-          `,
-          storePath.replace('store.ts', 'DefinitionList.tsx'),
-        ),
-      (err: Error) => {
-        assert.ok(err.message.includes('[gea]'), `Error should be prefixed with [gea], got: ${err.message}`)
-        assert.ok(
-          err.message.includes('key') || err.message.includes('Fragments'),
-          `Error should mention key or fragments, got: ${err.message}`,
-        )
-        return true
-      },
+        export default class DefinitionList extends Component {
+          template() {
+            return (
+              <dl>
+                {store.items.map(item => (
+                  <>
+                    <dt key={item.id}>{item.term}</dt>
+                    <dd>{item.def}</dd>
+                  </>
+                ))}
+              </dl>
+            )
+          }
+        }
+      `,
+      storePath.replace('store.ts', 'DefinitionList.tsx'),
     )
+    assert.ok(output, 'fragments in .map() should compile in v2')
+    assert.match(output!, /template/, 'output should use template() calls')
   } finally {
     await rm(dir, { recursive: true })
   }
 })
 
-test('fragment root in generateRenderItemMethod throws fragment-specific error', async () => {
-  const { generateRenderItemMethod } = await import('../../src/codegen/array-compiler')
-  const fragmentTemplate = t.jsxFragment(t.jsxOpeningFragment(), t.jsxClosingFragment(), [
-    t.jsxElement(t.jsxOpeningElement(t.jsxIdentifier('dt'), []), t.jsxClosingElement(t.jsxIdentifier('dt')), []),
-  ])
-  assert.throws(
-    () =>
-      generateRenderItemMethod(
-        {
-          arrayPathParts: ['items'],
-          itemVariable: 'item',
-          itemIdProperty: 'id',
-          containerBindingId: 'b0',
-          itemTemplate: fragmentTemplate,
-        } as any,
-        new Map(),
-        undefined,
-        { value: 0 },
-      ),
-    (err: Error) => {
-      assert.ok(err.message.includes('Fragments'), `Error should mention fragments, got: ${err.message}`)
-      assert.ok(err.message.includes('not supported'), `Error should say not supported, got: ${err.message}`)
-      return true
-    },
-  )
-})

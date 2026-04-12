@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it, before, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
+import { Component } from '../src/component/component'
 
 // ── DOM setup ──────────────────────────────────────────────────────
 
@@ -54,33 +55,27 @@ async function flush() {
 
 async function loadModules() {
   const seed = `router-${Date.now()}-${Math.random()}`
-  const { GeaRouter } = await import(`../src/lib/router/router?${seed}`)
-  return { GeaRouter: GeaRouter as typeof import('../src/lib/router/router').GeaRouter }
+  const { Router } = await import(`../src/router/router?${seed}`)
+  return { Router: Router as typeof import('../src/router/router').Router }
 }
 
-let Home: any, About: any, UserProfile: any, NotFound: any
-let Dashboard: any, LoginPage: any, AdminPanel: any, ProjectDetail: any
-let AppShell: any, DashboardLayout: any
+// ── Stub components (avoid importing JSX example files) ────────────
+
+class Home extends Component {}
+class About extends Component {}
+class UserProfile extends Component {}
+class NotFound extends Component {}
+class Dashboard extends Component {}
+class LoginPage extends Component {}
+class AdminPanel extends Component {}
+class ProjectDetail extends Component {}
+class AppShell extends Component {}
+class DashboardLayout extends Component {}
 
 // ── Tests ──────────────────────────────────────────────────────────
 
-describe('GeaRouter', () => {
+describe('Router', () => {
   let restoreDom: () => void
-
-  before(async () => {
-    restoreDom = installDom('http://localhost/')
-    Home = (await import('../../../examples/router-simple/src/views/Home')).default
-    About = (await import('../../../examples/router-simple/src/views/About')).default
-    UserProfile = (await import('../../../examples/router-simple/src/views/UserProfile')).default
-    NotFound = (await import('../../../examples/router-simple/src/views/NotFound')).default
-    Dashboard = (await import('../../../examples/router-v2/src/views/Overview')).default
-    LoginPage = (await import('../../../examples/router-v2/src/views/Login')).default
-    AdminPanel = (await import('../../../examples/router-v2/src/views/Projects')).default
-    ProjectDetail = (await import('../../../examples/router-v2/src/views/Project')).default
-    AppShell = (await import('../../../examples/router-v2/src/layouts/AppShell')).default
-    DashboardLayout = (await import('../../../examples/router-v2/src/layouts/DashboardLayout')).default
-    restoreDom()
-  })
 
   beforeEach(() => {
     restoreDom = installDom('http://localhost/')
@@ -94,10 +89,10 @@ describe('GeaRouter', () => {
   it('initializes state from window.location', async () => {
     restoreDom()
     restoreDom = installDom('http://localhost/initial')
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = { '/initial': Home as any }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
 
     assert.equal(router.path, '/initial')
     assert.equal(router.route, '/initial')
@@ -106,14 +101,14 @@ describe('GeaRouter', () => {
 
   // 2. push(string) updates path, route, params, matches
   it('push(string) updates path, route, params, matches', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/users/:id': UserProfile as any,
     } as const
 
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/users/42')
 
     assert.equal(router.path, '/users/42')
@@ -126,10 +121,10 @@ describe('GeaRouter', () => {
 
   // 3. push(NavigationTarget object) updates path, query, hash
   it('push(NavigationTarget object) updates path, query, hash', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = { '/search': Home as any }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
 
     router.push({ path: '/search', query: { q: 'hello', page: '2' }, hash: '#results' })
 
@@ -142,13 +137,13 @@ describe('GeaRouter', () => {
 
   // 4. replace() updates state
   it('replace() updates state', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/replaced': About as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.replace('/replaced')
 
     assert.equal(router.path, '/replaced')
@@ -159,10 +154,10 @@ describe('GeaRouter', () => {
 
   // 5. back(), forward(), go(-2) call history API
   it('back(), forward(), go() call history API', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = { '/': Home as any, '/a': About as any }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
 
     // These methods delegate to window.history — just verify they don't throw
     const calls: string[] = []
@@ -194,13 +189,13 @@ describe('GeaRouter', () => {
 
   // 6. isActive() uses segment-aware prefix match
   it('isActive() uses segment-aware prefix match', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/users/:id': UserProfile as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/users/42')
 
     assert.equal(router.isActive('/users'), true)
@@ -217,13 +212,13 @@ describe('GeaRouter', () => {
 
   // 7. isExact() returns true only for exact match
   it('isExact() returns true only for exact match', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/users/:id': UserProfile as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/users/42')
 
     assert.equal(router.isExact('/users/42'), true)
@@ -233,14 +228,14 @@ describe('GeaRouter', () => {
 
   // 8. Route resolution — push resolves to correct component via router.page
   it('push resolves to correct component via router.page', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/projects/:id': ProjectDetail as any,
       '*': NotFound as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
 
     assert.equal(router.page, Home)
 
@@ -253,7 +248,7 @@ describe('GeaRouter', () => {
 
   // 9. Guards that redirect
   it('guards that redirect change path to redirect target', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
@@ -265,7 +260,7 @@ describe('GeaRouter', () => {
         },
       } as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/admin')
 
     // Guard redirects to /login
@@ -276,7 +271,7 @@ describe('GeaRouter', () => {
 
   // 10. Guards that return Component — router.page returns the guard component
   it('guards that return Component show guard component via router.page', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
@@ -287,7 +282,7 @@ describe('GeaRouter', () => {
         },
       } as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/protected')
 
     assert.equal(router.page, LoginPage)
@@ -297,7 +292,7 @@ describe('GeaRouter', () => {
 
   // 11. Lazy routes — async resolution updates router.page
   it('lazy routes resolve and update router.page', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const LazyHome = async () => ({ default: Dashboard })
 
@@ -305,7 +300,7 @@ describe('GeaRouter', () => {
       '/': Home as any,
       '/lazy': LazyHome as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/lazy')
 
     // Before resolution, page is not yet Dashboard
@@ -320,7 +315,7 @@ describe('GeaRouter', () => {
 
   // 12. Failed lazy routes — sets router.error
   it('failed lazy routes set router.error', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const FailingLazy = async () => {
       throw new Error('Network error')
@@ -330,20 +325,11 @@ describe('GeaRouter', () => {
       '/': Home as any,
       '/broken': FailingLazy as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/broken')
 
-    // resolveLazy retries 3 times with exponential backoff — use a 0-delay version
-    // Actually, default is 3 retries with 1s delay. We need to wait long enough.
-    // For testing, let's wait enough time for the retries to fail.
-    // With retries=3 and delay=1000: waits 1000 + 2000 + 4000 = 7000ms total.
-    // That's too long for a test. Let's instead use a lazy that fails immediately
-    // and check that error is eventually set.
-
-    // Actually, resolveLazy has default retries=3. We can't control that from here.
-    // Let's wait for all retries to complete (up to 10s)
-    // For a faster test, we rely on the fact that the promise chain resolves eventually.
-    // Let's use a shorter approach: wait in a loop.
+    // resolveLazy retries 3 times with exponential backoff.
+    // Wait for all retries to complete (up to 15s).
     const start = Date.now()
     while (router.error === null && Date.now() - start < 15000) {
       await new Promise((r) => setTimeout(r, 100))
@@ -358,14 +344,14 @@ describe('GeaRouter', () => {
   it('base path strips base on incoming and prepends on outgoing', async () => {
     restoreDom()
     restoreDom = installDom('http://localhost/app/dashboard')
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/dashboard': Dashboard as any,
       '/about': About as any,
     }
-    const router = new GeaRouter(routes, { base: '/app' })
+    const router = new Router(routes, { base: '/app' })
 
     // Initial path should have base stripped
     assert.equal(router.path, '/dashboard')
@@ -382,10 +368,10 @@ describe('GeaRouter', () => {
 
   // 14. dispose() removes popstate listener
   it('dispose() removes popstate listener', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = { '/': Home as any }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
 
     let listenerRemoved = false
     const origRemove = window.removeEventListener
@@ -400,39 +386,33 @@ describe('GeaRouter', () => {
     window.removeEventListener = origRemove
   })
 
-  // Additional: reactive fields trigger observers
-  it('push triggers reactive updates on path', async () => {
-    const { GeaRouter } = await loadModules()
+  // Additional: push updates path synchronously
+  it('push triggers synchronous path update', async () => {
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/about': About as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
 
-    const paths: string[] = []
-    router.observe('path', (val: string) => {
-      paths.push(val)
-    })
-
+    assert.equal(router.path, '/')
     router.push('/about')
-    await flush()
-
-    assert.ok(paths.length >= 1)
-    assert.equal(paths[paths.length - 1], '/about')
+    assert.equal(router.path, '/about')
+    assert.equal(router.page, About)
     router.dispose()
   })
 
   // String redirects
   it('string redirect navigates to target', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/old': '/new' as any,
       '/new': About as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/old')
 
     assert.equal(router.path, '/new')
@@ -442,12 +422,12 @@ describe('GeaRouter', () => {
 
   // No match returns null component
   it('no match results in null page', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/nonexistent')
 
     assert.equal(router.page, null)
@@ -458,9 +438,9 @@ describe('GeaRouter', () => {
   it('router without routes reads initial URL from window.location', async () => {
     restoreDom()
     restoreDom = installDom('http://localhost/some/deep/route?q=1#section')
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
-    const router = new GeaRouter()
+    const router = new Router()
     assert.equal(router.path, '/some/deep/route', 'path should reflect window.location.pathname')
     assert.equal(router.hash, '#section', 'hash should reflect window.location.hash')
     assert.deepEqual(router.query, { q: '1' }, 'query should reflect window.location.search')
@@ -468,13 +448,13 @@ describe('GeaRouter', () => {
   })
 
   it('navigate() is an alias for push()', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': Home as any,
       '/about': About as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.navigate('/about')
 
     assert.equal(router.path, '/about')
@@ -483,7 +463,7 @@ describe('GeaRouter', () => {
   })
 
   it('getComponentAtDepth passes page prop to layouts', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': {
@@ -499,7 +479,7 @@ describe('GeaRouter', () => {
         },
       } as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/dashboard')
 
     const depth0 = router.getComponentAtDepth(0)
@@ -518,7 +498,7 @@ describe('GeaRouter', () => {
   })
 
   it('guard component replaces entire layout chain when guard blocks', async () => {
-    const { GeaRouter } = await loadModules()
+    const { Router } = await loadModules()
 
     const routes = {
       '/': {
@@ -529,7 +509,7 @@ describe('GeaRouter', () => {
         },
       } as any,
     }
-    const router = new GeaRouter(routes)
+    const router = new Router(routes)
     router.push('/dashboard')
 
     // Guard blocks before _applyResolved — layouts are not applied, guard component shows directly

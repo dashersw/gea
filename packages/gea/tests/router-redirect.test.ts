@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { resolveRedirect } from '../src/lib/router/redirect'
+import { resolveRedirect } from '../src/router/redirect'
 
 describe('resolveRedirect', () => {
   it('resolves static string redirect', () => {

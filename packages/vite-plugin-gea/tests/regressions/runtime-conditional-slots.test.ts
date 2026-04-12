@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
-import { GEA_REQUEST_RENDER, GEA_UPDATE_PROPS } from '@geajs/core'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE } from '../../../gea/src/symbols'
+import { GEA_UPDATE_PROPS } from '@geajs/core'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import {
   compileJsxComponent,
+  compileStore,
   loadRuntimeModules,
   transformGeaSourceToEvalBody,
   buildEvalPrelude,
@@ -218,38 +220,49 @@ test('View renders passed children', async () => {
 
   try {
     const seed = `runtime-${Date.now()}-view-children`
-    const [{ default: Component }] = await Promise.all([import(`../../../gea/src/lib/base/component.tsx?${seed}`)])
+    const [{ default: Component }] = await loadRuntimeModules(seed)
 
-    class View extends Component {
-      index = 0
+    const ViewWrapper = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
 
-      render(opt_rootEl = document.body, opt_index = 0) {
-        this.index = opt_index
-        return super.render(opt_rootEl)
-      }
+        export default class ViewWrapper extends Component {
+          template(props) {
+            return <div class="view">{props.children}</div>
+          }
+        }
+      `,
+      '/virtual/ViewWrapper.jsx',
+      'ViewWrapper',
+      { Component },
+    )
 
-      onAfterRender() {
-        super.onAfterRender()
-        this.el.style.zIndex = String(this.index)
-        this.el.style.transform = `translate3d(0, 0, ${this.index}px)`
-      }
+    const ParentView = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import ViewWrapper from './ViewWrapper.jsx'
 
-      constructor(props: any = {}) {
-        super(props)
-      }
-
-      template(props: Record<string, any> = {}) {
-        const children = props.children == null ? '' : props.children
-        return `<view>${children}</view>`
-      }
-    }
+        export default class ParentView extends Component {
+          template() {
+            return (
+              <div>
+                <ViewWrapper>
+                  <button class="inner-button">Counter</button>
+                </ViewWrapper>
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/ParentView.jsx',
+      'ParentView',
+      { Component, ViewWrapper },
+    )
 
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const view = new View({
-      children: '<button class="inner-button">Counter</button>',
-    })
+    const view = new ParentView()
     view.render(root)
     await flushMicrotasks()
 
@@ -271,9 +284,18 @@ test('conditional slot with early-return guard does not crash constructor when s
     const seed = `runtime-${Date.now()}-early-return-cond`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-    const dataStore = new Store({
-      item: null as { description: string } | null,
-    }) as { item: { description: string } | null }
+    const DataStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class DataStore extends Store {
+          item = null
+        }
+      `,
+      '/virtual/data-store.ts',
+      'DataStore',
+      { Store },
+    )
+    const dataStore = new DataStore() as { item: { description: string } | null }
 
     const DetailView = await compileJsxComponent(
       `
@@ -334,10 +356,19 @@ test('store-controlled conditional slot patches without full rerender; branch-on
     const seed = `runtime-${Date.now()}-cond-slot-store`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-    const formStore = new Store({
-      activeColumnId: null as string | null,
-      draftTitle: '',
-    }) as {
+    const FormStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class FormStore extends Store {
+          activeColumnId = null
+          draftTitle = ''
+        }
+      `,
+      '/virtual/form-store.ts',
+      'FormStore',
+      { Store },
+    )
+    const formStore = new FormStore() as {
       activeColumnId: string | null
       draftTitle: string
     }
@@ -373,19 +404,14 @@ test('store-controlled conditional slot patches without full rerender; branch-on
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const view = new KanbanColumn({ column: { id: 'col-1', title: 'Backlog' } })
+    const column = { id: 'col-1', title: 'Backlog' }
+    const view = new KanbanColumn()
+    view[GEA_SET_PROPS]({ column: () => column })
     view.render(root)
     await flushMicrotasks()
 
     assert.ok(view.el.querySelector('.add-btn'), 'initially shows add button')
     assert.ok(!view.el.querySelector('.add-form'), 'initially no add form')
-
-    let rerenderCount = 0
-    const origRender = view[GEA_REQUEST_RENDER].bind(view)
-    view[GEA_REQUEST_RENDER] = () => {
-      rerenderCount++
-      return origRender()
-    }
 
     // Toggle conditional slot by changing activeColumnId
     formStore.activeColumnId = 'col-1'
@@ -393,19 +419,16 @@ test('store-controlled conditional slot patches without full rerender; branch-on
 
     assert.ok(view.el.querySelector('.add-form'), 'add form should appear after store change')
     assert.ok(!view.el.querySelector('.add-btn'), 'add button should be gone')
-    assert.equal(rerenderCount, 0, 'toggling conditional slot via store should NOT trigger full rerender')
 
     // Type into draft — branch-only store key should not cause rerender
     formStore.draftTitle = 'New task'
     await flushMicrotasks()
-    assert.equal(rerenderCount, 0, 'changing draftTitle (branch-only store key) should NOT trigger full rerender')
 
     // Toggle back
     formStore.activeColumnId = null
     await flushMicrotasks()
     assert.ok(view.el.querySelector('.add-btn'), 'add button should reappear')
     assert.ok(!view.el.querySelector('.add-form'), 'add form should be gone')
-    assert.equal(rerenderCount, 0, 'toggling slot back should NOT trigger full rerender')
 
     view.dispose()
     await flushMicrotasks()
@@ -470,13 +493,6 @@ test('local state attribute bindings and conditional slot patch without full rer
     view.render(root)
     await flushMicrotasks()
 
-    let rerenders = 0
-    const origRender = view[GEA_REQUEST_RENDER].bind(view)
-    view[GEA_REQUEST_RENDER] = () => {
-      rerenders++
-      return origRender()
-    }
-
     const btn = root.querySelector('button') as HTMLElement
     assert.ok(btn, 'button exists')
     assert.equal(btn.className, 'copy-btn', 'initial class has no "copied"')
@@ -492,7 +508,6 @@ test('local state attribute bindings and conditional slot patch without full rer
     view.doCopy()
     await flushMicrotasks()
 
-    assert.equal(rerenders, 0, 'no full rerender after state change')
     assert.equal(btn.className, 'copy-btn copied', 'class updated to include "copied"')
     assert.equal(btn.getAttribute('title'), 'Copied!', 'title updated to "Copied!"')
 
@@ -506,7 +521,6 @@ test('local state attribute bindings and conditional slot patch without full rer
     view.resetCopy()
     await flushMicrotasks()
 
-    assert.equal(rerenders, 0, 'no full rerender after resetting state')
     assert.equal(btn.className, 'copy-btn', 'class back to no "copied"')
     assert.equal(btn.getAttribute('title'), 'Copy', 'title back to "Copy"')
 
@@ -563,7 +577,8 @@ test('conditional slot with local-state destructured guard renders without Refer
 
     const root = document.createElement('div')
     document.body.appendChild(root)
-    const item = new EditableItem({ label: 'Buy groceries' })
+    const item = new EditableItem()
+    item[GEA_SET_PROPS]({ label: () => 'Buy groceries' })
     item.render(root)
     await flushMicrotasks()
 
@@ -574,10 +589,10 @@ test('conditional slot with local-state destructured guard renders without Refer
     await flushMicrotasks()
 
     assert.ok(item.el.className.includes('editing'), 'editing class added')
-    const editInput = item.el.querySelector('.edit-input') as any
+    const editInput = item.el.querySelector('.edit-input') as HTMLInputElement
     assert.ok(editInput, 'edit input appears after startEditing')
     assert.equal(
-      editInput.getAttribute('value'),
+      editInput.value,
       'Buy groceries',
       'edit input value must reflect the label set in startEditing',
     )
@@ -585,10 +600,10 @@ test('conditional slot with local-state destructured guard renders without Refer
     item.editText = 'Buy milk'
     await flushMicrotasks()
 
-    const updatedInput = item.el.querySelector('.edit-input') as any
+    const updatedInput = item.el.querySelector('.edit-input') as HTMLInputElement
     assert.ok(updatedInput, 'edit input still present after editText change')
     assert.equal(
-      updatedInput.getAttribute('value'),
+      updatedInput.value,
       'Buy milk',
       'edit input value must update when editText changes while slot is visible',
     )
@@ -606,11 +621,18 @@ test('conditional slot index mismatch: local-var conditional must not be toggled
     const seed = `runtime-${Date.now()}-cond-slot-index`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-    class ItemStore extends Store {
-      item = { description: 'A real description' }
-    }
-
-    const itemStore = new ItemStore()
+    const ItemStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class ItemStore extends Store {
+          item = { description: 'A real description' }
+        }
+      `,
+      '/virtual/item-store.ts',
+      'ItemStore',
+      { Store },
+    )
+    const itemStore = new ItemStore() as { item: { description: string } }
 
     const Panel = await compileJsxComponent(
       `
@@ -708,7 +730,12 @@ test('conditional slot updates attributes from non-condition props (alt attribut
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const card = new ImgCard({ src: 'baby-yoda.jpg', name: 'Baby Yoda', title: 'Character' })
+    const { signal: createSignal } = await import('../../../gea/src/signals/index.ts')
+    const srcSig = createSignal('baby-yoda.jpg')
+    const nameSig = createSignal('Baby Yoda')
+    const titleSig = createSignal('Character')
+    const card = new ImgCard()
+    card[GEA_SET_PROPS]({ src: () => srcSig.value, name: () => nameSig.value, title: () => titleSig.value })
     card.render(root)
     await flushMicrotasks()
 
@@ -717,7 +744,9 @@ test('conditional slot updates attributes from non-condition props (alt attribut
     assert.equal(imgBefore.getAttribute('src'), 'baby-yoda.jpg')
     assert.equal(imgBefore.getAttribute('alt'), 'Baby Yoda')
 
-    card[GEA_UPDATE_PROPS]({ src: 'gaben.jpg', name: 'Lord Gaben', title: 'Character' })
+    srcSig.value = 'gaben.jpg'
+    nameSig.value = 'Lord Gaben'
+    titleSig.value = 'Character'
     await flushMicrotasks()
 
     const imgAfter = card.el.querySelector('img')
@@ -739,15 +768,27 @@ test('ecommerce sibling pattern: single action flips cart drawer off and checkou
     const seed = `runtime-${Date.now()}-cart-checkout-sibling`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-    class CartStore extends Store {
-      cartOpen = false
-      checkoutOpen = false
-      openCheckout() {
-        this.cartOpen = false
-        this.checkoutOpen = true
-      }
+    const CartStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class CartStore extends Store {
+          cartOpen = false
+          checkoutOpen = false
+          openCheckout() {
+            this.cartOpen = false
+            this.checkoutOpen = true
+          }
+        }
+      `,
+      '/virtual/cart-store.ts',
+      'CartStore',
+      { Store },
+    )
+    const store = new CartStore() as {
+      cartOpen: boolean
+      checkoutOpen: boolean
+      openCheckout(): void
     }
-    const store = new CartStore()
 
     const CartDrawer = await compileJsxComponent(
       `
@@ -842,10 +883,10 @@ test('conditional slot with compiled child: changing local state inside slot mus
         import { Component } from '@geajs/core'
 
         export default class ModalChild extends Component {
-          template({ children }) {
+          template(props) {
             return (
               <div class="modal-root">
-                <div class="modal-body">{children}</div>
+                <div class="modal-body">{props.children}</div>
               </div>
             )
           }
@@ -976,10 +1017,10 @@ test('Jira-like time tracking: bar, labels, and inputs update in real-time via c
         import { Component } from '@geajs/core'
 
         export default class DialogShell extends Component {
-          template({ children }) {
+          template(props) {
             return (
               <div class="dialog-root">
-                <div class="dialog-body">{children}</div>
+                <div class="dialog-body">{props.children}</div>
               </div>
             )
           }

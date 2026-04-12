@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 function fillInput(input: HTMLInputElement, value: string) {
   input.value = value
@@ -29,44 +30,41 @@ describe('runtime-only-jsx todo app (JSX templates)', { concurrency: false }, ()
 
     const seed = `runtime-only-jsx-${Date.now()}-${Math.random()}`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    resetDelegation()
 
-    let nextId = 1
-
-    class TodoStore extends Store {
-      todos: any[] = []
-      filter = 'all'
-      draft = ''
-
-      add() {
-        const t = this.draft.trim()
-        if (!t) return
-        this.draft = ''
-        this.todos.push({ id: nextId++, text: t, done: false })
+    const TodoStore = await compileStore(`
+      import { Store } from '@geajs/core'
+      let nextId = 1
+      export class TodoStore extends Store {
+        todos = []
+        filter = 'all'
+        draft = ''
+        add() {
+          const t = this.draft.trim()
+          if (!t) return
+          this.draft = ''
+          this.todos.push({ id: nextId++, text: t, done: false })
+        }
+        toggle(id) {
+          const todo = this.todos.find(t => t.id == id)
+          todo.done = !todo.done
+        }
+        remove(id) {
+          this.todos = this.todos.filter(t => t.id != id)
+        }
+        setFilter(filter) {
+          this.filter = filter
+        }
+        get filteredTodos() {
+          if (this.filter === 'active') return this.todos.filter(t => !t.done)
+          if (this.filter === 'completed') return this.todos.filter(t => t.done)
+          return this.todos
+        }
+        get activeCount() {
+          return this.todos.filter(t => !t.done).length
+        }
       }
-
-      toggle(id: number) {
-        const todo = this.todos.find((t: any) => t.id == id)
-        todo.done = !todo.done
-      }
-
-      remove(id: number) {
-        this.todos = this.todos.filter((t: any) => t.id != id)
-      }
-
-      setFilter(filter: string) {
-        this.filter = filter
-      }
-
-      get filteredTodos() {
-        if (this.filter === 'active') return this.todos.filter((t: any) => !t.done)
-        if (this.filter === 'completed') return this.todos.filter((t: any) => t.done)
-        return this.todos
-      }
-
-      get activeCount() {
-        return this.todos.filter((t: any) => !t.done).length
-      }
-    }
+    `, '/virtual/todo-store.ts', 'TodoStore', { Store })
 
     store = new TodoStore()
 
@@ -81,15 +79,15 @@ describe('runtime-only-jsx todo app (JSX templates)', { concurrency: false }, ()
               <div class="todo-app" id={this.id}>
                 <h1>Todo</h1>
                 <div class="input-row">
-                  <input class="todo-input" type="text" placeholder="What needs to be done?" value={store.draft} />
-                  <button class="add-btn">Add</button>
+                  <input class="todo-input" type="text" placeholder="What needs to be done?" value={store.draft} input={(e) => { store.draft = e.target.value }} keydown={(e) => { if (e.key === 'Enter') store.add() }} />
+                  <button class="add-btn" click={() => store.add()}>Add</button>
                 </div>
                 <ul class="todo-list">
                   {store.filteredTodos.map((todo) => (
                     <li key={todo.id} class={\`todo-item \${todo.done ? 'done' : ''}\`}>
-                      <input type="checkbox" data-id={todo.id} checked={todo.done} />
+                      <input type="checkbox" data-id={todo.id} checked={todo.done} change={() => store.toggle(todo.id)} />
                       <span class="todo-text">{todo.text}</span>
-                      <button class="remove-btn" data-id={todo.id}>
+                      <button class="remove-btn" data-id={todo.id} click={() => store.remove(todo.id)}>
                         &times;
                       </button>
                     </li>
@@ -99,7 +97,7 @@ describe('runtime-only-jsx todo app (JSX templates)', { concurrency: false }, ()
                   <span class="active-count">{store.activeCount} items left</span>
                   <div class="filters">
                     {['all', 'active', 'completed'].map((f) => (
-                      <button key={f} class={\`filter-btn \${store.filter === f ? 'active' : ''}\`} data-filter={f}>
+                      <button key={f} class={\`filter-btn \${store.filter === f ? 'active' : ''}\`} data-filter={f} click={() => store.setFilter(f)}>
                         {f[0].toUpperCase() + f.slice(1)}
                       </button>
                     ))}

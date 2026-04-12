@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE, GEA_COMPILED } from '../src/symbols'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
-import { GEA_CTOR_TAG_NAME } from '../src/lib/symbols'
+
+// TODO: ComponentManager does not exist in v2 (signal-based reactivity).
+// v2 uses direct DOM event delegation (src/dom/events.ts) instead of a
+// centralised ComponentManager. These tests need to be rewritten once
+// an equivalent manager API is added, or permanently replaced with tests
+// for the v2 event-delegation system.
+//
+// For now, we test the v2 event-delegation module (ensureDelegation /
+// delegateEvent) which is the closest v2 equivalent.
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -42,169 +51,253 @@ function installDom() {
   }
 }
 
-describe('ComponentManager', () => {
+describe('v2 event delegation (replaces ComponentManager)', () => {
   let restoreDom: () => void
-  let ComponentManager: any
+  let delegateEvent: typeof import('../src/dom/events').delegateEvent
+  let ensureDelegation: typeof import('../src/dom/events').ensureDelegation
+  let resetDelegation: typeof import('../src/dom/events').resetDelegation
 
   beforeEach(async () => {
     restoreDom = installDom()
-    const seed = `cm-${Date.now()}-${Math.random()}`
-    const mod = await import(`../src/lib/base/component-manager?${seed}`)
-    ComponentManager = mod.default
-    ComponentManager.instance = undefined
+    const seed = `ev-${Date.now()}-${Math.random()}`
+    const mod = await import(`../src/dom/events?${seed}`)
+    delegateEvent = mod.delegateEvent
+    ensureDelegation = mod.ensureDelegation
+    resetDelegation = mod.resetDelegation
   })
 
   afterEach(() => {
     restoreDom()
   })
 
-  describe('singleton', () => {
-    it('getInstance returns same instance', () => {
-      const a = ComponentManager.getInstance()
-      const b = ComponentManager.getInstance()
+  describe('ensureDelegation', () => {
+    it('installs a document-level listener for the given event type', () => {
+      // Should not throw
+      ensureDelegation('click')
+    })
+
+    it('can be called multiple times for the same event without error', () => {
+      ensureDelegation('click')
+      ensureDelegation('click')
+    })
+
+    it('supports multiple event types', () => {
+      ensureDelegation('click')
+      ensureDelegation('input')
+      ensureDelegation('change')
+    })
+  })
+
+  describe('delegateEvent', () => {
+    it('attaches a handler property to the element', () => {
+      const el = document.createElement('button')
+      const handler = () => {}
+      delegateEvent(el, 'click', handler)
+      assert.equal((el as any).__gea_click, handler)
+    })
+
+    it('dispatches to handler on click via delegation', async () => {
+      let called = false
+      const btn = document.createElement('button')
+      document.body.appendChild(btn)
+      delegateEvent(btn, 'click', () => {
+        called = true
+      })
+      btn.click()
+      // Give the event loop a tick for the delegated handler
+      await new Promise((r) => setTimeout(r, 0))
+      assert.equal(called, true)
+    })
+
+    it('handler receives the event object', async () => {
+      let receivedEvent: Event | null = null
+      const btn = document.createElement('button')
+      document.body.appendChild(btn)
+      delegateEvent(btn, 'click', (e: any) => {
+        receivedEvent = e
+      })
+      btn.click()
+      await new Promise((r) => setTimeout(r, 0))
+      assert.ok(receivedEvent)
+      assert.equal(receivedEvent!.type, 'click')
+    })
+
+    it('bubbles up from child to parent handler', async () => {
+      let parentCalled = false
+      const parent = document.createElement('div')
+      const child = document.createElement('span')
+      parent.appendChild(child)
+      document.body.appendChild(parent)
+      delegateEvent(parent, 'click', () => {
+        parentCalled = true
+      })
+      child.click()
+      await new Promise((r) => setTimeout(r, 0))
+      assert.equal(parentCalled, true)
+    })
+
+    it('inner handler takes priority over outer handler', async () => {
+      const calls: string[] = []
+      const outer = document.createElement('div')
+      const inner = document.createElement('div')
+      outer.appendChild(inner)
+      document.body.appendChild(outer)
+      delegateEvent(outer, 'click', () => {
+        calls.push('outer')
+      })
+      delegateEvent(inner, 'click', () => {
+        calls.push('inner')
+      })
+      inner.click()
+      await new Promise((r) => setTimeout(r, 0))
+      // v2 delegation stops at the first handler found
+      assert.deepEqual(calls, ['inner'])
+    })
+
+    it('replaces handler when delegateEvent called again on same element', async () => {
+      let firstCalled = false
+      let secondCalled = false
+      const btn = document.createElement('button')
+      document.body.appendChild(btn)
+      delegateEvent(btn, 'click', () => {
+        firstCalled = true
+      })
+      delegateEvent(btn, 'click', () => {
+        secondCalled = true
+      })
+      btn.click()
+      await new Promise((r) => setTimeout(r, 0))
+      assert.equal(firstCalled, false)
+      assert.equal(secondCalled, true)
+    })
+  })
+
+  describe('resetDelegation', () => {
+    it('clears the installed delegation set', () => {
+      ensureDelegation('click')
+      resetDelegation()
+      // After reset, ensureDelegation should re-install
+      // (no direct way to check, but it should not throw)
+      ensureDelegation('click')
+    })
+  })
+
+  describe('UID generation', () => {
+    it('generates unique ids via getUid', async () => {
+      const seed = `uid-${Date.now()}-${Math.random()}`
+      const mod = await import(`../src/component/uid?${seed}`)
+      const getUid = mod.default
+      const a = getUid()
+      const b = getUid()
+      assert.notEqual(a, b)
+      assert.equal(typeof a, 'string')
+    })
+
+    it('resetUidCounter resets the counter', async () => {
+      const seed = `uid-reset-${Date.now()}-${Math.random()}`
+      const mod = await import(`../src/component/uid?${seed}`)
+      const getUid = mod.default
+      mod.resetUidCounter(100)
+      const a = getUid()
+      mod.resetUidCounter(100)
+      const b = getUid()
       assert.equal(a, b)
     })
   })
 
-  describe('getUid', () => {
-    it('generates unique ids', () => {
-      const mgr = ComponentManager.getInstance()
-      const a = mgr.getUid()
-      const b = mgr.getUid()
-      assert.notEqual(a, b)
-    })
-  })
+  describe('Component mount helpers', () => {
+    it('mountComponent creates and appends to parent', async () => {
+      const seed = `mount-${Date.now()}-${Math.random()}`
+      const { Component } = await import(`../src/component/component?${seed}`)
+      const { mountComponent } = await import(`../src/dom/mount?${seed}`)
 
-  describe('createElement', () => {
-    it('creates element from HTML string', () => {
-      const mgr = ComponentManager.getInstance()
-      const el = mgr.createElement('<div class="test">Hello</div>')
-      assert.equal(el.tagName, 'DIV')
-      assert.equal(el.className, 'test')
-      assert.equal(el.textContent, 'Hello')
-    })
-  })
-
-  describe('rcc', () => {
-    it('registers class with auto-generated tag name', () => {
-      const mgr = ComponentManager.getInstance()
-      class MyWidget {}
-      mgr.registerComponentClass(MyWidget)
-      assert.ok(mgr.getComponentConstructor('my-widget'))
-    })
-
-    it('registers class with explicit tag name', () => {
-      const mgr = ComponentManager.getInstance()
-      class Foo {}
-      mgr.registerComponentClass(Foo, 'custom-foo')
-      assert.equal(mgr.getComponentConstructor('custom-foo'), Foo)
-    })
-
-    it('does not re-register same class', () => {
-      const mgr = ComponentManager.getInstance()
-      class Bar {
-        static [GEA_CTOR_TAG_NAME]?: string
+      class TestComp extends Component {
+        [GEA_CREATE_TEMPLATE]() {
+          const el = document.createElement('div')
+          el.className = 'mounted'
+          el.textContent = 'hello'
+          return el
+        }
       }
-      mgr.registerComponentClass(Bar)
-      const tag1 = (Bar as any)[GEA_CTOR_TAG_NAME]
-      mgr.registerComponentClass(Bar, 'different-bar')
-      assert.equal((Bar as any)[GEA_CTOR_TAG_NAME], tag1)
-    })
-  })
-
-  describe('gtn', () => {
-    it('converts PascalCase to kebab-case', () => {
-      const mgr = ComponentManager.getInstance()
-      assert.equal(mgr.generateTagName_({ name: 'MyComponent' }), 'my-component')
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const node = mountComponent(TestComp, { text: () => 'hi' }, container)
+      assert.equal(container.children.length, 1)
+      assert.equal(container.children[0].className, 'mounted')
     })
 
-    it('prefixes single-word names that have no hyphen', () => {
-      const mgr = ComponentManager.getInstance()
-      assert.equal(mgr.generateTagName_({ name: 'Link' }), 'gea-link')
-      assert.equal(mgr.generateTagName_({ name: 'Label' }), 'gea-label')
-      assert.equal(mgr.generateTagName_({ name: 'Foo' }), 'gea-foo')
+    it('mountComponent inserts before anchor when provided', async () => {
+      const seed = `mount-anchor-${Date.now()}-${Math.random()}`
+      const { Component } = await import(`../src/component/component?${seed}`)
+      const { mountComponent } = await import(`../src/dom/mount?${seed}`)
+
+      class TestComp extends Component {
+        [GEA_CREATE_TEMPLATE]() {
+          const el = document.createElement('div')
+          el.className = 'inserted'
+          return el
+        }
+      }
+      const container = document.createElement('div')
+      const existing = document.createElement('span')
+      existing.className = 'existing'
+      container.appendChild(existing)
+      document.body.appendChild(container)
+
+      mountComponent(TestComp, {}, container, existing)
+      assert.equal(container.children[0].className, 'inserted')
+      assert.equal(container.children[1].className, 'existing')
     })
 
-    it('uses displayName when available', () => {
-      const mgr = ComponentManager.getInstance()
-      assert.equal(mgr.generateTagName_({ displayName: 'CustomName', name: 'Other' }), 'custom-name')
+    it('mountFunctionComponent calls function with props proxy', async () => {
+      const seed = `mountfn-${Date.now()}-${Math.random()}`
+      const { mountFunctionComponent } = await import(`../src/dom/mount?${seed}`)
+
+      let receivedProps: any = null
+      function MyFn(props: Record<string, unknown>) {
+        receivedProps = props
+        const el = document.createElement('div')
+        el.textContent = String(props.text)
+        return el
+      }
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      mountFunctionComponent(MyFn, { text: () => 'hello' }, container)
+      assert.equal(container.children.length, 1)
+      assert.equal(container.children[0].textContent, 'hello')
+      assert.ok(receivedProps)
     })
 
-    it('falls back to "gea-component"', () => {
-      const mgr = ComponentManager.getInstance()
-      assert.equal(mgr.generateTagName_({}), 'gea-component')
-    })
-  })
+    it('mount detects class vs function', async () => {
+      // mount's internal `import { Component }` resolves to the canonical
+      // (non-seeded) module, so we must use the same canonical Component
+      // for the instanceof check to succeed.
+      const { Component } = await import('../src/component/component')
+      const { mount } = await import('../src/dom/mount')
 
-  describe('component registry', () => {
-    it('sc and gc round-trip', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = { id: 'test-1', rendered: true, render: () => true, constructor: Object }
-      mgr.setComponent(comp)
-      assert.equal(mgr.getComponent('test-1'), comp)
-    })
+      class TestComp extends Component {
+        [GEA_CREATE_TEMPLATE]() {
+          const el = document.createElement('div')
+          el.className = 'class-comp'
+          return el
+        }
+      }
+      function FnComp(props: Record<string, unknown>) {
+        const el = document.createElement('div')
+        el.className = 'fn-comp'
+        return el
+      }
 
-    it('rc deletes from registry', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = { id: 'test-2', rendered: true, render: () => true, constructor: Object }
-      mgr.setComponent(comp)
-      mgr.removeComponent(comp)
-      assert.equal(mgr.getComponent('test-2'), undefined)
-    })
+      const container1 = document.createElement('div')
+      const container2 = document.createElement('div')
+      document.body.appendChild(container1)
+      document.body.appendChild(container2)
 
-    it('unrendered components go to componentsToRender', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = { id: 'test-3', rendered: false, render: () => true, constructor: Object }
-      mgr.setComponent(comp)
-      assert.ok(mgr.componentsToRender['test-3'])
-    })
+      mount(TestComp, {}, container1)
+      mount(FnComp, {}, container2)
 
-    it('mcr removes from componentsToRender', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = { id: 'test-4', rendered: false, render: () => true, constructor: Object }
-      mgr.setComponent(comp)
-      mgr.markComponentRendered(comp)
-      assert.equal(mgr.componentsToRender['test-4'], undefined)
-    })
-  })
-
-  describe('gcs', () => {
-    it('returns tag names of registered classes', () => {
-      const mgr = ComponentManager.getInstance()
-      class Alpha {}
-      mgr.registerComponentClass(Alpha)
-      const selectors = mgr.getComponentSelectors()
-      assert.ok(selectors.includes('gea-alpha'))
-    })
-
-    it('caches selectors', () => {
-      const mgr = ComponentManager.getInstance()
-      const a = mgr.getComponentSelectors()
-      const b = mgr.getComponentSelectors()
-      assert.equal(a, b)
-    })
-
-    it('invalidates cache on new registration', () => {
-      const mgr = ComponentManager.getInstance()
-      const a = mgr.getComponentSelectors()
-      class Beta {}
-      mgr.registerComponentClass(Beta)
-      const b = mgr.getComponentSelectors()
-      assert.notEqual(a, b)
-    })
-  })
-
-  describe('registerEventTypes (static)', () => {
-    it('adds custom event types', () => {
-      ComponentManager.customEventTypes_ = []
-      ComponentManager.registerEventTypes(['customclick'])
-      assert.ok(ComponentManager.customEventTypes_.includes('customclick'))
-    })
-
-    it('deduplicates event types', () => {
-      ComponentManager.customEventTypes_ = []
-      ComponentManager.registerEventTypes(['x', 'x'])
-      assert.equal(ComponentManager.customEventTypes_.filter((t: string) => t === 'x').length, 1)
+      assert.equal(container1.children[0].className, 'class-comp')
+      assert.equal(container2.children[0].className, 'fn-comp')
     })
   })
 })

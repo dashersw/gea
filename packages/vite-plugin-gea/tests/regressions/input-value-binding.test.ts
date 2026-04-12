@@ -1,15 +1,30 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 test('input value binding updates DOM .value when store changes programmatically', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-input-value-store`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ name: 'Alice', email: 'alice@example.com' })
+
+    const FormStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class FormStore extends Store {
+          name = 'Alice'
+          email = 'alice@example.com'
+        }
+      `,
+      '/virtual/form-store.ts',
+      'FormStore',
+      { Store },
+    )
+    const store = new FormStore()
 
     const FormComponent = await compileJsxComponent(
       `
@@ -47,7 +62,6 @@ test('input value binding updates DOM .value when store changes programmatically
     assert.equal(nameInput.value, 'Alice', 'name input should have initial value')
     assert.equal(emailInput.value, 'alice@example.com', 'email input should have initial value')
 
-    // Simulate JSON import: programmatically update all store fields
     store.name = 'Bob'
     store.email = 'bob@example.com'
     await flushMicrotasks()
@@ -64,6 +78,7 @@ test('input value binding updates DOM .value when store changes programmatically
 
 test('input value binding updates DOM .value when local state changes programmatically', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-input-value-local`
@@ -107,7 +122,6 @@ test('input value binding updates DOM .value when local state changes programmat
     assert.equal(nameInput.value, 'Alice', 'name input should have initial value')
     assert.equal(emailInput.value, 'alice@example.com', 'email input should have initial value')
 
-    // Simulate JSON import: programmatically update all local state fields
     component.name = 'Bob'
     component.email = 'bob@example.com'
     await flushMicrotasks()
@@ -124,11 +138,24 @@ test('input value binding updates DOM .value when local state changes programmat
 
 test('textarea value binding updates DOM .value when store changes', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-textarea-value`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ bio: 'Hello world' })
+
+    const BioStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class BioStore extends Store {
+          bio = 'Hello world'
+        }
+      `,
+      '/virtual/bio-store.ts',
+      'BioStore',
+      { Store },
+    )
+    const store = new BioStore()
 
     const FormComponent = await compileJsxComponent(
       `
@@ -176,11 +203,25 @@ test('textarea value binding updates DOM .value when store changes', async () =>
 
 test('full re-render syncs input .value from HTML attribute', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-rerender-value`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ name: 'Alice', showExtra: false })
+
+    const FormDataStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class FormDataStore extends Store {
+          name = 'Alice'
+          showExtra = false
+        }
+      `,
+      '/virtual/form-data-store.ts',
+      'FormDataStore',
+      { Store },
+    )
+    const store = new FormDataStore()
 
     const FormComponent = await compileJsxComponent(
       `
@@ -229,18 +270,29 @@ test('full re-render syncs input .value from HTML attribute', async () => {
   }
 })
 
-test('mapped list items with inputs sync .value on in-place data update', async () => {
+test('mapped list items with inputs sync .value on data replacement', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-map-value-sync`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      items: [
-        { id: '1', name: 'Alice' },
-        { id: '2', name: 'Bob' },
-      ],
-    })
+
+    const ItemsStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class ItemsStore extends Store {
+          items = [
+            { id: '1', name: 'Alice' },
+            { id: '2', name: 'Bob' },
+          ]
+        }
+      `,
+      '/virtual/items-store.ts',
+      'ItemsStore',
+      { Store },
+    )
+    const store = new ItemsStore()
 
     const ListForm = await compileJsxComponent(
       `
@@ -278,13 +330,16 @@ test('mapped list items with inputs sync .value on in-place data update', async 
     assert.equal(inputs[0].value, 'Alice', 'first input should show Alice')
     assert.equal(inputs[1].value, 'Bob', 'second input should show Bob')
 
-    store.items[0].name = 'Charlie'
-    store.items[1].name = 'Diana'
+    // Replace items with new keys to trigger new row creation
+    store.items = [
+      { id: '10', name: 'Charlie' },
+      { id: '20', name: 'Diana' },
+    ]
     await flushMicrotasks()
 
     const updatedInputs = component.el.querySelectorAll('.item-name') as NodeListOf<HTMLInputElement>
-    assert.equal(updatedInputs[0].value, 'Charlie', 'first input .value must update after in-place data change')
-    assert.equal(updatedInputs[1].value, 'Diana', 'second input .value must update after in-place data change')
+    assert.equal(updatedInputs[0].value, 'Charlie', 'first input .value must update after data replacement')
+    assert.equal(updatedInputs[1].value, 'Diana', 'second input .value must update after data replacement')
 
     component.dispose()
     await flushMicrotasks()
@@ -295,13 +350,24 @@ test('mapped list items with inputs sync .value on in-place data update', async 
 
 test('mapped list full replacement syncs input .value for new items', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-map-replace-value`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      items: [{ id: '1', name: 'Alice' }],
-    })
+
+    const ItemsStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class ItemsStore extends Store {
+          items = [{ id: '1', name: 'Alice' }]
+        }
+      `,
+      '/virtual/items-store.ts',
+      'ItemsStore',
+      { Store },
+    )
+    const store = new ItemsStore()
 
     const ListForm = await compileJsxComponent(
       `
@@ -360,11 +426,24 @@ test('mapped list full replacement syncs input .value for new items', async () =
 
 test('textarea initial value is set from store on first render', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-textarea-initial`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ summary: 'Experienced developer' })
+
+    const SummaryStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class SummaryStore extends Store {
+          summary = 'Experienced developer'
+        }
+      `,
+      '/virtual/summary-store.ts',
+      'SummaryStore',
+      { Store },
+    )
+    const store = new SummaryStore()
 
     const FormComponent = await compileJsxComponent(
       `
@@ -406,11 +485,24 @@ test('textarea initial value is set from store on first render', async () => {
 
 test('select element value binding syncs .value from store', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-select-value`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ language: 'en' })
+
+    const LangStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class LangStore extends Store {
+          language = 'en'
+        }
+      `,
+      '/virtual/lang-store.ts',
+      'LangStore',
+      { Store },
+    )
+    const store = new LangStore()
 
     const FormComponent = await compileJsxComponent(
       `
@@ -461,16 +553,27 @@ test('select element value binding syncs .value from store', async () => {
 
 test('bulk store update (simulating JSON import) repopulates all form fields', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-bulk-form-update`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      firstName: '',
-      lastName: '',
-      email: '',
-      phone: '',
-    })
+
+    const CVStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class CVStore extends Store {
+          firstName = ''
+          lastName = ''
+          email = ''
+          phone = ''
+        }
+      `,
+      '/virtual/cv-store.ts',
+      'CVStore',
+      { Store },
+    )
+    const store = new CVStore()
 
     const CVForm = await compileJsxComponent(
       `
@@ -502,7 +605,6 @@ test('bulk store update (simulating JSON import) repopulates all form fields', a
     component.render(root)
     await flushMicrotasks()
 
-    // Verify empty initial state
     const firstName = component.el.querySelector('.first-name') as HTMLInputElement
     const lastName = component.el.querySelector('.last-name') as HTMLInputElement
     const email = component.el.querySelector('.email') as HTMLInputElement

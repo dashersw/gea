@@ -6,8 +6,6 @@ import { tmpdir } from 'node:os'
 import {
   transformComponentSource,
   transformWithPlugin,
-  parseSource,
-  transformComponentFile,
   generate,
 } from './plugin-helpers'
 
@@ -49,9 +47,12 @@ export default function OptionStep({ stepNumber, title, options, selectedId, sho
       componentPath,
     )
     assert.ok(output)
-    assert.match(output, /export default class OptionStep extends Component/)
-    assert.match(output, /template\(/)
-    assert.match(output, /import.*Component.*from ['"]@geajs\/core['"]/)
+    // v2 keeps function components as functions (transforms JSX inline)
+    assert.match(output, /export default function OptionStep/, 'should keep function component as a function')
+    assert.match(output, /template\(/, 'should use template() calls for JSX elements')
+    assert.match(output, /mount\(StepHeader/, 'should mount StepHeader child component')
+    assert.match(output, /mount\(OptionItem/, 'should mount OptionItem child component')
+    assert.match(output, /keyedList/, 'should use keyedList for .map() with keys')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -74,11 +75,13 @@ test('transform recognizes aliased named component imports', () => {
     }
   `)
 
-  assert.match(output, /this\._fancyCounter = this\[GEA_CHILD\]\(FancyCounter/)
-  assert.match(output, /this\._fancyCounter2 = this\[GEA_CHILD\]\(FancyCounter/)
+  // v2 uses mount for child components
+  const mountCalls = output.match(/mount\(FancyCounter/g)
+  assert.ok(mountCalls, 'should have mount(FancyCounter calls')
+  assert.equal(mountCalls!.length, 2, 'should mount FancyCounter twice')
 })
 
-test('prop patch methods use getElementById for element lookup', () => {
+test('prop-based component uses reactiveContent for prop display', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -96,14 +99,12 @@ test('prop patch methods use getElementById for element lookup', () => {
     }
   `)
 
-  assert.match(output, /counter-value.*id=.*__id.*-b\d|id=.*__id.*-b\d.*counter-value/)
-  assert.ok(
-    /__gid\([^)]*__id[^)]*\+[^)]*"-b\d"\)/.test(output),
-    'prop patch must use __gid, not this.$(selector)',
-  )
+  // v2 uses reactiveContent or computation for prop display
+  assert.match(output, /reactiveContent|computation/, 'should use reactiveContent or computation for prop display')
+  assert.match(output, /__props/, 'should reference __props')
 })
 
-test('generated selectors distinguish repeated sibling bindings', () => {
+test('generated template distinguishes repeated sibling elements', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -125,14 +126,12 @@ test('generated selectors distinguish repeated sibling bindings', () => {
     }
   `)
 
-  const selectors = Array.from(output.matchAll(/this\.\$\("([^"]+)"\)/g)).map((match) => match[1])
-  const bindingIds = Array.from(output.matchAll(/__gid\([^+]*\+\s*["']-([^"']+)["']\)/g)).map(
-    (match) => match[1],
-  )
-  const updateTextIds = Array.from(output.matchAll(/this\[GEA_UPDATE_TEXT\]\(['"]([^'"]+)['"]/g)).map(
-    (match) => match[1],
-  )
-  assert.equal(new Set(selectors).size >= 2 || new Set(bindingIds).size >= 2 || new Set(updateTextIds).size >= 2, true)
+  // v2 uses computation() for dynamic text with tree walker references
+  const computations = output.match(/computation\(/g)
+  assert.ok(computations, 'should have computation() calls')
+  assert.ok(computations!.length >= 2, 'should have at least 2 computation() calls for left and right')
+  // v2 navigates with firstElementChild/nextElementSibling
+  assert.match(output, /firstElementChild/, 'should use DOM tree walking')
 })
 
 test('plugin transforms jsx entry files', async () => {
@@ -195,7 +194,7 @@ test('compiled output does not contain querySelector', () => {
   assert.doesNotMatch(output, /\.querySelector\s*\(/, 'compiled output must not use querySelector')
 })
 
-test('static string expressions in JSX children are HTML-escaped at compile time', () => {
+test('static string expressions in JSX children use createTextNode (safe by default)', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     export default class App extends Component {
@@ -208,18 +207,17 @@ test('static string expressions in JSX children are HTML-escaped at compile time
     }
   `)
 
-  assert.ok(
-    output.includes('&lt;Button&gt;Default&lt;/Button&gt;'),
-    'angle brackets in static template literal should be HTML-escaped',
+  // v2 uses createTextNode or computation with .data = for static text,
+  // which is inherently safe (DOM text nodes don't interpret HTML)
+  assert.match(
+    output,
+    /createTextNode|\.data\s*=/,
+    'static string expression should use createTextNode or .data = (safe text assignment)',
   )
-  assert.ok(
-    output.includes('&lt;Button variant=&quot;secondary&quot;&gt;'),
-    'attributes in static template literal should be escaped',
-  )
-  assert.ok(!output.includes('${`<Button'), 'static string should not be interpolated as an expression')
+  assert.ok(!output.includes('innerHTML'), 'static string should not use innerHTML')
 })
 
-test('static StringLiteral in JSX children is HTML-escaped at compile time', () => {
+test('static StringLiteral in JSX children uses createTextNode (safe by default)', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     export default class App extends Component {
@@ -229,36 +227,13 @@ test('static StringLiteral in JSX children is HTML-escaped at compile time', () 
     }
   `)
 
-  assert.ok(output.includes('&lt;script&gt;'), 'angle brackets in string literal should be HTML-escaped')
-  assert.ok(!output.includes('<script>alert'), 'raw script tag should not appear in output')
-})
-
-test('parseSource detects all component classes in a single file', () => {
-  const source = `
-    import { Component } from '@geajs/core'
-
-    class Header extends Component {
-      template() {
-        return <header><h1>Title</h1></header>
-      }
-    }
-
-    export default class App extends Component {
-      template() {
-        return <div><span>Hello</span></div>
-      }
-    }
-  `
-
-  const parsed = parseSource(source)
-  assert.ok(parsed)
-  assert.ok(parsed.componentClassNames.length === 2, 'should detect both component classes')
-  assert.ok(parsed.componentClassNames.includes('Header'), 'should include Header')
-  assert.ok(parsed.componentClassNames.includes('App'), 'should include App')
+  // v2 uses createTextNode for static strings — inherently XSS-safe
+  assert.match(output, /createTextNode/, 'static string literal should use createTextNode')
+  assert.ok(!output.includes('innerHTML'), 'static string should not use innerHTML')
 })
 
 test('two components in a single file are both transformed', () => {
-  const source = `
+  const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
     class Header extends Component {
@@ -272,37 +247,20 @@ test('two components in a single file are both transformed', () => {
         return <div><span>Hello</span></div>
       }
     }
-  `
+  `)
 
-  const parsed = parseSource(source)
-  assert.ok(parsed)
-
-  const original = parseSource(source)
-  assert.ok(original)
-  const storeImports = new Map<string, string>()
-
-  for (const className of parsed.componentClassNames) {
-    transformComponentFile(
-      parsed.ast,
-      parsed.imports,
-      storeImports,
-      className,
-      '/virtual/multi-component.jsx',
-      original.ast,
-      new Set(),
-      new Set(),
-    )
-  }
-
-  const output = generate(parsed.ast).code
-
+  // v2 transforms both components
   assert.doesNotMatch(output, /return <header>/, 'Header template JSX should be transformed')
   assert.doesNotMatch(output, /return <div>/, 'App template JSX should be transformed')
   assert.match(output, /class Header/, 'Header class should still exist')
   assert.match(output, /class App/, 'App class should still exist')
+  // Both should have GEA_CREATE_TEMPLATE
+  const createTemplateCalls = output.match(/\[GEA_CREATE_TEMPLATE\]\(/g)
+  assert.ok(createTemplateCalls, 'should have [GEA_CREATE_TEMPLATE] methods')
+  assert.equal(createTemplateCalls!.length, 2, 'both components should have [GEA_CREATE_TEMPLATE]')
 })
 
-test('render prop arrow functions containing JSX are compiled to template literals', () => {
+test('render prop arrow functions containing JSX are compiled to mount calls', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import MySelect from './MySelect.jsx'
@@ -323,15 +281,10 @@ test('render prop arrow functions containing JSX are compiled to template litera
   `)
 
   assert.doesNotMatch(output, /<Avatar/, 'JSX inside render prop must be compiled — raw <Avatar> tag should not appear')
-  assert.match(output, /new Avatar\(/, 'render prop must instantiate the component with new Avatar(...)')
-  assert.doesNotMatch(
-    output,
-    /`<avatar[^`]*<\/avatar>`/,
-    'render prop must not produce a dead <avatar> custom element HTML string',
-  )
+  assert.match(output, /mount\(Avatar/, 'render prop must instantiate the component with mount(Avatar, ...)')
 })
 
-test('imported component tags do not throw dynamic component error', () => {
+test('imported component tags compile successfully', () => {
   const output = transformComponentSource(
     `
       import { Component } from '@geajs/core'
@@ -347,12 +300,12 @@ test('imported component tags do not throw dynamic component error', () => {
         }
       }
     `,
-    new Set(['Header']),
   )
   assert.ok(output, 'Should compile without errors')
+  assert.match(output, /mount\(Header/, 'Should use mount for imported component')
 })
 
-test('static text with single quotes is escaped as &#39;', () => {
+test('static text with single quotes uses createTextNode (safe by default)', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
 
@@ -362,14 +315,15 @@ test('static text with single quotes is escaped as &#39;', () => {
       }
     }
   `)
-  assert.match(output, /it&#39;s a test/, 'Single quote should be escaped to &#39;')
+  // v2 uses createTextNode for static text — quotes are naturally safe
+  assert.match(output, /createTextNode.*it's a test/, 'Single quote text should use createTextNode')
 })
 
 // ---------------------------------------------------------------------------
 // Render prop / dynamic content function calls
 // ---------------------------------------------------------------------------
 
-test('render prop call result must not be escaped with geaEscapeHtml', () => {
+test('render prop call result does not use geaEscapeHtml (v2 uses DOM operations)', () => {
   const output = transformComponentSource(`
     import { Component } from '@geajs/core'
     import SummaryContent from './SummaryContent'
@@ -393,20 +347,9 @@ test('render prop call result must not be escaped with geaEscapeHtml', () => {
     }
   `)
 
-  // A call that returns JSX/component HTML must not be escaped
+  // v2 does not use geaEscapeHtml — it uses DOM operations
   assert.ok(
-    !output.includes('geaEscapeHtml(String(activeTab.content()))'),
-    'render prop call returning JSX must not be wrapped with geaEscapeHtml, got: ' +
-      output.match(/geaEscapeHtml[^)]*\)/)?.[0],
-  )
-
-  // Observer must use innerHTML (not textContent) for render prop updates
-  assert.ok(
-    !output.includes('.textContent') || output.includes('.innerHTML'),
-    'observer for render prop must use innerHTML, not textContent',
+    !output.includes('geaEscapeHtml'),
+    'v2 should not use geaEscapeHtml, uses DOM operations instead',
   )
 })
-
-// ---------------------------------------------------------------------------
-// JSXNamespacedName handling
-// ---------------------------------------------------------------------------

@@ -1,15 +1,22 @@
 /**
- * Getter dependency analysis must track `this.__stack`, `this._items`, `this.name_`, etc.
- * as real backing paths (same issue class as GitHub #35).
+ * v2 getter dependency tracking: store getters with underscore-prefixed backing fields.
+ *
+ * In v2, the compiled component accesses the getter at runtime (e.g. store.stack),
+ * and the signal system automatically tracks dependencies on the underlying backing
+ * signals (____stack, etc.). The compiled *store* uses wrapSignalValue for getters.
+ *
+ * These tests verify:
+ * 1. The component compiles and uses the getter via computation/keyedList.
+ * 2. The store getter compilation wraps backing fields with wrapSignalValue.
  */
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
-import { transformWithPlugin } from './plugin-helpers'
+import { transformComponentSource, transformWithPlugin } from './plugin-helpers'
 
-test('getter reading this.__stack wires observe path __stack for .map', async () => {
+test('getter reading this.__stack compiles store with wrapSignalValue and component with keyedList', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-getter-__stack-'))
 
   try {
@@ -49,16 +56,32 @@ export default class S extends Store {
     )
 
     assert.ok(output)
-    assert.ok(
-      output.includes('__stack'),
-      'compiled output must reference backing field __stack (observe / map delegate / getter deps)',
+    // v2 component uses store.stack via keyedList — the getter is called at runtime
+    assert.match(output, /keyedList\(/, 'component must use keyedList for .map()')
+    assert.match(output, /store\.stack/, 'component must access the getter store.stack')
+
+    // Also verify the store itself compiles the backing field correctly
+    const storeOutput = await transformWithPlugin(
+      `import { Store } from '@geajs/core'
+export default class S extends Store {
+  __stack: Array<{ id: string }> = [{ id: '1' }]
+  get stack() {
+    return this.__stack
+  }
+}
+`,
+      storePath,
     )
+
+    assert.ok(storeOutput)
+    assert.match(storeOutput, /wrapSignalValue/, 'store getter must use wrapSignalValue for reactive access')
+    assert.match(storeOutput, /Symbol.for.*gea.field.__stack/, 'store must use Symbol.for for __stack field')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('getter reading this._items wires observe path _items for .map', async () => {
+test('getter reading this._items compiles store with wrapSignalValue and component with keyedList', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-getter-_items-'))
 
   try {
@@ -98,16 +121,32 @@ export default class S extends Store {
     )
 
     assert.ok(output)
-    assert.ok(
-      output.includes('_items'),
-      'compiled output must reference backing field _items when getter reads this._items',
+    // v2 component uses store.items via keyedList
+    assert.match(output, /keyedList\(/, 'component must use keyedList for .map()')
+    assert.match(output, /store\.items/, 'component must access the getter store.items')
+
+    // Verify store compilation
+    const storeOutput = await transformWithPlugin(
+      `import { Store } from '@geajs/core'
+export default class S extends Store {
+  _items: string[] = ['a']
+  get items() {
+    return this._items
+  }
+}
+`,
+      storePath,
     )
+
+    assert.ok(storeOutput)
+    assert.match(storeOutput, /wrapSignalValue/, 'store getter must use wrapSignalValue')
+    assert.match(storeOutput, /Symbol.for.*gea.field._items/, 'store must use Symbol.for for _items field')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('getter reading this.name_ wires observe path name_', async () => {
+test('getter reading this.name_ compiles store with wrapSignalValue and component with computation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'gea-getter-name_-'))
 
   try {
@@ -141,10 +180,26 @@ export default class S extends Store {
     )
 
     assert.ok(output)
-    assert.ok(
-      output.includes('name_'),
-      'compiled output must reference backing field name_ when getter reads this.name_',
+    // v2 component uses store.display via computation — signal tracking handles dependency
+    assert.match(output, /computation\(/, 'component must use computation for reactive text')
+    assert.match(output, /store\.display/, 'component must access the getter store.display')
+
+    // Verify store compilation
+    const storeOutput = await transformWithPlugin(
+      `import { Store } from '@geajs/core'
+export default class S extends Store {
+  name_ = 'x'
+  get display() {
+    return this.name_
+  }
+}
+`,
+      storePath,
     )
+
+    assert.ok(storeOutput)
+    assert.match(storeOutput, /wrapSignalValue/, 'store getter must use wrapSignalValue')
+    assert.match(storeOutput, /Symbol.for.*gea.field.name_/, 'store must use Symbol.for for name_ field')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

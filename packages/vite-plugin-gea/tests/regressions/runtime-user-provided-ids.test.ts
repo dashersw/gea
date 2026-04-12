@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE } from '../../../gea/src/symbols'
 import { describe, it } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 describe('user-provided id attributes', () => {
   it('static id on root element is emitted verbatim', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const seed = `uid-static-root-${Date.now()}`
       const [{ default: Component }] = await loadRuntimeModules(seed)
@@ -30,7 +33,6 @@ describe('user-provided id attributes', () => {
       comp.render(root)
 
       assert.equal(comp.el.id, 'my-app')
-      assert.equal(comp.el.getAttribute('data-gcc'), comp.id)
       assert.equal(comp.el.textContent?.trim(), 'Hello')
 
       comp.dispose()
@@ -42,6 +44,7 @@ describe('user-provided id attributes', () => {
 
   it('static id on child element with reactive binding is emitted verbatim', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const seed = `uid-static-child-${Date.now()}`
       const [{ default: Component }] = await loadRuntimeModules(seed)
@@ -87,6 +90,7 @@ describe('user-provided id attributes', () => {
 
   it('dynamic id on root element is emitted from expression', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const seed = `uid-dynamic-root-${Date.now()}`
       const [{ default: Component }] = await loadRuntimeModules(seed)
@@ -107,11 +111,11 @@ describe('user-provided id attributes', () => {
 
       const root = document.createElement('div')
       document.body.appendChild(root)
-      const comp = new Comp({ myId: 'custom-123' })
+      const comp = new Comp()
+      comp[GEA_SET_PROPS]({ myId: () => 'custom-123' })
       comp.render(root)
 
       assert.equal(comp.el.id, 'custom-123')
-      assert.equal(comp.el.getAttribute('data-gcc'), comp.id)
 
       comp.dispose()
       await flushMicrotasks()
@@ -120,8 +124,9 @@ describe('user-provided id attributes', () => {
     }
   })
 
-  it('no user id on root element uses framework id', async () => {
+  it('no user id on root element produces empty id (v2 does not auto-assign framework id)', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const seed = `uid-no-id-${Date.now()}`
       const [{ default: Component }] = await loadRuntimeModules(seed)
@@ -145,8 +150,9 @@ describe('user-provided id attributes', () => {
       const comp = new Comp()
       comp.render(root)
 
-      assert.equal(comp.el.id, comp.id)
-      assert.equal(comp.el.getAttribute('data-gcc'), null)
+      // v2 does not auto-assign the framework id to the root element
+      assert.equal(comp.el.id, '')
+      assert.equal(comp.el.textContent?.trim(), 'No custom id')
 
       comp.dispose()
       await flushMicrotasks()
@@ -157,6 +163,7 @@ describe('user-provided id attributes', () => {
 
   it('static id on root with click event delegates correctly', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const seed = `uid-event-${Date.now()}`
       const [{ default: Component }] = await loadRuntimeModules(seed)
@@ -200,6 +207,7 @@ describe('user-provided id attributes', () => {
 
   it('user id on array container element used for list lookup', async () => {
     const restoreDom = installDom()
+    resetDelegation()
     try {
       const seed = `uid-array-${Date.now()}`
       const [{ default: Component }] = await loadRuntimeModules(seed)

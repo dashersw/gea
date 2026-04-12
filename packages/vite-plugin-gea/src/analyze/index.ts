@@ -1,0 +1,5 @@
+export { analyzeImports } from './imports.js'
+export type { ImportInfo } from './imports.js'
+export { identifyReactiveSources } from './reactive-sources.js'
+export { buildSubstitutionMap, scanDestructuringStatements, scanReactiveLocalConsts } from './destructuring.js'
+export type { SubstitutionMap } from './destructuring.js'

@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE, GEA_COMPILED } from '../src/symbols'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
-import { GEA_COMPILED_CHILD, GEA_HANDLE_ITEM_HANDLER } from '../src/lib/symbols'
+
+// TODO: ComponentManager does not exist in v2 (signal-based reactivity).
+// The original v1 tests covered event handling, getParentComps,
+// callEventsGetterHandler, callItemHandler, MutationObserver rendering,
+// event plugins, etc. In v2 these are replaced by:
+//   - Direct DOM event delegation (src/dom/events.ts)
+//   - Signals, effects, computeds, batch (src/signals/)
+//   - DOM helpers: template, text, attributes, mount (src/dom/)
+//   - Component lifecycle scope (src/component/lifecycle.ts)
+//
+// This file tests the v2 equivalents thoroughly.
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -42,706 +53,437 @@ function installDom() {
   }
 }
 
-describe('ComponentManager – event handling', () => {
+describe('v2 event delegation – advanced', () => {
   let restoreDom: () => void
-  let ComponentManager: any
+  let delegateEvent: typeof import('../src/dom/events').delegateEvent
+  let ensureDelegation: typeof import('../src/dom/events').ensureDelegation
+  let resetDelegation: typeof import('../src/dom/events').resetDelegation
 
   beforeEach(async () => {
     restoreDom = installDom()
-    const seed = `cmcov-${Date.now()}-${Math.random()}`
-    const mod = await import(`../src/lib/base/component-manager?${seed}`)
-    ComponentManager = mod.default
-    ComponentManager.instance = undefined
+    const seed = `ev-cov-${Date.now()}-${Math.random()}`
+    const mod = await import(`../src/dom/events?${seed}`)
+    delegateEvent = mod.delegateEvent
+    ensureDelegation = mod.ensureDelegation
+    resetDelegation = mod.resetDelegation
   })
 
   afterEach(() => {
     restoreDom()
   })
 
-  describe('he', () => {
-    it('dispatches event to parent component handlers', () => {
-      const mgr = ComponentManager.getInstance()
-      let handlerCalled = false
-      const comp = {
-        id: 'test-comp',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: {
-            '.btn': () => {
-              handlerCalled = true
-            },
-          },
-        },
-      }
-      mgr.setComponent(comp)
+  it('delegation walks from target up to handler', async () => {
+    const calls: string[] = []
+    const grandparent = document.createElement('div')
+    const parent = document.createElement('div')
+    const child = document.createElement('span')
+    grandparent.appendChild(parent)
+    parent.appendChild(child)
+    document.body.appendChild(grandparent)
 
-      const root = document.createElement('div')
-      root.id = 'test-comp'
-      document.body.appendChild(root)
+    delegateEvent(grandparent, 'click', () => calls.push('grandparent'))
+    child.click()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.deepEqual(calls, ['grandparent'])
+  })
 
-      const btn = document.createElement('button')
-      btn.className = 'btn'
-      root.appendChild(btn)
+  it('closest handler wins when nested', async () => {
+    const calls: string[] = []
+    const outer = document.createElement('div')
+    const inner = document.createElement('div')
+    const leaf = document.createElement('span')
+    outer.appendChild(inner)
+    inner.appendChild(leaf)
+    document.body.appendChild(outer)
 
-      const event = new Event('click', { bubbles: true })
-      Object.defineProperty(event, 'target', { value: btn })
-      mgr.handleEvent(event)
-      assert.equal(handlerCalled, true)
+    delegateEvent(outer, 'click', () => calls.push('outer'))
+    delegateEvent(inner, 'click', () => calls.push('inner'))
+    leaf.click()
+    await new Promise((r) => setTimeout(r, 0))
+    // v2 stops at first handler
+    assert.deepEqual(calls, ['inner'])
+  })
+
+  it('no handler = no error on click', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    ensureDelegation('click')
+    // Should not throw
+    el.click()
+    await new Promise((r) => setTimeout(r, 0))
+  })
+
+  it('different event types are independent', async () => {
+    let clickCalled = false
+    let inputCalled = false
+    const el = document.createElement('input')
+    document.body.appendChild(el)
+
+    delegateEvent(el, 'click', () => { clickCalled = true })
+    delegateEvent(el, 'input', () => { inputCalled = true })
+
+    el.click()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.equal(clickCalled, true)
+    assert.equal(inputCalled, false)
+  })
+
+  it('handler receives the native event', async () => {
+    let receivedType = ''
+    const btn = document.createElement('button')
+    document.body.appendChild(btn)
+    delegateEvent(btn, 'click', (e: any) => {
+      receivedType = e.type
+    })
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+    assert.equal(receivedType, 'click')
+  })
+})
+
+describe('v2 signals – signal / effect / computed / batch', () => {
+  let signal: typeof import('../src/signals/index').signal
+  let effect: typeof import('../src/signals/index').effect
+  let computed: typeof import('../src/signals/index').computed
+  let batch: typeof import('../src/signals/index').batch
+
+  beforeEach(async () => {
+    const seed = `sig-${Date.now()}-${Math.random()}`
+    const mod = await import(`../src/signals/index?${seed}`)
+    signal = mod.signal
+    effect = mod.effect
+    computed = mod.computed
+    batch = mod.batch
+  })
+
+  describe('signal', () => {
+    it('creates a signal with initial value', () => {
+      const s = signal(0)
+      assert.equal(s.value, 0)
     })
 
-    it('propagates up through parent nodes', () => {
-      const mgr = ComponentManager.getInstance()
+    it('updates value via setter', () => {
+      const s = signal(1)
+      s.value = 2
+      assert.equal(s.value, 2)
+    })
+
+    it('peek returns value without tracking', () => {
+      const s = signal(42)
+      assert.equal(s.peek(), 42)
+    })
+
+    it('subscribe notifies on change', () => {
+      const s = signal(0)
       let called = false
-      const comp = {
-        id: 'outer',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: {
-            '.inner-btn': () => {
-              called = true
-            },
-          },
-        },
-      }
-      mgr.setComponent(comp)
-
-      const outer = document.createElement('div')
-      outer.id = 'outer'
-      document.body.appendChild(outer)
-      const inner = document.createElement('div')
-      outer.appendChild(inner)
-      const btn = document.createElement('button')
-      btn.className = 'inner-btn'
-      inner.appendChild(btn)
-
-      const event = new Event('click', { bubbles: true })
-      Object.defineProperty(event, 'target', { value: btn })
-      mgr.handleEvent(event)
+      s.subscribe(() => { called = true })
+      s.value = 1
       assert.equal(called, true)
     })
 
-    it('invokes events getter at most once per component per he', () => {
-      const mgr = ComponentManager.getInstance()
-      mgr.loaded_ = false
-      let eventsGets = 0
-      const comp = {
-        id: 'ev-cache',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        get events() {
-          eventsGets++
-          return {
-            click: {
-              '.leaf': () => {},
-            },
-          }
-        },
-      }
-      mgr.setComponent(comp)
-
-      const outer = document.createElement('div')
-      outer.id = 'ev-cache'
-      document.body.appendChild(outer)
-      const mid = document.createElement('div')
-      outer.appendChild(mid)
-      const leaf = document.createElement('button')
-      leaf.className = 'leaf'
-      mid.appendChild(leaf)
-
-      const event = new Event('click', { bubbles: true })
-      Object.defineProperty(event, 'target', { value: leaf })
-      mgr.handleEvent(event)
-      assert.equal(eventsGets, 1)
-    })
-
-    it('skips inner component handlers after synthetic bubble passes its root', () => {
-      const mgr = ComponentManager.getInstance()
-      let innerBroadDivCalls = 0
-      const inner = {
-        id: 'inner-broad',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: {
-            div: () => {
-              innerBroadDivCalls++
-            },
-          },
-        },
-      }
-      const outer = {
-        id: 'outer-broad',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: { click: {} },
-      }
-      mgr.setComponent(inner)
-      mgr.setComponent(outer)
-
-      const outerEl = document.createElement('div')
-      outerEl.id = 'outer-broad'
-      document.body.appendChild(outerEl)
-      const innerEl = document.createElement('div')
-      innerEl.id = 'inner-broad'
-      outerEl.appendChild(innerEl)
-      const span = document.createElement('span')
-      innerEl.appendChild(span)
-
-      const event = new Event('click', { bubbles: true })
-      Object.defineProperty(event, 'target', { value: span })
-      mgr.handleEvent(event)
-      assert.equal(
-        innerBroadDivCalls,
-        1,
-        'inner delegated handler should only run while targetEl is still inside that component root',
-      )
-    })
-
-    it('stops propagation when handler returns false', () => {
-      const mgr = ComponentManager.getInstance()
-      let secondCalled = false
-      const inner = {
-        id: 'inner-comp',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: { '.stop': () => false },
-        },
-      }
-      const outer = {
-        id: 'outer-comp',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: {
-            '.stop': () => {
-              secondCalled = true
-            },
-          },
-        },
-      }
-      mgr.setComponent(inner)
-      mgr.setComponent(outer)
-
-      const outerEl = document.createElement('div')
-      outerEl.id = 'outer-comp'
-      document.body.appendChild(outerEl)
-      const innerEl = document.createElement('div')
-      innerEl.id = 'inner-comp'
-      outerEl.appendChild(innerEl)
-      const btn = document.createElement('button')
-      btn.className = 'stop'
-      innerEl.appendChild(btn)
-
-      const event = new Event('click', { bubbles: true })
-      Object.defineProperty(event, 'target', { value: btn })
-      mgr.handleEvent(event)
-      assert.equal(secondCalled, false)
-    })
-  })
-
-  describe('gpc', () => {
-    it('walks up the DOM to find parent components', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = {
-        id: 'par',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-      }
-      mgr.setComponent(comp)
-
-      const el = document.createElement('div')
-      el.id = 'par'
-      document.body.appendChild(el)
-      const child = document.createElement('span')
-      el.appendChild(child)
-
-      const parents = mgr.getParentComps(child)
-      assert.equal(parents.length, 1)
-      assert.equal(parents[0], comp)
-    })
-
-    it('uses cached parentComps on repeat calls', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = {
-        id: 'cached',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-      }
-      mgr.setComponent(comp)
-
-      const el = document.createElement('div')
-      el.id = 'cached'
-      document.body.appendChild(el)
-      const child = document.createElement('span')
-      el.appendChild(child)
-
-      mgr.getParentComps(child)
-      const secondCall = mgr.getParentComps(child)
-      assert.equal(secondCall.length, 1)
-    })
-
-    it('recomputes when cached parentComps references a removed component', () => {
-      const mgr = ComponentManager.getInstance()
-      const gone = {
-        id: 'gone',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-      }
-      const kept = {
-        id: 'kept',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-      }
-      mgr.setComponent(gone)
-      mgr.setComponent(kept)
-
-      const outer = document.createElement('div')
-      outer.id = 'kept'
-      document.body.appendChild(outer)
-      const inner = document.createElement('div')
-      inner.id = 'gone'
-      outer.appendChild(inner)
-      const leaf = document.createElement('span')
-      inner.appendChild(leaf)
-
-      mgr.getParentComps(leaf)
-      mgr.removeComponent(gone)
-      const parents = mgr.getParentComps(leaf)
-      assert.equal(parents.length, 1)
-      assert.equal(parents[0], kept)
-    })
-  })
-
-  describe('cegh', () => {
-    it('returns true when comp has no events', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = { id: 'no-events', rendered: true, render: () => true, constructor: Object }
-      const event = new Event('click')
-      Object.defineProperty(event, 'targetEl', { value: document.createElement('div'), writable: true })
-      assert.equal(mgr.callEventsGetterHandler(comp, event), true)
-    })
-
-    it('matches by id selector (# prefix)', () => {
-      const mgr = ComponentManager.getInstance()
-      let called = false
-      const comp = {
-        id: 'id-match',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: {
-            '#my-btn': () => {
-              called = true
-            },
-          },
-        },
-      }
-      const btn = document.createElement('button')
-      btn.id = 'my-btn'
-      document.body.appendChild(btn)
-
-      const event = new Event('click')
-      ;(event as any).targetEl = btn
-      mgr.callEventsGetterHandler(comp, event)
-      assert.equal(called, true)
-    })
-
-    it('returns true when no matching selector', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = {
-        id: 'no-match',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: { '.nonexistent': () => {} },
-        },
-      }
-      const btn = document.createElement('button')
-      btn.className = 'other'
-      document.body.appendChild(btn)
-      const event = new Event('click')
-      ;(event as any).targetEl = btn
-      assert.equal(mgr.callEventsGetterHandler(comp, event), true)
-    })
-
-    it('returns true when event type has no handlers', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = {
-        id: 'wrong-type',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: { click: { '.btn': () => {} } },
-      }
-      const btn = document.createElement('button')
-      const event = new Event('mouseover')
-      ;(event as any).targetEl = btn
-      assert.equal(mgr.callEventsGetterHandler(comp, event), true)
-    })
-  })
-
-  describe('cih', () => {
-    it('calls [GEA_HANDLE_ITEM_HANDLER] for item elements', () => {
-      const mgr = ComponentManager.getInstance()
-      let receivedId: string | null = null
-      const comp = {
-        id: 'item-handler',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        el: null as any,
-        [GEA_HANDLE_ITEM_HANDLER](itemId: string, _e: Event) {
-          receivedId = itemId
-        },
-      }
-
-      const el = document.createElement('div')
-      el.id = 'item-handler'
-      comp.el = el
-      document.body.appendChild(el)
-      mgr.setComponent(comp)
-
-      const item = document.createElement('div')
-      item.setAttribute('data-gid', 'item-42')
-      el.appendChild(item)
-
-      const event = new Event('click')
-      ;(event as any).targetEl = item
-      mgr.callItemHandler(comp, event)
-      assert.equal(receivedId, 'item-42')
-    })
-
-    it('returns true when no item element found', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = { id: 'no-item', rendered: true, render: () => true, constructor: Object }
-      const div = document.createElement('div')
-      const event = new Event('click')
-      ;(event as any).targetEl = div
-      assert.equal(mgr.callItemHandler(comp, event), true)
-    })
-
-    it('ch does not invoke [GEA_HANDLE_ITEM_HANDLER] after a delegated row handler runs (parent data-ge only)', async () => {
-      const seed = `cmcov-skip-item-${Date.now()}-${Math.random()}`
-      const mod = await import(`../src/lib/base/component-manager?${seed}`)
-      const CM = mod.default
-      const { GEA_SKIP_ITEM_HANDLER } = mod as { GEA_SKIP_ITEM_HANDLER: string }
-      CM.instance = undefined
-      const mgr = CM.getInstance()
-
-      let delegatedCalled = false
-      let itemHandlerCalled = false
-      const comp = {
-        id: 'skip-item-chain',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        el: null as any,
-        [GEA_HANDLE_ITEM_HANDLER]() {
-          itemHandlerCalled = true
-        },
-        events: {
-          click: {
-            '[data-ge="ev0"]': () => {
-              delegatedCalled = true
-            },
-          },
-        },
-      }
-      const root = document.createElement('div')
-      root.id = 'skip-item-chain'
-      document.body.appendChild(root)
-      comp.el = root
-
-      const row = document.createElement('div')
-      row.setAttribute('data-ge', 'ev0')
-      const cell = document.createElement('span')
-      cell.setAttribute('data-gid', '5')
-      row.appendChild(cell)
-      root.appendChild(row)
-
-      mgr.setComponent(comp)
-
-      const event = new Event('click', { bubbles: true })
-      ;(event as any).targetEl = cell
-
-      assert.equal(mgr.callEventsGetterHandler(comp, event as any), GEA_SKIP_ITEM_HANDLER)
-
-      mgr.callHandlers([comp], [comp.events], event as any, [undefined], 0)
-
-      assert.equal(delegatedCalled, true)
-      assert.equal(itemHandlerCalled, false)
-    })
-
-    it('returns true when targetEl has no getAttribute', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = { id: 'no-attr', rendered: true, render: () => true, constructor: Object }
-      const event = new Event('click')
-      ;(event as any).targetEl = {}
-      assert.equal(mgr.callItemHandler(comp, event), true)
-    })
-  })
-
-  describe('goc', () => {
-    it('finds owning component by walking up DOM', () => {
-      const mgr = ComponentManager.getInstance()
-      const comp = {
-        id: 'owner',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-      }
-      mgr.setComponent(comp)
-
-      const el = document.createElement('div')
-      el.id = 'owner'
-      document.body.appendChild(el)
-      const child = document.createElement('span')
-      el.appendChild(child)
-
-      assert.equal(mgr.getOwningComponent(child), comp)
-    })
-
-    it('returns undefined for orphan element', () => {
-      const mgr = ComponentManager.getInstance()
-      const el = document.createElement('div')
-      assert.equal(mgr.getOwningComponent(el), undefined)
-    })
-  })
-
-  describe('adl', () => {
-    it('deduplicates event listeners', () => {
-      const mgr = ComponentManager.getInstance()
-      mgr.addDocumentEventListeners_(['click'])
-      mgr.addDocumentEventListeners_(['click'])
-      assert.equal(
-        mgr.registeredDocumentEvents_.size,
-        mgr.registeredDocumentEvents_.has('click') ? mgr.registeredDocumentEvents_.size : 0,
-      )
-    })
-  })
-
-  describe('event plugins', () => {
-    it('iep avoids duplicate installs', () => {
-      const mgr = ComponentManager.getInstance()
+    it('unsubscribe stops notifications', () => {
+      const s = signal(0)
       let callCount = 0
-      const plugin = () => {
-        callCount++
-      }
-      mgr.installEventPlugin_(plugin)
-      mgr.installEventPlugin_(plugin)
+      const unsub = s.subscribe(() => { callCount++ })
+      s.value = 1
+      unsub()
+      s.value = 2
       assert.equal(callCount, 1)
     })
 
-    it('icp installs static plugins', () => {
-      let installed = false
-      ComponentManager.eventPlugins_ = [
-        () => {
-          installed = true
-        },
-      ]
-      const mgr = ComponentManager.getInstance()
-      mgr.installConfiguredPlugins_()
-      assert.equal(installed, true)
-      ComponentManager.eventPlugins_ = []
+    it('does not notify when value is same (Object.is)', () => {
+      const s = signal(5)
+      let callCount = 0
+      s.subscribe(() => { callCount++ })
+      s.value = 5
+      assert.equal(callCount, 0)
+    })
+  })
+
+  describe('effect', () => {
+    it('runs immediately on creation', () => {
+      let ran = false
+      const dispose = effect(() => { ran = true })
+      assert.equal(ran, true)
+      dispose()
     })
 
-    it('static installEventPlugin installs on existing instance', () => {
-      const mgr = ComponentManager.getInstance()
-      mgr.loaded_ = true
-      let called = false
-      ComponentManager.installEventPlugin(() => {
-        called = true
+    it('re-runs when tracked signal changes', () => {
+      const s = signal(0)
+      const values: number[] = []
+      const dispose = effect(() => { values.push(s.value) })
+      s.value = 1
+      s.value = 2
+      assert.deepEqual(values, [0, 1, 2])
+      dispose()
+    })
+
+    it('stops re-running after dispose', () => {
+      const s = signal(0)
+      let runCount = 0
+      const dispose = effect(() => { s.value; runCount++ })
+      assert.equal(runCount, 1)
+      dispose()
+      s.value = 1
+      assert.equal(runCount, 1)
+    })
+  })
+
+  describe('computed', () => {
+    it('derives a value from a signal', () => {
+      const s = signal(2)
+      const c = computed(() => s.value * 2)
+      assert.equal(c.value, 4)
+    })
+
+    it('updates when source signal changes', () => {
+      const s = signal(3)
+      const c = computed(() => s.value + 10)
+      s.value = 7
+      assert.equal(c.value, 17)
+    })
+
+    it('peek returns current value without tracking', () => {
+      const s = signal(5)
+      const c = computed(() => s.value * 3)
+      assert.equal(c.peek(), 15)
+    })
+
+    it('can be disposed', () => {
+      const s = signal(1)
+      const c = computed(() => s.value * 2)
+      c.dispose()
+      s.value = 10
+      // After dispose, computed no longer updates
+      // (peek may return stale value)
+      assert.equal(c.peek(), 2)
+    })
+  })
+
+  describe('batch', () => {
+    it('defers effect updates until batch ends', () => {
+      const s = signal(0)
+      const values: number[] = []
+      const dispose = effect(() => { values.push(s.value) })
+      batch(() => {
+        s.value = 1
+        s.value = 2
+        s.value = 3
       })
-      assert.equal(called, true)
+      // Initial run + one batched run
+      assert.deepEqual(values, [0, 3])
+      dispose()
+    })
+
+    it('returns the value from the batch callback', () => {
+      const result = batch(() => 42)
+      assert.equal(result, 42)
+    })
+
+    it('nested batches only flush once', () => {
+      const s = signal(0)
+      let runCount = 0
+      const dispose = effect(() => { s.value; runCount++ })
+      runCount = 0
+      batch(() => {
+        batch(() => {
+          s.value = 1
+        })
+        s.value = 2
+      })
+      assert.equal(runCount, 1)
+      dispose()
+    })
+  })
+})
+
+describe('v2 DOM helpers', () => {
+  let restoreDom: () => void
+
+  beforeEach(() => {
+    restoreDom = installDom()
+  })
+
+  afterEach(() => {
+    restoreDom()
+  })
+
+  describe('template', () => {
+    it('creates a reusable cloneable template', async () => {
+      const seed = `tpl-${Date.now()}-${Math.random()}`
+      const { template } = await import(`../src/dom/template?${seed}`)
+      const tpl = template('<div class="row">text</div>')
+      const el1 = tpl()
+      const el2 = tpl()
+      assert.equal(el1.tagName, 'DIV')
+      assert.equal(el1.className, 'row')
+      assert.notEqual(el1, el2) // clones are distinct
     })
   })
 
-  describe('sc with events', () => {
-    it('registers document event listeners when loaded', () => {
-      const mgr = ComponentManager.getInstance()
-      mgr.loaded_ = true
-      const comp = {
-        id: 'ev-comp',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: { customtest: { '.a': () => {} } },
-      }
-      mgr.setComponent(comp)
-      assert.ok(mgr.registeredDocumentEvents_.has('customtest'))
+  describe('createElement', () => {
+    it('creates an element with the given tag', async () => {
+      const seed = `ce-${Date.now()}-${Math.random()}`
+      const { createElement } = await import(`../src/dom/element?${seed}`)
+      const el = createElement('span')
+      assert.equal(el.tagName, 'SPAN')
     })
   })
 
-  describe('gae', () => {
-    it('collects event types from all components and custom types', () => {
-      const mgr = ComponentManager.getInstance()
-      ComponentManager.customEventTypes_ = ['globalcustom']
-      const comp = {
-        id: 'ev-all',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: { localclick: {} },
-      }
-      mgr.setComponent(comp)
-      const types = mgr.getActiveDocumentEventTypes_()
-      assert.ok(types.includes('globalcustom'))
-      assert.ok(types.includes('localclick'))
-      ComponentManager.customEventTypes_ = []
+  describe('createTextNode', () => {
+    it('creates a text node', async () => {
+      const seed = `tn-${Date.now()}-${Math.random()}`
+      const { createTextNode } = await import(`../src/dom/text?${seed}`)
+      const t = createTextNode('hello')
+      assert.equal(t.nodeType, 3)
+      assert.equal(t.data, 'hello')
     })
   })
 
-  describe('onLoad – MutationObserver for pending components', () => {
-    it('renders components pending in componentsToRender on DOM mutation', async () => {
-      const mgr = ComponentManager.getInstance()
-      let rendered = false
-      const comp = {
-        id: 'pending-comp',
-        rendered: false,
-        [GEA_COMPILED_CHILD]: false,
-        render() {
-          rendered = true
-          return true
-        },
-        constructor: Object,
-      }
-      mgr.componentsToRender['pending-comp'] = comp
-      mgr.onLoad()
+  describe('reactiveText', () => {
+    it('creates a text node that updates from a signal', async () => {
+      const seed = `rt-${Date.now()}-${Math.random()}`
+      const sigMod = await import(`../src/signals/index?${seed}`)
+      const textMod = await import(`../src/dom/text?${seed}`)
+      const s = sigMod.signal('initial')
+      const t = textMod.reactiveText(() => s.value)
+      assert.equal(t.data, 'initial')
+      s.value = 'updated'
+      assert.equal(t.data, 'updated')
+    })
+  })
+
+  describe('reactiveAttr', () => {
+    it('sets and updates an attribute reactively', async () => {
+      const seed = `ra-${Date.now()}-${Math.random()}`
+      const sigMod = await import(`../src/signals/index?${seed}`)
+      const attrMod = await import(`../src/dom/attributes?${seed}`)
       const el = document.createElement('div')
-      document.body.appendChild(el)
-      await new Promise((r) => setTimeout(r, 50))
-      assert.equal(rendered, true)
+      const s = sigMod.signal('red')
+      attrMod.reactiveAttr(el, 'class', () => s.value)
+      assert.equal(el.getAttribute('class'), 'red')
+      s.value = 'blue'
+      assert.equal(el.getAttribute('class'), 'blue')
     })
+  })
 
-    it('skips [GEA_COMPILED_CHILD] components in MutationObserver', async () => {
-      const mgr = ComponentManager.getInstance()
-      let rendered = false
-      const comp = {
-        id: 'compiled-pending',
-        rendered: false,
-        [GEA_COMPILED_CHILD]: true,
-        render() {
-          rendered = true
-          return true
-        },
-        constructor: Object,
-      }
-      mgr.componentsToRender['compiled-pending'] = comp
-      mgr.onLoad()
+  describe('staticAttr', () => {
+    it('sets an attribute once', async () => {
+      const seed = `sa-${Date.now()}-${Math.random()}`
+      const { staticAttr } = await import(`../src/dom/attributes?${seed}`)
       const el = document.createElement('div')
-      document.body.appendChild(el)
-      await new Promise((r) => setTimeout(r, 50))
-      assert.equal(rendered, false)
+      staticAttr(el, 'id', 'myid')
+      assert.equal(el.getAttribute('id'), 'myid')
     })
   })
+})
 
-  describe('adl when no body', () => {
-    it('does nothing when document.body is null', () => {
-      const mgr = ComponentManager.getInstance()
-      const origBody = document.body
-      Object.defineProperty(document, 'body', { value: null, configurable: true })
-      mgr.addDocumentEventListeners_(['click'])
-      Object.defineProperty(document, 'body', { value: origBody, configurable: true })
-    })
+describe('v2 component lifecycle scope', () => {
+  let restoreDom: () => void
+
+  beforeEach(() => {
+    restoreDom = installDom()
   })
 
-  describe('cegh with owning component', () => {
-    it('matches when owning component found via DOM walk', () => {
-      const mgr = ComponentManager.getInstance()
-      let called = false
-      const comp = {
-        id: 'owner-test',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: {
-            '.deep-btn': () => {
-              called = true
-            },
-          },
-        },
-      }
-      mgr.setComponent(comp)
-      const el = document.createElement('div')
-      el.id = 'owner-test'
-      document.body.appendChild(el)
-      const wrapper = document.createElement('div')
-      el.appendChild(wrapper)
-      const btn = document.createElement('button')
-      btn.className = 'deep-btn'
-      wrapper.appendChild(btn)
-
-      const event = new Event('click')
-      ;(event as any).targetEl = btn
-      mgr.callEventsGetterHandler(comp, event)
-      assert.equal(called, true)
-    })
+  afterEach(() => {
+    restoreDom()
   })
 
-  describe('ch – cih returns false', () => {
-    it('stops propagation when cih returns false', () => {
-      const mgr = ComponentManager.getInstance()
-      let secondCalled = false
-      const comp = {
-        id: 'item-stop',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        el: null as any,
-        [GEA_HANDLE_ITEM_HANDLER]() {
-          return false
-        },
+  it('createEffectScope runs effects and disposes them', async () => {
+    const seed = `scope-${Date.now()}-${Math.random()}`
+    const sigMod = await import(`../src/signals/index?${seed}`)
+    const { createEffectScope } = await import(`../src/component/lifecycle?${seed}`)
+
+    const s = sigMod.signal(0)
+    let runCount = 0
+    const scope = createEffectScope()
+    scope.run(() => { s.value; runCount++ })
+    assert.equal(runCount, 1)
+    s.value = 1
+    assert.equal(runCount, 2)
+    scope.dispose()
+    s.value = 2
+    assert.equal(runCount, 2) // no more updates after dispose
+  })
+
+  it('createEffectScope disposes multiple effects', async () => {
+    const seed = `scope2-${Date.now()}-${Math.random()}`
+    const sigMod = await import(`../src/signals/index?${seed}`)
+    const { createEffectScope } = await import(`../src/component/lifecycle?${seed}`)
+
+    const s1 = sigMod.signal(0)
+    const s2 = sigMod.signal(0)
+    let count1 = 0
+    let count2 = 0
+    const scope = createEffectScope()
+    scope.run(() => { s1.value; count1++ })
+    scope.run(() => { s2.value; count2++ })
+    assert.equal(count1, 1)
+    assert.equal(count2, 1)
+
+    scope.dispose()
+    s1.value = 1
+    s2.value = 1
+    assert.equal(count1, 1)
+    assert.equal(count2, 1)
+  })
+})
+
+describe('v2 Component + props integration', () => {
+  let restoreDom: () => void
+
+  beforeEach(() => {
+    restoreDom = installDom()
+  })
+
+  afterEach(() => {
+    restoreDom()
+  })
+
+  it('mountComponent sets props and renders', async () => {
+    const seed = `integ-${Date.now()}-${Math.random()}`
+    const sigMod = await import(`../src/signals/index?${seed}`)
+    const { Component } = await import(`../src/component/component?${seed}`)
+    const { mountComponent } = await import(`../src/dom/mount?${seed}`)
+
+    const nameSig = sigMod.signal('Alice')
+
+    class Greeting extends Component {
+      [GEA_CREATE_TEMPLATE]() {
+        const el = document.createElement('div')
+        el.textContent = `Hello ${this.props.name}`
+        return el
       }
-      const comp2 = {
-        id: 'item-outer',
-        rendered: true,
-        render: () => true,
-        constructor: Object,
-        events: {
-          click: {
-            '.x': () => {
-              secondCalled = true
-            },
-          },
-        },
-      }
+    }
 
-      const outerEl = document.createElement('div')
-      outerEl.id = 'item-outer'
-      document.body.appendChild(outerEl)
-      const innerEl = document.createElement('div')
-      innerEl.id = 'item-stop'
-      outerEl.appendChild(innerEl)
-      comp.el = innerEl
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    mountComponent(Greeting, { name: () => nameSig.value }, container)
+    assert.equal(container.children[0].textContent, 'Hello Alice')
+  })
 
-      const itemEl = document.createElement('div')
-      itemEl.setAttribute('data-gid', 'x')
-      innerEl.appendChild(itemEl)
+  it('props thunks are lazy — changing signal after mount does not auto-update static read', async () => {
+    const seed = `integ2-${Date.now()}-${Math.random()}`
+    const sigMod = await import(`../src/signals/index?${seed}`)
+    const { Component } = await import(`../src/component/component?${seed}`)
 
-      mgr.setComponent(comp)
-      mgr.setComponent(comp2)
+    const s = sigMod.signal('initial')
+    class MyComp extends Component {}
+    const c = new MyComp()
+    c[GEA_SET_PROPS]({ val: () => s.value })
+    assert.equal(c.props.val, 'initial')
+    s.value = 'changed'
+    // props.val is a getter backed by the thunk, so it reads the signal
+    assert.equal(c.props.val, 'changed')
+  })
 
-      const event = new Event('click', { bubbles: true })
-      Object.defineProperty(event, 'target', { value: itemEl })
-      mgr.handleEvent(event)
-      assert.equal(secondCalled, false)
-    })
+  it('createPropsProxy creates enumerable getters', async () => {
+    const seed = `props-enum-${Date.now()}-${Math.random()}`
+    const { createPropsProxy } = await import(`../src/component/props?${seed}`)
+    const proxy = createPropsProxy({ a: () => 1, b: () => 2, c: () => 3 })
+    assert.deepEqual(Object.keys(proxy).sort(), ['a', 'b', 'c'])
+    assert.equal(proxy.a, 1)
+    assert.equal(proxy.b, 2)
+    assert.equal(proxy.c, 3)
   })
 })

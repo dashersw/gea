@@ -1,24 +1,29 @@
+/**
+ * component-helpers.test.ts
+ *
+ * Tests for v2 component helper patterns: child components via mountComponent,
+ * reactive text updates, store observation via effects, list reconciliation
+ * via keyedList, and component disposal patterns.
+ *
+ * Replaces the v1 proxy-based helper tests (GEA_CHILD, GEA_EL, GEA_UPDATE_TEXT,
+ * GEA_OBSERVE, GEA_OBSERVE_LIST, GEA_RECONCILE_LIST) with equivalent v2 patterns.
+ */
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
-import {
-  GEA_CHILD,
-  GEA_CHILD_COMPONENTS,
-  GEA_COMPILED_CHILD,
-  GEA_EL,
-  GEA_ITEM_KEY,
-  GEA_OBSERVE,
-  GEA_OBSERVE_LIST,
-  GEA_OBSERVER_REMOVERS,
-  GEA_PARENT_COMPONENT,
-  GEA_PROXY_GET_RAW_TARGET,
-  GEA_RECONCILE_LIST,
-  GEA_UPDATE_TEXT,
-} from '../src/lib/symbols'
-
-function engineThis(c: object): any {
-  return (c as any)[GEA_PROXY_GET_RAW_TARGET] ?? c
-}
+import { Component } from '../src/component/component'
+import { Store } from '../src/store/store'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE, GEA_COMPILED } from '../src/symbols'
+import { signal } from '../src/signals/signal'
+import { effect, computation } from '../src/signals/effect'
+import { batch } from '../src/signals/batch'
+import { resetBatch } from '../src/signals/batch'
+import { resetState } from '../src/signals/tracking'
+import { wrapSignalValue } from '../src/reactive/wrap-signal-value'
+import { mountComponent } from '../src/dom/mount'
+import { keyedList } from '../src/dom/keyed-list'
+import { reactiveText } from '../src/dom/text'
+import { reactiveAttr } from '../src/dom/attributes'
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -59,593 +64,449 @@ function installDom() {
   }
 }
 
-async function loadModules() {
-  const seed = `comp-helpers-${Date.now()}-${Math.random()}`
-  const mgr = await import(`../src/lib/base/component-manager?${seed}`)
-  mgr.default.instance = undefined
-  const compMod = await import(`../src/lib/base/component.tsx?${seed}`)
-  const storeMod = await import(`../src/lib/store?${seed}`)
-  return {
-    Component: compMod.default as typeof import('../src/lib/base/component').default,
-    Store: storeMod.Store as typeof import('../src/lib/store').Store,
-  }
-}
-
-describe('Component.__child', () => {
+// ---------------------------------------------------------------------------
+// Child component mounting (replaces v1 GEA_CHILD)
+// ---------------------------------------------------------------------------
+describe('Child component mounting via mountComponent', () => {
   let restoreDom: () => void
-  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
 
-  beforeEach(async () => {
+  beforeEach(() => {
+    resetState()
+    resetBatch()
     restoreDom = installDom()
-    const mods = await loadModules()
-    Component = mods.Component
   })
 
   afterEach(() => {
     restoreDom()
   })
 
-  it('sets parentComponent to the parent', () => {
-    class Parent extends Component {
-      template() {
-        return '<div></div>'
-      }
-    }
+  it('mounts child into parent container', () => {
     class Child extends Component {
-      template() {
-        return '<span></span>'
+      [GEA_CREATE_TEMPLATE]() {
+        const el = document.createElement('span')
+        el.textContent = 'child'
+        return el
       }
     }
-    const parent = new Parent()
-    const child = parent[GEA_CHILD](Child, {})
-    assert.equal(engineThis(child)[GEA_PARENT_COMPONENT], parent)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    mountComponent(Child, {}, container)
+    assert.equal(container.children.length, 1)
+    assert.equal(container.children[0].textContent, 'child')
   })
 
-  it('sets GEA_COMPILED_CHILD to true on the child', () => {
-    class Parent extends Component {
-      template() {
-        return '<div></div>'
-      }
-    }
+  it('passes props correctly to child', () => {
     class Child extends Component {
-      template() {
-        return '<span></span>'
+      [GEA_CREATE_TEMPLATE]() {
+        const el = document.createElement('span')
+        el.textContent = `${this.props.color}-${this.props.count}`
+        return el
       }
     }
-    const parent = new Parent()
-    const child = parent[GEA_CHILD](Child, {})
-    assert.equal(child[GEA_COMPILED_CHILD], true)
+    const container = document.createElement('div')
+    mountComponent(Child, { color: () => 'blue', count: () => 42 }, container)
+    assert.equal(container.children[0].textContent, 'blue-42')
   })
 
-  it('passes props correctly to the child', () => {
-    class Parent extends Component {
-      template() {
-        return '<div></div>'
-      }
-    }
+  it('child receives reactive props from signals', () => {
+    const color = signal('red')
     class Child extends Component {
-      template() {
-        return '<span></span>'
+      [GEA_CREATE_TEMPLATE]() {
+        const el = document.createElement('span')
+        const text = reactiveText(() => this.props.color)
+        el.appendChild(text)
+        return el
       }
     }
-    const parent = new Parent()
-    const child = parent[GEA_CHILD](Child, { color: 'blue', count: 42 })
-    assert.equal(child.props.color, 'blue')
-    assert.equal(child.props.count, 42)
+    const container = document.createElement('div')
+    mountComponent(Child, { color: () => color.value }, container)
+    assert.equal(container.textContent, 'red')
+    color.value = 'blue'
+    assert.equal(container.textContent, 'blue')
   })
 
-  it('registers the child in parent[GEA_CHILD_COMPONENTS]', () => {
-    class Parent extends Component {
-      template() {
-        return '<div></div>'
-      }
-    }
+  it('mounts multiple children', () => {
     class Child extends Component {
-      template() {
-        return '<span></span>'
+      [GEA_CREATE_TEMPLATE]() {
+        const el = document.createElement('li')
+        el.textContent = String(this.props.text)
+        return el
       }
     }
-    const parent = new Parent()
-    const child = parent[GEA_CHILD](Child, {})
-    assert.ok(parent[GEA_CHILD_COMPONENTS].includes(child))
-  })
-
-  it('sets __geaItemKey (stringified) when key argument is provided', () => {
-    class Parent extends Component {
-      template() {
-        return '<div></div>'
-      }
-    }
-    class Child extends Component {
-      template() {
-        return '<span></span>'
-      }
-    }
-    const parent = new Parent()
-    const childNumKey = parent[GEA_CHILD](Child, {}, 7)
-    assert.equal(childNumKey[GEA_ITEM_KEY], '7')
-
-    const childStrKey = parent[GEA_CHILD](Child, {}, 'abc')
-    assert.equal(childStrKey[GEA_ITEM_KEY], 'abc')
-  })
-
-  it('does not set __geaItemKey when no key argument is provided', () => {
-    class Parent extends Component {
-      template() {
-        return '<div></div>'
-      }
-    }
-    class Child extends Component {
-      template() {
-        return '<span></span>'
-      }
-    }
-    const parent = new Parent()
-    const child = parent[GEA_CHILD](Child, {})
-    assert.equal(child[GEA_ITEM_KEY], undefined)
+    const container = document.createElement('ul')
+    mountComponent(Child, { text: () => 'first' }, container)
+    mountComponent(Child, { text: () => 'second' }, container)
+    mountComponent(Child, { text: () => 'third' }, container)
+    assert.equal(container.children.length, 3)
+    assert.equal(container.children[0].textContent, 'first')
+    assert.equal(container.children[2].textContent, 'third')
   })
 })
 
-describe('Component.__el', () => {
+// ---------------------------------------------------------------------------
+// Reactive text updates (replaces v1 GEA_UPDATE_TEXT)
+// ---------------------------------------------------------------------------
+describe('Reactive text updates via reactiveText', () => {
   let restoreDom: () => void
-  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
 
-  beforeEach(async () => {
+  beforeEach(() => {
+    resetState()
+    resetBatch()
     restoreDom = installDom()
-    const mods = await loadModules()
-    Component = mods.Component
   })
 
   afterEach(() => {
     restoreDom()
   })
 
-  it('returns element by id suffix with caching', async () => {
-    class MyComp extends Component {
-      template() {
-        return `<div id="${this.id}"><p id="${this.id}-info">hi</p></div>`
-      }
-    }
-    const comp = new MyComp()
-    document.body.innerHTML = ''
-    comp.render(document.body)
-    const el = comp[GEA_EL]('info')
-    assert.ok(el)
-    assert.equal(el.textContent, 'hi')
-    // Second call returns cached
-    assert.equal(comp[GEA_EL]('info'), el)
+  it('updates textContent of text node reactively', () => {
+    const message = signal('old')
+    const container = document.createElement('div')
+    const text = reactiveText(() => message.value)
+    container.appendChild(text)
+    assert.equal(container.textContent, 'old')
+    message.value = 'new'
+    assert.equal(container.textContent, 'new')
   })
 
-  it('re-queries DOM when cached element is disconnected', async () => {
-    class MyComp extends Component {
-      template() {
-        return `<div id="${this.id}"><p id="${this.id}-info">hi</p></div>`
-      }
-    }
-    const comp = new MyComp()
-    document.body.innerHTML = ''
-    comp.render(document.body)
-    const el1 = comp[GEA_EL]('info')
-    assert.ok(el1)
+  it('handles empty string', () => {
+    const s = signal('')
+    const node = reactiveText(() => s.value)
+    assert.equal(node.data, '')
+  })
 
-    // Disconnect the cached element by removing it from the DOM
-    el1.remove()
-
-    // Insert a new element with the same ID
-    const newP = document.createElement('p')
-    newP.id = comp.id + '-info'
-    newP.textContent = 'replaced'
-    comp[GEA_EL]('info') // should detect disconnected, re-query
-    // but the element is gone now, let's put it back first
-    document.getElementById(comp.id)!.appendChild(newP)
-
-    const el2 = comp[GEA_EL]('info')
-    assert.ok(el2)
-    assert.notEqual(el2, el1)
-    assert.equal(el2.textContent, 'replaced')
+  it('converts numbers to string', () => {
+    const s = signal<any>(42)
+    const node = reactiveText(() => s.value)
+    assert.equal(node.data, '42')
+    s.value = 0
+    assert.equal(node.data, '0')
   })
 })
 
-describe('Component.__updateText', () => {
-  let restoreDom: () => void
-  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
-
-  beforeEach(async () => {
-    restoreDom = installDom()
-    const mods = await loadModules()
-    Component = mods.Component
+// ---------------------------------------------------------------------------
+// Store observation via effects (replaces v1 GEA_OBSERVE)
+// ---------------------------------------------------------------------------
+describe('Store observation via effects', () => {
+  beforeEach(() => {
+    resetState()
+    resetBatch()
   })
 
-  afterEach(() => {
-    restoreDom()
-  })
-
-  it('updates textContent of element by suffix', async () => {
-    class MyComp extends Component {
-      template() {
-        return `<div id="${this.id}"><span id="${this.id}-msg">old</span></div>`
-      }
-    }
-    const comp = new MyComp()
-    document.body.innerHTML = ''
-    comp.render(document.body)
-    comp[GEA_UPDATE_TEXT]('msg', 'new')
-    assert.equal(document.getElementById(comp.id + '-msg')?.textContent, 'new')
-  })
-
-  it('does nothing if element not found', () => {
-    class MyComp extends Component {
-      template() {
-        return `<div id="${this.id}"></div>`
-      }
-    }
-    const comp = new MyComp()
-    document.body.innerHTML = ''
-    comp.render(document.body)
-    // Should not throw when suffix does not exist in the rendered output
-    comp[GEA_UPDATE_TEXT]('nonexistent', 'text')
-  })
-})
-
-describe('Component.__observe', () => {
-  let restoreDom: () => void
-  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
-  let Store: Awaited<ReturnType<typeof loadModules>>['Store']
-
-  beforeEach(async () => {
-    restoreDom = installDom()
-    const mods = await loadModules()
-    Component = mods.Component
-    Store = mods.Store
-  })
-
-  afterEach(() => {
-    restoreDom()
-  })
-
-  it('registers observer and pushes remover to GEA_OBSERVER_REMOVERS', async () => {
-    class MyComp extends Component {
-      template() {
-        return `<div id="${this.id}"></div>`
-      }
-    }
+  it('effect tracks store field changes', () => {
     class TestStore extends Store {
-      count = 0
+      __count = signal(0)
+      get count() {
+        return this.__count.value
+      }
+      set count(v: number) {
+        this.__count.value = v
+      }
     }
     const store = new TestStore()
-    const comp = new MyComp()
     const values: number[] = []
-    comp[GEA_OBSERVE](store, ['count'], (v: number) => values.push(v))
-    assert.equal(comp[GEA_OBSERVER_REMOVERS].length, 1)
+    effect(() => {
+      values.push(store.count)
+    })
+    assert.deepEqual(values, [0])
     store.count = 5
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.deepEqual(values, [5])
-    // Dispose should clean up
-    comp.dispose()
+    assert.deepEqual(values, [0, 5])
+  })
+
+  it('dispose stops tracking store changes', () => {
+    class TestStore extends Store {
+      __count = signal(0)
+      get count() {
+        return this.__count.value
+      }
+      set count(v: number) {
+        this.__count.value = v
+      }
+    }
+    const store = new TestStore()
+    const values: number[] = []
+    const dispose = effect(() => {
+      values.push(store.count)
+    })
+    store.count = 5
+    assert.deepEqual(values, [0, 5])
+    dispose()
     store.count = 10
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.deepEqual(values, [5]) // No new value
+    assert.deepEqual(values, [0, 5]) // no new value after dispose
+  })
+
+  it('tracks multiple store fields', () => {
+    class UserStore extends Store {
+      __name = signal('Alice')
+      get name() {
+        return this.__name.value
+      }
+      set name(v: string) {
+        this.__name.value = v
+      }
+      __age = signal(25)
+      get age() {
+        return this.__age.value
+      }
+      set age(v: number) {
+        this.__age.value = v
+      }
+    }
+    const store = new UserStore()
+    let observed = ''
+    effect(() => {
+      observed = `${store.name}-${store.age}`
+    })
+    assert.equal(observed, 'Alice-25')
+    store.name = 'Bob'
+    assert.equal(observed, 'Bob-25')
+    store.age = 30
+    assert.equal(observed, 'Bob-30')
+  })
+
+  it('batched store mutations produce single effect run', () => {
+    class TestStore extends Store {
+      __x = signal(0)
+      get x() {
+        return this.__x.value
+      }
+      set x(v: number) {
+        this.__x.value = v
+      }
+      __y = signal(0)
+      get y() {
+        return this.__y.value
+      }
+      set y(v: number) {
+        this.__y.value = v
+      }
+    }
+    const store = new TestStore()
+    let runCount = 0
+    effect(() => {
+      store.x
+      store.y
+      runCount++
+    })
+    assert.equal(runCount, 1)
+    batch(() => {
+      store.x = 1
+      store.y = 2
+    })
+    assert.equal(runCount, 2) // single flush
   })
 })
 
-describe('Component.__reconcileList', () => {
+// ---------------------------------------------------------------------------
+// List rendering via keyedList (replaces v1 GEA_RECONCILE_LIST)
+// ---------------------------------------------------------------------------
+describe('List rendering via keyedList', () => {
   let restoreDom: () => void
-  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
 
-  beforeEach(async () => {
+  beforeEach(() => {
+    resetState()
+    resetBatch()
     restoreDom = installDom()
-    const mods = await loadModules()
-    Component = mods.Component
   })
 
   afterEach(() => {
     restoreDom()
   })
 
-  it('removes disposed items and keeps survivors', async () => {
-    class Parent extends Component {
-      template() {
-        return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
-      }
-    }
-    class Item extends Component {
-      template() {
-        return `<li id="${this.id}">${this.props.text}</li>`
-      }
-    }
-    const parent = new Parent()
-    document.body.innerHTML = ''
-    parent.render(document.body)
+  function getTexts(container: HTMLElement): string[] {
+    return Array.from(container.childNodes)
+      .filter((n) => n.nodeType === 1)
+      .map((el) => el.textContent || '')
+  }
 
-    const items = [
-      parent[GEA_CHILD](Item, { text: 'a' }, 1),
-      parent[GEA_CHILD](Item, { text: 'b' }, 2),
-      parent[GEA_CHILD](Item, { text: 'c' }, 3),
-    ]
-    const list = parent[GEA_EL]('list')
-    items.forEach((item) => item.render(list))
+  function setupList(initial: { id: number; text: string }[] = []) {
+    const container = document.createElement('div')
+    const anchor = document.createComment('')
+    container.appendChild(anchor)
+    const items = signal(initial)
+    keyedList(
+      container,
+      anchor,
+      () => items.value,
+      (item) => (item as any).id,
+      (getter) => {
+        const el = document.createElement('li')
+        el.textContent = (getter() as any).text
+        return el
+      },
+      true,
+    )
+    return { container, items }
+  }
 
-    // Remove item with key "2"
-    const newData = [
+  it('removes disposed items and keeps survivors', () => {
+    const { container, items } = setupList([
+      { id: 1, text: 'a' },
+      { id: 2, text: 'b' },
+      { id: 3, text: 'c' },
+    ])
+    assert.deepEqual(getTexts(container), ['a', 'b', 'c'])
+    items.value = [
       { id: 1, text: 'a' },
       { id: 3, text: 'c' },
     ]
-    const result = parent[GEA_RECONCILE_LIST](
-      items,
-      newData,
-      list,
-      Item,
-      (d) => ({ text: d.text }),
-      (d) => d.id,
-    )
-    assert.equal(result.length, 2)
-    assert.equal(result[0], items[0]) // reused
-    assert.equal(result[1], items[2]) // reused
+    assert.deepEqual(getTexts(container), ['a', 'c'])
   })
 
-  it('adds new items for new keys', async () => {
-    class Parent extends Component {
-      template() {
-        return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
-      }
-    }
-    class Item extends Component {
-      template() {
-        return `<li id="${this.id}">${this.props.text}</li>`
-      }
-    }
-    const parent = new Parent()
-    document.body.innerHTML = ''
-    parent.render(document.body)
-
-    const items = [parent[GEA_CHILD](Item, { text: 'a' }, 1)]
-    const list = parent[GEA_EL]('list')
-    items.forEach((item) => item.render(list))
-
-    const newData = [
+  it('adds new items for new keys', () => {
+    const { container, items } = setupList([{ id: 1, text: 'a' }])
+    items.value = [
       { id: 1, text: 'a' },
       { id: 2, text: 'b' },
     ]
-    const result = parent[GEA_RECONCILE_LIST](
-      items,
-      newData,
-      list,
-      Item,
-      (d) => ({ text: d.text }),
-      (d) => d.id,
-    )
-    assert.equal(result.length, 2)
-    assert.equal(result[0], items[0]) // reused
-    assert.notEqual(result[1], items[0]) // new component
-    assert.equal(result[1][GEA_ITEM_KEY], '2')
+    assert.deepEqual(getTexts(container), ['a', 'b'])
   })
 
-  it('reorders items to match new data order', async () => {
-    class Parent extends Component {
-      template() {
-        return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
-      }
-    }
-    class Item extends Component {
-      template() {
-        return `<li id="${this.id}">${this.props.text}</li>`
-      }
-    }
-    const parent = new Parent()
-    document.body.innerHTML = ''
-    parent.render(document.body)
-
-    const items = [
-      parent[GEA_CHILD](Item, { text: 'a' }, 1),
-      parent[GEA_CHILD](Item, { text: 'b' }, 2),
-      parent[GEA_CHILD](Item, { text: 'c' }, 3),
-    ]
-    const list = parent[GEA_EL]('list')
-    items.forEach((item) => item.render(list))
-
-    // Reverse the order
-    const newData = [
+  it('reorders items to match new data order', () => {
+    const { container, items } = setupList([
+      { id: 1, text: 'a' },
+      { id: 2, text: 'b' },
+      { id: 3, text: 'c' },
+    ])
+    items.value = [
       { id: 3, text: 'c' },
       { id: 1, text: 'a' },
       { id: 2, text: 'b' },
     ]
-    const result = parent[GEA_RECONCILE_LIST](
-      items,
-      newData,
-      list,
-      Item,
-      (d) => ({ text: d.text }),
-      (d) => d.id,
-    )
-    assert.equal(result.length, 3)
-    assert.equal(result[0], items[2]) // was third, now first
-    assert.equal(result[1], items[0]) // was first, now second
-    assert.equal(result[2], items[1]) // was second, now third
+    assert.deepEqual(getTexts(container), ['c', 'a', 'b'])
   })
 
-  it('preserves static DOM siblings before list roots when reconciling order (mixed container)', async () => {
-    class Parent extends Component {
-      template() {
-        return `<div id="${this.id}-board"></div>`
-      }
-    }
-    class Item extends Component {
-      template() {
-        return `<button type="button" id="${this.id}">${this.props.label}</button>`
-      }
-    }
-    const parent = new Parent()
-    document.body.innerHTML = ''
-    parent.render(document.body)
-
-    const board = parent[GEA_EL]('board')
-    assert.ok(board)
+  it('preserves static DOM siblings before list', () => {
+    const container = document.createElement('div')
     const marker = document.createElement('span')
     marker.className = 'static-marker'
     marker.textContent = 'status'
-    board.appendChild(marker)
-
-    const items = [
-      parent[GEA_CHILD](Item, { label: 'a' }, '1'),
-      parent[GEA_CHILD](Item, { label: 'b' }, '2'),
-      parent[GEA_CHILD](Item, { label: 'c' }, '3'),
-    ]
-    items.forEach((item) => item.render(board))
-
-    assert.equal(board.firstElementChild, marker, 'initial: marker must precede list buttons')
-
-    const newData = [
-      { k: '3', label: 'c' },
-      { k: '1', label: 'a' },
-      { k: '2', label: 'b' },
-    ]
-    parent[GEA_RECONCILE_LIST](
-      items,
-      newData,
-      board,
-      Item,
-      (d) => ({ label: d.label }),
-      (d) => d.k,
+    container.appendChild(marker)
+    const anchor = document.createComment('')
+    container.appendChild(anchor)
+    const items = signal([
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+      { id: 3, label: 'c' },
+    ])
+    keyedList(
+      container,
+      anchor,
+      () => items.value,
+      (item) => (item as any).id,
+      (getter) => {
+        const el = document.createElement('button')
+        el.textContent = (getter() as any).label
+        return el
+      },
+      true,
     )
-
-    assert.equal(board.firstElementChild, marker, 'after reorder: static sibling must stay first')
-    const texts = [...board.querySelectorAll('button')].map((b) => b.textContent)
-    assert.deepEqual(texts, ['c', 'a', 'b'])
+    assert.equal(container.firstElementChild, marker)
+    items.value = [
+      { id: 3, label: 'c' },
+      { id: 1, label: 'a' },
+      { id: 2, label: 'b' },
+    ]
+    assert.equal(container.firstElementChild, marker, 'static sibling must stay first after reorder')
+    const buttons = [...container.querySelectorAll('button')].map((b) => b.textContent)
+    assert.deepEqual(buttons, ['c', 'a', 'b'])
   })
 })
 
-describe('Component.__observeList', () => {
+// ---------------------------------------------------------------------------
+// Store-driven list observation (replaces v1 GEA_OBSERVE_LIST)
+// ---------------------------------------------------------------------------
+describe('Store-driven list observation', () => {
   let restoreDom: () => void
-  let Component: Awaited<ReturnType<typeof loadModules>>['Component']
-  let Store: Awaited<ReturnType<typeof loadModules>>['Store']
-  let store: any
 
-  beforeEach(async () => {
+  beforeEach(() => {
+    resetState()
+    resetBatch()
     restoreDom = installDom()
-    const mods = await loadModules()
-    Component = mods.Component
-    Store = mods.Store
-
-    let nextId = 1
-    class TodoStore extends Store {
-      todos: any[] = []
-      add(text: string) {
-        this.todos.push({ id: nextId++, text, done: false })
-      }
-      toggle(id: number) {
-        const t = this.todos.find((t: any) => t.id === id)
-        if (t) t.done = !t.done
-      }
-      remove(id: number) {
-        this.todos = this.todos.filter((t: any) => t.id !== id)
-      }
-    }
-    store = new TodoStore()
   })
 
   afterEach(() => {
     restoreDom()
   })
 
-  it('appends items on push', async () => {
-    class Item extends Component {
-      template() {
-        return `<li id="${this.id}">${this.props.text}</li>`
+  it('appends items on push', () => {
+    class TodoStore extends Store {
+      __todos = signal<{ id: number; text: string }[]>([])
+      get todos() {
+        return wrapSignalValue(this.__todos)
+      }
+      set todos(v: { id: number; text: string }[]) {
+        this.__todos.value = v
+      }
+      add(text: string) {
+        return batch(() => {
+          this.todos = [...this.__todos.peek(), { id: this.__todos.peek().length + 1, text }]
+        })
       }
     }
-    class Parent extends Component {
-      compiledItems: any[] = []
-      template() {
-        return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
-      }
-    }
-    const parent = new Parent()
-    document.body.innerHTML = ''
-    parent.render(document.body)
-    const backingRef = parent.compiledItems
-    parent[GEA_OBSERVE_LIST](store, ['todos'], {
-      items: parent.compiledItems,
-      container: () => parent[GEA_EL]('list'),
-      Ctor: Item,
-      props: (todo: any) => ({ text: todo.text }),
-      key: (todo: any) => todo.id,
-    })
-    assert.strictEqual(parent.compiledItems, backingRef, 'compiledItems array ref must stay stable after __observeList')
-
+    const store = new TodoStore()
+    const container = document.createElement('div')
+    const anchor = document.createComment('')
+    container.appendChild(anchor)
+    keyedList(
+      container,
+      anchor,
+      () => store.todos,
+      (item) => (item as any).id,
+      (getter) => {
+        const el = document.createElement('li')
+        el.textContent = (getter() as any).text
+        return el
+      },
+      true,
+    )
+    assert.equal(container.querySelectorAll('li').length, 0)
     store.add('first')
-    assert.strictEqual(parent.compiledItems, backingRef, 'compiledItems array ref must stay stable after store.add')
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(parent.compiledItems.length, 1)
-    assert.ok(parent.compiledItems[0], 'append must set compiledItems[0] to the row component')
-    assert.equal(parent[GEA_EL]('list')?.children.length, 1)
+    assert.equal(container.querySelectorAll('li').length, 1)
+    assert.equal(container.querySelector('li')!.textContent, 'first')
   })
 
-  it('updates item props on property change', async () => {
-    class Item extends Component {
-      template() {
-        return `<li id="${this.id}">${this.props.done ? 'done' : 'todo'}</li>`
+  it('reconciles on filter (remove)', () => {
+    class TodoStore extends Store {
+      __todos = signal<{ id: number; text: string }[]>([])
+      get todos() {
+        return wrapSignalValue(this.__todos)
+      }
+      set todos(v: { id: number; text: string }[]) {
+        this.__todos.value = v
+      }
+      add(text: string) {
+        return batch(() => {
+          this.todos = [...this.__todos.peek(), { id: this.__todos.peek().length + 1, text }]
+        })
+      }
+      remove(id: number) {
+        return batch(() => {
+          this.todos = this.__todos.peek().filter((t) => t.id !== id)
+        })
       }
     }
-    class Parent extends Component {
-      compiledItems: any[] = []
-      template() {
-        return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
-      }
-    }
-    const parent = new Parent()
-    document.body.innerHTML = ''
-    parent.render(document.body)
-    parent[GEA_OBSERVE_LIST](store, ['todos'], {
-      items: parent.compiledItems,
-      container: () => parent[GEA_EL]('list'),
-      Ctor: Item,
-      props: (todo: any) => ({ text: todo.text, done: todo.done }),
-      key: (todo: any) => todo.id,
-    })
-
-    store.add('task')
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(parent.compiledItems.length, 1, 'append should populate compiledItems')
-    const todoId = store.todos[0].id
-
-    store.toggle(todoId)
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    // Item should have updated props
-    assert.equal(parent.compiledItems[0].props.done, true)
-  })
-
-  it('reconciles on filter (remove)', async () => {
-    class Item extends Component {
-      template() {
-        return `<li id="${this.id}">${this.props.text}</li>`
-      }
-    }
-    class Parent extends Component {
-      compiledItems: any[] = []
-      template() {
-        return `<div id="${this.id}"><ul id="${this.id}-list"></ul></div>`
-      }
-    }
-    const parent = new Parent()
-    document.body.innerHTML = ''
-    parent.render(document.body)
-    parent[GEA_OBSERVE_LIST](store, ['todos'], {
-      items: parent.compiledItems,
-      container: () => parent[GEA_EL]('list'),
-      Ctor: Item,
-      props: (todo: any) => ({ text: todo.text }),
-      key: (todo: any) => todo.id,
-    })
-
+    const store = new TodoStore()
+    const container = document.createElement('div')
+    const anchor = document.createComment('')
+    container.appendChild(anchor)
+    keyedList(
+      container,
+      anchor,
+      () => store.todos,
+      (item) => (item as any).id,
+      (getter) => {
+        const el = document.createElement('li')
+        el.textContent = (getter() as any).text
+        return el
+      },
+      true,
+    )
     store.add('first')
     store.add('second')
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(parent.compiledItems.length, 2, 'two appends should populate compiledItems')
-    const firstId = store.todos[0].id
-
-    store.remove(firstId)
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(parent.compiledItems.length, 1)
-    assert.equal(parent.compiledItems[0].props.text, 'second')
+    assert.equal(container.querySelectorAll('li').length, 2)
+    store.remove(1)
+    assert.equal(container.querySelectorAll('li').length, 1)
+    assert.equal(container.querySelector('li')!.textContent, 'second')
   })
 })

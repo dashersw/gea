@@ -1,6 +1,6 @@
 /**
- * Two `.map()` blocks in one component must not share the same `#__dc` template-cache field;
- * that caused the second map to bind to the first map's container and wipe tab contents on update.
+ * Two `.map()` blocks in one component must produce distinct `keyedList` calls
+ * with separate anchors; the key expression must mirror the JSX key attribute.
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -31,7 +31,7 @@ export default function Tabs({ tabs, activeTabIndex, onTabChange }: {
 }
 `
 
-test('delegated map click uses keyExpression for item lookup (not default id)', async () => {
+test('delegated map click uses keyExpression from JSX key attribute', async () => {
   const plugin = geaPlugin()
   const src = `
 import { Component } from '@geajs/core'
@@ -55,26 +55,37 @@ export default function Tabs({ tabs, activeTabIndex, onTabChange }: {
   const r = await transform!.call({} as never, src, '/virtual/tabs.tsx')
   const code = typeof r === 'string' ? r : r?.code
   assert.ok(code)
-  const helper = code!.slice(code!.indexOf('__getMapItemFromEvent'), code!.indexOf('__getMapItemFromEvent') + 900)
+
+  // v2 compiler uses keyedList with the key expression as a function argument
+  assert.ok(code!.includes('keyedList'), 'compiled output must use keyedList for .map()')
+
+  // The key function must include the user-provided key expression (title + suffix)
   assert.ok(
-    helper.includes('__candidate.title') && helper.includes('-button'),
-    'lookup must mirror JSX key expression (title + suffix), not .id',
-  )
-  assert.ok(
-    !helper.includes('__candidate?.id ?? __candidate'),
-    'must not use default id path when keyExpression is set',
+    code!.includes('tab.title') && code!.includes('-button'),
+    'key function must mirror JSX key expression (title + suffix)',
   )
 })
 
-test('two sibling .map() blocks get distinct #__dc_* private fields', async () => {
+test('two sibling .map() blocks get distinct keyedList calls with separate anchors', async () => {
   const plugin = geaPlugin()
   const transform2 = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform!.handler
   const r = await transform2!.call({} as never, TWO_MAPS_SOURCE, '/virtual/tabs.tsx')
   const code = typeof r === 'string' ? r : r?.code
   assert.ok(code)
-  const dcFields = [...code!.matchAll(/#__(dc_[a-z0-9_]+)/gi)].map((m) => m[1])
-  const unique = [...new Set(dcFields)]
-  assert.ok(unique.length >= 2, `expected at least two distinct __dc_* fields, got: ${unique.join(', ')}`)
-  assert.match(code!, /#__dc_[^;]+ \|\| \(this\.#__dc_[^ ]+ = this\.____unresolved_0_container\)/)
-  assert.match(code!, /#__dc_[^;]+ \|\| \(this\.#__dc_[^ ]+ = this\.____unresolved_1_container\)/)
+
+  // Count keyedList calls — should have exactly 2 for two .map() blocks
+  const keyedListCalls = (code!.match(/keyedList\(/g) || []).length
+  assert.equal(keyedListCalls, 2, `expected exactly 2 keyedList calls, got ${keyedListCalls}`)
+
+  // Each keyedList should use a distinct anchor comment node
+  const anchorMatches = code!.match(/__anchor\d+/g) || []
+  const uniqueAnchors = [...new Set(anchorMatches)]
+  assert.ok(
+    uniqueAnchors.length >= 2,
+    `expected at least 2 distinct anchor variables, got: ${uniqueAnchors.join(', ')}`,
+  )
+
+  // Verify that the key expressions are different for each map
+  assert.ok(code!.includes("tab.title"), 'first map key should reference tab.title')
+  assert.ok(code!.includes("tab.index"), 'second map key should reference tab.index')
 })

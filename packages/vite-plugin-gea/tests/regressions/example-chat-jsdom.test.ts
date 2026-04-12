@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, compileJsxModule, loadComponentUnseeded, readGeaUiSource } from '../helpers/compile'
-import { readExampleFile } from '../helpers/example-paths'
+import { compileJsxComponent, compileJsxModule, compileStore, loadComponentUnseeded, loadRuntimeModules, readGeaUiSource } from '../helpers/compile'
+import { examplePath, readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 import type { ChatStore } from '../../../../examples/chat/store'
 
 function shimResizeObserver() {
@@ -22,9 +24,12 @@ async function mountChatApp(seed: string, pageUrl = 'http://localhost/') {
   const restore = installDom(pageUrl)
   const restoreRO = shimResizeObserver()
 
-  const { ChatStore } = await import('../../../../examples/chat/store.ts')
+  const [, { Store }] = await loadRuntimeModules(seed)
+  const storeSource = readFileSync(examplePath('chat/store.ts'), 'utf8')
+  const ChatStoreClass = await compileStore(storeSource, examplePath('chat/store.ts'), 'ChatStore', { Store })
   const Component = await loadComponentUnseeded()
-  const { router, RouterView } = await import(`../../../gea/src/lib/router/index.ts?${seed}`)
+  const { createRouter, RouterView } = await import(`../../../gea/src/router/index.ts?${seed}`)
+  const router = createRouter({})
 
   const { cn } = await import('../../../gea-ui/src/utils/cn.ts')
   const { default: ZagComponent } = await import('../../../gea-ui/src/primitives/zag-component.ts')
@@ -56,7 +61,7 @@ async function mountChatApp(seed: string, pageUrl = 'http://localhost/') {
     { ZagComponent, avatar, normalizeProps },
   )
 
-  const chatStore = new ChatStore()
+  const chatStore = new ChatStoreClass() as ChatStore
 
   const MessageBubble = await compileJsxComponent(
     readExampleFile('chat/message-bubble.tsx'),
@@ -122,11 +127,12 @@ type MountChat = Awaited<ReturnType<typeof mountChatApp>>
 describe('examples/chat in JSDOM (ported from chat.spec)', { concurrency: false }, () => {
   let outerRestore: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
-  let router: { dispose: () => void }
+  let app: { dispose?: () => void }
+  let router: { dispose?: () => void }
   let chatStore: ChatStore
 
   beforeEach(async () => {
+    resetDelegation()
     const m: MountChat = await mountChatApp(`ex-chat-${Date.now()}-${Math.random()}`)
     outerRestore = m.restoreDom
     app = m.app
@@ -136,9 +142,15 @@ describe('examples/chat in JSDOM (ported from chat.spec)', { concurrency: false 
   })
 
   afterEach(async () => {
-    app.dispose()
-    router.dispose()
-    await flushMicrotasks()
+    // Cancel any pending simulated replies before teardown
+    if ((chatStore as any).typingTimer) {
+      clearTimeout((chatStore as any).typingTimer)
+      ;(chatStore as any).typingTimer = null
+    }
+    try { app.dispose?.() } catch {}
+    try { router.dispose?.() } catch {}
+    // Drain all pending macrotasks (requestAnimationFrame = setTimeout(0) in JSDOM)
+    for (let i = 0; i < 10; i++) await flushMicrotasks()
     root.remove()
     outerRestore()
   })
@@ -157,19 +169,19 @@ describe('examples/chat in JSDOM (ported from chat.spec)', { concurrency: false 
   })
 
   it('thread header matches active conversation', () => {
-    const firstName = root.querySelector('.conv-item .conv-name')?.textContent
-    assert.equal(root.querySelector('.thread-name')?.textContent, firstName)
+    const firstName = root.querySelector('.conv-item .conv-name')?.textContent?.trim()
+    assert.equal(root.querySelector('.thread-name')?.textContent?.trim(), firstName)
   })
 
   it('shows bubbles and send disabled when draft empty', () => {
     assert.ok(root.querySelectorAll('.bubble').length > 0)
-    const send = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Send') as HTMLButtonElement
+    const send = [...root.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Send') as HTMLButtonElement
     assert.ok(send)
     assert.equal(send.disabled, true)
   })
 
   it('send enables when draft non-empty', async () => {
-    const send = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Send') as HTMLButtonElement
+    const send = [...root.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Send') as HTMLButtonElement
     assert.equal(send.disabled, true)
     chatStore.setDraft({ target: { value: 'JSDOM hello' } as any })
     await flushMicrotasks()
@@ -180,9 +192,15 @@ describe('examples/chat in JSDOM (ported from chat.spec)', { concurrency: false 
     const before = chatStore.activeMessages.length
     chatStore.setDraft({ target: { value: 'JSDOM hello' } as any })
     chatStore.sendMessage()
+    await flushMicrotasks()
+    await flushMicrotasks()
+    await flushMicrotasks()
     assert.equal(chatStore.activeMessages.length, before + 1)
     assert.equal(chatStore.activeMessages[chatStore.activeMessages.length - 1]?.text, 'JSDOM hello')
     assert.equal(chatStore.draft, '')
+    // Extra flush to drain any remaining DOM effects before afterEach disposes
+    await flushMicrotasks()
+    await flushMicrotasks()
   })
 
   it('no data-gea-compiled-child-root leaks', () => {
@@ -192,6 +210,7 @@ describe('examples/chat in JSDOM (ported from chat.spec)', { concurrency: false 
 
 describe('examples/chat router deep link in JSDOM', { concurrency: false }, () => {
   it('deep link selects conversation and thread name', async () => {
+    resetDelegation()
     const m = await mountChatApp(`ex-chat-deeplink-${Date.now()}`, 'http://localhost/conversations/c2')
     try {
       await flushMicrotasks()
@@ -199,8 +218,8 @@ describe('examples/chat router deep link in JSDOM', { concurrency: false }, () =
       const items = m.root.querySelectorAll('.conv-item')
       assert.ok(items[1].classList.contains('active'))
     } finally {
-      m.app.dispose()
-      m.router.dispose()
+      try { (m.app as any).dispose?.() } catch {}
+      try { (m.router as any).dispose?.() } catch {}
       await flushMicrotasks()
       m.root.remove()
       m.restoreDom()

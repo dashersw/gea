@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import type { InferRouteProps, ExtractParams } from '../src/lib/router/types'
-import type { GeaRouter } from '../src/lib/router/router'
+import type { InferRouteProps, ExtractParams } from '../src/router/types'
+import type { GeaRouter } from '../src/router/router'
 
 import Home from '../../../examples/router-simple/src/views/Home'
 import Projects from '../../../examples/router-v2/src/views/Projects'

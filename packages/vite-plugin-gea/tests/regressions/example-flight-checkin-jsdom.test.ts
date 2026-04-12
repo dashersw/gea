@@ -1,17 +1,41 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadComponentUnseeded } from '../helpers/compile'
-import { readExampleFile } from '../helpers/example-paths'
+import { compileJsxComponent, compileStore, loadComponentUnseeded, loadRuntimeModules } from '../helpers/compile'
+import { examplePath, readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 
 /** Unseeded Component matches example stores (`Store` from `@geajs/core`); seeded runtime breaks observer/prototype pairing. */
-async function mountFlightCheckin() {
+async function mountFlightCheckin(seed: string) {
   const Component = await loadComponentUnseeded()
-  const { default: store } = await import('../../../../examples/flight-checkin/src/flight-store.ts')
-  const { default: optionsStore } = await import('../../../../examples/flight-checkin/src/options-store.ts')
-  const { default: paymentStore } = await import('../../../../examples/flight-checkin/src/payment-store.ts')
-  const { BASE_TICKET_PRICE, FLIGHT_INFO, LUGGAGE_OPTIONS, MEAL_OPTIONS, SEAT_OPTIONS } =
+  const [, { Store }] = await loadRuntimeModules(seed)
+  const { BASE_TICKET_PRICE, FLIGHT_INFO, LUGGAGE_OPTIONS, MEAL_OPTIONS, SEAT_OPTIONS, generateBoardingPass } =
     await import('../../../../examples/flight-checkin/src/shared/flight-data.ts')
+
+  // Compile stores in dependency order
+  const PaymentStoreClass = await compileStore(
+    readExampleFile('flight-checkin/src/payment-store.ts'),
+    examplePath('flight-checkin/src/payment-store.ts'),
+    'PaymentStore',
+    { Store },
+  )
+  const paymentStore = new PaymentStoreClass()
+
+  const OptionsStoreClass = await compileStore(
+    readExampleFile('flight-checkin/src/options-store.ts'),
+    examplePath('flight-checkin/src/options-store.ts'),
+    'OptionsStore',
+    { Store, LUGGAGE_OPTIONS, SEAT_OPTIONS, MEAL_OPTIONS },
+  )
+  const optionsStore = new OptionsStoreClass()
+
+  const FlightStoreClass = await compileStore(
+    readExampleFile('flight-checkin/src/flight-store.ts'),
+    examplePath('flight-checkin/src/flight-store.ts'),
+    'FlightStore',
+    { Store, generateBoardingPass, optionsStore, paymentStore },
+  )
+  const store = new FlightStoreClass()
 
   const StepHeader = await compileJsxComponent(
     readExampleFile('flight-checkin/src/components/StepHeader.tsx'),
@@ -75,7 +99,7 @@ async function mountFlightCheckin() {
   const app = new FlightCheckin()
   app.render(root)
   await flushMicrotasks()
-  return { app, root }
+  return { app, root, store }
 }
 
 function optionByLabel(root: HTMLElement, labelSubstring: string): HTMLElement | null {
@@ -114,19 +138,20 @@ function setInputValue(el: HTMLInputElement, value: string) {
 describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', { concurrency: false }, () => {
   let restoreDom: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
+  let app: { dispose?: () => void }
 
   beforeEach(async () => {
+    resetDelegation()
     restoreDom = installDom()
-    const { default: store } = await import('../../../../examples/flight-checkin/src/flight-store.ts')
-    store.startOver()
-    const m = await mountFlightCheckin()
+    const seed = `ex-flight-${Date.now()}-${Math.random()}`
+    const m = await mountFlightCheckin(seed)
+    m.store.startOver()
     app = m.app
     root = m.root
   })
 
   afterEach(async () => {
-    app.dispose()
+    try { app.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     restoreDom()
@@ -134,14 +159,14 @@ describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', {
 
   it('step 1 luggage options', () => {
     assert.ok(root.querySelector('.flight-checkin'))
-    assert.equal(root.querySelector('.step-header h2')?.textContent, 'Select Luggage')
+    assert.equal(root.querySelector('.step-header h2')?.textContent?.trim(), 'Select Luggage')
     assert.equal(root.querySelectorAll('.option-item').length, 4)
   })
 
   it('advance to seat step', async () => {
     ;(root.querySelector('.nav-buttons .btn-primary') as HTMLButtonElement).click()
     await settleUi()
-    assert.equal(root.querySelector('.step-header h2')?.textContent, 'Select Seat')
+    assert.equal(root.querySelector('.step-header h2')?.textContent?.trim(), 'Select Seat')
   })
 
   it('full flow reaches boarding pass', { timeout: 15_000 }, async () => {
@@ -163,7 +188,7 @@ describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', {
     ;(root.querySelector('.nav-buttons .btn-primary') as HTMLButtonElement).click()
     await settleUi()
 
-    assert.equal(root.querySelector('.step-header h2')?.textContent, 'Review & Payment')
+    assert.equal(root.querySelector('.step-header h2')?.textContent?.trim(), 'Review & Payment')
 
     const nameInput = root.querySelector('input[placeholder="Passenger name"]') as HTMLInputElement
     const cardInput = root.querySelector('input[placeholder^="Card number"]') as HTMLInputElement

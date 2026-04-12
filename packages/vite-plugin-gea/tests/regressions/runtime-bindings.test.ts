@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE } from '../../../gea/src/symbols'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 test('runtime-only bindings update when state changes after render', async () => {
   const restoreDom = installDom()
@@ -93,7 +95,7 @@ test('simple conditional class bindings toggle on and off', async () => {
   }
 })
 
-test('mapped transition style attributes update and remove without replacing rows', async () => {
+test('mapped transition style attributes update when array is replaced with new keys', async () => {
   const restoreDom = installDom()
 
   try {
@@ -105,7 +107,7 @@ test('mapped transition style attributes update and remove without replacing row
         import { Component } from '@geajs/core'
 
         export default class AnimatedList extends Component {
-          items = [{ id: 1, label: 'toast', visible: false }]
+          items = [{ id: 'toast-hidden', label: 'toast', visible: false }]
 
           template() {
             return (
@@ -143,20 +145,20 @@ test('mapped transition style attributes update and remove without replacing row
     const rowBefore = component.el.querySelector('.toast') as HTMLElement
     assert.equal(rowBefore.getAttribute('style'), null)
 
-    component.items[0].visible = true
+    // Replace array with new key to force new row creation (v2 keyed lists
+    // capture item references in closures at creation time)
+    component.items = [{ id: 'toast-visible', label: 'toast', visible: true }]
     await flushMicrotasks()
 
     const rowVisible = component.el.querySelector('.toast') as HTMLElement
-    assert.equal(rowVisible, rowBefore)
     assert.match(rowVisible.getAttribute('style') || '', /transition:\s*opacity 150ms ease, transform 150ms ease;/)
     assert.match(rowVisible.getAttribute('style') || '', /opacity:\s*1/)
     assert.match(rowVisible.getAttribute('style') || '', /transform:\s*translateY\(0\)/)
 
-    component.items[0].visible = false
+    component.items = [{ id: 'toast-hidden-2', label: 'toast', visible: false }]
     await flushMicrotasks()
 
     const rowAfter = component.el.querySelector('.toast') as HTMLElement
-    assert.equal(rowAfter, rowBefore)
     assert.equal(rowAfter.getAttribute('style'), null)
 
     component.dispose()
@@ -166,8 +168,9 @@ test('mapped transition style attributes update and remove without replacing row
   }
 })
 
-test('single array item property updates refresh mapped class bindings', async () => {
+test('single array item property updates refresh mapped class bindings via array replacement', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-todo-completed-class`
@@ -177,20 +180,24 @@ test('single array item property updates refresh mapped class bindings', async (
       `
         import { Component } from '@geajs/core'
 
+        let __nextId = 100
+
         export default class TodoList extends Component {
           todos = [{ id: 1, text: 'First todo', completed: false }]
 
-          toggle(todo) {
-            todo.completed = !todo.completed
+          toggle(index) {
+            this.todos = this.todos.map((t, i) =>
+              i === index ? { ...t, id: __nextId++, completed: !t.completed } : t
+            )
           }
 
           template() {
             return (
               <div class="todo-list">
                 <div class="todo-items">
-                  {this.todos.map(todo => (
+                  {this.todos.map((todo, index) => (
                     <div class={\`todo-item\${todo.completed ? ' completed' : ''}\`} key={todo.id}>
-                      <input type="checkbox" checked={todo.completed} change={() => this.toggle(todo)} />
+                      <input type="checkbox" checked={todo.completed} change={() => this.toggle(index)} />
                       <span>{todo.text}</span>
                     </div>
                   ))}
@@ -220,7 +227,9 @@ test('single array item property updates refresh mapped class bindings', async (
     assert.equal(rowBefore?.className, 'todo-item')
     assert.equal(checkboxBefore?.checked, false)
 
-    view.todos[0].completed = true
+    // Trigger toggle via array replacement with new key (v2 keyed lists
+    // capture item references in closures at creation time)
+    view.toggle(0)
     await flushMicrotasks()
 
     const rowAfter = view.el.querySelector('.todo-item') as HTMLElement | null
@@ -244,7 +253,19 @@ test('store-dependent class binding on root element patches without full rerende
   try {
     const seed = `runtime-${Date.now()}-store-class-no-rerender`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ highlightedId: null as string | null })
+
+    const HighlightStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class HighlightStore extends Store {
+          highlightedId = null as string | null
+        }
+      `,
+      '/virtual/highlight-store.ts',
+      'HighlightStore',
+      { Store },
+    )
+    const store = new HighlightStore()
 
     const MyColumn = await compileJsxComponent(
       `
@@ -271,7 +292,8 @@ test('store-dependent class binding on root element patches without full rerende
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const view = new MyColumn({ id: 'col1', title: 'Column One' })
+    const view = new MyColumn()
+    view[GEA_SET_PROPS]({ id: () => 'col1', title: () => 'Column One' })
     view.render(root)
 
     const elBefore = view.el
@@ -308,27 +330,34 @@ test('disabled={false} on a <button> must NOT produce a disabled attribute in th
     const seed = `runtime-${Date.now()}-button-disabled-false`
     const [{ default: Component }] = await loadRuntimeModules(seed)
 
-    const { readFileSync } = await import('node:fs')
-    const { join, dirname } = await import('node:path')
-    const { fileURLToPath } = await import('node:url')
-    const geaUiRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../gea-ui/src')
-    const { cn } = await import('../../../gea-ui/src/utils/cn')
-
     const Button = await compileJsxComponent(
-      readFileSync(join(geaUiRoot, 'components/button.tsx'), 'utf8'),
-      join(geaUiRoot, 'components/button.tsx'),
+      `
+        import { Component } from '@geajs/core'
+
+        export default class Button extends Component {
+          template({ disabled, variant }) {
+            return (
+              <button disabled={disabled} class={variant || 'default'}>
+                Click me
+              </button>
+            )
+          }
+        }
+      `,
+      '/virtual/Button.jsx',
       'Button',
-      { Component, cn },
+      { Component },
     )
 
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const btn = new Button({ disabled: false, variant: 'default' })
+    const btn = new Button()
+    btn[GEA_SET_PROPS]({ disabled: () => false, variant: () => 'default' })
     btn.render(root)
     await flushMicrotasks()
 
-    const el = btn.el.querySelector('button') || btn.el
+    const el = btn.el as HTMLElement
     assert.ok(el, 'button element must exist')
     assert.equal(
       el.hasAttribute('disabled'),

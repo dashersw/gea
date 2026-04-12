@@ -1,301 +1,200 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { parse } from '@babel/parser'
-import _generate from '@babel/generator'
-import { injectHMR } from '../src/postprocess/hmr.ts'
+import { transformSource } from '../src/transform/index.ts'
 
-const generate = typeof (_generate as any).default === 'function' ? (_generate as any).default : _generate
+/**
+ * v2 compiler does NOT have a separate HMR postprocess module.
+ * These tests verify that transformSource correctly transforms component
+ * classes, named/default exports, multi-component files, and various
+ * import patterns — the core compilation behaviors that were previously
+ * bundled with HMR injection tests.
+ */
 
-function parseModule(code: string) {
-  return parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
-}
-
-function codegen(ast: any): string {
-  return generate(ast).code
-}
-
-describe('injectHMR', () => {
-  describe('basic injection', () => {
-    it('injects HMR block for a component class', () => {
-      const ast = parseModule(`
+describe('transformSource – component class transforms', () => {
+  describe('basic transformation', () => {
+    it('transforms a component class with a template', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export default class Counter extends Component {
-          template() { return '<div>Counter</div>' }
+          template() { return <div>Counter</div> }
         }
-      `)
+      `, '/virtual/Counter.jsx')
 
-      const injected = injectHMR(ast, ['Counter'], 'Counter', [], new Set())
-      assert.equal(injected, true)
-
-      const code = codegen(ast)
-      assert.ok(code.includes('import.meta.hot'), 'should have HMR guard')
-      assert.ok(code.includes('handleComponentUpdate'), 'should call handleComponentUpdate')
-      assert.ok(code.includes('registerHotModule'), 'should call registerHotModule')
-      assert.ok(code.includes('registerComponentInstance'), 'should patch created')
-      assert.ok(code.includes('unregisterComponentInstance'), 'should patch dispose')
+      assert.ok(code, 'should return transformed code')
+      assert.ok(code.includes('GEA_CREATE_TEMPLATE'), 'should rename template to GEA_CREATE_TEMPLATE')
+      assert.ok(code.includes('template('), 'should have template() call from runtime')
+      assert.ok(code.includes('@geajs/core/runtime'), 'should import from runtime')
     })
 
-    it('returns false when no component classes are given', () => {
-      const ast = parseModule(`
-        import { Store } from '@geajs/core'
-        export class MyStore extends Store {}
-      `)
+    it('returns null when no component classes are present', () => {
+      const code = transformSource(`
+        export const config = { foo: 'bar' }
+      `, '/virtual/config.ts')
 
-      const injected = injectHMR(ast, [], null, [], new Set())
-      assert.equal(injected, false)
+      assert.equal(code, null, 'should return null for non-component files')
     })
   })
 
   describe('import injection', () => {
-    it('adds required imports from virtual:gea-hmr', () => {
-      const ast = parseModule(`
+    it('adds runtime imports for used helpers', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export default class App extends Component {
-          template() { return '<div></div>' }
+          template() { return <div></div> }
         }
-      `)
+      `, '/virtual/App.jsx')
 
-      injectHMR(ast, ['App'], 'App', [], new Set())
-      const code = codegen(ast)
-
-      assert.ok(code.includes('virtual:gea-hmr'), 'should import from virtual:gea-hmr')
-      assert.ok(code.includes('handleComponentUpdate'))
-      assert.ok(code.includes('registerHotModule'))
-      assert.ok(code.includes('registerComponentInstance'))
-      assert.ok(code.includes('unregisterComponentInstance'))
+      assert.ok(code)
+      assert.ok(code.includes('@geajs/core/runtime'), 'should import from @geajs/core/runtime')
+      assert.ok(code.includes('template'), 'should import template helper')
     })
 
-    it('uses custom hmrImportSource when provided', () => {
-      const ast = parseModule(`
+    it('includes reactiveContent when template has dynamic text', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export default class App extends Component {
-          template() { return '<div></div>' }
+          template(props) { return <div>{props.name}</div> }
         }
-      `)
+      `, '/virtual/App.jsx')
 
-      injectHMR(ast, ['App'], 'App', [], new Set(), 'custom-hmr-source')
-      const code = codegen(ast)
-      assert.ok(code.includes('custom-hmr-source'))
+      assert.ok(code)
+      assert.ok(code.includes('reactiveContent'), 'should import reactiveContent for dynamic text')
     })
   })
 
   describe('named export vs default export', () => {
     it('handles named export', () => {
-      const ast = parseModule(`
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export class MyWidget extends Component {
-          template() { return '<div></div>' }
+          template() { return <div></div> }
         }
-      `)
+      `, '/virtual/MyWidget.jsx')
 
-      const injected = injectHMR(ast, ['MyWidget'], null, [], new Set())
-      assert.equal(injected, true)
-
-      const code = codegen(ast)
-      assert.ok(
-        code.includes('MyWidget: MyWidget') || code.includes('MyWidget'),
-        'shorthand named export in module obj',
-      )
+      assert.ok(code)
+      assert.ok(code.includes('export class MyWidget'), 'should preserve named export')
+      assert.ok(code.includes('GEA_CREATE_TEMPLATE'), 'should transform template method')
     })
 
     it('handles default export', () => {
-      const ast = parseModule(`
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export default class MyWidget extends Component {
-          template() { return '<div></div>' }
+          template() { return <div></div> }
         }
-      `)
+      `, '/virtual/MyWidget.jsx')
 
-      injectHMR(ast, ['MyWidget'], 'MyWidget', [], new Set())
-      const code = codegen(ast)
-      assert.ok(code.includes('default: MyWidget') || code.includes('"default"'))
+      assert.ok(code)
+      assert.ok(code.includes('export default class MyWidget'), 'should preserve default export')
+      assert.ok(code.includes('GEA_CREATE_TEMPLATE'), 'should transform template method')
     })
   })
 
-  describe('component imports (hot.accept for deps)', () => {
-    it('creates hot.accept for store/util imports (invalidate)', () => {
-      const ast = parseModule(`
+  describe('component with store imports', () => {
+    it('preserves store imports in transformed output', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         import { myStore } from './my-store'
         export default class App extends Component {
-          template() { return '<div></div>' }
+          template() { return <div>{myStore.count}</div> }
         }
-      `)
+      `, '/virtual/App.jsx')
 
-      injectHMR(ast, ['App'], 'App', ['./my-store'], new Set())
-      const code = codegen(ast)
-      assert.ok(code.includes('./my-store'), 'should accept store dependency')
-      assert.ok(code.includes('invalidate'), 'store imports should trigger invalidation')
+      assert.ok(code)
+      assert.ok(code.includes('./my-store'), 'should preserve store import')
+      assert.ok(code.includes('myStore.count'), 'should reference store in template')
     })
 
-    it('rewrites component dep imports with createHotComponentProxy', () => {
-      const ast = parseModule(`
+    it('handles child component imports with mount', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         import ChildComp from './child-comp.ts'
         export default class App extends Component {
-          template() { return '<div></div>' }
+          template() { return <div><ChildComp name="test" /></div> }
         }
-      `)
+      `, '/virtual/App.jsx')
 
-      injectHMR(ast, ['App'], 'App', ['./child-comp.ts'], new Set(['ChildComp']))
-      const code = codegen(ast)
-      assert.ok(code.includes('createHotComponentProxy'), 'should proxy component deps')
-    })
-
-    it('shouldProxyDep overrides legacy: no proxy when callback returns false', () => {
-      const ast = parseModule(`
-        import { Component } from '@geajs/core'
-        import ChildComp from './child-comp.ts'
-        export default class App extends Component {
-          template() { return '<div></div>' }
-        }
-      `)
-
-      injectHMR(ast, ['App'], 'App', ['./child-comp.ts'], new Set(['ChildComp']), 'virtual:gea-hmr', () => false)
-      const code = codegen(ast)
-      assert.ok(!code.includes('createHotComponentProxy'), 'explicit classifier can disable proxy')
-      assert.ok(code.includes('invalidate'), 'falls back to invalidate-only accept')
+      assert.ok(code)
+      assert.ok(code.includes('mount'), 'should use mount for child components')
+      assert.ok(code.includes('ChildComp'), 'should reference ChildComp')
     })
   })
 
-  describe('prototype patching', () => {
-    it('patches created to register instance', () => {
-      const ast = parseModule(`
+  describe('template transformation details', () => {
+    it('generates template literal for static HTML', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export default class Test extends Component {
-          template() { return '<div></div>' }
+          template() { return <div id="test" class="foo">hello</div> }
         }
-      `)
+      `, '/virtual/Test.jsx')
 
-      injectHMR(ast, ['Test'], 'Test', [], new Set())
-      const code = codegen(ast)
-      assert.ok(code.includes('Test.prototype.created'))
-      assert.ok(code.includes('registerComponentInstance'))
+      assert.ok(code)
+      assert.ok(code.includes("template("), 'should use template() helper')
+      assert.ok(code.includes('GEA_CREATE_TEMPLATE'), 'should rename template to GEA_CREATE_TEMPLATE')
     })
 
-    it('patches dispose to unregister instance', () => {
-      const ast = parseModule(`
+    it('generates reactiveAttr for dynamic attributes', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export default class Test extends Component {
-          template() { return '<div></div>' }
+          template(props) { return <div class={props.active ? 'on' : 'off'}>test</div> }
         }
-      `)
+      `, '/virtual/Test.jsx')
 
-      injectHMR(ast, ['Test'], 'Test', [], new Set())
-      const code = codegen(ast)
-      assert.ok(code.includes('Test.prototype.dispose'))
-      assert.ok(code.includes('unregisterComponentInstance'))
+      assert.ok(code)
+      assert.ok(code.includes('reactiveAttr'), 'should use reactiveAttr for dynamic class')
     })
 
-    it('patches all classes in a multi-component file', () => {
-      const ast = parseModule(`
+    it('transforms all classes in a multi-component file', () => {
+      const code = transformSource(`
         import { Component } from '@geajs/core'
         export default class Home extends Component {
-          template() { return '<div>Home</div>' }
+          template() { return <div>Home</div> }
         }
         export class About extends Component {
-          template() { return '<div>About</div>' }
+          template() { return <div>About</div> }
         }
         export class NotFound extends Component {
-          template() { return '<div>404</div>' }
+          template() { return <div>404</div> }
         }
-      `)
+      `, '/virtual/pages.jsx')
 
-      const injected = injectHMR(ast, ['Home', 'About', 'NotFound'], 'Home', [], new Set())
-      assert.equal(injected, true)
-
-      const code = codegen(ast)
-      assert.ok(code.includes('Home.prototype.created'), 'should patch Home.created')
-      assert.ok(code.includes('About.prototype.created'), 'should patch About.created')
-      assert.ok(code.includes('NotFound.prototype.created'), 'should patch NotFound.created')
-      assert.ok(code.includes('default: Home'), 'default export should be Home')
-    })
-  })
-
-  describe('shouldSkipDepAccept – circular store deps', () => {
-    it('skips hot.accept for store module deps when shouldSkipDepAccept returns true', () => {
-      const ast = parseModule(`
-        import { Component } from '@geajs/core'
-        import { router } from '../router'
-        export default class Home extends Component {
-          template() { return '<div>Home</div>' }
-        }
-      `)
-
-      injectHMR(
-        ast,
-        ['Home'],
-        'Home',
-        ['../router'],
-        new Set(),
-        'virtual:gea-hmr',
-        () => false,
-        (source) => source === '../router',
-      )
-      const code = codegen(ast)
-
+      assert.ok(code)
+      // All three classes should have GEA_CREATE_TEMPLATE
+      const createTemplateCount = (code.match(/GEA_CREATE_TEMPLATE/g) || []).length
       assert.ok(
-        !code.includes("'../router'") || !code.includes('invalidate'),
-        'should NOT generate hot.accept for ../router with invalidate',
+        createTemplateCount >= 3,
+        `should transform all 3 component templates, found ${createTemplateCount} GEA_CREATE_TEMPLATE occurrences`,
       )
-      assert.ok(code.includes('handleComponentUpdate'), 'self-accept should still work')
-    })
-
-    it('still generates hot.accept for non-store relative deps', () => {
-      const ast = parseModule(`
-        import { Component } from '@geajs/core'
-        import { router } from '../router'
-        import { utils } from './utils'
-        export default class Home extends Component {
-          template() { return '<div>Home</div>' }
-        }
-      `)
-
-      injectHMR(
-        ast,
-        ['Home'],
-        'Home',
-        ['../router', './utils'],
-        new Set(),
-        'virtual:gea-hmr',
-        () => false,
-        (source) => source === '../router',
-      )
-      const code = codegen(ast)
-
-      assert.ok(code.includes('./utils'), 'should still accept non-store deps')
-      assert.ok(code.includes('invalidate'), 'non-store deps should invalidate')
-    })
-
-    it('without shouldSkipDepAccept, all relative deps get hot.accept', () => {
-      const ast = parseModule(`
-        import { Component } from '@geajs/core'
-        import { router } from '../router'
-        export default class Home extends Component {
-          template() { return '<div>Home</div>' }
-        }
-      `)
-
-      injectHMR(ast, ['Home'], 'Home', ['../router'], new Set(), 'virtual:gea-hmr', () => false)
-      const code = codegen(ast)
-
-      assert.ok(code.includes('../router'), 'should accept ../router when no skip predicate')
-      assert.ok(code.includes('invalidate'), 'should invalidate')
+      assert.ok(code.includes('export default class Home'), 'should preserve Home default export')
+      assert.ok(code.includes('export class About'), 'should preserve About named export')
+      assert.ok(code.includes('export class NotFound'), 'should preserve NotFound named export')
     })
   })
 
-  describe('skip injection', () => {
-    it('skips files already containing gea-auto-register plugin comment', () => {
-      const ast = parseModule(`
-        // gea-auto-register plugin
-        import { Component } from '@geajs/core'
-        export default class App extends Component {
-          template() { return '<div></div>' }
-        }
-      `)
+  describe('skip transformation', () => {
+    it('returns null for files without JSX or gea imports', () => {
+      const code = transformSource(`
+        export function helper() { return 42 }
+      `, '/virtual/helper.ts')
 
-      const injected = injectHMR(ast, ['App'], 'App', [], new Set())
-      assert.equal(injected, false)
+      assert.equal(code, null)
+    })
+
+    it('transforms Store classes (fields to signals)', () => {
+      const code = transformSource(`
+        import { Store } from '@geajs/core'
+        export class MyStore extends Store {
+          count = 0
+          name = 'test'
+        }
+      `, '/virtual/store.ts')
+
+      assert.ok(code)
+      assert.ok(code.includes('signal'), 'should transform fields to signals')
+      assert.ok(code.includes('get count'), 'should generate getter for count')
+      assert.ok(code.includes('set count'), 'should generate setter for count')
     })
   })
 })

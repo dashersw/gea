@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
-import { readExampleFile } from '../helpers/example-paths'
+import { compileJsxComponent, compileStore, loadComponentUnseeded, loadRuntimeModules } from '../helpers/compile'
+import { examplePath, readExampleFile } from '../helpers/example-paths'
+import { resetDelegation } from '../../../../packages/gea/src/dom/events'
 
 async function mountKanban(seed: string) {
-  const { KanbanStore } = await import('../../../../examples/kanban/src/kanban-store.ts')
-  const [{ default: Component }] = await loadRuntimeModules(seed)
-  const kanbanStore = new KanbanStore()
+  const Component = await loadComponentUnseeded()
+  const [, { Store }] = await loadRuntimeModules(seed)
+  const KanbanStoreClass = await compileStore(
+    readExampleFile('kanban/src/kanban-store.ts'),
+    examplePath('kanban/src/kanban-store.ts'),
+    'KanbanStore',
+    { Store },
+  )
+  const kanbanStore = new KanbanStoreClass()
   const TaskModal = await compileJsxComponent(
     readExampleFile('kanban/src/components/TaskModal.tsx'),
     '/virtual/examples/kanban/TaskModal.jsx',
@@ -46,9 +53,10 @@ function setColumnDraft(input: HTMLInputElement, text: string) {
 describe('examples/kanban in JSDOM (ported from kanban.spec)', { concurrency: false }, () => {
   let restoreDom: () => void
   let root: HTMLElement
-  let app: { dispose: () => void }
+  let app: { dispose?: () => void }
 
   beforeEach(async () => {
+    resetDelegation()
     restoreDom = installDom()
     const m = await mountKanban(`ex-kanban-${Date.now()}-${Math.random()}`)
     app = m.app
@@ -56,7 +64,7 @@ describe('examples/kanban in JSDOM (ported from kanban.spec)', { concurrency: fa
   })
 
   afterEach(async () => {
-    app.dispose()
+    try { app.dispose?.() } catch {}
     await flushMicrotasks()
     root.remove()
     restoreDom()

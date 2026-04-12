@@ -1,4 +1,4 @@
-import { GEA_PROXY_GET_TARGET, Store } from '@geajs/core'
+import { Store } from '@geajs/core'
 import { COLS, ROWS, formatAddress, collectDependencies, evaluateFormula, parseAddress } from './formula'
 
 export const COL_LABELS = Array.from({ length: COLS }, (_, i) => String.fromCharCode(65 + i))
@@ -153,7 +153,7 @@ export class SheetStore extends Store {
   }
 
   recalc(): void {
-    const prevComputed = (this.computed as any)[GEA_PROXY_GET_TARGET] ?? this.computed
+    const prevComputed = this.computed
     const formulaCells = ALL_ADDRESSES.filter((a) => (this.cells[a] ?? '').startsWith('='))
     const getBodyFn = (addr: string) => formulaBody(this.cells[addr] ?? '')
 

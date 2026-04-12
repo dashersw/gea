@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 test('map items render before conditional slots in DOM order', async () => {
   const restoreDom = installDom()
@@ -9,15 +10,19 @@ test('map items render before conditional slots in DOM order', async () => {
   try {
     const seed = `runtime-${Date.now()}-map-before-cond`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    resetDelegation()
 
-    class ChatStore extends Store {
-      turns = [
-        { timestamp: '1', text: 'Hello' },
-        { timestamp: '2', text: 'World' },
-      ] as Array<{ timestamp: string; text: string }>
-      hasActiveTurn = false
-      error = ''
-    }
+    const ChatStore = await compileStore(`
+      import { Store } from '@geajs/core'
+      export class ChatStore extends Store {
+        turns = [
+          { timestamp: '1', text: 'Hello' },
+          { timestamp: '2', text: 'World' },
+        ]
+        hasActiveTurn = false
+        error = ''
+      }
+    `, '/virtual/chat-store.ts', 'ChatStore', { Store })
     const chatStore = new ChatStore()
 
     const TurnItem = await compileJsxComponent(
@@ -149,14 +154,16 @@ test('map items stay before conditional slots after store push', async () => {
     const seed = `runtime-${Date.now()}-map-push-cond`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-    class MsgStore extends Store {
-      messages = [] as Array<{ id: string; text: string }>
-      loading = false
-
-      addMessage(text: string) {
-        this.messages.push({ id: String(this.messages.length + 1), text })
+    const MsgStore = await compileStore(`
+      import { Store } from '@geajs/core'
+      export class MsgStore extends Store {
+        messages = []
+        loading = false
+        addMessage(text) {
+          this.messages.push({ id: String(this.messages.length + 1), text })
+        }
       }
-    }
+    `, '/virtual/msg-store.ts', 'MsgStore', { Store })
     const msgStore = new MsgStore()
 
     const MsgItem = await compileJsxComponent(
@@ -251,14 +258,17 @@ test('conditional before map, map before conditional: all three preserve JSX sou
     const seed = `runtime-${Date.now()}-cond-map-cond`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
 
-    class AppStore extends Store {
-      showHeader = false
-      items = [
-        { id: '1', label: 'alpha' },
-        { id: '2', label: 'beta' },
-      ] as Array<{ id: string; label: string }>
-      loading = false
-    }
+    const AppStore = await compileStore(`
+      import { Store } from '@geajs/core'
+      export class AppStore extends Store {
+        showHeader = false
+        items = [
+          { id: '1', label: 'alpha' },
+          { id: '2', label: 'beta' },
+        ]
+        loading = false
+      }
+    `, '/virtual/app-store.ts', 'AppStore', { Store })
     const appStore = new AppStore()
 
     const ListItem = await compileJsxComponent(

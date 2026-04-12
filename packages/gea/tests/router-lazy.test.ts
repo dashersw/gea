@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { resolveLazy } from '../src/lib/router/lazy'
+import { resolveLazy } from '../src/router/lazy'
 import Home from '../../../examples/router-simple/src/views/Home'
 
 describe('resolveLazy', () => {

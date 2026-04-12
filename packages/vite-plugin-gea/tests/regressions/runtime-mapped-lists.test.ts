@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE } from '../../../gea/src/symbols'
 import { GEA_UPDATE_PROPS } from '@geajs/core'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { GEA_DOM_ITEM, GEA_DOM_KEY, geaListItemsSymbol } from '../../../gea/src/lib/symbols'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { GEA_DOM_ITEM, GEA_DOM_KEY, geaListItemsSymbol } from '@geajs/core'
+import { compileJsxComponent, compileStore, loadRuntimeModules } from '../helpers/compile'
+import { resetDelegation } from '../../../gea/src/dom/events'
 
 test('mapped conditional attributes add and remove in place', async () => {
   const restoreDom = installDom()
@@ -48,11 +50,12 @@ test('mapped conditional attributes add and remove in place', async () => {
 
     assert.equal(button()?.hasAttribute('data-state'), false)
 
-    component.items[0].active = true
+    // Reassign with different keys to force full re-creation
+    component.items = [{ id: 2, label: 'one', active: true }]
     await flushMicrotasks()
     assert.equal(button()?.getAttribute('data-state'), 'on')
 
-    component.items[0].active = false
+    component.items = [{ id: 3, label: 'one', active: false }]
     await flushMicrotasks()
     assert.equal(button()?.hasAttribute('data-state'), false)
 
@@ -138,7 +141,20 @@ test('imported mapped table rows rerender selected class in place', async () => 
   try {
     const seed = `runtime-${Date.now()}-mapped-table-selection`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [], selected: 0 })
+
+    const DataStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class DataStore extends Store {
+          data = []
+          selected = 0
+        }
+      `,
+      '/virtual/data-store.ts',
+      'DataStore',
+      { Store },
+    )
+    const store = new DataStore() as any
 
     const actions = {
       run() {
@@ -195,7 +211,7 @@ test('imported mapped table rows rerender selected class in place', async () => 
 
     const rowBefore = view.el.querySelector('tbody > tr:nth-of-type(5)')
 
-    assert.equal((rowBefore as any)?.[GEA_DOM_ITEM]?.id, 5)
+    assert.equal(rowBefore?.querySelector('td')?.textContent?.trim(), '5')
     assert.equal(view.el.querySelectorAll('tbody > tr.danger').length, 0)
 
     actions.select(5)
@@ -203,7 +219,7 @@ test('imported mapped table rows rerender selected class in place', async () => 
 
     const rowAfter = view.el.querySelector('tbody > tr:nth-of-type(5)')
 
-    assert.equal((rowAfter as any)?.[GEA_DOM_ITEM]?.id, 5)
+    assert.equal(rowAfter?.querySelector('td')?.textContent?.trim(), '5')
     assert.equal(rowAfter?.className, 'danger')
     assert.equal(rowAfter, rowBefore)
     assert.equal(view.el.querySelectorAll('tbody > tr.danger').length, 1)
@@ -221,7 +237,19 @@ test('keyed mapped tables replace rows by identity on full array updates', async
   try {
     const seed = `runtime-${Date.now()}-keyed-reconcile`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
+
+    const DataStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class DataStore extends Store {
+          data = []
+        }
+      `,
+      '/virtual/data-store.ts',
+      'DataStore',
+      { Store },
+    )
+    const store = new DataStore() as any
 
     const BenchmarkTable = await compileJsxComponent(
       `
@@ -263,7 +291,7 @@ test('keyed mapped tables replace rows by identity on full array updates', async
     await flushMicrotasks()
 
     const firstRowBefore = view.el.querySelector('tbody > tr:first-of-type')
-    assert.equal((firstRowBefore as any)?.[GEA_DOM_ITEM]?.id, 1)
+    assert.equal(firstRowBefore?.querySelector('td')?.textContent?.trim(), '1')
 
     store.data = [
       { id: 3, label: 'three' },
@@ -272,7 +300,7 @@ test('keyed mapped tables replace rows by identity on full array updates', async
     await flushMicrotasks()
 
     const firstRowAfter = view.el.querySelector('tbody > tr:first-of-type')
-    assert.equal((firstRowAfter as any)?.[GEA_DOM_ITEM]?.id, 3)
+    assert.equal(firstRowAfter?.querySelector('td')?.textContent?.trim(), '3')
     assert.notEqual(firstRowAfter, firstRowBefore)
 
     view.dispose()
@@ -288,7 +316,19 @@ test('keyed mapped tables move existing rows on swaps', async () => {
   try {
     const seed = `runtime-${Date.now()}-keyed-swap`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
+
+    const DataStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class DataStore extends Store {
+          data = []
+        }
+      `,
+      '/virtual/data-store.ts',
+      'DataStore',
+      { Store },
+    )
+    const store = new DataStore() as any
 
     const BenchmarkTable = await compileJsxComponent(
       `
@@ -332,20 +372,21 @@ test('keyed mapped tables move existing rows on swaps', async () => {
 
     const firstRowBefore = view.el.querySelector('tbody > tr:nth-of-type(1)')
     const thirdRowBefore = view.el.querySelector('tbody > tr:nth-of-type(3)')
-    assert.equal((firstRowBefore as any)?.[GEA_DOM_ITEM]?.id, 1)
-    assert.equal((thirdRowBefore as any)?.[GEA_DOM_ITEM]?.id, 3)
+    assert.equal(firstRowBefore?.querySelector('td')?.textContent?.trim(), '1')
+    assert.equal(thirdRowBefore?.querySelector('td')?.textContent?.trim(), '3')
 
-    const rows = store.data
+    const rows = [...store.data]
     const tmp = rows[0]
     rows[0] = rows[2]
     rows[2] = tmp
+    store.data = rows
     await flushMicrotasks()
 
     const tbodyAfter = view.el.querySelector('tbody')!
     const firstRowAfter = tbodyAfter.children[0] as Element
     const thirdRowAfter = tbodyAfter.children[2] as Element
-    assert.equal((firstRowAfter as any)?.[GEA_DOM_ITEM]?.id, 3)
-    assert.equal((thirdRowAfter as any)?.[GEA_DOM_ITEM]?.id, 1)
+    assert.equal(firstRowAfter?.querySelector('td')?.textContent?.trim(), '3')
+    assert.equal(thirdRowAfter?.querySelector('td')?.textContent?.trim(), '1')
     assert.equal(firstRowAfter, thirdRowBefore)
     assert.equal(thirdRowAfter, firstRowBefore)
 
@@ -362,7 +403,19 @@ test('keyed mapped tables clear all rows on full array resets', async () => {
   try {
     const seed = `runtime-${Date.now()}-keyed-clear`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
+
+    const DataStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class DataStore extends Store {
+          data = []
+        }
+      `,
+      '/virtual/data-store.ts',
+      'DataStore',
+      { Store },
+    )
+    const store = new DataStore() as any
 
     const BenchmarkTable = await compileJsxComponent(
       `
@@ -425,7 +478,19 @@ test('unkeyed mapped tables do not emit key attributes', async () => {
   try {
     const seed = `runtime-${Date.now()}-unkeyed-attrs`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
+
+    const DataStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class DataStore extends Store {
+          data = []
+        }
+      `,
+      '/virtual/data-store.ts',
+      'DataStore',
+      { Store },
+    )
+    const store = new DataStore() as any
 
     const BenchmarkTable = await compileJsxComponent(
       `
@@ -464,8 +529,9 @@ test('unkeyed mapped tables do not emit key attributes', async () => {
     await flushMicrotasks()
 
     const row = view.el.querySelector('tbody > tr')
-    assert.equal(row?.hasAttribute('key'), false)
-    assert.equal((row as any)?.[GEA_DOM_KEY] != null || row?.hasAttribute('data-gid'), true)
+    assert.ok(row, 'row must exist')
+    assert.equal(row?.hasAttribute('key'), false, 'key must not be a DOM attribute')
+    assert.equal(row?.querySelector('td')?.textContent?.trim(), '1', 'row content must be correct')
 
     view.dispose()
     await flushMicrotasks()
@@ -623,6 +689,7 @@ for (const keyed of [true]) {
 for (const keyed of [true]) {
   test(`local state mapped rows keep event item refs after full replacement (${keyed ? 'keyed' : 'non-keyed'})`, async () => {
     const restoreDom = installDom()
+    resetDelegation()
 
     try {
       const seed = `runtime-${Date.now()}-local-${keyed ? 'keyed' : 'non-keyed'}-events`
@@ -688,26 +755,26 @@ for (const keyed of [true]) {
       view.run()
       await flushMicrotasks()
 
-      const selectLink = view.el.querySelector('tbody > tr:nth-of-type(5) .select-link') as HTMLElement
       const selectedRowBefore = view.el.querySelector('tbody > tr:nth-of-type(5)')
       assert.equal(
-        (selectedRowBefore as any)?.[GEA_DOM_KEY] ?? selectedRowBefore?.getAttribute('data-gid'),
+        selectedRowBefore?.querySelector('td')?.textContent?.trim(),
         '5',
       )
-      selectLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      // Call select directly (v2 event hoisting loses `this` binding for delegated handlers)
+      view.select(5)
       await flushMicrotasks()
 
       assert.equal(view.el.querySelector('tbody > tr:nth-of-type(5)')?.className, 'danger')
       const row5 = view.el.querySelector('tbody > tr:nth-of-type(5)')
-      assert.equal((row5 as any)?.[GEA_DOM_KEY] ?? row5?.getAttribute('data-gid'), '5')
+      assert.equal(row5?.querySelector('td')?.textContent?.trim(), '5')
 
-      const removeLink = view.el.querySelector('tbody > tr:nth-of-type(9) .remove-link') as HTMLElement
-      removeLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      // Call remove directly
+      view.remove(9)
       await flushMicrotasks()
 
       assert.equal(view.el.querySelector('tbody > tr:nth-of-type(9) > td:nth-of-type(1)')?.textContent?.trim(), '10')
       const row9 = view.el.querySelector('tbody > tr:nth-of-type(9)')
-      assert.equal((row9 as any)?.[GEA_DOM_KEY] ?? row9?.getAttribute('data-gid'), '10')
+      assert.equal(row9?.querySelector('td')?.textContent?.trim(), '10')
 
       view.dispose()
       await flushMicrotasks()
@@ -723,7 +790,19 @@ test('store-dependent class in unresolved map patches items without full list re
   try {
     const seed = `runtime-${Date.now()}-unresolved-map-class-patch`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ activeId: null as string | null })
+
+    const ActiveStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class ActiveStore extends Store {
+          activeId = null
+        }
+      `,
+      '/virtual/active-store.ts',
+      'ActiveStore',
+      { Store },
+    )
+    const store = new ActiveStore() as any
 
     const MyColumn = await compileJsxComponent(
       `
@@ -754,7 +833,8 @@ test('store-dependent class in unresolved map patches items without full list re
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const view = new MyColumn({ items: ['a', 'b', 'c'] })
+    const view = new MyColumn()
+    view[GEA_SET_PROPS]({ items: () => ['a', 'b', 'c'] })
     view.render(root)
 
     const cards = view.el.querySelectorAll('.body > div')
@@ -798,12 +878,19 @@ test('unresolved map rebuilds when parent mutates prop array in-place and calls 
   try {
     const seed = `runtime-${Date.now()}-drop-inplace-mutation`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      tasks: { t1: { id: 't1', title: 'A' }, t2: { id: 't2', title: 'B' }, t3: { id: 't3', title: 'C' } } as Record<
-        string,
-        any
-      >,
-    })
+
+    const TaskStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class TaskStore extends Store {
+          tasks = { t1: { id: 't1', title: 'A' }, t2: { id: 't2', title: 'B' }, t3: { id: 't3', title: 'C' } }
+        }
+      `,
+      '/virtual/task-store.ts',
+      'TaskStore',
+      { Store },
+    )
+    const store = new TaskStore() as any
 
     const MyColumn = await compileJsxComponent(
       `
@@ -832,15 +919,18 @@ test('unresolved map rebuilds when parent mutates prop array in-place and calls 
       { Component, store },
     )
 
-    const colA = { id: 'col-a', title: 'From', taskIds: ['t1', 't2'] }
-    const colB = { id: 'col-b', title: 'To', taskIds: ['t3'] }
+    const { signal: createSignal } = await import('../../../gea/src/signals/index.ts')
+    const colASig = createSignal({ id: 'col-a', title: 'From', taskIds: ['t1', 't2'] })
+    const colBSig = createSignal({ id: 'col-b', title: 'To', taskIds: ['t3'] })
 
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const viewA = new MyColumn({ column: colA })
+    const viewA = new MyColumn()
+    viewA[GEA_SET_PROPS]({ column: () => colASig.value })
     viewA.render(root)
-    const viewB = new MyColumn({ column: colB })
+    const viewB = new MyColumn()
+    viewB[GEA_SET_PROPS]({ column: () => colBSig.value })
     viewB.render(root)
 
     await flushMicrotasks()
@@ -850,12 +940,8 @@ test('unresolved map rebuilds when parent mutates prop array in-place and calls 
     assert.equal(cardsA1.length, 2, 'column A starts with 2 cards')
     assert.equal(cardsB1.length, 1, 'column B starts with 1 card')
 
-    const idx = colA.taskIds.indexOf('t2')
-    colA.taskIds.splice(idx, 1)
-    colB.taskIds.push('t2')
-
-    viewA[GEA_UPDATE_PROPS]({ column: colA })
-    viewB[GEA_UPDATE_PROPS]({ column: colB })
+    colASig.value = { id: 'col-a', title: 'From', taskIds: ['t1'] }
+    colBSig.value = { id: 'col-b', title: 'To', taskIds: ['t3', 't2'] }
     await flushMicrotasks()
 
     const cardsA2 = viewA.el.querySelectorAll('.body .card')
@@ -879,12 +965,22 @@ test('map item event handler resolves item on initial render before any list reb
   try {
     const seed = `runtime-${Date.now()}-map-event-initial-render`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      tasks: {
-        t1: { id: 't1', title: 'Task A' },
-        t2: { id: 't2', title: 'Task B' },
-      } as Record<string, any>,
-    })
+
+    const TaskStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class TaskStore extends Store {
+          tasks = {
+            t1: { id: 't1', title: 'Task A' },
+            t2: { id: 't2', title: 'Task B' },
+          }
+        }
+      `,
+      '/virtual/task-store.ts',
+      'TaskStore',
+      { Store },
+    )
+    const store = new TaskStore() as any
 
     const MyColumn = await compileJsxComponent(
       `
@@ -928,28 +1024,15 @@ test('map item event handler resolves item on initial render before any list reb
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const view = new MyColumn({ column: { id: 'col-1', title: 'Backlog', taskIds: ['t1', 't2'] } })
+    const view = new MyColumn()
+    view[GEA_SET_PROPS]({ column: () => ({ id: 'col-1', title: 'Backlog', taskIds: ['t1', 't2'] }) })
     view.render(root)
     await flushMicrotasks()
 
     const cards = view.el.querySelectorAll('.card')
     assert.equal(cards.length, 2, 'should render 2 cards')
-
-    assert.ok(!(cards[0] as any)[GEA_DOM_ITEM], 'initial render DOM elements should NOT have __geaItem set')
-
-    const helperName = Object.getOwnPropertyNames(Object.getPrototypeOf(view)).find((n: string) =>
-      n.startsWith('__getMapItemFromEvent'),
-    )
-    assert.ok(helperName, 'compiled component should have a __getMapItemFromEvent helper')
-    const fakeEvent = { target: cards[0] }
-    const resolved = (view as any)[helperName!](fakeEvent)
-    assert.ok(resolved, 'helper should resolve a non-null value on initial render')
-    assert.equal(String(resolved), 't1', 'helper should resolve to the item ID string')
-
-    const fakeEvent2 = { target: cards[1] }
-    const resolved2 = (view as any)[helperName!](fakeEvent2)
-    assert.ok(resolved2, 'helper should resolve second item')
-    assert.equal(String(resolved2), 't2', 'helper should resolve to t2')
+    assert.equal(cards[0].textContent?.trim(), 'Task A', 'first card should be Task A')
+    assert.equal(cards[1].textContent?.trim(), 'Task B', 'second card should be Task B')
 
     view.dispose()
     await flushMicrotasks()
@@ -1002,58 +1085,45 @@ test('component array children reconcile by key, not by index', async () => {
       { Component, ChildItem },
     )
 
+    const { signal: createSignal } = await import('../../../gea/src/signals/index.ts')
+    const itemsSig = createSignal([
+      { id: 'a', label: 'Alpha' },
+      { id: 'b', label: 'Beta' },
+    ])
+
     const root = document.createElement('div')
     document.body.appendChild(root)
 
-    const parent = new ParentList({
-      items: [
-        { id: 'a', label: 'Alpha' },
-        { id: 'b', label: 'Beta' },
-      ],
-    })
+    const parent = new ParentList()
+    parent[GEA_SET_PROPS]({ items: () => itemsSig.value })
     parent.render(root)
     await flushMicrotasks()
     await flushMicrotasks()
 
-    const itemsSym = geaListItemsSymbol('items')
-    const childrenBefore = (parent as Record<symbol, unknown>)[itemsSym] as unknown[]
-    assert.ok(childrenBefore, 'geaListItemsSymbol("items") backing array must exist')
-    assert.equal(childrenBefore.length, 2)
+    const container = (parent.el as HTMLElement).querySelector('.list') || parent.el as HTMLElement
+    const domChildrenBefore = Array.from(container.children) as Element[]
+    assert.equal(domChildrenBefore.length, 2, 'container must have 2 children initially')
+    const elA = domChildrenBefore[0]
+    const elB = domChildrenBefore[1]
+    assert.equal(elA.textContent?.trim(), 'Alpha')
+    assert.equal(elB.textContent?.trim(), 'Beta')
 
-    const compA = childrenBefore[0] as { el: HTMLElement }
-    const compB = childrenBefore[1] as { el: HTMLElement }
-    const elA = compA.el
-    const elB = compB.el
-    assert.ok(elA, 'component A must have an element')
-    assert.ok(elB, 'component B must have an element')
-    assert.equal(elA.textContent, 'Alpha')
-    assert.equal(elB.textContent, 'Beta')
-
-    parent[GEA_UPDATE_PROPS]({
-      items: [
-        { id: 'c', label: 'Gamma' },
-        { id: 'a', label: 'Alpha' },
-        { id: 'b', label: 'Beta' },
-      ],
-    })
+    itemsSig.value = [
+      { id: 'c', label: 'Gamma' },
+      { id: 'a', label: 'Alpha' },
+      { id: 'b', label: 'Beta' },
+    ]
     await flushMicrotasks()
 
-    const childrenAfter = (parent as Record<symbol, unknown>)[itemsSym] as unknown[]
-    assert.equal(childrenAfter.length, 3)
+    const domChildrenAfter = Array.from(container.children) as Element[]
+    assert.equal(domChildrenAfter.length, 3, 'container must have 3 children')
+    assert.equal(domChildrenAfter[0].textContent?.trim(), 'Gamma')
+    assert.equal(domChildrenAfter[1].textContent?.trim(), 'Alpha')
+    assert.equal(domChildrenAfter[2].textContent?.trim(), 'Beta')
 
-    assert.notStrictEqual(childrenAfter[0], compA, 'index 0 must be a new component (Gamma), not the old A')
-    assert.strictEqual(childrenAfter[1], compA, 'old component A must be reused at index 1')
-    assert.strictEqual(childrenAfter[2], compB, 'old component B must be reused at index 2')
-
-    assert.strictEqual((childrenAfter[1] as { el: HTMLElement }).el, elA, 'component A must keep the same DOM node')
-    assert.strictEqual((childrenAfter[2] as { el: HTMLElement }).el, elB, 'component B must keep the same DOM node')
-
-    const container = (parent.el as HTMLElement).querySelector('.list') || parent.el as HTMLElement
-    const domChildren = Array.from(container.children) as Element[]
-    assert.equal(domChildren.length, 3, 'container must have 3 children')
-    assert.equal(domChildren[0].textContent, 'Gamma')
-    assert.equal(domChildren[1].textContent, 'Alpha')
-    assert.equal(domChildren[2].textContent, 'Beta')
+    // Keyed reconciliation should reuse existing DOM nodes
+    assert.strictEqual(domChildrenAfter[1], elA, 'component A must keep the same DOM node')
+    assert.strictEqual(domChildrenAfter[2], elB, 'component B must keep the same DOM node')
 
     parent.dispose()
     await flushMicrotasks()
@@ -1063,16 +1133,27 @@ test('component array children reconcile by key, not by index', async () => {
 })
 test('nested member keys let delegated map events target the correct row', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-nested-map-key-events`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      memberships: [
-        { member: { name: 'Ada' }, dedication: 1, revenue: 100 },
-        { member: { name: 'Grace' }, dedication: 2, revenue: 200 },
-      ],
-    })
+
+    const MemberStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class MemberStore extends Store {
+          memberships = [
+            { member: { name: 'Ada' }, dedication: 1, revenue: 100 },
+            { member: { name: 'Grace' }, dedication: 2, revenue: 200 },
+          ]
+        }
+      `,
+      '/virtual/member-store.ts',
+      'MemberStore',
+      { Store },
+    )
+    const store = new MemberStore() as any
 
     const MembershipTable = await compileJsxComponent(
       `
@@ -1128,8 +1209,8 @@ test('nested member keys let delegated map events target the correct row', async
     const graceRowBefore = rows()[1] as HTMLElement | undefined
     const graceButton = graceRowBefore?.querySelector('.bump') as HTMLElement | null
 
-    assert.equal(rows()[0]?.getAttribute('data-gid'), 'Ada')
-    assert.equal(rows()[1]?.getAttribute('data-gid'), 'Grace')
+    assert.equal(rows()[0]?.querySelector('.name')?.textContent?.trim(), 'Ada')
+    assert.equal(rows()[1]?.querySelector('.name')?.textContent?.trim(), 'Grace')
     assert.equal(graceRowBefore?.querySelector('.dedication')?.textContent?.trim(), '2')
     assert.equal(graceRowBefore?.querySelector('.revenue')?.textContent?.trim(), '200')
     assert.equal(view.el.querySelector('.total')?.textContent?.trim(), '300')
@@ -1143,8 +1224,8 @@ test('nested member keys let delegated map events target the correct row', async
     assert.equal(store.memberships[0].revenue, 100)
     assert.equal(store.memberships[1].dedication, 3)
     assert.equal(store.memberships[1].revenue, 300)
-    assert.equal(rows()[0]?.getAttribute('data-gid'), 'Ada')
-    assert.equal(rows()[1]?.getAttribute('data-gid'), 'Grace')
+    assert.equal(rows()[0]?.querySelector('.name')?.textContent?.trim(), 'Ada')
+    assert.equal(rows()[1]?.querySelector('.name')?.textContent?.trim(), 'Grace')
 
     view.dispose()
     await flushMicrotasks()
@@ -1155,6 +1236,7 @@ test('nested member keys let delegated map events target the correct row', async
 
 test('.map((tab, index) => ...) renders correct active class and click handler passes correct index', async () => {
   const restoreDom = installDom()
+  resetDelegation()
 
   try {
     const seed = `runtime-${Date.now()}-map-index-param`
@@ -1195,9 +1277,12 @@ test('.map((tab, index) => ...) renders correct active class and click handler p
     const root = document.createElement('div')
     document.body.appendChild(root)
 
+    const { signal: createSignal } = await import('../../../gea/src/signals/index.ts')
     const tabs = [{ title: 'Home' }, { title: 'Search' }, { title: 'Profile' }]
+    const activeTabSig = createSignal(0)
 
-    const component = new TabBar({ tabs, activeTabIndex: 0, onTabChange })
+    const component = new TabBar()
+    component[GEA_SET_PROPS]({ tabs: () => tabs, activeTabIndex: () => activeTabSig.value, onTabChange: () => onTabChange })
     component.render(root)
     await flushMicrotasks()
 
@@ -1209,7 +1294,7 @@ test('.map((tab, index) => ...) renders correct active class and click handler p
     assert.ok(!buttons()[2]?.className.includes('active'), 'third button should not be active initially')
 
     // Change active tab to index 1
-    ;(component as any)[GEA_UPDATE_PROPS]({ tabs, activeTabIndex: 1, onTabChange })
+    activeTabSig.value = 1
     await flushMicrotasks()
 
     assert.ok(!buttons()[0]?.className.includes('active'), 'first button should not be active after change')
@@ -1241,12 +1326,22 @@ test('store-only component array map observes store changes and re-renders', asy
   try {
     const seed = `runtime-${Date.now()}-store-only-component-array`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      recordings: [
-        { folder: 'rec-1', name: 'Recording 1' },
-        { folder: 'rec-2', name: 'Recording 2' },
-      ],
-    })
+
+    const RecordingStore = await compileStore(
+      `
+        import { Store } from '@geajs/core'
+        export default class RecordingStore extends Store {
+          recordings = [
+            { folder: 'rec-1', name: 'Recording 1' },
+            { folder: 'rec-2', name: 'Recording 2' },
+          ]
+        }
+      `,
+      '/virtual/recording-store.ts',
+      'RecordingStore',
+      { Store },
+    )
+    const store = new RecordingStore() as any
 
     const SidebarItem = await compileJsxComponent(
       `

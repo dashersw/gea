@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { GEA_DOM_KEY } from '../../../gea/src/lib/symbols'
+import { GEA_DOM_KEY } from '../../../gea/src/symbols'
 import { compileJsxComponent, loadComponentUnseeded } from '../helpers/compile'
 
 async function mountCompiledComponent(source: string, bindings: Record<string, unknown>, id: string) {
@@ -27,7 +27,7 @@ async function mountCompiledComponent(source: string, bindings: Record<string, u
 }
 
 test('unrelated conditional slots do not erase sibling initial HTML lists', async () => {
-  const { Store } = await import('../../../gea/src/lib/store.ts')
+  const { Store } = await import('../../../gea/src/store/store.ts')
 
   class TestStore extends Store {
     users = [
@@ -70,7 +70,7 @@ test('unrelated conditional slots do not erase sibling initial HTML lists', asyn
 })
 
 test('conditional slot HTML lists render pre-existing items on initial mount', async () => {
-  const { Store } = await import('../../../gea/src/lib/store.ts')
+  const { Store } = await import('../../../gea/src/store/store.ts')
 
   class TestStore extends Store {
     items = [
@@ -115,7 +115,7 @@ test('conditional slot HTML lists render pre-existing items on initial mount', a
 })
 
 test('conditional slot empty branch remains visible when initial list is empty', async () => {
-  const { Store } = await import('../../../gea/src/lib/store.ts')
+  const { Store } = await import('../../../gea/src/store/store.ts')
 
   class TestStore extends Store {
     items: Array<{ id: string; label: string }> = []
@@ -155,7 +155,7 @@ test('conditional slot empty branch remains visible when initial list is empty',
 })
 
 test('gesture-log pattern: empty branch to keyed list with unshift keeps unique data-gid', async () => {
-  const { Store } = await import('../../../gea/src/lib/store.ts')
+  const { Store } = await import('../../../gea/src/store/store.ts')
 
   let counter = 0
   class LogStore extends Store {
