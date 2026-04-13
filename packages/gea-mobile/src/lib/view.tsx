@@ -23,7 +23,7 @@ export default class View extends Component {
     this.hasSidebar = false
   }
 
-  render(opt_rootEl: HTMLElement = document.body, opt_index: number = 0) {
+  render(opt_rootEl: Node = document.body, opt_index: number = 0) {
     this.index = opt_index
     return super.render(opt_rootEl)
   }

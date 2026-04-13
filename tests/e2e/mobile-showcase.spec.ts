@@ -148,25 +148,32 @@ test.describe('mobile-showcase views and navigation', () => {
   })
 
   // Regression: GestureView toggles between an empty placeholder and `.map()` on the same
-  // container; incremental list updates plus the conditional branch can duplicate keyed rows
-  // (duplicate row `id` — invalid HTML).
-  test('gesture log has at most one DOM node per list item (unique row id)', async ({ page }) => {
+  // container; incremental list updates plus the conditional branch can duplicate visible rows.
+  test('gesture log does not duplicate rows across empty/list transitions', async ({ page }) => {
     await page.locator('.home-card').nth(2).click()
     await expect(page.locator('.gesture-content')).toBeVisible({ timeout: 500 })
 
     const target = page.locator('.gesture-target')
     const log = page.locator('.gesture-log')
+    const rows = log.locator('.gesture-log-entry')
+
+    await expect(log.locator('.gesture-log-empty')).toBeVisible()
+    await expect(rows).toHaveCount(0)
 
     for (let i = 0; i < 4; i++) {
       await target.click()
-      await expect(log.locator('.gesture-log-entry').first()).toBeVisible({ timeout: 500 })
     }
 
-    const itemKeys = await log
-      .locator('.gesture-log-entry')
-      .evaluateAll((els) => els.map((el: any) => el[Symbol.for('gea.dom.key')] ?? el.getAttribute('data-gid') ?? el.id))
-    const unique = new Set(itemKeys)
-    expect(unique.size).toBe(itemKeys.length)
+    await expect(rows).toHaveCount(4)
+    await expect(log.locator('.gesture-log-empty')).toHaveCount(0)
+
+    await page.locator('.gesture-clear-btn').click()
+    await expect(rows).toHaveCount(0)
+    await expect(log.locator('.gesture-log-empty')).toBeVisible()
+
+    await target.click()
+    await expect(rows).toHaveCount(1)
+    await expect(log.locator('.gesture-log-empty')).toHaveCount(0)
   })
 
   test('sidebar hint text is shown on home', async ({ page }) => {

@@ -135,7 +135,7 @@ const singleExampleRun = activeExamples.length === 1
 function resolveWorkerCount(): number {
   const fromEnv = parseInt(process.env.E2E_WORKERS || '', 10)
   if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
-  return process.env.GITHUB_ACTIONS ? 4 : 10
+  return 4
 }
 
 /** Binds an ephemeral port on 127.0.0.1, then releases it for the dev server to use. */
@@ -218,8 +218,10 @@ export default defineConfig({
   use: {
     trace: 'on-first-retry',
     actionTimeout: 1000,
-    // Full-suite runs start many Vite dev servers; first navigation can exceed 2s on a busy machine or CI.
-    navigationTimeout: 5000,
+    // Full-suite runs start many Vite dev servers; under local 10-worker runs
+    // the first `page.goto(..., waitUntil: "load")` can exceed 5s even when
+    // the app itself is healthy.
+    navigationTimeout: 10000,
     headless: true,
   },
   projects: activeExamples.map((e, i) => {

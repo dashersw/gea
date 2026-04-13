@@ -12,7 +12,7 @@
     "@geajs/core": "^1.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "vite": "^8.0.0",
     "@geajs/vite-plugin": "^1.0.0"
   }

@@ -52,6 +52,9 @@ function filterIssues(
 export default class Board extends Component {
   created() {
     dndManager.onDragEnd = (result) => {
+      // destination is null when the card is dropped outside any droppable
+      // column (or dragged back to its source position). Ignore the drop.
+      if (!result.destination) return
       projectStore.moveIssue(result.draggableId, result.destination.droppableId, result.destination.index)
     }
   }

@@ -25,7 +25,7 @@
  *        │
  *        ▼
  * ┌──────────────┐
- * │   CodeGen     │  transformComponentFile / transformNonComponentJSX
+ * │   CodeGen     │  closure-codegen transformFile
  * └──────┬───────┘
  *        │
  *        ▼
@@ -44,11 +44,10 @@
 import { generate, traverse, t } from './utils/babel-interop.ts'
 import { parseSource } from './parse/parser.ts'
 import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
-import { transformComponentFile, transformNonComponentJSX } from './codegen/generator.ts'
+import { transformFile } from './closure-codegen/transform.ts'
 import { injectHMR } from './postprocess/hmr.ts'
-import { ensureGeaCompilerSymbolImports } from './codegen/member-chain.ts'
-import { isComponentTag } from './codegen/jsx-utils.ts'
-import { pascalToKebabCase } from './codegen/gen-template.ts'
+import { isComponentTag, pascalToKebabCase } from './utils/component-tags.ts'
+import { ensureGeaCompilerSymbolImports } from './utils/imports.ts'
 
 export interface CompilerContext {
   sourceFile: string
@@ -58,6 +57,8 @@ export interface CompilerContext {
   hmrImportSource: string
   isStoreModule: (filePath: string) => boolean
   isComponentModule: (filePath: string) => boolean
+  isClassComponentModule: (filePath: string) => boolean
+  isFunctionComponentModule: (filePath: string) => boolean
   resolveImportPath: (importer: string, source: string) => string | null
   registerStoreModule: (filePath: string) => void
   registerComponentModule: (filePath: string) => void
@@ -78,7 +79,7 @@ function isComponentImportSource(source: string): boolean {
  * classes back without hitting the temporal dead zone.
  */
 export function transform(ctx: CompilerContext): { code: string; map: any } | null {
-  const { sourceFile, code, isServe, isSSR, hmrImportSource } = ctx
+  const { sourceFile, code, isServe, hmrImportSource } = ctx
 
   // ── Quick checks ──────────────────────────────────────────────────────
   const hasAngleBrackets = code.includes('<') && code.includes('>')
@@ -89,7 +90,7 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     const parsed = parseSource(code)
     if (!parsed) return null
     const { functionalComponentInfo, hasJSX } = parsed
-    let { ast, componentClassName, imports } = parsed
+    let { ast, imports } = parsed
     let { componentClassNames } = parsed
 
     if (!hasJSX) return null
@@ -97,7 +98,6 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     // ── Preprocess: functional → class ────────────────────────────────
     if (functionalComponentInfo) {
       convertFunctionalToClass(ast, functionalComponentInfo, imports)
-      componentClassName = functionalComponentInfo.name
       componentClassNames = [functionalComponentInfo.name]
       const freshCode = generate(ast, { retainLines: true }).code
       const freshParsed = parseSource(freshCode)
@@ -123,6 +123,8 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
 
     const storeImports = new Map<string, string>()
     const knownComponentImports = new Set<string>()
+    const knownClassComponentImports = new Set<string>()
+    const knownFactoryComponentImports = new Set<string>()
     const namedImportSources = new Map<string, string>()
     traverse(ast, {
       ImportDeclaration(path) {
@@ -130,9 +132,13 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
         if (!isComponentImportSource(source)) return
         const resolvedImport = source.startsWith('.') ? ctx.resolveImportPath(sourceFile, source) : null
         const isComp = resolvedImport ? ctx.isComponentModule(resolvedImport) : false
+        const isClassComp = resolvedImport ? ctx.isClassComponentModule(resolvedImport) : false
+        const isFunctionComp = resolvedImport ? ctx.isFunctionComponentModule(resolvedImport) : false
         path.node.specifiers.forEach(
           (spec: { type: string; imported?: { name?: string }; local: { name: string } }) => {
             if (isComp) knownComponentImports.add(spec.local.name)
+            if (isClassComp) knownClassComponentImports.add(spec.local.name)
+            if (isFunctionComp) knownFactoryComponentImports.add(spec.local.name)
             if (spec.type === 'ImportDefaultSpecifier') {
               if (resolvedImport && !ctx.isStoreModule(resolvedImport)) return
               storeImports.set(spec.local.name, source)
@@ -174,43 +180,38 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     })
 
     // ── CodeGen per component ─────────────────────────────────────────
+    // NEW PATH: transformFile — closure-compiled emission (cloneNode + runtime helpers).
+    // No fallback. If transformFile can't rewrite this file's JSX, leave it.
     if (hasJSX) {
-      const originalAST = parseSource(code)!.ast
-      if (componentClassNames.length > 0) {
-        for (const cn of componentClassNames) {
-          if (!imports.has(cn)) imports.set(cn, sourceFile)
-        }
-        for (const cn of componentClassNames) {
-          const result = transformComponentFile(
-            ast,
-            imports,
-            storeImports,
-            cn,
-            sourceFile,
-            originalAST,
-            componentImportsUsedAsTags,
-            knownComponentImports,
-            isSSR,
-          )
-          if (result) transformed = true
-        }
-        // ── Inject __geaTagName static property ───────────────────────
-        for (const cn of componentClassNames) {
-          const kebab = pascalToKebabCase(cn)
-          traverse(ast, {
-            noScope: true,
-            ClassDeclaration(path: any) {
-              if (!path.node.id || path.node.id.name !== cn) return
-              const prop = t.classProperty(t.identifier('__geaTagName'), t.stringLiteral(kebab))
-              prop.static = true
-              path.node.body.body.unshift(prop)
-              path.stop()
-            },
-          })
+      const emitted = transformFile(code, sourceFile, {
+        directClassComponents: knownClassComponentImports,
+        directFactoryComponents: knownFactoryComponentImports,
+        enableTinyReactiveComponents: !isServe,
+      })
+      if (emitted.changed) {
+        // Re-parse the transformed code so the downstream passes (HMR, __geaTagName
+        // injection, symbol imports, source-map generation) run against the new AST.
+        const reparsed = parseSource(emitted.code)
+        if (reparsed) {
+          ast.program.body = reparsed.ast.program.body
           transformed = true
+          // Dev/HMR-only component tag metadata. Production bundles do not need it.
+          if (isServe) {
+            for (const cn of emitted.rewritten) {
+              const kebab = pascalToKebabCase(cn)
+              traverse(ast, {
+                noScope: true,
+                ClassDeclaration(path: any) {
+                  if (!path.node.id || path.node.id.name !== cn) return
+                  const prop = t.classProperty(t.identifier('__geaTagName'), t.stringLiteral(kebab))
+                  prop.static = true
+                  path.node.body.body.unshift(prop)
+                  path.stop()
+                },
+              })
+            }
+          }
         }
-      } else {
-        transformed = transformNonComponentJSX(ast, imports)
       }
     }
 
@@ -218,8 +219,11 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     if (isServe && componentClassNames.length > 0) {
       let defaultExportClassName: string | null = null
       for (const node of ast.program.body) {
-        if (t.isExportDefaultDeclaration(node) && t.isClassDeclaration(node.declaration) && node.declaration.id) {
-          defaultExportClassName = node.declaration.id.name
+        if (t.isExportDefaultDeclaration(node)) {
+          const decl = node.declaration
+          if ((t.isClassDeclaration(decl) || t.isFunctionDeclaration(decl)) && decl.id) {
+            defaultExportClassName = decl.id.name
+          }
         }
       }
 

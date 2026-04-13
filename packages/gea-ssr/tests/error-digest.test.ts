@@ -13,8 +13,12 @@ function hasDigest(error: Error): error is Error & { digest: string } {
 
 class TestApp implements GeaComponentInstance {
   props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props || {} }
-  template() { return '<h1>Test</h1>' }
+  constructor(props?: Record<string, unknown>) {
+    this.props = props || {}
+  }
+  template() {
+    return '<h1>Test</h1>'
+  }
 }
 
 describe('error digests', () => {
@@ -22,7 +26,9 @@ describe('error digests', () => {
     let receivedError: Error | null = null
     const handler = handleRequest(TestApp, {
       indexHtml: mockIndexHtml,
-      async onBeforeRender() { throw new Error('data fetch failed') },
+      async onBeforeRender() {
+        throw new Error('data fetch failed')
+      },
       onError(error) {
         receivedError = error
         return new Response('Error', { status: 500 })
@@ -56,7 +62,9 @@ describe('error digests', () => {
     let receivedDigest = ''
     const handler = handleRequest(TestApp, {
       indexHtml: mockIndexHtml,
-      async onBeforeRender() { throw new Error('sign-test') },
+      async onBeforeRender() {
+        throw new Error('sign-test')
+      },
       onError(error) {
         if (hasDigest(error)) receivedDigest = error.digest
         return new Response('Error', { status: 500 })

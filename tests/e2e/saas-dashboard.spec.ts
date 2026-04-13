@@ -171,7 +171,7 @@ test.describe('SaaS Dashboard', () => {
 
     test('clicking status dot toggles user status', async ({ page }) => {
       const firstDot = page.locator('.status-dot').first()
-      const wasActive = await firstDot.evaluate(el => el.classList.contains('active'))
+      const wasActive = await firstDot.evaluate((el) => el.classList.contains('active'))
       await firstDot.click()
       if (wasActive) {
         await expect(firstDot).toHaveClass(/inactive/)

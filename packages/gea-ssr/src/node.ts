@@ -4,10 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GeaComponentConstructor, NodeResponseWriter } from './types'
 import { flattenHeaders, copyHeadersToNodeResponse } from './types'
 
-export async function pipeToNodeResponse(
-  stream: ReadableStream<Uint8Array>,
-  res: NodeResponseWriter,
-): Promise<void> {
+export async function pipeToNodeResponse(stream: ReadableStream<Uint8Array>, res: NodeResponseWriter): Promise<void> {
   const reader = stream.getReader()
   let cancelled = false
 

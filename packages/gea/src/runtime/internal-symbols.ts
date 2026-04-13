@@ -1,0 +1,6 @@
+export const GEA_SET_PROPS = Symbol.for('gea.component.setProps')
+export const GEA_DISPOSER = Symbol()
+export const GEA_CREATED_CALLED = Symbol()
+export const GEA_OBSERVE_DIRECT = Symbol()
+export const GEA_ROOT_PROXY_HANDLER_FACTORY = Symbol.for('gea.store.rootProxyHandlerFactory')
+export const GEA_NO_STORE_PROXY = Symbol()

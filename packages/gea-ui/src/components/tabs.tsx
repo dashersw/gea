@@ -1,12 +1,61 @@
 import * as tabs from '@zag-js/tabs'
 import { normalizeProps } from '@zag-js/vanilla'
+import { GEA_ON_PROP_CHANGE } from '@geajs/core'
 import ZagComponent from '../primitives/zag-component'
 
 export default class Tabs extends ZagComponent {
   declare value: string | null
 
+  _isNodeLike(value: unknown): value is Node {
+    return !!value && typeof (value as Node).nodeType === 'number'
+  }
+
+  _setPanelContent(panel: HTMLElement, value: unknown) {
+    if (typeof value === 'string') {
+      if (panel.innerHTML !== value) panel.innerHTML = value
+      return
+    }
+    if (value == null || value === false || value === true) {
+      panel.replaceChildren()
+      return
+    }
+
+    const nodes: Node[] = []
+    const pushNode = (item: unknown) => {
+      if (item == null || item === false || item === true) return
+      if (Array.isArray(item)) {
+        item.forEach(pushNode)
+        return
+      }
+      if (this._isNodeLike(item)) {
+        nodes.push(item)
+        return
+      }
+      nodes.push(panel.ownerDocument.createTextNode(String(item)))
+    }
+
+    pushNode(value)
+    panel.replaceChildren(...nodes)
+  }
+
+  _syncPanelContents(nextProps: Record<string, any> | undefined) {
+    const items: any[] = Array.isArray(nextProps?.items) ? nextProps.items : []
+    if (items.length === 0) return
+    const root = this.el
+    if (!root) return
+    const panels = root.querySelectorAll('[data-part="content"]')
+    for (let i = 0; i < panels.length && i < items.length; i++) {
+      this._setPanelContent(panels[i] as HTMLElement, items[i]?.content)
+    }
+  }
+
   createMachine(_props: any): any {
     return tabs.machine
+  }
+
+  [GEA_ON_PROP_CHANGE](key: string, next: unknown) {
+    super[GEA_ON_PROP_CHANGE]?.(key, next)
+    this._syncPanelContents(this.props)
   }
 
   getMachineProps(props: any) {
@@ -56,6 +105,7 @@ export default class Tabs extends ZagComponent {
 
   onAfterRender() {
     super.onAfterRender()
+    this._syncPanelContents(this.props)
     if (this._api?.value && this._machine) {
       this._machine.service.send({ type: 'SET_INDICATOR_RECT' })
     }

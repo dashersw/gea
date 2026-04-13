@@ -96,7 +96,7 @@
   - **Children diff-patch**: Changed `emitInnerHTML` to use `Component[GEA_PATCH_NODE]` for in-place DOM diff-patching when the children prop updates, preserving existing DOM node references and runtime-added attributes instead of replacing via `innerHTML`
 
   ### @geajs/core (patch)
-  - **dnd-manager symbol APIs**: Updated `DndManager._getComponentFromElement`, `_findCompiledArray`, and `_performTransfer` in `gea-ui` to use the correct GEA symbol APIs (`GEA_DOM_COMPONENT`, `geaListItemsSymbol`, `GEA_PARENT_COMPONENT`, `GEA_PROXY_GET_RAW_TARGET`) instead of legacy string property names
+  - **dnd-manager symbol APIs**: Updated `DndManager._getComponentFromElement`, `_findCompiledArray`, and `_performTransfer` in `gea-ui` to use the correct GEA symbol APIs (`GEA_DOM_COMPONENT`, `geaListItemsSymbol`, `GEA_PARENT_COMPONENT`, `GEA_PROXY_GET_RAW_TARGET`) instead of string property names
 
 - [`a23721b`](https://github.com/dashersw/gea/commit/a23721bd2dd943fa3b1418c781f094575d875ca1) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
   - **Unified array compiler**: Merged `gen-array.ts`, `gen-array-patch.ts`, `gen-array-render.ts`, and `gen-array-slot-sync.ts` into a single `array-compiler.ts` (1,833 lines). Eliminates 4 files and deduplicates shared helpers (`thisPrivate`, naming helpers). All 410 tests pass with identical generated output.

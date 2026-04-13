@@ -4791,12 +4791,12 @@ function scrollRectIntoView(dom, rect, side, x, y, xMargin, yMargin, ltr) {
             }
             let moveX = 0, moveY = 0;
             if (y == "nearest") {
-                if (rect.top < bounding.top) {
+                if (rect.top < bounding.top + yMargin) {
                     moveY = rect.top - (bounding.top + yMargin);
                     if (side > 0 && rect.bottom > bounding.bottom + moveY)
                         moveY = rect.bottom - bounding.bottom + yMargin;
                 }
-                else if (rect.bottom > bounding.bottom) {
+                else if (rect.bottom > bounding.bottom - yMargin) {
                     moveY = rect.bottom - bounding.bottom + yMargin;
                     if (side < 0 && (rect.top - moveY) < bounding.top)
                         moveY = rect.top - (bounding.top + yMargin);
@@ -4810,12 +4810,12 @@ function scrollRectIntoView(dom, rect, side, x, y, xMargin, yMargin, ltr) {
                 moveY = targetTop - bounding.top;
             }
             if (x == "nearest") {
-                if (rect.left < bounding.left) {
+                if (rect.left < bounding.left + xMargin) {
                     moveX = rect.left - (bounding.left + xMargin);
                     if (side > 0 && rect.right > bounding.right + moveX)
                         moveX = rect.right - bounding.right + xMargin;
                 }
-                else if (rect.right > bounding.right) {
+                else if (rect.right > bounding.right - xMargin) {
                     moveX = rect.right - bounding.right + xMargin;
                     if (side < 0 && rect.left < bounding.left + moveX)
                         moveX = rect.left - (bounding.left + xMargin);
@@ -5555,7 +5555,7 @@ const nativeSelectionHidden = /*@__PURE__*/Facet.define({
 });
 const scrollHandler = /*@__PURE__*/Facet.define();
 class ScrollTarget {
-    constructor(range, y = "nearest", x = "nearest", yMargin = 5, xMargin = 5, 
+    constructor(range, y, x, yMargin, xMargin, 
     // This data structure is abused to also store precise scroll
     // snapshots, instead of a `scrollIntoView` request. When this
     // flag is `true`, `range` points at a position in the reference
@@ -8151,6 +8151,18 @@ class InlineCoordsScan {
             let side = above && (!below || (this.y - above.bottom < below.top - this.y)) ? above : below;
             this.y = (side.top + side.bottom) / 2;
             return this.scan(positions, getRects);
+        }
+        // Handle the case where closest matched a higher element on the
+        // same line as an element below/above the coords
+        if (closestDx) {
+            if (above && above.bottom > closestRect.top) {
+                this.y = above.bottom - 1;
+                return this.scan(positions, getRects);
+            }
+            if (below && below.top < closestRect.bottom) {
+                this.y = below.top + 1;
+                return this.scan(positions, getRects);
+            }
         }
         let ltr = (bidi ? this.dirAt(positions[closestI], 1) : this.baseDir) == Direction.LTR;
         return {
@@ -12168,7 +12180,8 @@ class EditorView {
                     scrollTarget = scrollTarget.map(tr.changes);
                 if (tr.scrollIntoView) {
                     let { main } = tr.state.selection;
-                    scrollTarget = new ScrollTarget(main.empty ? main : EditorSelection.cursor(main.head, main.head > main.anchor ? -1 : 1));
+                    let { x, y } = this.state.facet(EditorView.cursorScrollMargin);
+                    scrollTarget = new ScrollTarget(main.empty ? main : EditorSelection.cursor(main.head, main.head > main.anchor ? -1 : 1), "nearest", "nearest", y, x);
                 }
                 for (let e of tr.effects)
                     if (e.is(scrollIntoView))
@@ -12825,7 +12838,8 @@ class EditorView {
     cause it to scroll the given position or range into view.
     */
     static scrollIntoView(pos, options = {}) {
-        return scrollIntoView.of(new ScrollTarget(typeof pos == "number" ? EditorSelection.cursor(pos) : pos, options.y, options.x, options.yMargin, options.xMargin));
+        var _a, _b, _c, _d;
+        return scrollIntoView.of(new ScrollTarget(typeof pos == "number" ? EditorSelection.cursor(pos) : pos, (_a = options.y) !== null && _a !== void 0 ? _a : "nearest", (_b = options.x) !== null && _b !== void 0 ? _b : "nearest", (_c = options.yMargin) !== null && _c !== void 0 ? _c : 5, (_d = options.xMargin) !== null && _d !== void 0 ? _d : 5));
     }
     /**
     Return an effect that resets the editor to its current (at the
@@ -13084,11 +13098,30 @@ supported.)
 */
 EditorView.bidiIsolatedRanges = bidiIsolatedRanges;
 /**
+Can be used to specify the distance that scrolling cursor into
+view keeps it away from the sides of the editor, either as a
+single pixel number or two different values for the different
+axes. Defaults to 5 pixels on both axes.
+*/
+EditorView.cursorScrollMargin = /*@__PURE__*/Facet.define({
+    combine: inputs => {
+        let x = 5, y = 5;
+        for (let i of inputs) {
+            if (typeof i == "number")
+                x = y = i;
+            else
+                ({ x, y } = i);
+        }
+        return { x, y };
+    }
+});
+/**
 Facet that allows extensions to provide additional scroll
 margins (space around the sides of the scrolling element that
 should be considered invisible). This can be useful when the
 plugin introduces elements that cover part of that element (for
-example a horizontally fixed gutter).
+example a horizontally fixed gutter). Not to be confused with
+[`cursorScrollMargin`](https://codemirror.net/6/docs/ref/#view.EditorView^cursorScrollMargin).
 */
 EditorView.scrollMargins = scrollMargins;
 /**

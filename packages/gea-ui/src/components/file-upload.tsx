@@ -3,8 +3,8 @@ import { normalizeProps } from '@zag-js/vanilla'
 import ZagComponent from '../primitives/zag-component'
 
 export default class FileUpload extends ZagComponent {
-  declare acceptedFiles: File[]
-  declare rejectedFiles: any[]
+  acceptedFiles: File[] = []
+  rejectedFiles: any[] = []
 
   createMachine(_props: any): any {
     return fileUpload.machine

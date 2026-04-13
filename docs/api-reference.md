@@ -404,6 +404,8 @@ import { router, Router, RouterView, Link, matchRoute } from '@geajs/core'
 import type { RouteConfig, RouteMatch, RouteParams, RouteComponent } from '@geajs/core'
 ```
 
+Router APIs are part of the public root export for ESM compatibility and tree-shaking. The direct `@geajs/core/router` subpath is also available, and no-build browser pages using `dist/gea-runtime.js` can load the separate `dist/gea-router.js` global bundle when they need routing.
+
 ### `router` (Singleton)
 
 The `router` singleton is a `Store` that tracks the current URL state. Its properties are reactive.

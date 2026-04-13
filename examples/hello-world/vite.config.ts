@@ -12,4 +12,9 @@ export default defineConfig({
   resolve: {
     alias: [...geaCoreAliases(resolve(__dirname, '../../packages'))],
   },
+  build: {
+    outDir: resolve(__dirname, 'dist'),
+    emptyOutDir: true,
+    modulePreload: { polyfill: false },
+  },
 })

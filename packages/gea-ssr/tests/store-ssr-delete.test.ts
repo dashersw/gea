@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { GEA_PROXY_GET_RAW_TARGET, Store } from '@geajs/core'
+import { GEA_ROOT_PROXY_HANDLER_FACTORY } from '@geajs/core/ssr'
 import { createSSRRootProxyHandler } from '../src/ssr-proxy-handler.ts'
 import { runInSSRContext } from '../src/ssr-context.ts'
 
 describe('Store SSR overlay – delete tombstone', () => {
   beforeEach(() => {
-    Store.rootProxyHandlerFactory = createSSRRootProxyHandler
+    Store[GEA_ROOT_PROXY_HANDLER_FACTORY] = createSSRRootProxyHandler
   })
 
   afterEach(() => {
-    Store.rootProxyHandlerFactory = null
+    Store[GEA_ROOT_PROXY_HANDLER_FACTORY] = null
   })
 
   it('deleting a property in SSR overlay returns undefined on read, not the underlying value', () => {

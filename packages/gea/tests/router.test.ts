@@ -54,8 +54,8 @@ async function flush() {
 
 async function loadModules() {
   const seed = `router-${Date.now()}-${Math.random()}`
-  const { GeaRouter } = await import(`../src/lib/router/router?${seed}`)
-  return { GeaRouter: GeaRouter as typeof import('../src/lib/router/router').GeaRouter }
+  const { GeaRouter } = await import(`../src/router/router?${seed}`)
+  return { GeaRouter: GeaRouter as typeof import('../src/router/router').GeaRouter }
 }
 
 let Home: any, About: any, UserProfile: any, NotFound: any

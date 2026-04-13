@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../..')
 
 /**
- * Serves `/vendor/gea.js` from `packages/gea/dist/gea.js` and
+ * Serves `/vendor/gea-runtime.js` from `packages/gea/dist/gea-runtime.js` and
  * `/vendor/babel.min.js` from `tests/e2e/vendor/babel.min.js` so runtime-only
  * examples avoid CDN fetches during dev and e2e.
  */
@@ -18,15 +18,15 @@ export function runtimeOnlyVendorPlugin(): Plugin {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const pathname = req.url?.split('?')[0] ?? ''
-        if (pathname === '/vendor/gea.js') {
+        if (pathname === '/vendor/gea-runtime.js') {
           try {
-            const buf = readFileSync(resolve(REPO_ROOT, 'packages/gea/dist/gea.js'))
+            const buf = readFileSync(resolve(REPO_ROOT, 'packages/gea/dist/gea-runtime.js'))
             res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
             res.end(buf)
           } catch {
             res.statusCode = 404
             res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-            res.end('packages/gea/dist/gea.js not found — run: npm run build -w @geajs/core')
+            res.end('packages/gea/dist/gea-runtime.js not found — run: npm run build -w @geajs/core')
           }
           return
         }

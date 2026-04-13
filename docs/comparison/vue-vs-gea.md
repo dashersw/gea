@@ -390,13 +390,16 @@ No `emit`, no `v-model`, no `defineModel`. The child mutates the shared proxy di
 
 ## Bundle Size
 
-| Stack | Min+Gzip | Includes |
+| Stack | Compressed size | Includes |
 | --- | --- | --- |
-| Vue 3.5 | ~33 kb | Rendering only |
+| Vue 3.5.33 hello world | 20.7 kb brotli | Vue runtime + minimal mount |
+| Vue 3.5.33 todo app | 22.6 kb brotli JS / 23.4 kb brotli total | Interactive todo + identical CSS |
 | Vue 3.5 + Vue Router 5 + Pinia 3 | **~35 kb** | Rendering + state + routing |
-| Gea | **~19 kb** | Rendering + state + routing |
+| Gea 1.3.0 hello world | **121 B brotli** | Compiled DOM creation |
+| Gea 1.3.0 todo app | **4.9 kb brotli JS / 5.6 kb brotli total** | Interactive todo + identical CSS |
+| Gea hello world + router | **~7.3 kb** | Compiled output + routing |
 
-Vue includes a template compiler, virtual DOM runtime, reactivity system, and component runtime — but not a router or state manager. With Vue Router and Pinia, the total comes to ~35 kb gzipped. Gea moves most work to build time, ships state management and routing out of the box, and still comes in at ~19 kb — **1.8x smaller** than a comparable Vue stack.
+In a fresh Vite 8.0.10 production hello-world build, Vue ships 20.7 kb of brotli JavaScript. Gea ships 121 B because the compiler emits direct DOM creation and the framework runtime disappears from the bundle. In an equivalent interactive todo app with reactive state, input handling, filtering, item updates, and identical CSS, Gea ships 4.9 kb of brotli JavaScript while Vue ships 22.6 kb. Vue includes a virtual DOM runtime, reactivity system, and component runtime; with Vue Router and Pinia, the total comes to ~35 kb gzipped. Gea moves the UI path to build time instead: stores are part of the core API, and routing is paid for only when imported.
 
 ## Directives vs Plain JavaScript
 

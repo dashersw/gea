@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { Router } from '../../gea/src/lib/router/router.ts'
-import { router } from '../../gea/src/lib/router/index.ts'
+import { Router } from '../../gea/src/router/router.ts'
+import { router } from '../../gea/src/router/index.ts'
 import { resolveSSRRouter, runWithSSRRouter, createSSRRouterState } from '../src/ssr-router-context.ts'
 import type { ServerRouteResult } from '../src/server-router.ts'
 
@@ -51,7 +51,10 @@ describe('router singleton proxy SSR delegation', () => {
 
   it('returns null from resolver means fall through is attempted', () => {
     let called = false
-    Router._ssrRouterResolver = () => { called = true; return { path: '/fallback' } }
+    Router._ssrRouterResolver = () => {
+      called = true
+      return { path: '/fallback' }
+    }
     try {
       void router.path
       assert.equal(called, true)

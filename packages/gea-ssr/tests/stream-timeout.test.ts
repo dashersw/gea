@@ -42,10 +42,12 @@ describe('stream timeout and per-deferred streaming', () => {
   it('deferred that never resolves does not hold connection open', async () => {
     const neverResolves = new Promise<string>(() => {})
 
-    const stream = createSSRStream(makeOptions({
-      deferreds: [{ id: 'gea-d1', promise: neverResolves }],
-      streamTimeout: 100,
-    }))
+    const stream = createSSRStream(
+      makeOptions({
+        deferreds: [{ id: 'gea-d1', promise: neverResolves }],
+        streamTimeout: 100,
+      }),
+    )
 
     const start = Date.now()
     const html = await readStream(stream)
@@ -57,13 +59,17 @@ describe('stream timeout and per-deferred streaming', () => {
   })
 
   it('deferred that resolves before timeout streams normally', async () => {
-    const stream = createSSRStream(makeOptions({
-      deferreds: [{
-        id: 'gea-d1',
-        promise: Promise.resolve('<p>Resolved!</p>'),
-      }],
-      streamTimeout: 5000,
-    }))
+    const stream = createSSRStream(
+      makeOptions({
+        deferreds: [
+          {
+            id: 'gea-d1',
+            promise: Promise.resolve('<p>Resolved!</p>'),
+          },
+        ],
+        streamTimeout: 5000,
+      }),
+    )
 
     const html = await readStream(stream)
 
@@ -74,13 +80,17 @@ describe('stream timeout and per-deferred streaming', () => {
 
   it('default timeout is 10 seconds', async () => {
     // A deferred that resolves in 50ms should work fine with default timeout
-    const stream = createSSRStream(makeOptions({
-      deferreds: [{
-        id: 'gea-d1',
-        promise: new Promise<string>(r => setTimeout(() => r('<p>ok</p>'), 50)),
-      }],
-      // no streamTimeout — should default to 10_000
-    }))
+    const stream = createSSRStream(
+      makeOptions({
+        deferreds: [
+          {
+            id: 'gea-d1',
+            promise: new Promise<string>((r) => setTimeout(() => r('<p>ok</p>'), 50)),
+          },
+        ],
+        // no streamTimeout — should default to 10_000
+      }),
+    )
 
     const html = await readStream(stream)
     assert.ok(html.includes('<p>ok</p>'), 'Should resolve with default timeout')
@@ -89,27 +99,29 @@ describe('stream timeout and per-deferred streaming', () => {
   it('fast-resolving deferred streams before slow-resolving one completes', async () => {
     const order: string[] = []
 
-    const fastPromise = new Promise<string>(resolve => {
+    const fastPromise = new Promise<string>((resolve) => {
       setTimeout(() => {
         order.push('fast')
         resolve('<p>fast</p>')
       }, 20)
     })
 
-    const slowPromise = new Promise<string>(resolve => {
+    const slowPromise = new Promise<string>((resolve) => {
       setTimeout(() => {
         order.push('slow')
         resolve('<p>slow</p>')
       }, 200)
     })
 
-    const stream = createSSRStream(makeOptions({
-      deferreds: [
-        { id: 'gea-d1', promise: fastPromise },
-        { id: 'gea-d2', promise: slowPromise },
-      ],
-      streamTimeout: 5000,
-    }))
+    const stream = createSSRStream(
+      makeOptions({
+        deferreds: [
+          { id: 'gea-d1', promise: fastPromise },
+          { id: 'gea-d2', promise: slowPromise },
+        ],
+        streamTimeout: 5000,
+      }),
+    )
 
     const chunks = await readChunks(stream)
     const fullHtml = chunks.join('')
@@ -130,13 +142,17 @@ describe('stream timeout and per-deferred streaming', () => {
   })
 
   it('failed deferred leaves fallback in place', async () => {
-    const stream = createSSRStream(makeOptions({
-      deferreds: [{
-        id: 'gea-d1',
-        promise: Promise.reject(new Error('network error')),
-      }],
-      streamTimeout: 5000,
-    }))
+    const stream = createSSRStream(
+      makeOptions({
+        deferreds: [
+          {
+            id: 'gea-d1',
+            promise: Promise.reject(new Error('network error')),
+          },
+        ],
+        streamTimeout: 5000,
+      }),
+    )
 
     const html = await readStream(stream)
 
@@ -147,10 +163,12 @@ describe('stream timeout and per-deferred streaming', () => {
   it('timed-out deferred leaves fallback in place', async () => {
     const neverResolves = new Promise<string>(() => {})
 
-    const stream = createSSRStream(makeOptions({
-      deferreds: [{ id: 'gea-d1', promise: neverResolves }],
-      streamTimeout: 50,
-    }))
+    const stream = createSSRStream(
+      makeOptions({
+        deferreds: [{ id: 'gea-d1', promise: neverResolves }],
+        streamTimeout: 50,
+      }),
+    )
 
     const html = await readStream(stream)
 
@@ -169,13 +187,15 @@ describe('stream timeout and per-deferred streaming', () => {
     globalThis.clearTimeout = patchedClearTimeout
 
     try {
-      const stream = createSSRStream(makeOptions({
-        deferreds: [
-          { id: 'gea-d1', promise: Promise.resolve('<p>fast</p>') },
-          { id: 'gea-d2', promise: Promise.resolve('<p>also fast</p>') },
-        ],
-        streamTimeout: 5000,
-      }))
+      const stream = createSSRStream(
+        makeOptions({
+          deferreds: [
+            { id: 'gea-d1', promise: Promise.resolve('<p>fast</p>') },
+            { id: 'gea-d2', promise: Promise.resolve('<p>also fast</p>') },
+          ],
+          streamTimeout: 5000,
+        }),
+      )
 
       await readStream(stream)
 
@@ -186,26 +206,30 @@ describe('stream timeout and per-deferred streaming', () => {
   })
 
   it('configurable timeout via options', async () => {
-    const slowDeferred = new Promise<string>(resolve => {
+    const slowDeferred = new Promise<string>((resolve) => {
       setTimeout(() => resolve('<p>arrived</p>'), 200)
     })
 
     // With a 50ms timeout, the 200ms deferred should time out
-    const stream1 = createSSRStream(makeOptions({
-      deferreds: [{ id: 'gea-d1', promise: slowDeferred }],
-      streamTimeout: 50,
-    }))
+    const stream1 = createSSRStream(
+      makeOptions({
+        deferreds: [{ id: 'gea-d1', promise: slowDeferred }],
+        streamTimeout: 50,
+      }),
+    )
     const html1 = await readStream(stream1)
     assert.ok(!html1.includes('arrived'), 'Should time out with 50ms limit')
 
     // With a 500ms timeout, a 50ms deferred should resolve
-    const fastDeferred = new Promise<string>(resolve => {
+    const fastDeferred = new Promise<string>((resolve) => {
       setTimeout(() => resolve('<p>fast result</p>'), 50)
     })
-    const stream2 = createSSRStream(makeOptions({
-      deferreds: [{ id: 'gea-d1', promise: fastDeferred }],
-      streamTimeout: 500,
-    }))
+    const stream2 = createSSRStream(
+      makeOptions({
+        deferreds: [{ id: 'gea-d1', promise: fastDeferred }],
+        streamTimeout: 500,
+      }),
+    )
     const html2 = await readStream(stream2)
     assert.ok(html2.includes('fast result'), 'Should resolve with 500ms limit')
   })

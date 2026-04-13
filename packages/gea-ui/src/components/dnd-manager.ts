@@ -1,14 +1,10 @@
-import {
-  GEA_DOM_COMPONENT,
-  GEA_PARENT_COMPONENT,
-  GEA_PROXY_GET_RAW_TARGET,
-  stashComponentForTransfer,
-} from '@geajs/core'
+import { GEA_DOM_COMPONENT, GEA_PARENT_COMPONENT, GEA_PROXY_GET_RAW_TARGET } from '@geajs/core'
 
 export interface DragResult {
   draggableId: string
   source: { droppableId: string; index: number }
-  destination: { droppableId: string; index: number }
+  /** `null` when dropped outside any droppable or returned to same position. */
+  destination: { droppableId: string; index: number } | null
 }
 
 const DRAG_THRESHOLD_SQ = 25
@@ -17,6 +13,26 @@ const DROPPABLE_SEL = '[data-droppable-id]'
 
 function _rawComp(comp: any): any {
   return comp?.[GEA_PROXY_GET_RAW_TARGET] ?? comp
+}
+
+/**
+ * Walk up from `el` until its parent is `container`. Used to find the
+ * right position within a droppable's direct children when draggable
+ * elements are wrapped in one or more intermediate elements (e.g. the
+ * `<span style="display:contents">` component-boundary wrapper that Gea
+ * emits around child-Component roots inside a keyed-list).
+ *
+ * Returns the direct-child-of-`container` ancestor of `el`, or `el`
+ * itself if `el` is already a direct child. Returns `null` if `el`
+ * isn't inside `container` at all.
+ */
+function _directChildOf(container: HTMLElement, el: HTMLElement | null): HTMLElement | null {
+  let n: HTMLElement | null = el
+  while (n && n.parentElement !== container) {
+    n = n.parentElement
+    if (!n) return null
+  }
+  return n
 }
 
 class DndManager {
@@ -37,6 +53,13 @@ class DndManager {
   private _sourceDroppableId = ''
   private _sourceIndex = 0
   private _sourceEl: HTMLElement | null = null
+  /**
+   * If the source draggable is nested inside a component-boundary wrapper
+   * (e.g. a `<span style="display:contents">` inside the droppable), this
+   * holds that wrapper — the actual direct child of the droppable that we
+   * move/return. When there is no wrapper, this equals `_sourceEl`.
+   */
+  private _sourceWrapper: HTMLElement | null = null
   private _sourceHeight = 0
   private _sourceRect: DOMRect | null = null
   private _savedCssText = ''
@@ -89,7 +112,9 @@ class DndManager {
     if (!droppableEl) return
 
     const droppableId = droppableEl.dataset.droppableId!
-    const siblings = Array.from(droppableEl.querySelectorAll(`:scope > ${DRAGGABLE_SEL}`))
+    // Descendant lookup (not `:scope > ...`) because keyedList wraps each
+    // item in a `display:contents` span; direct-child lookup misses them.
+    const siblings = Array.from(droppableEl.querySelectorAll(DRAGGABLE_SEL))
     const sourceIndex = siblings.indexOf(el)
     if (sourceIndex === -1) return
 
@@ -153,9 +178,18 @@ class DndManager {
     placeholder.style.height = rect.height + 'px'
     placeholder.style.marginBottom = elMargin
     placeholder.style.transition = 'none'
-    el.parentElement!.insertBefore(placeholder, el)
+    // Resolve the wrapper: if the draggable is nested inside a component-
+    // boundary span (display:contents) between the droppable container and
+    // the card, track that wrapper as the DOM unit we actually move/return.
+    // All `insertBefore` calls in `_updateTarget` / `_returnToSource` run at
+    // container-level and need direct-child nodes, not grandchildren.
+    const sourceContainer = this.droppables.get(this._sourceDroppableId) || (el.closest(DROPPABLE_SEL) as HTMLElement)
+    this._sourceWrapper = sourceContainer ? _directChildOf(sourceContainer, el) : el
+    const wrapper = this._sourceWrapper || el
+    wrapper.parentElement!.insertBefore(placeholder, wrapper)
 
     document.body.appendChild(el)
+    el.classList.add('gea-dnd-clone', 'gea-dragging')
     Object.assign(el.style, {
       position: 'fixed',
       top: '0px',
@@ -199,7 +233,7 @@ class DndManager {
       return
     }
 
-    const items = Array.from(foundEl.querySelectorAll(`:scope > ${DRAGGABLE_SEL}`))
+    const items = Array.from(foundEl.querySelectorAll(DRAGGABLE_SEL))
     const movingDown = clientY >= this._lastClientY
     const threshold = movingDown ? 0 : 1
     let insertIndex = items.length
@@ -216,7 +250,14 @@ class DndManager {
 
     if (!this._placeholder) return
 
-    const refNode = (items[insertIndex] as HTMLElement) || null
+    // Resolve to direct-child of foundEl. When draggable cards are wrapped
+    // in component-boundary spans (display:contents), `items[i]` is the card
+    // element (grandchild of container); `insertBefore(ph, card)` with ph's
+    // new parent = container would throw NotFoundError. Walk up to find the
+    // direct child of foundEl — that's the wrapper span — and use it as the
+    // reference node for placeholder insertion.
+    const refItem = (items[insertIndex] as HTMLElement) || null
+    const refNode = refItem ? _directChildOf(foundEl, refItem) : null
     if (this._placeholder.parentElement !== foundEl || this._placeholder.nextElementSibling !== refNode) {
       if (this._placeholder.parentElement) {
         const ghost = document.createElement('div')
@@ -254,8 +295,14 @@ class DndManager {
       return
     }
 
+    const result: DragResult = {
+      draggableId: this._draggedId,
+      source: { droppableId: this._sourceDroppableId, index: this._sourceIndex },
+      destination: null,
+    }
     this._animateReturn().then(() => {
       this._returnToSource()
+      this._onDragEnd?.(result)
       this._cleanup()
     })
   }
@@ -274,34 +321,37 @@ class DndManager {
     const samePosition =
       destination && destination.droppableId === this._sourceDroppableId && destination.index === this._sourceIndex
 
+    const result: DragResult = {
+      draggableId: this._draggedId,
+      source: { droppableId: this._sourceDroppableId, index: this._sourceIndex },
+      destination: destination && !samePosition ? destination : null,
+    }
     if (destination && this._placeholder && !samePosition) {
-      const result: DragResult = {
-        draggableId: this._draggedId,
-        source: { droppableId: this._sourceDroppableId, index: this._sourceIndex },
-        destination,
-      }
       this._animateDrop().then(() => {
         this._restoreElStyles()
-        // Stash the component for cross-list transfer so the destination's
-        // reconciliation can adopt it (DOM subtree intact) instead of
-        // disposing + recreating it from scratch.
-        const draggedComp = this._getComponentFromElement(this._sourceEl)
-        if (draggedComp) {
-          stashComponentForTransfer(draggedComp)
+        // Put the source card back inside its component-boundary wrapper so
+        // the wrapper isn't orphaned after the drop. The keyed-list runtime
+        // handles the cross-list DOM preservation automatically via the
+        // deferred-dispose / rescue-by-key mechanism in `removeEntry` /
+        // `createEntry` — no explicit transfer API needed here.
+        const wrapper = this._sourceWrapper
+        if (this._sourceEl?.parentElement === document.body) {
+          this._sourceEl.remove()
+        }
+        if (wrapper && wrapper !== this._sourceEl && this._sourceEl && !wrapper.contains(this._sourceEl)) {
+          wrapper.appendChild(this._sourceEl)
         }
         if (this._placeholder?.parentElement) {
           this._placeholder.remove()
         }
         this._placeholder = null
-        if (this._sourceEl?.parentElement === document.body) {
-          this._sourceEl.remove()
-        }
         this._onDragEnd?.(result)
         this._cleanup()
       })
     } else {
       this._animateReturn().then(() => {
         this._returnToSource()
+        this._onDragEnd?.(result)
         this._cleanup()
       })
     }
@@ -320,18 +370,29 @@ class DndManager {
   private _restoreElStyles() {
     if (!this._sourceEl) return
     this._sourceEl.style.cssText = this._savedCssText
+    this._sourceEl.classList.remove('gea-dnd-clone', 'gea-dragging')
   }
 
   private _returnToSource() {
     if (!this._sourceEl) return
     this._restoreElStyles()
+    // Return the component-boundary WRAPPER (if any) to the placeholder's
+    // position, then put the source card back inside the wrapper. Without
+    // this step the wrapper span stays empty in the DOM and the card becomes
+    // a direct child of the droppable — breaking the keyed-list's internal
+    // DOM model (entries[i].element's parent would change).
+    const wrapper = this._sourceWrapper || this._sourceEl
+    if (wrapper !== this._sourceEl && !wrapper.contains(this._sourceEl)) {
+      wrapper.appendChild(this._sourceEl)
+    }
     if (this._placeholder?.parentElement) {
-      this._placeholder.parentElement.insertBefore(this._sourceEl, this._placeholder)
+      this._placeholder.parentElement.insertBefore(wrapper, this._placeholder)
     } else {
       const container = this.droppables.get(this._sourceDroppableId)
       if (container) {
-        const items = Array.from(container.querySelectorAll(`:scope > ${DRAGGABLE_SEL}`))
-        container.insertBefore(this._sourceEl, items[this._sourceIndex] || null)
+        const items = Array.from(container.querySelectorAll(DRAGGABLE_SEL))
+        const ref = items[this._sourceIndex] ? _directChildOf(container, items[this._sourceIndex] as HTMLElement) : null
+        container.insertBefore(wrapper, ref)
       }
     }
   }
@@ -343,7 +404,7 @@ class DndManager {
     const destContainer = this.droppables.get(destination.droppableId)
     if (!destContainer) return
 
-    const destItems = Array.from(destContainer.querySelectorAll(`:scope > ${DRAGGABLE_SEL}`))
+    const destItems = Array.from(destContainer.querySelectorAll(DRAGGABLE_SEL))
     const refNode = (destItems[destination.index] as HTMLElement) || null
     destContainer.insertBefore(sourceEl, refNode)
 

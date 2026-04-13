@@ -6,7 +6,7 @@ import { readExampleFile } from '../helpers/example-paths'
 
 async function mountRouterSimple(seed: string) {
   const Component = await loadComponentUnseeded()
-  const { router, Link, RouterView } = await import(`../../../gea/src/lib/router/index.ts?${seed}`)
+  const { router, Link, RouterView } = await import(`../../../gea/src/router/index.ts?${seed}`)
 
   const Home = await compileJsxComponent(
     readExampleFile('router-simple/src/views/Home.tsx'),

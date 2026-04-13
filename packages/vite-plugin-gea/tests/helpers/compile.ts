@@ -4,22 +4,114 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ResolvedConfig } from 'vite'
 import { geaPlugin } from '../../src/index'
-import { __escapeHtml as geaEscapeHtml, __sanitizeAttr as geaSanitizeAttr } from '../../../gea/src/lib/base/component'
-import * as geaSymbolsNs from '../../../gea/src/lib/symbols'
+import { escapeHtml as geaEscapeHtml, sanitizeAttr as geaSanitizeAttr } from '../../../gea/src/xss'
+import * as geaSymbolsNs from '../../../gea/src/symbols'
+import * as geaRuntimeSymsNs from '../../../gea/src/runtime/symbols'
+import { createDisposer, NOOP_DISPOSER } from '../../../gea/src/runtime/disposer'
+import { scheduleAfterRenderAsync } from '../../../gea/src/runtime/after-render-async'
+import { CompiledComponent } from '../../../gea/src/runtime/compiled-component'
+import { CompiledLeanReactiveComponent } from '../../../gea/src/runtime/compiled-lean-reactive-component'
+import { CompiledTinyReactiveComponent } from '../../../gea/src/runtime/compiled-tiny-reactive-component'
+import { CompiledReactiveComponent } from '../../../gea/src/runtime/compiled-reactive-component'
+import { CompiledStaticElementComponent } from '../../../gea/src/runtime/compiled-static-element-component'
+import { CompiledStaticComponent } from '../../../gea/src/runtime/compiled-static-component'
+import { GEA_STATIC_TEMPLATE } from '../../../gea/src/runtime/compiled-static-symbols'
+import { GEA_OBSERVE_DIRECT, GEA_SET_PROPS } from '../../../gea/src/runtime/internal-symbols'
+import { CompiledStore } from '../../../gea/src/runtime/compiled-store'
+import { CompiledLeanStore } from '../../../gea/src/runtime/compiled-lean-store'
+import { subscribe, readPath } from '../../../gea/src/runtime/subscribe'
+import { withTracking } from '../../../gea/src/runtime/with-tracking'
+import { patch } from '../../../gea/src/runtime/patch'
+import { reactiveText, reactiveTextValue } from '../../../gea/src/runtime/reactive-text'
+import { reactiveAttr } from '../../../gea/src/runtime/reactive-attr'
+import { reactiveBool, reactiveBoolAttr } from '../../../gea/src/runtime/reactive-bool'
+import { reactiveClass } from '../../../gea/src/runtime/reactive-class'
+import { reactiveClassName } from '../../../gea/src/runtime/reactive-class-name'
+import { relationalClass } from '../../../gea/src/runtime/relational-class'
+import { relationalClassProp } from '../../../gea/src/runtime/relational-class-prop'
+import { reactiveStyle } from '../../../gea/src/runtime/reactive-style'
+import { reactiveValue, reactiveValueRead } from '../../../gea/src/runtime/reactive-value'
+import { delegateEvent } from '../../../gea/src/runtime/delegate-event'
+import { delegateEventFast } from '../../../gea/src/runtime/delegate-event-fast'
+import { delegateClick, ensureClickDelegate } from '../../../gea/src/runtime/delegate-click'
+import { reactiveHtml } from '../../../gea/src/runtime/reactive-html'
+import { mount } from '../../../gea/src/runtime/mount'
+import { conditional } from '../../../gea/src/runtime/conditional'
+import { conditionalTruthy } from '../../../gea/src/runtime/conditional-truthy'
+import { keyedList, GEA_DOM_ITEM, GEA_DOM_KEY } from '../../../gea/src/runtime/keyed-list'
+import { keyedListSimple } from '../../../gea/src/runtime/keyed-list-simple'
+import { keyedListProp } from '../../../gea/src/runtime/keyed-list-prop'
+import { _rescue } from '../../../gea/src/runtime/keyed-list/rescue'
+import { createItemObservable, createItemProxy } from '../../../gea/src/runtime/keyed-list/item-obs'
+import { GEA_DIRTY, GEA_DIRTY_PROPS } from '../../../gea/src/runtime/dirty-symbols'
 import type { GeaHmrBindings } from './gea-hmr-runtime'
 
 /** Reserved — do not use these names in compileJsx* `bindings`. */
-const GEA_EVAL_RESERVED = ['__geaXss', '__geaSyms'] as const
+const GEA_EVAL_RESERVED = ['__geaXss', '__geaSyms', '__geaRt'] as const
 
 /** Plain object copy of `@geajs/core` symbol exports for `__geaSyms` (avoids `new Function` param collisions with `router`, etc.). */
-export const geaSymsForEval: Record<string, unknown> = { ...geaSymbolsNs }
+export const geaSymsForEval: Record<string, unknown> = { ...geaSymbolsNs, ...geaRuntimeSymsNs }
+
+/** New runtime helpers emitted by transformFile. Made available via __geaRt param. */
+export const geaRuntimeForEval: Record<string, unknown> = {
+  createDisposer,
+  NOOP_DISPOSER,
+  scheduleAfterRenderAsync,
+  CompiledComponent,
+  CompiledLeanReactiveComponent,
+  CompiledTinyReactiveComponent,
+  CompiledReactiveComponent,
+  CompiledStaticElementComponent,
+  CompiledStaticComponent,
+  GEA_STATIC_TEMPLATE,
+  GEA_OBSERVE_DIRECT,
+  GEA_SET_PROPS,
+  CompiledStore,
+  CompiledLeanStore,
+  subscribe,
+  readPath,
+  withTracking,
+  patch,
+  reactiveText,
+  reactiveTextValue,
+  reactiveAttr,
+  reactiveBool,
+  reactiveBoolAttr,
+  reactiveClass,
+  reactiveClassName,
+  relationalClass,
+  relationalClassProp,
+  reactiveStyle,
+  reactiveValue,
+  reactiveValueRead,
+  reactiveHtml,
+  delegateEvent,
+  delegateEventFast,
+  delegateClick,
+  ensureClickDelegate,
+  mount,
+  conditional,
+  conditionalTruthy,
+  keyedList,
+  keyedListSimple,
+  keyedListProp,
+  GEA_DOM_ITEM,
+  GEA_DOM_KEY,
+  GEA_DIRTY,
+  GEA_DIRTY_PROPS,
+  _rescue,
+  createItemObservable,
+  createItemProxy,
+}
 
 export function buildEvalPrelude(): string {
-  const symKeys = Object.keys(geaSymbolsNs).filter((k) => k !== 'default')
+  const symKeys = Object.keys(geaSymsForEval).filter((k) => k !== 'default')
+  const rtKeys = Object.keys(geaRuntimeForEval)
   return [
     'const geaEscapeHtml = __geaXss.geaEscapeHtml;',
     'const geaSanitizeAttr = __geaXss.geaSanitizeAttr;',
     `const { ${symKeys.join(', ')} } = __geaSyms;`,
+    `const { ${rtKeys.join(', ')} } = __geaRt;`,
     '',
   ].join('\n')
 }
@@ -30,13 +122,14 @@ function assertNoEvalBindingCollisions(bindings: Record<string, unknown>): void 
   }
 }
 
-/** Merge user `bindings` with reserved `__geaXss` / `__geaSyms` params for `new Function` eval. */
+/** Merge user `bindings` with reserved `__geaXss` / `__geaSyms` / `__geaRt` params for `new Function` eval. */
 export function mergeEvalBindings(bindings: Record<string, unknown>): Record<string, unknown> {
   assertNoEvalBindingCollisions(bindings)
   return {
     ...bindings,
     __geaXss: { geaEscapeHtml, geaSanitizeAttr },
     __geaSyms: geaSymsForEval,
+    __geaRt: geaRuntimeForEval,
   }
 }
 
@@ -188,19 +281,16 @@ return ${className};`
 }
 
 export async function loadRuntimeModules(seed: string) {
-  const { default: ComponentManager } = await import('../../../gea/src/lib/base/component-manager')
-  ComponentManager.instance = undefined
+  // Post-flip: compiled apps target the new closure-compiled Component at runtime/component.ts.
   const [componentModule, storeModule] = await Promise.all([
-    import(`../../../gea/src/lib/base/component.tsx?${seed}`),
-    import(`../../../gea/src/lib/store.ts?${seed}`),
+    import(`../../../gea/src/runtime/component.ts?${seed}`),
+    import(`../../../gea/src/store.ts?${seed}`),
   ])
   return [componentModule, storeModule]
 }
 
-/** Same `Component` module as `@geajs/ui` and `RouterView` — required when mixing compiled examples with those packages (seeded `component.tsx?seed` breaks prototype checks). */
+/** Same `Component` module as `@geajs/ui` and `RouterView` — required when mixing compiled examples with those packages. */
 export async function loadComponentUnseeded() {
-  const { default: ComponentManager } = await import('../../../gea/src/lib/base/component-manager')
-  ComponentManager.instance = undefined
-  const mod = await import('../../../gea/src/lib/base/component.tsx')
-  return mod.default
+  const mod = await import('../../../gea/src/runtime/component.ts')
+  return mod.Component
 }

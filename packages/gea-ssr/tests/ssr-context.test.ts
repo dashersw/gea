@@ -1,10 +1,10 @@
-import { GEA_PROXY_GET_RAW_TARGET } from '@geajs/core'
+import { Component, GEA_CREATE_TEMPLATE, GEA_PROXY_GET_RAW_TARGET } from '@geajs/core'
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleRequest } from '../src/handle-request.ts'
 import { resolveOverlay, runInSSRContext } from '../src/ssr-context.ts'
-import type { GeaComponentInstance, GeaStore } from '../src/types.ts'
-import { Store } from '../../gea/src/lib/store.ts'
+import type { GeaStore } from '../src/types.ts'
+import { Store } from '../../gea/src/store.ts'
 
 const mockIndexHtml = '<!DOCTYPE html><html><body><div id="app"></div></body></html>'
 
@@ -15,11 +15,12 @@ class TestStore extends Store {
 }
 const sharedStore: GeaStore = new TestStore()
 
-class StoreReadingApp implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props || {} }
-  template() {
-    return `<div data-user="${sharedStore.user}" data-count="${sharedStore.count}"></div>`
+class StoreReadingApp extends Component {
+  [GEA_CREATE_TEMPLATE](): Node {
+    const div = document.createElement('div')
+    div.setAttribute('data-user', String(sharedStore.user))
+    div.setAttribute('data-count', String(sharedStore.count))
+    return div
   }
 }
 
@@ -51,11 +52,11 @@ describe('SSR context isolation', () => {
           sharedStore.user = 'Alice'
           sharedStore.count = 1
           // Simulate async work to increase overlap window
-          await new Promise(r => setTimeout(r, 20))
+          await new Promise((r) => setTimeout(r, 20))
         } else if (route === '/bob') {
           sharedStore.user = 'Bob'
           sharedStore.count = 2
-          await new Promise(r => setTimeout(r, 20))
+          await new Promise((r) => setTimeout(r, 20))
         }
       },
     })
@@ -175,7 +176,7 @@ describe('store isolation — advanced concurrency', () => {
       const overlay1 = resolveOverlay(store)
       overlay1!.count = 10
 
-      await new Promise(resolve => setTimeout(resolve, 1))
+      await new Promise((resolve) => setTimeout(resolve, 1))
 
       const overlay2 = resolveOverlay(store)
       assert.equal(overlay2!.count, 10, 'same overlay across async boundary')
@@ -191,13 +192,13 @@ describe('store isolation — advanced concurrency', () => {
       runInSSRContext([store], async () => {
         const overlay = resolveOverlay(store)!
         overlay.count = 100
-        await new Promise(resolve => setTimeout(resolve, 5))
+        await new Promise((resolve) => setTimeout(resolve, 5))
         results.push(overlay.count)
       }),
       runInSSRContext([store], async () => {
         const overlay = resolveOverlay(store)!
         overlay.count = 200
-        await new Promise(resolve => setTimeout(resolve, 5))
+        await new Promise((resolve) => setTimeout(resolve, 5))
         results.push(overlay.count)
       }),
     ])
@@ -225,7 +226,7 @@ describe('store isolation — advanced concurrency', () => {
       runInSSRContext([storeA, storeB], async () => {
         resolveOverlay(storeA)!.value = 'a-modified'
         resolveOverlay(storeB)!.value = 'b-modified'
-        await new Promise(resolve => setTimeout(resolve, 2))
+        await new Promise((resolve) => setTimeout(resolve, 2))
         assert.equal(resolveOverlay(storeA)!.value, 'a-modified')
         assert.equal(resolveOverlay(storeB)!.value, 'b-modified')
       }),

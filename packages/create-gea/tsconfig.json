@@ -3,11 +3,7 @@
     "target": "ES2020",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": [
-      "ES2020",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "allowJs": true,
     "checkJs": false,
     "declaration": false,
@@ -17,7 +13,11 @@
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "jsxImportSource": "@geajs/core"
+    "jsxImportSource": "@geajs/core",
+    "paths": {
+      "@geajs/core": ["../gea/src"],
+      "@geajs/core/*": ["../gea/src/*"]
+    }
   },
   "include": [
     "template/src/**/*.ts",
@@ -27,8 +27,5 @@
     "test/**/*.js",
     "bin/**/*.js"
   ],
-  "exclude": [
-    "dist",
-    "node_modules"
-  ]
+  "exclude": ["dist", "node_modules"]
 }

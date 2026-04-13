@@ -1,6 +1,6 @@
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
-import eslintConfigPrettier from 'eslint-config-prettier'
+import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended'
 import globals from 'globals'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,6 +24,7 @@ export default [
       'website/playground/codemirror-bundle.js',
       'website/playground/gea-compiler-browser.js',
       'website/playground/gea-core.js',
+      'website/playground/gea-playground-runtime.js',
       'website/playground/index.mjs.map',
       'tests/e2e/vendor/babel.min.js',
       '**/.claude/worktrees/**',
@@ -32,7 +33,6 @@ export default [
 
   js.configs.recommended,
   ...tseslint.configs.recommended,
-  eslintConfigPrettier,
 
   {
     languageOptions: {
@@ -65,6 +65,9 @@ export default [
       'no-regex-spaces': 'warn',
       '@typescript-eslint/no-this-alias': 'warn',
       '@typescript-eslint/no-empty-object-type': 'off',
+      '@typescript-eslint/no-namespace': ['error', { allowDeclarations: true }],
     },
   },
+
+  eslintPluginPrettierRecommended,
 ]

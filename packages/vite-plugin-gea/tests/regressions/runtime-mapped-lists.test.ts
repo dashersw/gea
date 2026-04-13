@@ -1,1314 +1,355 @@
 import assert from 'node:assert/strict'
-import { GEA_UPDATE_PROPS } from '@geajs/core'
-import test from 'node:test'
+import { describe, it, beforeEach, afterEach } from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
-import { GEA_DOM_ITEM, GEA_DOM_KEY, geaListItemsSymbol } from '../../../gea/src/lib/symbols'
-import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { compileJsxComponent, compileJsxModule, loadRuntimeModules } from '../helpers/compile'
 
-test('mapped conditional attributes add and remove in place', async () => {
-  const restoreDom = installDom()
+describe('ported mapped-list runtime regressions', { concurrency: false }, () => {
+  let restoreDom: () => void
 
-  try {
-    const seed = `runtime-${Date.now()}-mapped-attribute-toggle`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
+  beforeEach(() => {
+    restoreDom = installDom()
+  })
 
-    const AttributeList = await compileJsxComponent(
+  afterEach(() => {
+    restoreDom()
+  })
+
+  it('add, remove, and swap preserve keyed row identity', async () => {
+    const seed = `mapped-list-${Date.now()}`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    const store = new Store({
+      items: [
+        { id: 'a', label: 'Alpha' },
+        { id: 'b', label: 'Beta' },
+        { id: 'c', label: 'Gamma' },
+      ],
+    }) as { items: Array<{ id: string; label: string }> }
+
+    const ListProbe = await compileJsxComponent(
       `
         import { Component } from '@geajs/core'
+        import store from './store'
 
-        export default class AttributeList extends Component {
-          items = [{ id: 1, label: 'one', active: false }]
-
+        export default class ListProbe extends Component {
           template() {
             return (
-              <div class="items">
-                {this.items.map(item => (
-                  <button key={item.id} data-state={item.active ? 'on' : null}>
-                    {item.label}
-                  </button>
+              <ol class="items">
+                {store.items.map((item, index) => (
+                  <li key={item.id} data-id={item.id}>{index}:{item.label}</li>
                 ))}
-              </div>
+              </ol>
             )
           }
         }
       `,
-      '/virtual/AttributeList.jsx',
-      'AttributeList',
-      { Component },
+      '/virtual/ListProbe.tsx',
+      'ListProbe',
+      { Component, store },
     )
 
     const root = document.createElement('div')
     document.body.appendChild(root)
-
-    const component = new AttributeList()
-    component.render(root)
+    const view = new ListProbe()
+    view.render(root)
     await flushMicrotasks()
 
-    const button = () => component.el.querySelector('button')
-
-    assert.equal(button()?.hasAttribute('data-state'), false)
-
-    component.items[0].active = true
+    const initial = new Map(Array.from(root.querySelectorAll('li')).map((row) => [row.getAttribute('data-id'), row]))
+    store.items.push({ id: 'd', label: 'Delta' })
     await flushMicrotasks()
-    assert.equal(button()?.getAttribute('data-state'), 'on')
+    assert.equal(root.querySelector('[data-id="a"]'), initial.get('a'))
+    assert.equal(root.querySelector('[data-id="b"]'), initial.get('b'))
+    assert.equal(root.querySelector('[data-id="c"]'), initial.get('c'))
 
-    component.items[0].active = false
+    store.items.splice(1, 1)
     await flushMicrotasks()
-    assert.equal(button()?.hasAttribute('data-state'), false)
+    assert.deepEqual(
+      Array.from(root.querySelectorAll('li')).map((row) => row.getAttribute('data-id')),
+      ['a', 'c', 'd'],
+    )
+    assert.equal(root.querySelector('[data-id="a"]'), initial.get('a'))
+    assert.equal(root.querySelector('[data-id="c"]'), initial.get('c'))
 
-    component.dispose()
+    const rowA = root.querySelector('[data-id="a"]')
+    const rowC = root.querySelector('[data-id="c"]')
+    store.items = [
+      { id: 'c', label: 'Gamma' },
+      { id: 'a', label: 'Alpha' },
+      { id: 'd', label: 'Delta' },
+    ]
     await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
 
-test('mapped list mutations add and remove DOM rows in order', async () => {
-  const restoreDom = installDom()
+    assert.deepEqual(
+      Array.from(root.querySelectorAll('li')).map((row) => row.getAttribute('data-id')),
+      ['c', 'a', 'd'],
+    )
+    assert.equal(root.querySelector('[data-id="a"]'), rowA)
+    assert.equal(root.querySelector('[data-id="c"]'), rowC)
+    assert.equal(root.querySelectorAll('li').length, 3)
 
-  try {
-    const seed = `runtime-${Date.now()}-mapped-list-mutations`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
+    view.dispose()
+    await flushMicrotasks()
+  })
 
-    const SimpleList = await compileJsxComponent(
+  it('two sibling maps with overlapping keys do not cross-adopt rows', async () => {
+    const seed = `dual-map-${Date.now()}`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    const store = new Store({
+      left: [
+        { id: '1', label: 'Left one' },
+        { id: '2', label: 'Left two' },
+      ],
+      right: [
+        { id: '1', label: 'Right one' },
+        { id: '2', label: 'Right two' },
+      ],
+    }) as {
+      left: Array<{ id: string; label: string }>
+      right: Array<{ id: string; label: string }>
+    }
+
+    const DualMapProbe = await compileJsxComponent(
       `
         import { Component } from '@geajs/core'
+        import store from './store'
 
-        export default class SimpleList extends Component {
-          nextId = 2
-          items = [{ id: 1, label: 'one' }]
-
-          add(label) {
-            this.items.push({ id: this.nextId++, label })
+        export default class DualMapProbe extends Component {
+          template() {
+            return (
+              <section>
+                <ul class="left">{store.left.map(item => <li key={item.id} data-side="left" data-id={item.id}>{item.label}</li>)}</ul>
+                <ul class="right">{store.right.map(item => <li key={item.id} data-side="right" data-id={item.id}>{item.label}</li>)}</ul>
+              </section>
+            )
           }
+        }
+      `,
+      '/virtual/DualMapProbe.tsx',
+      'DualMapProbe',
+      { Component, store },
+    )
 
-          removeFirst() {
-            this.items.splice(0, 1)
-          }
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const view = new DualMapProbe()
+    view.render(root)
+    await flushMicrotasks()
 
+    const leftOne = root.querySelector('.left [data-id="1"]')
+    const rightOne = root.querySelector('.right [data-id="1"]')
+
+    store.left = [
+      { id: '2', label: 'Left two' },
+      { id: '1', label: 'Left one moved' },
+    ]
+    await flushMicrotasks()
+
+    assert.equal(root.querySelector('.left [data-id="1"]'), leftOne)
+    assert.equal(root.querySelector('.right [data-id="1"]'), rightOne)
+    assert.equal(root.querySelector('.right [data-id="1"]')?.textContent, 'Right one')
+    assert.equal(root.querySelector('.left [data-id="1"]')?.textContent, 'Left one moved')
+    assert.equal(root.querySelectorAll('.left [data-side="right"]').length, 0)
+    assert.equal(root.querySelectorAll('.right [data-side="left"]').length, 0)
+
+    view.dispose()
+    await flushMicrotasks()
+  })
+
+  it('derived lists can shrink to one item and grow back to detached keyed rows', async () => {
+    const seed = `derived-map-grow-${Date.now()}`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+
+    class AppStore extends Store {
+      query = ''
+      items = [
+        { id: 'a', label: 'Alpha' },
+        { id: 'b', label: 'Beta' },
+        { id: 'c', label: 'Gamma' },
+      ]
+
+      get filtered() {
+        if (!this.query) return this.items
+        return this.items.filter((item) => item.label.toLowerCase().includes(this.query))
+      }
+    }
+    const store = new AppStore()
+
+    const ListProbe = await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        import store from './store'
+
+        export default class ListProbe extends Component {
           template() {
             return (
               <ul class="items">
-                {this.items.map(item => (
-                  <li key={item.id}>{item.label}</li>
+                {store.filtered.map((item) => (
+                  <li key={item.id} data-id={item.id}>{item.label}</li>
                 ))}
               </ul>
             )
           }
         }
       `,
-      '/virtual/SimpleList.jsx',
-      'SimpleList',
-      { Component },
+      '/virtual/ListProbe.tsx',
+      'ListProbe',
+      { Component, store },
     )
 
     const root = document.createElement('div')
     document.body.appendChild(root)
-
-    const component = new SimpleList()
-    component.render(root)
-
-    const rowTexts = () =>
-      Array.from(component.el.querySelectorAll('li')).map((node: Element) => node.textContent?.trim())
-
-    assert.deepEqual(rowTexts(), ['one'])
-
-    component.add('two')
+    const view = new ListProbe()
+    view.render(root)
     await flushMicrotasks()
-    assert.deepEqual(rowTexts(), ['one', 'two'])
 
-    component.removeFirst()
+    assert.deepEqual(
+      Array.from(root.querySelectorAll('li')).map((row) => row.getAttribute('data-id')),
+      ['a', 'b', 'c'],
+    )
+
+    store.query = 'alpha'
     await flushMicrotasks()
-    assert.deepEqual(rowTexts(), ['two'])
+    assert.deepEqual(
+      Array.from(root.querySelectorAll('li')).map((row) => row.getAttribute('data-id')),
+      ['a'],
+    )
 
-    component.add('three')
+    store.query = ''
     await flushMicrotasks()
-    assert.deepEqual(rowTexts(), ['two', 'three'])
+    assert.deepEqual(
+      Array.from(root.querySelectorAll('li')).map((row) => row.getAttribute('data-id')),
+      ['a', 'b', 'c'],
+    )
 
-    component.dispose()
+    view.dispose()
     await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
+  })
 
-test('imported mapped table rows rerender selected class in place', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-mapped-table-selection`
+  it('filtered sibling component lists preserve a card moved back to an earlier column', async () => {
+    const seed = `filtered-column-move-${Date.now()}`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [], selected: 0 })
+    const store = new Store({
+      issues: [
+        { id: 'i1', status: 'right', title: 'Move me' },
+        { id: 'i2', status: 'left', title: 'Stay put' },
+      ],
+    }) as { issues: Array<{ id: string; status: string; title: string }> }
 
-    const actions = {
-      run() {
-        store.data = [
-          { id: 1, label: 'one' },
-          { id: 2, label: 'two' },
-          { id: 3, label: 'three' },
-          { id: 4, label: 'four' },
-          { id: 5, label: 'five' },
-          { id: 6, label: 'six' },
+    const module = await compileJsxModule(
+      `
+        import { Component } from '@geajs/core'
+        import store from './store'
+
+        export class Column extends Component {
+          template() {
+            return (
+              <section data-column={this.props.status}>
+                {store.issues
+                  .filter((issue) => issue.status === this.props.status)
+                  .map((issue) => (
+                    <article key={issue.id} data-id={issue.id}>{issue.title}</article>
+                  ))}
+              </section>
+            )
+          }
+        }
+
+        export class BoardProbe extends Component {
+          template() {
+            return (
+              <div class="board-probe">
+                <Column status="left" />
+                <Column status="right" />
+              </div>
+            )
+          }
+        }
+      `,
+      '/virtual/FilteredColumns.tsx',
+      ['Column', 'BoardProbe'],
+      { Component, store },
+    )
+
+    const BoardProbe = module.BoardProbe as { new (): { render: (n: Node) => void; dispose: () => void } }
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const view = new BoardProbe()
+    view.render(root)
+    await flushMicrotasks()
+
+    const moved = root.querySelector('[data-column="right"] [data-id="i1"]')
+    assert.ok(moved)
+
+    store.issues[0].status = 'left'
+    await flushMicrotasks()
+
+    assert.equal(root.querySelector('[data-column="left"] [data-id="i1"]'), moved)
+    assert.equal(root.querySelector('[data-column="right"] [data-id="i1"]'), null)
+
+    view.dispose()
+    await flushMicrotasks()
+  })
+
+  it('nested component maps do not steal shared object entries during first render', async () => {
+    const seed = `shared-nested-map-${Date.now()}`
+    const [{ default: Component }] = await loadRuntimeModules(seed)
+
+    const module = await compileJsxModule(
+      `
+        import { Component } from '@geajs/core'
+
+        const sharedUser = { id: 'u1', name: 'Ada' }
+        const cards = [
+          { id: 'a', users: [sharedUser] },
+          { id: 'b', users: [sharedUser] },
         ]
-        store.selected = 0
-      },
-      select(id: number) {
-        store.selected = id
-      },
-    }
 
-    const BenchmarkTable = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
+        export class AvatarProbe extends Component {
+          template() {
+            return <span class="avatar" data-user={this.props.user.id}>{this.props.user.name}</span>
+          }
+        }
 
-        export default class BenchmarkTable extends Component {
+        export class CardProbe extends Component {
           template() {
             return (
-              <table>
-                <tbody id="tbody">
-                  {store.data.map(item => (
-                    <tr key={item.id} class={store.selected === item.id ? 'danger' : ''}>
-                      <td>{item.id}</td>
-                      <td>{item.label}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <article data-card={this.props.id}>
+                {this.props.users.map((user) => (
+                  <AvatarProbe key={user.id} user={user} />
+                ))}
+              </article>
             )
           }
         }
-      `,
-      '/virtual/BenchmarkTable.jsx',
-      'BenchmarkTable',
-      { Component, store },
-    )
 
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new BenchmarkTable()
-    view.render(root)
-
-    actions.run()
-    await flushMicrotasks()
-
-    const rowBefore = view.el.querySelector('tbody > tr:nth-of-type(5)')
-
-    assert.equal((rowBefore as any)?.[GEA_DOM_ITEM]?.id, 5)
-    assert.equal(view.el.querySelectorAll('tbody > tr.danger').length, 0)
-
-    actions.select(5)
-    await flushMicrotasks()
-
-    const rowAfter = view.el.querySelector('tbody > tr:nth-of-type(5)')
-
-    assert.equal((rowAfter as any)?.[GEA_DOM_ITEM]?.id, 5)
-    assert.equal(rowAfter?.className, 'danger')
-    assert.equal(rowAfter, rowBefore)
-    assert.equal(view.el.querySelectorAll('tbody > tr.danger').length, 1)
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('keyed mapped tables replace rows by identity on full array updates', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-keyed-reconcile`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
-
-    const BenchmarkTable = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class BenchmarkTable extends Component {
+        export class SharedAvatarBoard extends Component {
           template() {
             return (
-              <table>
-                <tbody id="tbody">
-                  {store.data.map(item => (
-                    <tr key={item.id}>
-                      <td>{item.id}</td>
-                      <td>{item.label}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <section>
+                {cards.map((card) => (
+                  <CardProbe key={card.id} id={card.id} users={card.users} />
+                ))}
+              </section>
             )
           }
         }
       `,
-      '/virtual/BenchmarkTable.jsx',
-      'BenchmarkTable',
-      { Component, store },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new BenchmarkTable()
-    view.render(root)
-
-    store.data = [
-      { id: 1, label: 'one' },
-      { id: 2, label: 'two' },
-    ]
-    await flushMicrotasks()
-
-    const firstRowBefore = view.el.querySelector('tbody > tr:first-of-type')
-    assert.equal((firstRowBefore as any)?.[GEA_DOM_ITEM]?.id, 1)
-
-    store.data = [
-      { id: 3, label: 'three' },
-      { id: 4, label: 'four' },
-    ]
-    await flushMicrotasks()
-
-    const firstRowAfter = view.el.querySelector('tbody > tr:first-of-type')
-    assert.equal((firstRowAfter as any)?.[GEA_DOM_ITEM]?.id, 3)
-    assert.notEqual(firstRowAfter, firstRowBefore)
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('keyed mapped tables move existing rows on swaps', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-keyed-swap`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
-
-    const BenchmarkTable = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class BenchmarkTable extends Component {
-          template() {
-            return (
-              <table>
-                <tbody id="tbody">
-                  {store.data.map(item => (
-                    <tr key={item.id}>
-                      <td>{item.id}</td>
-                      <td>{item.label}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
-          }
-        }
-      `,
-      '/virtual/BenchmarkTable.jsx',
-      'BenchmarkTable',
-      { Component, store },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new BenchmarkTable()
-    view.render(root)
-
-    store.data = [
-      { id: 1, label: 'one' },
-      { id: 2, label: 'two' },
-      { id: 3, label: 'three' },
-    ]
-    await flushMicrotasks()
-
-    const firstRowBefore = view.el.querySelector('tbody > tr:nth-of-type(1)')
-    const thirdRowBefore = view.el.querySelector('tbody > tr:nth-of-type(3)')
-    assert.equal((firstRowBefore as any)?.[GEA_DOM_ITEM]?.id, 1)
-    assert.equal((thirdRowBefore as any)?.[GEA_DOM_ITEM]?.id, 3)
-
-    const rows = store.data
-    const tmp = rows[0]
-    rows[0] = rows[2]
-    rows[2] = tmp
-    await flushMicrotasks()
-
-    const tbodyAfter = view.el.querySelector('tbody')!
-    const firstRowAfter = tbodyAfter.children[0] as Element
-    const thirdRowAfter = tbodyAfter.children[2] as Element
-    assert.equal((firstRowAfter as any)?.[GEA_DOM_ITEM]?.id, 3)
-    assert.equal((thirdRowAfter as any)?.[GEA_DOM_ITEM]?.id, 1)
-    assert.equal(firstRowAfter, thirdRowBefore)
-    assert.equal(thirdRowAfter, firstRowBefore)
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('keyed mapped tables clear all rows on full array resets', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-keyed-clear`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
-
-    const BenchmarkTable = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class BenchmarkTable extends Component {
-          template() {
-            return (
-              <table>
-                <tbody id="tbody">
-                  {store.data.map(item => (
-                    <tr key={item.id}>
-                      <td>{item.id}</td>
-                      <td>{item.label}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
-          }
-        }
-      `,
-      '/virtual/BenchmarkTable.jsx',
-      'BenchmarkTable',
-      { Component, store },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new BenchmarkTable()
-    view.render(root)
-
-    store.data = [
-      { id: 1, label: 'one' },
-      { id: 2, label: 'two' },
-      { id: 3, label: 'three' },
-    ]
-    await flushMicrotasks()
-
-    assert.equal(view.el.querySelectorAll('tbody > tr').length, 3)
-
-    store.data = []
-    await flushMicrotasks()
-
-    assert.equal(view.el.querySelectorAll('tbody > tr').length, 0)
-    assert.equal(view.el.querySelector('tbody')?.textContent, '')
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('unkeyed mapped tables do not emit key attributes', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-unkeyed-attrs`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ data: [] as Array<{ id: number; label: string }> })
-
-    const BenchmarkTable = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class BenchmarkTable extends Component {
-          template() {
-            return (
-              <table>
-                <tbody id="tbody">
-                  {store.data.map(item => (
-                    <tr key={item.id}>
-                      <td>{item.id}</td>
-                      <td>{item.label}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
-          }
-        }
-      `,
-      '/virtual/UnkeyedTable.jsx',
-      'BenchmarkTable',
-      { Component, store },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new BenchmarkTable()
-    view.render(root)
-
-    store.data = [{ id: 1, label: 'one' }]
-    await flushMicrotasks()
-
-    const row = view.el.querySelector('tbody > tr')
-    assert.equal(row?.hasAttribute('key'), false)
-    assert.equal((row as any)?.[GEA_DOM_KEY] != null || row?.hasAttribute('data-gid'), true)
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-for (const keyed of [true]) {
-  test(`local state mapped benchmark table renders rows after array assignment (${keyed ? 'keyed' : 'non-keyed'})`, async () => {
-    const restoreDom = installDom()
-
-    try {
-      const seed = `runtime-${Date.now()}-local-table-${keyed ? 'keyed' : 'non-keyed'}`
-      const [{ default: Component }] = await loadRuntimeModules(seed)
-
-      const BenchmarkTable = await compileJsxComponent(
-        `
-          import { Component } from '@geajs/core'
-
-          export default class BenchmarkTable extends Component {
-            data = []
-            selected = 0
-
-            run() {
-              this.data = Array.from({ length: 1000 }, (_, index) => ({
-                id: index + 1,
-                label: \`row-\${index + 1}\`
-              }))
-            }
-
-            template() {
-              return (
-                <table>
-                  <tbody id="tbody">
-                    {this.data.map(item => (
-                      <tr${keyed ? ' key={item.id}' : ''} class={this.selected === item.id ? 'danger' : ''}>
-                        <td class="col-md-1">{item.id}</td>
-                        <td class="col-md-4">
-                          <a>{item.label}</a>
-                        </td>
-                        <td class="col-md-1">
-                          <a>
-                            <span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
-                          </a>
-                        </td>
-                        <td class="col-md-6"></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )
-            }
-          }
-        `,
-        `/virtual/LocalBenchmarkTable-${keyed ? 'keyed' : 'non-keyed'}.jsx`,
-        'BenchmarkTable',
-        { Component },
-      )
-
-      const root = document.createElement('div')
-      document.body.appendChild(root)
-
-      const view = new BenchmarkTable()
-      view.render(root)
-      view.run()
-      await flushMicrotasks()
-
-      assert.equal(view.el.querySelectorAll('tbody > tr').length, 1000)
-      assert.equal(view.el.querySelector('tbody > tr:nth-of-type(1) > td:nth-of-type(1)')?.textContent?.trim(), '1')
-      assert.equal(
-        view.el.querySelector('tbody > tr:nth-of-type(1000) > td:nth-of-type(2) > a')?.textContent?.trim(),
-        'row-1000',
-      )
-
-      view.dispose()
-      await flushMicrotasks()
-    } finally {
-      restoreDom()
-    }
-  })
-}
-
-for (const keyed of [true]) {
-  test(`local state mapped rows update selected class in place (${keyed ? 'keyed' : 'non-keyed'})`, async () => {
-    const restoreDom = installDom()
-
-    try {
-      const seed = `runtime-${Date.now()}-local-select-${keyed ? 'keyed' : 'non-keyed'}`
-      const [{ default: Component }] = await loadRuntimeModules(seed)
-
-      const BenchmarkTable = await compileJsxComponent(
-        `
-          import { Component } from '@geajs/core'
-
-          export default class BenchmarkTable extends Component {
-            data = [
-              { id: 1, label: 'one' },
-              { id: 2, label: 'two' },
-              { id: 3, label: 'three' },
-              { id: 4, label: 'four' },
-              { id: 5, label: 'five' }
-            ]
-            selected = 0
-
-            select(id) {
-              this.selected = id
-            }
-
-            template() {
-              return (
-                <table>
-                  <tbody id="tbody">
-                    {this.data.map(item => (
-                      <tr${keyed ? ' key={item.id}' : ''} class={this.selected === item.id ? 'danger' : ''}>
-                        <td>{item.id}</td>
-                        <td>{item.label}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )
-            }
-          }
-        `,
-        `/virtual/LocalSelectTable-${keyed ? 'keyed' : 'non-keyed'}.jsx`,
-        'BenchmarkTable',
-        { Component },
-      )
-
-      const root = document.createElement('div')
-      document.body.appendChild(root)
-
-      const view = new BenchmarkTable()
-      view.render(root)
-
-      const rowBefore = view.el.querySelector('tbody > tr:nth-of-type(5)')
-      assert.equal(rowBefore?.className, '')
-
-      view.select(5)
-      await flushMicrotasks()
-
-      const rowAfter = view.el.querySelector('tbody > tr:nth-of-type(5)')
-      assert.equal(rowAfter?.className, 'danger')
-      assert.equal(rowAfter, rowBefore)
-
-      view.dispose()
-      await flushMicrotasks()
-    } finally {
-      restoreDom()
-    }
-  })
-}
-
-for (const keyed of [true]) {
-  test(`local state mapped rows keep event item refs after full replacement (${keyed ? 'keyed' : 'non-keyed'})`, async () => {
-    const restoreDom = installDom()
-
-    try {
-      const seed = `runtime-${Date.now()}-local-${keyed ? 'keyed' : 'non-keyed'}-events`
-      const [{ default: Component }] = await loadRuntimeModules(seed)
-
-      const BenchmarkTable = await compileJsxComponent(
-        `
-          import { Component } from '@geajs/core'
-
-          export default class BenchmarkTable extends Component {
-            data = []
-            selected = 0
-
-            run() {
-              this.data = Array.from({ length: 10 }, (_, index) => ({
-                id: index + 1,
-                label: \`row-\${index + 1}\`
-              }))
-            }
-
-            select(id) {
-              this.selected = id
-            }
-
-            remove(id) {
-              const index = this.data.findIndex(item => item.id === id)
-              if (index >= 0) this.data.splice(index, 1)
-            }
-
-            template() {
-              return (
-                <table>
-                  <tbody id="tbody">
-                    {this.data.map(item => (
-                      <tr${keyed ? ' key={item.id}' : ''} class={this.selected === item.id ? 'danger' : ''}>
-                        <td>{item.id}</td>
-                        <td>
-                          <a class="select-link" click={() => this.select(item.id)}>{item.label}</a>
-                        </td>
-                        <td>
-                          <a class="remove-link" click={() => this.remove(item.id)}>
-                            <span>x</span>
-                          </a>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )
-            }
-          }
-        `,
-        `/virtual/Local${keyed ? 'Keyed' : 'NonKeyed'}Events.jsx`,
-        'BenchmarkTable',
-        { Component },
-      )
-
-      const root = document.createElement('div')
-      document.body.appendChild(root)
-
-      const view = new BenchmarkTable()
-      view.render(root)
-      view.run()
-      await flushMicrotasks()
-
-      const selectLink = view.el.querySelector('tbody > tr:nth-of-type(5) .select-link') as HTMLElement
-      const selectedRowBefore = view.el.querySelector('tbody > tr:nth-of-type(5)')
-      assert.equal(
-        (selectedRowBefore as any)?.[GEA_DOM_KEY] ?? selectedRowBefore?.getAttribute('data-gid'),
-        '5',
-      )
-      selectLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-      await flushMicrotasks()
-
-      assert.equal(view.el.querySelector('tbody > tr:nth-of-type(5)')?.className, 'danger')
-      const row5 = view.el.querySelector('tbody > tr:nth-of-type(5)')
-      assert.equal((row5 as any)?.[GEA_DOM_KEY] ?? row5?.getAttribute('data-gid'), '5')
-
-      const removeLink = view.el.querySelector('tbody > tr:nth-of-type(9) .remove-link') as HTMLElement
-      removeLink.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-      await flushMicrotasks()
-
-      assert.equal(view.el.querySelector('tbody > tr:nth-of-type(9) > td:nth-of-type(1)')?.textContent?.trim(), '10')
-      const row9 = view.el.querySelector('tbody > tr:nth-of-type(9)')
-      assert.equal((row9 as any)?.[GEA_DOM_KEY] ?? row9?.getAttribute('data-gid'), '10')
-
-      view.dispose()
-      await flushMicrotasks()
-    } finally {
-      restoreDom()
-    }
-  })
-}
-
-test('store-dependent class in unresolved map patches items without full list rebuild', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-unresolved-map-class-patch`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ activeId: null as string | null })
-
-    const MyColumn = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class MyColumn extends Component {
-          template({ items }) {
-            return (
-              <div class="column">
-                <div class="body">
-                  {items.map(item => (
-                    <div key={item} class={\`card \${store.activeId === item ? 'active' : ''}\`}>
-                      {item}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/MyColumn.jsx',
-      'MyColumn',
-      { Component, store },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new MyColumn({ items: ['a', 'b', 'c'] })
-    view.render(root)
-
-    const cards = view.el.querySelectorAll('.body > div')
-    assert.equal(cards.length, 3)
-
-    const cardA = cards[0]
-    const cardB = cards[1]
-    const cardC = cards[2]
-    assert.ok(cardA)
-    assert.ok(cardB)
-    assert.ok(cardC)
-
-    store.activeId = 'b'
-    await flushMicrotasks()
-
-    const cardsAfter = view.el.querySelectorAll('.body > div')
-    assert.equal(cardsAfter.length, 3)
-    assert.equal(cardsAfter[0], cardA, 'first card DOM should be preserved')
-    assert.equal(cardsAfter[1], cardB, 'second card DOM should be preserved')
-    assert.equal(cardsAfter[2], cardC, 'third card DOM should be preserved')
-    assert.match(cardsAfter[1].className, /active/)
-
-    store.activeId = null
-    await flushMicrotasks()
-
-    const cardsAfter2 = view.el.querySelectorAll('.body > div')
-    assert.equal(cardsAfter2.length, 3)
-    assert.equal(cardsAfter2[0], cardA, 'first card DOM still preserved after deactivation')
-    assert.doesNotMatch(cardsAfter2[1].className, /active/)
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('unresolved map rebuilds when parent mutates prop array in-place and calls [GEA_UPDATE_PROPS] (drop scenario)', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-drop-inplace-mutation`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      tasks: { t1: { id: 't1', title: 'A' }, t2: { id: 't2', title: 'B' }, t3: { id: 't3', title: 'C' } } as Record<
-        string,
-        any
-      >,
-    })
-
-    const MyColumn = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class MyColumn extends Component {
-          template({ column }) {
-            const taskIds = column.taskIds
-            return (
-              <div class="column">
-                <div class="body">
-                  {taskIds.map(taskId =>
-                    store.tasks[taskId] ? (
-                      <div key={taskId} class="card">{store.tasks[taskId].title}</div>
-                    ) : null
-                  )}
-                </div>
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/MyColumn.jsx',
-      'MyColumn',
-      { Component, store },
-    )
-
-    const colA = { id: 'col-a', title: 'From', taskIds: ['t1', 't2'] }
-    const colB = { id: 'col-b', title: 'To', taskIds: ['t3'] }
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const viewA = new MyColumn({ column: colA })
-    viewA.render(root)
-    const viewB = new MyColumn({ column: colB })
-    viewB.render(root)
-
-    await flushMicrotasks()
-
-    const cardsA1 = viewA.el.querySelectorAll('.body .card')
-    const cardsB1 = viewB.el.querySelectorAll('.body .card')
-    assert.equal(cardsA1.length, 2, 'column A starts with 2 cards')
-    assert.equal(cardsB1.length, 1, 'column B starts with 1 card')
-
-    const idx = colA.taskIds.indexOf('t2')
-    colA.taskIds.splice(idx, 1)
-    colB.taskIds.push('t2')
-
-    viewA[GEA_UPDATE_PROPS]({ column: colA })
-    viewB[GEA_UPDATE_PROPS]({ column: colB })
-    await flushMicrotasks()
-
-    const cardsA2 = viewA.el.querySelectorAll('.body .card')
-    const cardsB2 = viewB.el.querySelectorAll('.body .card')
-    assert.equal(cardsA2.length, 1, 'column A should have 1 card after move')
-    assert.equal(cardsB2.length, 2, 'column B should have 2 cards after move')
-    assert.equal(cardsA2[0].textContent, 'A', 'remaining card in A is t1')
-    assert.equal(cardsB2[1].textContent, 'B', 'moved card in B is t2')
-
-    viewA.dispose()
-    viewB.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('map item event handler resolves item on initial render before any list rebuild', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-map-event-initial-render`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      tasks: {
-        t1: { id: 't1', title: 'Task A' },
-        t2: { id: 't2', title: 'Task B' },
-      } as Record<string, any>,
-    })
-
-    const MyColumn = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class MyColumn extends Component {
-          template({ column }) {
-            const taskIds = column.taskIds
-            return (
-              <div class="column">
-                <div class="body">
-                  {taskIds.map(taskId =>
-                    store.tasks[taskId] ? (
-                      <div
-                        key={taskId}
-                        class="card"
-                        draggable="true"
-                        dragstart={(e) => {
-                          if (e.dataTransfer) {
-                            e.dataTransfer.setData('text/plain', taskId)
-                          }
-                        }}
-                        click={() => store.__clicked = taskId}
-                      >
-                        {store.tasks[taskId].title}
-                      </div>
-                    ) : null
-                  )}
-                </div>
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/MyColumn.jsx',
-      'MyColumn',
-      { Component, store },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new MyColumn({ column: { id: 'col-1', title: 'Backlog', taskIds: ['t1', 't2'] } })
-    view.render(root)
-    await flushMicrotasks()
-
-    const cards = view.el.querySelectorAll('.card')
-    assert.equal(cards.length, 2, 'should render 2 cards')
-
-    assert.ok(!(cards[0] as any)[GEA_DOM_ITEM], 'initial render DOM elements should NOT have __geaItem set')
-
-    const helperName = Object.getOwnPropertyNames(Object.getPrototypeOf(view)).find((n: string) =>
-      n.startsWith('__getMapItemFromEvent'),
-    )
-    assert.ok(helperName, 'compiled component should have a __getMapItemFromEvent helper')
-    const fakeEvent = { target: cards[0] }
-    const resolved = (view as any)[helperName!](fakeEvent)
-    assert.ok(resolved, 'helper should resolve a non-null value on initial render')
-    assert.equal(String(resolved), 't1', 'helper should resolve to the item ID string')
-
-    const fakeEvent2 = { target: cards[1] }
-    const resolved2 = (view as any)[helperName!](fakeEvent2)
-    assert.ok(resolved2, 'helper should resolve second item')
-    assert.equal(String(resolved2), 't2', 'helper should resolve to t2')
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('component array children reconcile by key, not by index', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-keyed-component-array`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const ChildItem = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class ChildItem extends Component {
-          template({ label }: any) {
-            return <div class="item">{label}</div>
-          }
-        }
-      `,
-      '/virtual/ChildItem.tsx',
-      'ChildItem',
+      '/virtual/SharedAvatarBoard.tsx',
+      ['AvatarProbe', 'CardProbe', 'SharedAvatarBoard'],
       { Component },
     )
 
-    const ParentList = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import ChildItem from './ChildItem'
-
-        export default class ParentList extends Component {
-          template({ items }: any) {
-            return (
-              <div class="list">
-                {items.map((item: any) => (
-                  <ChildItem key={item.id} itemId={item.id} label={item.label} />
-                ))}
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/ParentList.tsx',
-      'ParentList',
-      { Component, ChildItem },
-    )
-
+    const SharedAvatarBoard = module.SharedAvatarBoard as { new (): { render: (n: Node) => void; dispose: () => void } }
     const root = document.createElement('div')
     document.body.appendChild(root)
-
-    const parent = new ParentList({
-      items: [
-        { id: 'a', label: 'Alpha' },
-        { id: 'b', label: 'Beta' },
-      ],
-    })
-    parent.render(root)
-    await flushMicrotasks()
-    await flushMicrotasks()
-
-    const itemsSym = geaListItemsSymbol('items')
-    const childrenBefore = (parent as Record<symbol, unknown>)[itemsSym] as unknown[]
-    assert.ok(childrenBefore, 'geaListItemsSymbol("items") backing array must exist')
-    assert.equal(childrenBefore.length, 2)
-
-    const compA = childrenBefore[0] as { el: HTMLElement }
-    const compB = childrenBefore[1] as { el: HTMLElement }
-    const elA = compA.el
-    const elB = compB.el
-    assert.ok(elA, 'component A must have an element')
-    assert.ok(elB, 'component B must have an element')
-    assert.equal(elA.textContent, 'Alpha')
-    assert.equal(elB.textContent, 'Beta')
-
-    parent[GEA_UPDATE_PROPS]({
-      items: [
-        { id: 'c', label: 'Gamma' },
-        { id: 'a', label: 'Alpha' },
-        { id: 'b', label: 'Beta' },
-      ],
-    })
-    await flushMicrotasks()
-
-    const childrenAfter = (parent as Record<symbol, unknown>)[itemsSym] as unknown[]
-    assert.equal(childrenAfter.length, 3)
-
-    assert.notStrictEqual(childrenAfter[0], compA, 'index 0 must be a new component (Gamma), not the old A')
-    assert.strictEqual(childrenAfter[1], compA, 'old component A must be reused at index 1')
-    assert.strictEqual(childrenAfter[2], compB, 'old component B must be reused at index 2')
-
-    assert.strictEqual((childrenAfter[1] as { el: HTMLElement }).el, elA, 'component A must keep the same DOM node')
-    assert.strictEqual((childrenAfter[2] as { el: HTMLElement }).el, elB, 'component B must keep the same DOM node')
-
-    const container = (parent.el as HTMLElement).querySelector('.list') || parent.el as HTMLElement
-    const domChildren = Array.from(container.children) as Element[]
-    assert.equal(domChildren.length, 3, 'container must have 3 children')
-    assert.equal(domChildren[0].textContent, 'Gamma')
-    assert.equal(domChildren[1].textContent, 'Alpha')
-    assert.equal(domChildren[2].textContent, 'Beta')
-
-    parent.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-test('nested member keys let delegated map events target the correct row', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-nested-map-key-events`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      memberships: [
-        { member: { name: 'Ada' }, dedication: 1, revenue: 100 },
-        { member: { name: 'Grace' }, dedication: 2, revenue: 200 },
-      ],
-    })
-
-    const MembershipTable = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-
-        export default class MembershipTable extends Component {
-          updateDedication(name, dedication) {
-            const index = store.memberships.findIndex(entry => entry.member.name === name)
-            if (index < 0) return
-            store.memberships[index].dedication = dedication
-            store.memberships[index].revenue = dedication * 100
-          }
-
-          template() {
-            return (
-              <div>
-                <table>
-                  <tbody>
-                    {store.memberships.map(membership => (
-                      <tr key={membership.member.name}>
-                        <td class="name">{membership.member.name}</td>
-                        <td class="dedication">{membership.dedication}</td>
-                        <td class="revenue">{membership.revenue}</td>
-                        <td>
-                          <button class="bump" click={() => this.updateDedication(membership.member.name, membership.dedication + 1)}>
-                            Bump
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <div class="total">{store.memberships.reduce((sum, membership) => sum + membership.revenue, 0)}</div>
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/MembershipTable.jsx',
-      'MembershipTable',
-      { Component, store },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new MembershipTable()
+    const view = new SharedAvatarBoard()
     view.render(root)
     await flushMicrotasks()
 
-    const rows = () => Array.from((view.el as HTMLElement).querySelectorAll('tbody > tr')) as HTMLElement[]
-    const graceRowBefore = rows()[1] as HTMLElement | undefined
-    const graceButton = graceRowBefore?.querySelector('.bump') as HTMLElement | null
-
-    assert.equal(rows()[0]?.getAttribute('data-gid'), 'Ada')
-    assert.equal(rows()[1]?.getAttribute('data-gid'), 'Grace')
-    assert.equal(graceRowBefore?.querySelector('.dedication')?.textContent?.trim(), '2')
-    assert.equal(graceRowBefore?.querySelector('.revenue')?.textContent?.trim(), '200')
-    assert.equal(view.el.querySelector('.total')?.textContent?.trim(), '300')
-
-    graceButton?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-    await flushMicrotasks()
-
-    const graceRowAfter = rows()[1] as HTMLElement | undefined
-    assert.equal(graceRowAfter, graceRowBefore, 'Grace row DOM should be preserved')
-    assert.equal(store.memberships[0].dedication, 1)
-    assert.equal(store.memberships[0].revenue, 100)
-    assert.equal(store.memberships[1].dedication, 3)
-    assert.equal(store.memberships[1].revenue, 300)
-    assert.equal(rows()[0]?.getAttribute('data-gid'), 'Ada')
-    assert.equal(rows()[1]?.getAttribute('data-gid'), 'Grace')
+    assert.equal(root.querySelectorAll('.avatar').length, 2)
+    assert.equal(root.querySelector('[data-card="a"] .avatar')?.textContent, 'Ada')
+    assert.equal(root.querySelector('[data-card="b"] .avatar')?.textContent, 'Ada')
 
     view.dispose()
     await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('.map((tab, index) => ...) renders correct active class and click handler passes correct index', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-map-index-param`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    let clickedIndex: number | undefined
-    const onTabChange = (i: number) => {
-      clickedIndex = i
-    }
-
-    const TabBar = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class TabBar extends Component {
-          template({ tabs, activeTabIndex, onTabChange }) {
-            return (
-              <div class="tab-titles">
-                {tabs.map((tab, index) => (
-                  <button
-                    key={tab.title}
-                    class={\`ghost \${index === activeTabIndex ? 'active' : ''}\`}
-                    click={() => onTabChange(index)}
-                  >
-                    {tab.title}
-                  </button>
-                ))}
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/TabBar.jsx',
-      'TabBar',
-      { Component },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const tabs = [{ title: 'Home' }, { title: 'Search' }, { title: 'Profile' }]
-
-    const component = new TabBar({ tabs, activeTabIndex: 0, onTabChange })
-    component.render(root)
-    await flushMicrotasks()
-
-    const buttons = () => Array.from((component.el as HTMLElement).querySelectorAll('button')) as HTMLElement[]
-
-    // Initial render: first button should have 'active' class, others should not
-    assert.ok(buttons()[0]?.className.includes('active'), 'first button should be active initially')
-    assert.ok(!buttons()[1]?.className.includes('active'), 'second button should not be active initially')
-    assert.ok(!buttons()[2]?.className.includes('active'), 'third button should not be active initially')
-
-    // Change active tab to index 1
-    ;(component as any)[GEA_UPDATE_PROPS]({ tabs, activeTabIndex: 1, onTabChange })
-    await flushMicrotasks()
-
-    assert.ok(!buttons()[0]?.className.includes('active'), 'first button should not be active after change')
-    assert.ok(buttons()[1]?.className.includes('active'), 'second button should be active after change')
-    assert.ok(!buttons()[2]?.className.includes('active'), 'third button should not be active after change')
-
-    // Click the third button and verify onTabChange receives index 2
-    clickedIndex = undefined
-    buttons()[2]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-    await flushMicrotasks()
-    assert.equal(clickedIndex, 2, 'clicking third button should call onTabChange with index 2')
-
-    // Click the first button and verify onTabChange receives index 0
-    clickedIndex = undefined
-    buttons()[0]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-    await flushMicrotasks()
-    assert.equal(clickedIndex, 0, 'clicking first button should call onTabChange with index 0')
-
-    component.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('store-only component array map observes store changes and re-renders', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-store-only-component-array`
-    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({
-      recordings: [
-        { folder: 'rec-1', name: 'Recording 1' },
-        { folder: 'rec-2', name: 'Recording 2' },
-      ],
-    })
-
-    const SidebarItem = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class SidebarItem extends Component {
-          template({ folder, name }) {
-            return <div class="sidebar-item" data-folder={folder}>{name}</div>
-          }
-        }
-      `,
-      '/virtual/SidebarItem.jsx',
-      'SidebarItem',
-      { Component },
-    )
-
-    // Component that ONLY uses the store for the .map() — no other store bindings
-    const RecordingSidebar = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-        import store from './store.ts'
-        import SidebarItem from './SidebarItem'
-
-        export default class RecordingSidebar extends Component {
-          template() {
-            return (
-              <div class="recordings">
-                {store.recordings.map((recording) => (
-                  <SidebarItem key={recording.folder} folder={recording.folder} name={recording.name} />
-                ))}
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/RecordingSidebar.jsx',
-      'RecordingSidebar',
-      { Component, store, SidebarItem },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new RecordingSidebar()
-    view.render(root)
-    await flushMicrotasks()
-
-    const items = () => Array.from((view.el as HTMLElement).querySelectorAll('.sidebar-item')) as Element[]
-    assert.equal(items().length, 2, 'should render 2 items initially')
-    assert.equal(items()[0]?.textContent?.trim(), 'Recording 1')
-    assert.equal(items()[1]?.textContent?.trim(), 'Recording 2')
-
-    // Add an item to the store
-    store.recordings = [...store.recordings, { folder: 'rec-3', name: 'Recording 3' }]
-    await flushMicrotasks()
-
-    assert.equal(items().length, 3, 'should render 3 items after store update')
-    assert.equal(items()[2]?.textContent?.trim(), 'Recording 3')
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
+  })
 })

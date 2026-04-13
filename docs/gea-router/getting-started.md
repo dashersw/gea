@@ -52,8 +52,7 @@ Views are normal Gea components. Route params arrive as props.
 
 ```tsx
 // src/views/Home.tsx
-import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Component, Link } from '@geajs/core'
 
 export default class Home extends Component {
   template() {

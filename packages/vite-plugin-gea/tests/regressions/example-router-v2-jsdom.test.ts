@@ -6,7 +6,7 @@ import { readExampleFile } from '../helpers/example-paths'
 
 async function mountRouterV2(seed: string) {
   const Component = await loadComponentUnseeded()
-  const { router, Link, RouterView, Outlet } = await import(`../../../gea/src/lib/router/index.ts?${seed}`)
+  const { router, Link, RouterView, Outlet } = await import(`../../../gea/src/router/index.ts?${seed}`)
   const { default: authStore } = await import('../../../../examples/router-v2/src/stores/auth-store.ts')
   authStore.logout()
 

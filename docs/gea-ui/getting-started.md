@@ -14,7 +14,7 @@ npm install @geajs/core
 
 ## Tailwind CSS Setup
 
-@geajs/ui uses [Tailwind CSS](https://tailwindcss.com/) **v4** for styling. The theme CSS shipped with the library sets up Tailwind and all design tokens.
+@geajs/ui uses [Tailwind CSS](https://tailwindcss.com/) **v4** for styling. The theme CSS that ships with the library sets up Tailwind and all design tokens.
 
 ### 1. Install Tailwind and its Vite plugin
 

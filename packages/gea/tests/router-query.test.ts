@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { parseQuery } from '../src/lib/router/query'
+import { parseQuery } from '../src/router/query'
 
 describe('parseQuery', () => {
   it('returns empty object for empty string', () => {

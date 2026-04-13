@@ -10,12 +10,25 @@ function createMockResponse() {
 
   // Use defineProperties so getters survive Object.assign
   const res = Object.assign(emitter, {
-    write(chunk: Uint8Array) { chunks.push(Buffer.from(chunk)); return true },
-    end() { ended = true },
+    write(chunk: Uint8Array) {
+      chunks.push(Buffer.from(chunk))
+      return true
+    },
+    end() {
+      ended = true
+    },
   })
   Object.defineProperties(res, {
-    chunks: { get() { return chunks } },
-    ended: { get() { return ended } },
+    chunks: {
+      get() {
+        return chunks
+      },
+    },
+    ended: {
+      get() {
+        return ended
+      },
+    },
   })
   return res
 }
@@ -44,7 +57,9 @@ describe('pipeToNodeResponse', () => {
 
     let controllerRef: ReadableStreamDefaultController<Uint8Array>
     const stream = new ReadableStream<Uint8Array>({
-      start(controller) { controllerRef = controller },
+      start(controller) {
+        controllerRef = controller
+      },
     })
 
     const pipePromise = pipeToNodeResponse(stream, res)
@@ -57,7 +72,9 @@ describe('pipeToNodeResponse', () => {
     // The pipe should resolve (not hang forever)
     await Promise.race([
       pipePromise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('pipeToNodeResponse hung after client disconnect')), 2000)),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('pipeToNodeResponse hung after client disconnect')), 2000),
+      ),
     ])
   })
 
@@ -66,22 +83,21 @@ describe('pipeToNodeResponse', () => {
 
     let controllerRef: ReadableStreamDefaultController<Uint8Array>
     const stream = new ReadableStream<Uint8Array>({
-      start(controller) { controllerRef = controller },
+      start(controller) {
+        controllerRef = controller
+      },
     })
 
     const pipePromise = pipeToNodeResponse(stream, res)
 
     // Write first chunk
     controllerRef!.enqueue(new TextEncoder().encode('chunk1'))
-    await new Promise(resolve => setTimeout(resolve, 5))
+    await new Promise((resolve) => setTimeout(resolve, 5))
 
     // Disconnect after first chunk
     res.emit('close')
 
-    await Promise.race([
-      pipePromise,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('hung')), 2000)),
-    ])
+    await Promise.race([pipePromise, new Promise((_, reject) => setTimeout(() => reject(new Error('hung')), 2000))])
 
     assert.equal(res.chunks.length, 1, 'only one chunk written before disconnect')
   })
@@ -89,7 +105,9 @@ describe('pipeToNodeResponse', () => {
   it('handles backpressure then disconnect without hanging', async () => {
     const emitter = new EventEmitter()
     const res = Object.assign(emitter, {
-      write() { return false }, // Always backpressure
+      write() {
+        return false
+      }, // Always backpressure
       end() {},
     })
 
@@ -102,7 +120,7 @@ describe('pipeToNodeResponse', () => {
     const pipePromise = pipeToNodeResponse(stream, res)
 
     // Disconnect while waiting for drain
-    await new Promise(resolve => setTimeout(resolve, 5))
+    await new Promise((resolve) => setTimeout(resolve, 5))
     res.emit('close')
 
     await Promise.race([

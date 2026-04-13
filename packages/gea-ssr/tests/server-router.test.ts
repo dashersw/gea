@@ -69,9 +69,24 @@ describe('createServerRouter', () => {
 })
 
 describe('resolveRoutes — nested groups', () => {
-  class PageA { props = {}; template() { return '<a>' } }
-  class PageB { props = {}; template() { return '<b>' } }
-  class Deep { props = {}; template() { return '<deep>' } }
+  class PageA {
+    props = {}
+    template() {
+      return '<a>'
+    }
+  }
+  class PageB {
+    props = {}
+    template() {
+      return '<b>'
+    }
+  }
+  class Deep {
+    props = {}
+    template() {
+      return '<deep>'
+    }
+  }
 
   it('resolves deeply nested route groups', () => {
     const routes = {
@@ -132,7 +147,12 @@ describe('resolveRoutes — nested groups', () => {
 })
 
 describe('resolveRoutes — guard behavior', () => {
-  class Guarded { props = {}; template() { return '<guarded>' } }
+  class Guarded {
+    props = {}
+    template() {
+      return '<guarded>'
+    }
+  }
 
   it('skips guards when skipGuards is true', () => {
     const routes = {

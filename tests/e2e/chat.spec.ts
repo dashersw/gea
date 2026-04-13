@@ -102,10 +102,7 @@ test.describe('Chat / Messaging App', () => {
       await page.locator('button:has-text("Send")').click()
       // Typing indicator (dots) may appear briefly
       // Wait for eventual reply
-      await expect(page.locator('.bubble')).toHaveCount(
-        await page.locator('.bubble').count(),
-        { timeout: 500 }
-      )
+      await expect(page.locator('.bubble')).toHaveCount(await page.locator('.bubble').count(), { timeout: 500 })
     })
   })
 

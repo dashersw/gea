@@ -12,10 +12,7 @@ function normalize(html: string): string {
  * Returns null if they match (after whitespace normalization),
  * or a MismatchResult with both versions if they differ.
  */
-export function detectHydrationMismatch(
-  element: { innerHTML: string },
-  clientHtml: string,
-): MismatchResult | null {
+export function detectHydrationMismatch(element: { innerHTML: string }, clientHtml: string): MismatchResult | null {
   const serverHtml = element.innerHTML
   if (normalize(serverHtml) === normalize(clientHtml)) return null
   return { server: serverHtml, client: clientHtml }

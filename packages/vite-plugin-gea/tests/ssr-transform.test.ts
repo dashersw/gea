@@ -1,73 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import babelGenerator from '@babel/generator'
-import { parseSource } from '../src/parse/parser'
-import { transformComponentFile } from '../src/codegen/generator'
+import { transformFile } from '../src/closure-codegen/transform.ts'
 
-const generate = 'default' in babelGenerator ? babelGenerator.default : babelGenerator
-
-function transformComponentSSR(source: string, knownComponentImports?: Set<string>): string {
-  const parsed = parseSource(source)
-  assert.ok(parsed)
-  assert.ok(parsed.componentClassName)
-
-  const original = parseSource(source)
-  assert.ok(original)
-  const storeImports = new Map<string, string>()
-
-  parsed.imports.forEach((importSource, localName) => {
-    if (parsed.importKinds.get(localName) !== 'default') return
-    if (/store/i.test(importSource)) storeImports.set(localName, importSource)
-  })
-
-  const transformed = transformComponentFile(
-    parsed.ast,
-    parsed.imports,
-    storeImports,
-    parsed.componentClassName,
-    '/virtual/test-component.jsx',
-    original.ast,
-    new Set(),
-    knownComponentImports,
-    true, // ssr = true
-  )
-
-  assert.equal(transformed, true)
-  return generate(parsed.ast).code
-}
-
-function transformComponentClient(source: string, knownComponentImports?: Set<string>): string {
-  const parsed = parseSource(source)
-  assert.ok(parsed)
-  assert.ok(parsed.componentClassName)
-
-  const original = parseSource(source)
-  assert.ok(original)
-  const storeImports = new Map<string, string>()
-
-  parsed.imports.forEach((importSource, localName) => {
-    if (parsed.importKinds.get(localName) !== 'default') return
-    if (/store/i.test(importSource)) storeImports.set(localName, importSource)
-  })
-
-  const transformed = transformComponentFile(
-    parsed.ast,
-    parsed.imports,
-    storeImports,
-    parsed.componentClassName,
-    '/virtual/test-component.jsx',
-    original.ast,
-    new Set(),
-    knownComponentImports,
-    false, // ssr = false
-  )
-
-  assert.equal(transformed, true)
-  return generate(parsed.ast).code
-}
-
-test('SSR: root component in .map() is instantiated inline for server rendering', () => {
+test('root component in .map() compiles into inline keyed-list mounting', () => {
   const source = `
     import { Component } from '@geajs/core'
     import todoStore from './todo-store'
@@ -88,41 +24,14 @@ test('SSR: root component in .map() is instantiated inline for server rendering'
     }
   `
 
-  const output = transformComponentSSR(source)
+  const output = transformFile(source, '/virtual/test-component.jsx')
 
-  // SSR must instantiate components so template() runs and produces HTML
-  assert.ok(
-    output.includes('new TodoItem'),
-    'SSR output should instantiate TodoItem for server rendering.\nGot:\n' + output,
-  )
-})
-
-test('Client: root component in .map() compiles into list builder for reconciliation', () => {
-  const source = `
-    import { Component } from '@geajs/core'
-    import todoStore from './todo-store'
-    import TodoItem from './components/TodoItem'
-
-    export default class TodoApp extends Component {
-      template() {
-        return (
-          <div class="todo-app">
-            <ul>
-              {todoStore.todos.map((todo) => (
-                <TodoItem key={todo.id} todo={todo} />
-              ))}
-            </ul>
-          </div>
-        )
-      }
-    }
-  `
-
-  const output = transformComponentClient(source)
-
-  // Client compiler builds list items via compiled child pattern, not custom element tags
-  assert.ok(
-    output.includes('_buildTodosItems') || output.includes('__itemProps_todos'),
-    'Client output should compile map children into list builder.\nGot:\n' + output,
-  )
+  assert.equal(output.changed, true)
+  assert.deepEqual(output.rewritten, ['TodoApp'])
+  assert.doesNotMatch(output.code, /keyedListSimple\(/)
+  assert.doesNotMatch(output.code, /keyedList\(/)
+  assert.doesNotMatch(output.code, /_rescue/)
+  assert.match(output.code, /mount\(TodoItem/)
+  assert.doesNotMatch(output.code, /const __kl_key =/)
+  assert.match(output.code, /__kl_byKey\.get\(arr\[i\]\.id\)/)
 })

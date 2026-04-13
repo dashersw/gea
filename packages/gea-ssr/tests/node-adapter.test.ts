@@ -9,13 +9,30 @@ function createMockRes() {
   const chunks: Buffer[] = []
   let ended = false
   const res = Object.assign(emitter, {
-    write(chunk: Uint8Array) { chunks.push(Buffer.from(chunk)); return true },
-    end() { ended = true },
+    write(chunk: Uint8Array) {
+      chunks.push(Buffer.from(chunk))
+      return true
+    },
+    end() {
+      ended = true
+    },
   })
   Object.defineProperties(res, {
-    chunks: { get() { return chunks } },
-    ended: { get() { return ended } },
-    body: { get() { return Buffer.concat(chunks).toString() } },
+    chunks: {
+      get() {
+        return chunks
+      },
+    },
+    ended: {
+      get() {
+        return ended
+      },
+    },
+    body: {
+      get() {
+        return Buffer.concat(chunks).toString()
+      },
+    },
   })
   return res
 }
@@ -78,7 +95,9 @@ describe('pipeToNodeResponse', () => {
 
   it('handles empty stream', async () => {
     const stream = new ReadableStream({
-      start(controller) { controller.close() },
+      start(controller) {
+        controller.close()
+      },
     })
     const res = createMockRes()
     await pipeToNodeResponse(stream, res)
@@ -95,7 +114,11 @@ describe('copyHeadersToNodeResponse', () => {
     headers.append('Content-Type', 'text/html')
 
     const stored: Record<string, string | string[]> = {}
-    const mockRes = { setHeader(key: string, value: string | string[]) { stored[key] = value } }
+    const mockRes = {
+      setHeader(key: string, value: string | string[]) {
+        stored[key] = value
+      },
+    }
 
     copyHeadersToNodeResponse(headers, mockRes)
 
@@ -108,7 +131,11 @@ describe('copyHeadersToNodeResponse', () => {
     headers.append('Set-Cookie', 'session=abc; Path=/')
 
     const stored: Record<string, string | string[]> = {}
-    const mockRes = { setHeader(key: string, value: string | string[]) { stored[key] = value } }
+    const mockRes = {
+      setHeader(key: string, value: string | string[]) {
+        stored[key] = value
+      },
+    }
 
     copyHeadersToNodeResponse(headers, mockRes)
 
@@ -120,7 +147,11 @@ describe('copyHeadersToNodeResponse', () => {
     headers.set('Content-Type', 'text/html')
 
     const stored: Record<string, string | string[]> = {}
-    const mockRes = { setHeader(key: string, value: string | string[]) { stored[key] = value } }
+    const mockRes = {
+      setHeader(key: string, value: string | string[]) {
+        stored[key] = value
+      },
+    }
 
     copyHeadersToNodeResponse(headers, mockRes)
 

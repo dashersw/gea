@@ -13,7 +13,5 @@ const typeIcons: Record<string, string> = {
 export default function IssueTypeIcon({ type, size = 18, top = 0, left = 0 }) {
   const color = typeColors[type] || '#4FADE6'
   const transform = left || top ? `translate(${left}px,${top}px)` : undefined
-  return (
-    <i class={`icon icon-${typeIcons[type] || 'task'}`} style={{ fontSize: `${size}px`, color, transform }}></i>
-  )
+  return <i class={`icon icon-${typeIcons[type] || 'task'}`} style={{ fontSize: `${size}px`, color, transform }}></i>
 }

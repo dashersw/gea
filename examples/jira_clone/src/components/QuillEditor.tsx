@@ -10,7 +10,7 @@ const TOOLBAR_OPTIONS = [
 ]
 
 export default class QuillEditor extends Component {
-  quill: Quill | null = null;
+  quill: Quill | null = null
   _ignoreChange = false;
 
   [GEA_ON_PROP_CHANGE]() {

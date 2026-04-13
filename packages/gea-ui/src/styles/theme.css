@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -90,7 +90,6 @@
 }
 
 @layer components {
-
   /* Checkbox: hide indicator when unchecked, show on checked */
   .checkbox-control [data-part='indicator'] {
     display: none;
@@ -160,11 +159,11 @@
   }
 
   /* Zag component animations */
-  [data-part='positioner']>[data-part='content'][data-state='open'] {
+  [data-part='positioner'] > [data-part='content'][data-state='open'] {
     animation: fadeIn 150ms ease-out;
   }
 
-  [data-part='positioner']>[data-part='content'][data-state='closed'] {
+  [data-part='positioner'] > [data-part='content'][data-state='closed'] {
     animation: fadeOut 100ms ease-in;
   }
 

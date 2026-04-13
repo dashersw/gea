@@ -86,7 +86,8 @@ export default class Dialog extends ZagComponent<DialogProps> {
           onpointerdown: preventTriggerFocus,
           onmousedown: preventTriggerFocus,
           onclick: (e: MouseEvent) => {
-            ;(e.currentTarget as HTMLElement)?.blur()
+            const btn = (e.target as HTMLElement)?.closest('button, [role="button"]') as HTMLElement | null
+            btn?.blur()
             origOnClick?.(e)
           },
         }

@@ -51,12 +51,16 @@ describe('geaSSR vite plugin', () => {
       const middlewareFns: Function[] = []
       return {
         middlewares: {
-          use(fn: Function) { middlewareFns.push(fn) },
+          use(fn: Function) {
+            middlewareFns.push(fn)
+          },
         },
         ssrLoadModule: async () => mod,
         transformIndexHtml: async (_url: string, html: string) => html,
         ssrFixStacktrace: (_e: Error) => {},
-        _getMiddleware() { return middlewareFns[0] },
+        _getMiddleware() {
+          return middlewareFns[0]
+        },
       }
     }
 
@@ -78,14 +82,31 @@ describe('geaSSR vite plugin', () => {
       let statusCode = 200
       const headers: Record<string, string | string[]> = {}
       return Object.assign(emitter, {
-        get statusCode() { return statusCode },
-        set statusCode(v: number) { statusCode = v },
-        setHeader(name: string, value: string | string[]) { headers[name] = value },
-        write(chunk: Uint8Array) { chunks.push(chunk); return true },
-        end() { ended = true },
-        get _headers() { return headers },
-        get _chunks() { return chunks },
-        get _ended() { return ended },
+        get statusCode() {
+          return statusCode
+        },
+        set statusCode(v: number) {
+          statusCode = v
+        },
+        setHeader(name: string, value: string | string[]) {
+          headers[name] = value
+        },
+        write(chunk: Uint8Array) {
+          chunks.push(chunk)
+          return true
+        },
+        end() {
+          ended = true
+        },
+        get _headers() {
+          return headers
+        },
+        get _chunks() {
+          return chunks
+        },
+        get _ended() {
+          return ended
+        },
       })
     }
 
@@ -99,7 +120,9 @@ describe('geaSSR vite plugin', () => {
 
       for (const assetUrl of ['/main.js', '/style.css', '/logo.png', '/font.woff2', '/image.svg']) {
         let nextCalled = false
-        await middleware(createMockReq(assetUrl), createMockRes(), () => { nextCalled = true })
+        await middleware(createMockReq(assetUrl), createMockRes(), () => {
+          nextCalled = true
+        })
         assert.ok(nextCalled, `should call next() for ${assetUrl}`)
       }
     })
@@ -114,7 +137,9 @@ describe('geaSSR vite plugin', () => {
 
       for (const url of ['/@vite/client', '/node_modules/foo']) {
         let nextCalled = false
-        await middleware(createMockReq(url), createMockRes(), () => { nextCalled = true })
+        await middleware(createMockReq(url), createMockRes(), () => {
+          nextCalled = true
+        })
         assert.ok(nextCalled, `should call next() for ${url}`)
       }
     })
@@ -128,7 +153,9 @@ describe('geaSSR vite plugin', () => {
       const middleware = server._getMiddleware()
 
       let errorPassed: unknown = null
-      await middleware(createMockReq('/'), createMockRes(), (err?: unknown) => { errorPassed = err })
+      await middleware(createMockReq('/'), createMockRes(), (err?: unknown) => {
+        errorPassed = err
+      })
       assert.ok(errorPassed !== null, 'should pass error to next()')
     })
 
@@ -138,7 +165,9 @@ describe('geaSSR vite plugin', () => {
       configResolved({ root: '/nonexistent-path' })
       // Provide a valid handler so readFileSync is reached and throws
       const server = createMockServer({ default: () => new Response('ok') })
-      server.ssrFixStacktrace = (e: Error) => { fixedError = e }
+      server.ssrFixStacktrace = (e: Error) => {
+        fixedError = e
+      }
       const setup = configureServer(server)
       setup()
       const middleware = server._getMiddleware()

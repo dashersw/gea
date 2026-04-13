@@ -1,5 +1,3 @@
-import { readFile, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import { defineConfig } from 'tsdown'
 import { geaPlugin } from '../vite-plugin-gea/src/index'
 
@@ -11,6 +9,7 @@ const esmOpts = {
   dts: { build: true },
   target: 'es2022' as const,
   platform: 'browser' as const,
+  minify: true,
   define: {
     'import.meta.hot': 'undefined',
     'import.meta.url': '""',
@@ -19,41 +18,31 @@ const esmOpts = {
   fixedExtension: true,
 }
 
+const browserRouterExternals = ['../store', '../runtime/component', 'store', 'runtime/component']
 export default defineConfig([
   {
     entry: {
       index: 'src/index.ts',
+      'compiler-runtime': 'src/compiler-runtime.ts',
+      'jsx-runtime': 'src/jsx-runtime.ts',
+      'jsx-dev-runtime': 'src/jsx-dev-runtime.ts',
+      router: 'src/router-entry.ts',
     },
     ...esmOpts,
     clean: true,
   },
   {
     entry: {
-      router: 'src/router-subpath.ts',
+      ssr: 'src/ssr.ts',
     },
     ...esmOpts,
     clean: false,
-    deps: {
-      neverBundle: (id) => /[/\\]src[/\\]index\.ts$/.test(id),
-    },
-    hooks: {
-      async 'build:done'({ chunks }) {
-        for (const chunk of chunks) {
-          if (chunk.fileName === 'router.mjs' && 'outDir' in chunk && typeof chunk.outDir === 'string') {
-            const file = path.join(chunk.outDir, chunk.fileName)
-            let code = await readFile(file, 'utf8')
-            if (code.includes('./index.ts')) {
-              code = code.replace(/\.\/index\.ts/g, './index.mjs')
-              await writeFile(file, code)
-            }
-          }
-        }
-      },
-    },
+    // SSR bridge is tiny (re-exports internal helpers); bundle inline so the
+    // output resolves without separate chunks for uid.ts / store.ts.
   },
   {
     entry: {
-      gea: 'src/index.ts',
+      'gea-runtime': 'src/runtime-only-browser.ts',
     },
     format: 'iife',
     globalName: 'gea',
@@ -71,6 +60,32 @@ export default defineConfig([
     outputOptions: {
       exports: 'named',
       entryFileNames: '[name].js',
+    },
+  },
+  {
+    entry: {
+      'gea-router': 'src/router-entry.ts',
+    },
+    format: 'iife',
+    globalName: 'geaRouter',
+    outDir: 'dist',
+    clean: false,
+    minify: true,
+    sourcemap: true,
+    target: 'es2022',
+    platform: 'browser',
+    define: {
+      'import.meta.hot': 'undefined',
+      'import.meta.url': '""',
+    },
+    deps: {
+      neverBundle: browserRouterExternals,
+    },
+    hash: false,
+    outputOptions: {
+      exports: 'named',
+      entryFileNames: '[name].js',
+      globals: () => 'gea',
     },
   },
 ])

@@ -35,7 +35,7 @@ export default class Select extends ZagComponent {
       required: props.required,
       name: props.name,
       form: props.form,
-      closeOnSelect: props.closeOnSelect ?? true,
+      closeOnSelect: props.closeOnSelect ?? !props.multiple,
       positioning: props.positioning,
       loopFocus: props.loopFocus ?? false,
       onValueChange: (details: select.ValueChangeDetails) => {

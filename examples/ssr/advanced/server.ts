@@ -38,9 +38,7 @@ export default handleRequest(App, {
           { name: 'description', content: 'Server-rendered meta description' },
           { property: 'og:title', content: 'OG Title from SSR' },
         ],
-        link: [
-          { rel: 'canonical', href: 'https://example.com/head' },
-        ],
+        link: [{ rel: 'canonical', href: 'https://example.com/head' }],
       }
     }
 
@@ -90,9 +88,7 @@ export async function handleDeferredRequest(indexHtml: string): Promise<Response
     },
     {
       id: 'deferred-fail',
-      promise: new Promise<string>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('Deferred failed')), 100),
-      ),
+      promise: new Promise<string>((_resolve, reject) => setTimeout(() => reject(new Error('Deferred failed')), 100)),
     },
   ]
 

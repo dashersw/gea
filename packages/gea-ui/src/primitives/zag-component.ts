@@ -1,5 +1,17 @@
-import { Component, GEA_MAPS, GEA_SYNC_MAP, GEA_UPDATE_PROPS } from '@geajs/core'
+import { Component, GEA_ON_PROP_CHANGE } from '@geajs/core'
 import { VanillaMachine, normalizeProps, spreadProps } from '@zag-js/vanilla'
+
+/**
+ * Under the closure-compiled runtime there is no `[GEA_MAPS]` registry on the
+ * component. Zag integration now uses `registerListState(listId, state)` /
+ * `onItemSync(listId, idx)` hooks that the compiled `keyedList` call invokes.
+ * We keep a local Map of list states keyed by the compiler's listId string.
+ */
+interface ListStateRecord {
+  container: Element
+  containerProp?: string
+  getContainer?: () => Element
+}
 
 type SpreadCleanup = () => void
 type PropsGetter = string | ((api: any, el: Element) => Record<string, any>)
@@ -11,10 +23,12 @@ export interface SpreadMap {
 export default class ZagComponent<P = Record<string, unknown>> extends Component<P> {
   declare _machine: VanillaMachine<any> | null
   declare _api: any
-  declare _spreadCleanups: Map<string, SpreadCleanup>
-  declare _spreadScheduled: boolean
-  declare _zagIdMap: Map<string, Element>
-  declare _elementCache: Map<string, Element[]>
+  // Initialize fields eagerly — under the closure-compiled runtime, `created()`
+  // may be called AFTER `[GEA_CREATE_TEMPLATE]`, which references these caches.
+  _spreadCleanups: Map<string, SpreadCleanup> = new Map()
+  _spreadScheduled: boolean = false
+  _zagIdMap: Map<string, Element> = new Map()
+  _elementCache: Map<string, Element[]> = new Map()
 
   createMachine(_props: any): any {
     return null
@@ -76,8 +90,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
     this._scheduleSpreadApplication()
   }
 
-  [GEA_UPDATE_PROPS](nextProps: Record<string, any>) {
-    super[GEA_UPDATE_PROPS](nextProps)
+  [GEA_ON_PROP_CHANGE](_key: string, _next: unknown) {
     this._syncMachineProps()
   }
 
@@ -105,7 +118,31 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
     if (root && root.matches(selector) && !results.includes(root)) {
       results.unshift(root)
     }
-    return results
+    // Exclude elements that live inside ANOTHER component's subtree. Every
+    // mounted Gea component tags its root element with `GEA_DOM_COMPONENT`
+    // (Symbol.for('gea.dom.component')). Walking up from each match toward
+    // `root`, if we cross a tagged element whose component !== this, that
+    // match belongs to a nested component — skip it. Prevents a parent
+    // ZagComponent (e.g. Dialog) from clobbering child-Zag parts like
+    // `[data-part="trigger"]` shared by Select/Menu/Tabs, which live inside
+    // a slot (`props.children`) and aren't tracked in `this._cc`.
+    const COMP = Symbol.for('gea.dom.component')
+    if (!root) return results
+    const filtered: Element[] = []
+    for (const el of results) {
+      let cur: Element | null = el
+      let foreign = false
+      while (cur && cur !== root) {
+        const owner = (cur as any)[COMP]
+        if (owner && owner !== this) {
+          foreign = true
+          break
+        }
+        cur = cur.parentElement
+      }
+      if (!foreign) filtered.push(el)
+    }
+    return filtered
   }
 
   _applyAllSpreads() {
@@ -145,45 +182,78 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
     }
   }
 
-  [GEA_SYNC_MAP](idx: number) {
-    super[GEA_SYNC_MAP](idx)
+  /** Compiled keyedList calls this on the owner after each reconciliation. */
+  onItemSync(_listId: string, _idx: number) {
     this._elementCache.clear()
-    // After the map syncs new/updated DOM items, Zag spreads must be
-    // re-applied because createItemFn produces elements without Zag's
-    // event handlers and attributes.
     this._scheduleSpreadApplication()
   }
+
+  /** Compiled keyedList calls this once per list at construction. */
+  registerListState(listId: string, state: ListStateRecord) {
+    if (!this._listStates) this._listStates = new Map()
+    this._listStates.set(listId, state)
+  }
+
+  unregisterListState(listId: string) {
+    this._listStates?.delete(listId)
+  }
+
+  declare _listStates: Map<string, ListStateRecord>
 
   onAfterRender() {
     this._cacheArrayContainers()
     this._elementCache.clear()
+    // If the machine was stopped (parent conditional removed this component's
+    // subtree) and the subtree is now re-shown, re-create the Zag machine
+    // so spread props + event handlers work again.
+    if ((this as any)._machineStopped && !this._machine) {
+      ;(this as any)._machineStopped = false
+      try {
+        this.created(this.props)
+      } catch {
+        /* isolated */
+      }
+    }
     this._applyAllSpreads()
   }
 
   _cacheArrayContainers() {
-    const maps = (this as any)[GEA_MAPS]
-    if (!maps) return
-    for (const idx in maps) {
-      const map = maps[idx]
-      map.container = map.getContainer()
-      if (map.container) (this as any)[map.containerProp] = map.container
+    if (!this._listStates) return
+    for (const state of this._listStates.values()) {
+      if (state.getContainer) state.container = state.getContainer()
+      if (state.container && state.containerProp) (this as any)[state.containerProp] = state.container
     }
   }
 
-  dispose() {
+  /** Stop the Zag machine + spread cleanups without fully disposing the
+   *  component. Invoked when a parent conditional slot removes this
+   *  component's DOM subtree so side effects on `<html>` (pointer-events,
+   *  aria-hidden, scroll lock) are restored. The component instance stays
+   *  alive so it can re-render if the conditional becomes truthy again. */
+  _stopMachine() {
     for (const cleanup of this._spreadCleanups.values()) {
-      cleanup()
+      try {
+        cleanup()
+      } catch {
+        /* isolated */
+      }
     }
     this._spreadCleanups.clear()
-
     if (this._machine) {
-      this._machine.stop()
+      try {
+        this._machine.stop()
+      } catch {
+        /* isolated */
+      }
       this._machine = null
     }
     this._api = null
     this._zagIdMap?.clear()
     this._elementCache?.clear()
+  }
 
+  dispose() {
+    this._stopMachine()
     super.dispose()
   }
 

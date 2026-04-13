@@ -93,8 +93,7 @@ const noMatch = matchRoute('/users/:id', '/about')
 **Conditional rendering** — match routes manually in templates:
 
 ```tsx
-import { Component } from '@geajs/core'
-import { router, matchRoute } from '@geajs/core'
+import { Component, router, matchRoute } from '@geajs/core'
 
 export default class App extends Component {
   template() {

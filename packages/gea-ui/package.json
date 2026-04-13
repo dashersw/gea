@@ -1,6 +1,6 @@
 {
   "name": "@geajs/ui",
-  "version": "0.2.4",
+  "version": "0.2.9",
   "description": "Accessible UI components for Gea, powered by Zag.js state machines and styled with Tailwind CSS",
   "type": "module",
   "main": "dist/index.mjs",
@@ -39,7 +39,8 @@
   ],
   "scripts": {
     "build": "tsdown --config-loader unrun",
-    "build:docs": "vite build --config ../../examples/docs/vite.config.prod.ts"
+    "build:docs": "vite build --config ../../examples/docs/vite.config.prod.ts",
+    "test": "tsx --conditions source --test tests/*.test.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -89,6 +90,6 @@
     "prismjs": "^1.30.0",
     "tailwindcss": "^4.0.0",
     "tsdown": "^0.21.2",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   }
 }

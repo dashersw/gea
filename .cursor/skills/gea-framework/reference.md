@@ -20,6 +20,7 @@
 - [GestureHandler](#gesturehandler)
 - [UI Components](#ui-components)
 - [Drag and Drop](#drag-and-drop)
+- [SSR](#ssr)
 - [Project Setup](#project-setup)
 
 ---
@@ -134,19 +135,16 @@ removeObserver()
 
 ```ts
 interface StoreChange {
-  type: 'add' | 'update' | 'delete' | 'append' | 'reorder' | 'swap'
-  property: string
-  target: any
-  pathParts: string[]
-  newValue?: any
+  prop: string
   previousValue?: any
-  start?: number // for append
-  count?: number // for append
-  permutation?: number[] // for reorder (sort/reverse)
-  arrayIndex?: number // for array item property updates
-  leafPathParts?: string[]
-  isArrayItemPropUpdate?: boolean
-  otherIndex?: number // for swap
+  pathParts?: string[]
+  type?: 'update' | 'append' | 'remove' | 'add' | 'delete' | 'reorder'
+  start?: number
+  count?: number
+  aipu?: boolean
+  arix?: number
+  newValue?: any
+  target?: any
 }
 ```
 
@@ -170,14 +168,23 @@ These array methods on store properties are intercepted to produce fine-grained 
 | Method                                 | Change type                                   |
 | -------------------------------------- | --------------------------------------------- |
 | `push(...items)`                       | `append`                                      |
-| `pop()`                                | `delete`                                      |
-| `shift()`                              | `delete`                                      |
-| `unshift(...items)`                    | `add` (per item)                              |
-| `splice(start, deleteCount, ...items)` | `delete` + `add` (or `append` when appending) |
-| `sort(compareFn?)`                     | `reorder` with permutation                    |
-| `reverse()`                            | `reorder` with permutation                    |
+| `pop()`                                | `remove`                                      |
+| `shift()`                              | `remove`                                      |
+| `unshift(...items)`                    | `reorder`                                     |
+| `splice(start, deleteCount, ...items)` | `remove` when deleting, otherwise `reorder` or `append` |
+| `sort(compareFn?)`                     | `reorder`                                     |
+| `reverse()`                            | `reorder`                                     |
 
 Iterator methods (`map`, `filter`, `find`, `findIndex`, `forEach`, `some`, `every`, `reduce`, `indexOf`, `includes`) are also intercepted to provide proxied items with correct paths.
+
+### flushSync()
+
+Flushes pending observer notifications for the current store synchronously. This is rarely needed in app code, but useful in tests or integration points that need to observe DOM/state immediately after a mutation.
+
+```ts
+store.count++
+store.flushSync()
+```
 
 ---
 
@@ -265,7 +272,7 @@ export default function Badge({ label, count }: { label: string; count: number }
 
 | Method         | Description                                                                        |
 | -------------- | ---------------------------------------------------------------------------------- |
-| `$(selector)`  | Returns the first matching descendant element, or the root element if no selector. |
+| `$(selector)`  | Returns the first matching descendant element within the component root.           |
 | `$$(selector)` | Returns all matching descendant elements as an array.                              |
 
 ### Rendering
@@ -331,7 +338,7 @@ export default function TodoInput({ draft, onDraftChange, onAdd }) {
 **When to use class components:**
 
 - Components with local reactive properties (class fields)
-- Components that need lifecycle hooks (`created`, `onAfterRender`)
+- Components that need lifecycle hooks (`created`, `onAfterRender`, `onAfterRenderAsync`)
 - Root/container components that read from stores
 
 ---
@@ -497,6 +504,8 @@ Both native-style (`click`, `change`) and React-style (`onClick`, `onChange`) ev
 <input input={handleInput} />
 <input change={handleChange} />
 <input keydown={handleKeyDown} />
+<div pointerdown={handlePointerDown} />
+<div wheel={handleWheel} />
 <input blur={handleBlur} />
 <input focus={handleFocus} />
 <span dblclick={handleDoubleClick}>Text</span>
@@ -509,6 +518,8 @@ const handleInput = e => {
   store.setName(e.target.value)
 }
 ```
+
+Supported event names include mouse (`click`, `dblclick`, `mousedown`, `mouseup`, `mouseover`, `mouseout`, `mousemove`, `mouseenter`, `mouseleave`, `contextmenu`), keyboard (`keydown`, `keyup`, `keypress`), form (`input`, `change`, `submit`, `reset`), focus (`focus`, `blur`), scroll/wheel, touch, pointer, drag/drop, animation, transition, and mobile gesture events (`tap`, `longTap`, `swipeRight`, `swipeUp`, `swipeLeft`, `swipeDown`). React-style names such as `onClick` and `onPointerDown` are normalized to lowercase event names.
 
 ### Method References vs. Arrow Functions
 
@@ -590,11 +601,11 @@ export default class DrawingCanvas extends Component {
 }
 ```
 
-**How it works:** The compiler replaces the `ref` attribute with a `data-gea-ref` marker attribute and generates a `__setupRefs()` method that uses `querySelector` to find the marked element and assign it to the component property. Refs are assigned after each render cycle, so they are available in `onAfterRender()`.
+**How it works:** The compiler emits a direct assignment that sets the component property to the referenced DOM element after the template is cloned. Refs are assigned before lifecycle code that runs after insertion, so they are available in `onAfterRender()`.
 
 **Limitations:**
 - `ref` works on HTML elements, not on component tags.
-- The element must be a descendant of the component's root element (not the root element itself).
+- Use a component property or assignable expression (`ref={this.inputEl}`), not an arbitrary callback.
 
 ### Compiler Errors (Unsupported JSX Patterns)
 
@@ -647,7 +658,7 @@ Use `.map()` with a `key` prop to render arrays:
 </ul>
 ```
 
-The `key` prop is required for efficient list diffing. Gea uses `applyListChanges` internally to handle add, delete, append, reorder, and swap operations without re-rendering the entire list.
+The `key` prop is required for efficient list diffing. Gea uses keyed list patching internally to handle append, remove, reorder, and item-update operations without re-rendering the entire list.
 
 By default the runtime uses `item.id` when available. You can use any property as the key:
 
@@ -862,7 +873,11 @@ export const router = new Router()
 // src/App.tsx
 import { router } from './router'
 import AppShell from './views/AppShell'
+import Login from './views/Login'
 import Dashboard from './views/Dashboard'
+import Settings from './views/Settings'
+import UserProfile from './views/UserProfile'
+import NotFound from './views/NotFound'
 
 router.setRoutes({
   '/login': Login,
@@ -903,10 +918,13 @@ Route entry types:
 - **RedirectConfig** — full redirect control: `'/old/:id': { redirect: (params) => '/new/' + params.id, method: 'replace' }`
 - **RouteGroupConfig** — layout + guard + children: `'/': { layout: AppShell, guard: AuthGuard, children: { ... } }`
 - **Lazy** — code-split: `'/admin': () => import('./views/Admin')`
+- **Query-mode group** — keep a layout mounted while switching child views from a query param: `'/settings': { layout: SettingsLayout, mode: { type: 'query', param: 'tab' }, children: { profile: Profile, billing: Billing } }`
 
 Options (for `createRouter` or `new Router(routes, options)`):
 - `base` — URL base path (default: `''`)
 - `scroll` — scroll to top on push, restore on back/forward (default: `false`)
+
+The most recently constructed `Router` becomes the default router used by `<Link>`, `<Outlet>`, and inline `<RouterView routes={...} />` when no explicit router prop is passed. Prefer one app-level router unless you deliberately need multiple isolated routers.
 
 ### Router Properties
 
@@ -1089,6 +1107,7 @@ A component that renders an `<a>` tag for SPA navigation. Left-clicks call `rout
 | `children` | `string` | No | Inner HTML: `<Link to="/about">About</Link>` |
 | `class` | `string` | No | CSS class(es) for the `<a>` tag |
 | `replace` | `boolean` | No | Use `router.replace()` instead of `router.push()` |
+| `exact` | `boolean` | No | Use `router.isExact(to)` for active state instead of prefix matching |
 | `target` | `string` | No | Link target (e.g. `_blank`) |
 | `rel` | `string` | No | Link relationship (e.g. `noopener`) |
 | `onNavigate` | `(e: MouseEvent) => void` | No | Callback fired before SPA navigation |
@@ -1099,7 +1118,7 @@ A component that renders an `<a>` tag for SPA navigation. Left-clicks call `rout
 <Link to="/about" label="About" />
 <Link to="/about">About</Link>
 <Link to="/users/1" class="nav-link">Alice</Link>
-<Link to="/external" target="_blank" rel="noopener">Docs</Link>
+<Link to="https://example.com" target="_blank" rel="noopener">Docs</Link>
 ```
 
 **Behavior:**
@@ -1107,6 +1126,7 @@ A component that renders an `<a>` tag for SPA navigation. Left-clicks call `rout
 - Renders `<a href="/about">About</a>` with a click handler that calls `router.push(to)`.
 - Only intercepts left-clicks without modifier keys (Cmd, Ctrl, Shift, Alt). Modified clicks and non-left-button clicks pass through to the browser.
 - The `href` attribute is always set, so right-click → "Open in new tab" works, and the URL is visible on hover.
+- Active links receive `data-active` and an `active` class. By default active state uses `router.isActive(to)`; pass `exact` to use `router.isExact(to)`.
 
 ### Full Example
 
@@ -1296,7 +1316,7 @@ vm.push()
 
 ### GestureHandler
 
-Registers gesture events with the `ComponentManager`. These events work via event delegation like all other events.
+Initializes mobile gesture detection when `@geajs/mobile` is imported. Gesture events work via the same event attribute convention as other Gea events.
 
 Supported gestures: `tap`, `longTap`, `swipeRight`, `swipeLeft`, `swipeUp`, `swipeDown`.
 
@@ -1381,7 +1401,7 @@ import { DragDropContext, Droppable, Draggable } from '@geajs/ui'
 interface DragResult {
   draggableId: string
   source: { droppableId: string; index: number }
-  destination: { droppableId: string; index: number }
+  destination: { droppableId: string; index: number } | null
 }
 ```
 
@@ -1393,6 +1413,79 @@ interface DragResult {
 - Real DOM element is moved on drop
 - Use `Store.silent()` when reordering store arrays in `onDragEnd` to avoid redundant DOM patches
 - Style the placeholder with `.gea-dnd-placeholder`
+
+---
+
+## SSR
+
+`@geajs/ssr` provides server-side rendering, hydration, streaming, store serialization, head injection, and Vite dev middleware. The package exports the main server helpers from `@geajs/ssr`, client hydration from `@geajs/ssr/client`, Node response helpers from `@geajs/ssr/node`, and the Vite plugin from `@geajs/ssr/vite`.
+
+### Vite Setup
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite'
+import { geaPlugin } from '@geajs/vite-plugin'
+import { geaSSR } from '@geajs/ssr/vite'
+
+export default defineConfig({
+  plugins: [geaPlugin(), geaSSR()],
+})
+```
+
+`geaSSR()` sets Vite's `appType` to `custom`, loads `server.ts` by default, passes the transformed `index.html` shell to your request handler, and skips asset/module requests.
+
+### Server Entry
+
+```ts
+// server.ts
+import { handleRequest } from '@geajs/ssr'
+import App from './src/App'
+import appStore from './src/store'
+
+export default handleRequest(App, {
+  storeRegistry: { AppStore: appStore },
+  async onBeforeRender(context) {
+    context.head = {
+      title: 'Server-rendered Gea app',
+      meta: [{ name: 'description', content: 'Rendered with @geajs/ssr' }],
+    }
+  },
+})
+```
+
+`handleRequest(App, options)` returns a Fetch-style `(request, context) => Promise<Response>` handler. Common options:
+
+| Option | Description |
+| --- | --- |
+| `routes` | Route map to resolve on the server. Guards can return redirect strings. |
+| `storeRegistry` | Named store singletons to isolate per request and serialize into `window.__GEA_STATE__`. |
+| `onBeforeRender(context)` | Load data or set `context.head` before rendering starts. |
+| `onError(error, request)` | Return a custom error `Response` for data/routing errors. |
+| `onRenderError(error)` | Return fallback HTML when component rendering throws. |
+| `afterResponse(context)` | Runs after the response stream finishes. |
+| `shell.appElementId` | App mount element id; defaults to `app`. |
+
+### Client Hydration
+
+```ts
+// src/main.ts
+import { hydrate } from '@geajs/ssr/client'
+import App from './App'
+import appStore from './store'
+
+hydrate(App, document.getElementById('app'), {
+  storeRegistry: { AppStore: appStore },
+})
+```
+
+`hydrate()` restores serialized store state, resets deterministic component IDs, clears SSR markup, and renders the app into the mount element. In dev mode it can warn about hydration mismatches.
+
+### Routing and State
+
+When `routes` are provided, SSR resolves the same route map shape used by the client router, including layouts, guards, redirects, params, query strings, hash, lazy route entries, and wildcard routes. Route state is exposed through the normal router APIs during the render pass.
+
+Register every store that should survive the server-to-client transition in `storeRegistry` on both server and client. The registry keys become keys in `window.__GEA_STATE__`.
 
 ---
 
@@ -1471,11 +1564,11 @@ app.render(document.getElementById('app'))
 ```json
 {
   "dependencies": {
-    "@geajs/core": "^1.0.0"
+    "@geajs/core": "^1.3.0"
   },
   "devDependencies": {
-    "vite": "^7.3.1",
-    "@geajs/vite-plugin": "^1.0.0"
+    "vite": "^8.0.0",
+    "@geajs/vite-plugin": "^1.3.0"
   }
 }
 ```
@@ -1485,11 +1578,36 @@ For mobile apps using navigation and gestures, also add `@geajs/mobile`:
 ```json
 {
   "dependencies": {
-    "@geajs/core": "^1.0.0",
-    "@geajs/mobile": "^1.0.0"
+    "@geajs/core": "^1.3.0",
+    "@geajs/mobile": "^1.0.1"
   }
 }
 ```
+
+For SSR apps, also add `@geajs/ssr`:
+
+```json
+{
+  "dependencies": {
+    "@geajs/core": "^1.3.0",
+    "@geajs/ssr": "^1.0.2"
+  }
+}
+```
+
+### Package Exports
+
+`@geajs/core` exports the common app surface from the package root, and also provides subpaths for specialized use:
+
+| Import | Use |
+| --- | --- |
+| `@geajs/core` | `Component`, `Store`, router components/helpers, HTML escaping helpers, public types |
+| `@geajs/core/router` | Router-only imports for split bundles or tooling |
+| `@geajs/core/ssr` | Low-level SSR bridge utilities used by `@geajs/ssr` |
+| `@geajs/core/jsx-runtime` / `@geajs/core/jsx-dev-runtime` | JSX runtime entry points used by TypeScript/Vite |
+| `@geajs/core/compiler-runtime` | Internal compiler runtime helpers emitted by the Vite plugin |
+
+The root export also includes `geaEscapeHtml` and `geaSanitizeAttr` for integration code that needs to escape user-controlled strings before writing raw HTML or attributes.
 
 ### Monorepo Development
 

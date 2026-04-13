@@ -14,7 +14,7 @@ class Sidebar extends withEvents(Component) {
     this.vm = null
   }
 
-  render(rootEl?: HTMLElement, opt_index?: number): boolean {
+  render(rootEl?: HTMLElement, opt_index?: number): void {
     return super.render(rootEl || document.body, opt_index)
   }
 

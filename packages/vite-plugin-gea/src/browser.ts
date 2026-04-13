@@ -1,12 +1,11 @@
 import babelGenerator from '@babel/generator'
 import babelTraverse from '@babel/traverse'
 import { parseSource } from './parse/parser.ts'
-import { transformComponentFile, transformNonComponentJSX } from './codegen/generator.ts'
+import { transformFile } from './closure-codegen/transform.ts'
 import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
-import { isComponentTag } from './codegen/jsx-utils.ts'
-import { ensureGeaCompilerSymbolImports } from './codegen/member-chain.ts'
+import { isComponentTag } from './utils/component-tags.ts'
+import { ensureGeaCompilerSymbolImports } from './utils/imports.ts'
 import { clearCaches as clearStoreCaches } from './parse/store-analysis.ts'
-import { clearCaches as clearEventCaches } from './codegen/event-helpers.ts'
 
 const traverse = typeof (babelTraverse as any).default === 'function' ? (babelTraverse as any).default : babelTraverse
 const generate =
@@ -37,7 +36,6 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
   const errors: Array<{ file: string; message: string }> = []
 
   clearStoreCaches()
-  clearEventCaches()
   ;(globalThis as any).__geaPlaygroundFiles = files
   ;(globalThis as any).__geaResolveFile = (filePath: string): string | null => {
     const name = filePath.replace(/^\/virtual\//, '')
@@ -46,6 +44,8 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
 
   const storeModules = new Set<string>()
   const componentModules = new Set<string>()
+  const classComponentModules = new Set<string>()
+  const functionComponentModules = new Set<string>()
 
   for (const [filename, code] of Object.entries(files)) {
     if (code.includes('extends Store') || code.includes('new Store(')) {
@@ -53,6 +53,10 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
     }
     if (code.includes('extends Component')) {
       componentModules.add(`/virtual/${filename}`)
+      classComponentModules.add(`/virtual/${filename}`)
+    } else if (/export\s+default\s+function\b/.test(code) || /export\s+default\s*\([^)]*\)\s*=>\s*/.test(code)) {
+      componentModules.add(`/virtual/${filename}`)
+      functionComponentModules.add(`/virtual/${filename}`)
     }
   }
 
@@ -65,7 +69,6 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
       }
 
       let { ast, imports } = parsed
-      let { componentClassNames } = parsed
       const { functionalComponentInfo, hasJSX } = parsed
 
       if (!hasJSX) {
@@ -76,7 +79,6 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
 
       if (functionalComponentInfo) {
         convertFunctionalToClass(ast, functionalComponentInfo, imports)
-        componentClassNames = [functionalComponentInfo.name]
         const freshCode = generate(ast).code
         const freshParsed = parseSource(freshCode)
         if (freshParsed) {
@@ -88,8 +90,9 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
       const virtualSourceFile = `/virtual/${filename}`
       const storeImports = new Map<string, string>()
       const knownComponentImports = new Set<string>()
+      const knownClassComponentImports = new Set<string>()
+      const knownFactoryComponentImports = new Set<string>()
       const namedImportSources = new Map<string, string>()
-      const componentImportsUsedAsTags = new Set<string>()
 
       traverse(ast, {
         ImportDeclaration(path: any) {
@@ -102,6 +105,9 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
 
           path.node.specifiers.forEach((spec: any) => {
             if (isComp) knownComponentImports.add(spec.local.name)
+            if (resolvedPath && classComponentModules.has(resolvedPath)) knownClassComponentImports.add(spec.local.name)
+            if (resolvedPath && functionComponentModules.has(resolvedPath))
+              knownFactoryComponentImports.add(spec.local.name)
 
             if (spec.type === 'ImportDefaultSpecifier') {
               if (resolvedPath && !storeModules.has(resolvedPath)) return
@@ -145,27 +151,18 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
       })
 
       let transformed = false
-      if (componentClassNames.length > 0) {
-        for (const cn of componentClassNames) {
-          if (!imports.has(cn)) imports.set(cn, virtualSourceFile)
+      // Use the closure-compiled transformer (Phase 3+). Pass source code (not AST)
+      // and splice the resulting AST back in so downstream passes still run.
+      const emitted = transformFile(code, virtualSourceFile, {
+        directClassComponents: knownClassComponentImports,
+        directFactoryComponents: knownFactoryComponentImports,
+      })
+      if (emitted.changed) {
+        const reparsed = parseSource(emitted.code)
+        if (reparsed) {
+          ast.program.body = reparsed.ast.program.body
+          transformed = true
         }
-        const originalAST = parseSource(code)!.ast
-        for (const cn of componentClassNames) {
-          const result = transformComponentFile(
-            ast,
-            imports,
-            storeImports,
-            cn,
-            virtualSourceFile,
-            originalAST,
-            componentImportsUsedAsTags,
-            knownComponentImports,
-            false,
-          )
-          if (result) transformed = true
-        }
-      } else if (hasJSX) {
-        transformed = transformNonComponentJSX(ast, imports)
       }
 
       if (transformed) {

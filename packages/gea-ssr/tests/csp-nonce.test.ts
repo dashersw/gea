@@ -32,9 +32,7 @@ describe('CSP nonce support', () => {
       shellAfter: '</div></body>',
       nonce: 'def456',
       render: async () => ({ appHtml: '', stateJson: '{}' }),
-      deferreds: [
-        { id: 'deferred-1', promise: Promise.resolve('<p>loaded</p>') },
-      ],
+      deferreds: [{ id: 'deferred-1', promise: Promise.resolve('<p>loaded</p>') }],
     })
     const html = await readStream(stream)
     assert.ok(html.includes('<script nonce="def456">(function()'))

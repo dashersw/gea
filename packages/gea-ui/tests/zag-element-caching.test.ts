@@ -1,137 +1,121 @@
-/**
- * Unit tests for Element Caching in ZagComponent.
- * Verifies that DOM queries are memoized and correctly invalidated.
- */
-
-import { GEA_MAPS, GEA_SYNC_MAP, GEA_UPDATE_PROPS } from '@geajs/core'
-import { transformSync } from 'esbuild'
-import { JSDOM } from 'jsdom'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+import { GEA_ELEMENT } from '@geajs/core'
+import { JSDOM } from 'jsdom'
 
-// ── Setup ────────────────────────────────────────────────────────────────
+import ZagComponent from '../src/primitives/zag-component'
 
-const dom = new JSDOM('<!doctype html><html><body><div id="root"><span data-part="item"></span></div></body></html>')
-const { window } = dom
-const { document, HTMLElement, Node } = window
+function installDom() {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"><span data-part="item"></span></div></body></html>')
+  const previous: Record<string, any> = {}
+  const globals: Record<string, any> = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    Element: dom.window.Element,
+    Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
+    MutationObserver: dom.window.MutationObserver,
+    Event: dom.window.Event,
+  }
 
-Object.assign(globalThis, { window, document, HTMLElement, Node })
+  for (const key in globals) previous[key] = (globalThis as any)[key]
+  Object.assign(globalThis, globals)
 
-function transpileTs(source: string): string {
-  const result = transformSync(source, {
-    loader: 'ts',
-    format: 'esm',
-    target: 'esnext',
-  })
-  return result.code
+  return () => {
+    Object.assign(globalThis, previous)
+    dom.window.close()
+  }
 }
 
-async function loadZagComponent() {
-  const src = await readFile(resolve(__dirname, '../src/primitives/zag-component.ts'), 'utf-8')
-  // Mock Component base class
-  class MockComponent {
-    get rendered() {
-      return true
+async function flushMicrotasks(rounds = 4) {
+  for (let i = 0; i < rounds; i++) {
+    await Promise.resolve()
+  }
+}
+
+class CacheProbe extends ZagComponent {
+  getSpreadMap() {
+    return {
+      '[data-part="item"]': () => ({ 'data-applied': 'true' }),
     }
-    _cacheArrayContainers() {}
-    [GEA_SYNC_MAP]() {}
-    dispose() {}
   }
-
-  const js = transpileTs(src)
-    .replace(/^import\b.*$/gm, '')
-    .replace(/extends\s+Component/, 'extends MockComponent')
-    .replace(/^export\s+default\s+class\s+/, 'class ')
-    .replace(/^export\s*\{[\s\S]*?\};?\s*$/gm, '')
-
-  const fn = new Function(
-    'MockComponent',
-    'VanillaMachine',
-    'normalizeProps',
-    'spreadProps',
-    'GEA_MAPS',
-    'GEA_SYNC_MAP',
-    'GEA_UPDATE_PROPS',
-    `${js}\nreturn ZagComponent;`,
-  )
-  return fn(
-    MockComponent,
-    {},
-    () => ({}),
-    () => () => ({}),
-    GEA_MAPS,
-    GEA_SYNC_MAP,
-    GEA_UPDATE_PROPS,
-  )
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────
-test('ZagComponent: should cache element queries and handle invalidation', async () => {
-  const ZagComponent = await loadZagComponent()
-  const instance = new ZagComponent()
+test('ZagComponent: element cache is reused and invalidated by current render/list hooks', async () => {
+  const restoreDom = installDom()
+  try {
+    const instance = new CacheProbe()
+    const root = document.getElementById('root')!
+    instance.rendered = true
+    ;(instance as any)[GEA_ELEMENT] = root
+    ;(instance as any)._api = {}
 
-  // 1. Setup & Initial State
-  let queryCount = 0
-  instance.created({})
-  instance._api = {}
-  instance.getSpreadMap = () => ({
-    '[data-part="item"]': () => ({}),
-  })
-  instance.el = document.getElementById('root')
+    let queryCount = 0
+    ;(instance as any)._queryAllIncludingSelf = (selector: string) => {
+      queryCount++
+      const matches = Array.from(root.querySelectorAll(selector))
+      if (root.matches(selector)) matches.unshift(root)
+      return matches
+    }
 
-  // Mocking the query method to track hits
-  instance._queryAllIncludingSelf = (selector: string) => {
-    queryCount++
-    return Array.from(document.querySelectorAll(selector))
+    instance._applyAllSpreads()
+    assert.equal(queryCount, 1, 'first spread application queries DOM')
+    assert.equal(instance._elementCache.get('[data-part="item"]')?.length, 1, 'first query is cached')
+    assert.equal(instance._spreadCleanups.size, 1, 'spread cleanup is retained for the cached selector')
+
+    instance._applyAllSpreads()
+    assert.equal(queryCount, 1, 'second spread application reuses cached elements')
+
+    instance.onItemSync('items', 0)
+    assert.equal(instance._elementCache.size, 0, 'onItemSync clears stale element cache immediately')
+    await flushMicrotasks()
+    assert.equal(queryCount, 2, 'onItemSync schedules a fresh spread application')
+
+    instance.onAfterRender()
+    assert.equal(queryCount, 3, 'onAfterRender clears cache before applying spreads')
+
+    const newItem = document.createElement('span')
+    newItem.setAttribute('data-part', 'item')
+    root.appendChild(newItem)
+
+    instance.onAfterRender()
+    assert.equal(queryCount, 4, 'structural render change re-queries DOM')
+    assert.equal(instance._elementCache.get('[data-part="item"]')?.length, 2, 'cache sees newly inserted item')
+
+    instance.dispose()
+    assert.equal(instance._elementCache.size, 0, 'dispose clears element cache')
+    assert.equal(instance._spreadCleanups.size, 0, 'dispose runs and clears spread cleanups')
+  } finally {
+    restoreDom()
   }
+})
 
-  // --- 2. Test Execution ---
+test('ZagComponent: registerListState keeps compiler list containers refreshable', () => {
+  const restoreDom = installDom()
+  try {
+    const instance = new CacheProbe()
+    const original = document.createElement('div')
+    const refreshed = document.createElement('section')
 
-  // Run 1: Cache MISS
-  instance._applyAllSpreads()
-  assert.strictEqual(queryCount, 1, 'Should query DOM on first run (Cache MISS)')
+    instance.registerListState('items', {
+      container: original,
+      containerProp: '_itemsContainer',
+      getContainer: () => refreshed,
+    })
 
-  // Run 2: Cache HIT
-  instance._applyAllSpreads()
-  assert.strictEqual(queryCount, 1, 'Should NOT query DOM on second run (Cache HIT)')
+    instance._cacheArrayContainers()
+    assert.equal((instance as any)._itemsContainer, refreshed, 'containerProp receives refreshed container')
+    assert.equal(
+      (instance as any)._listStates.get('items').container,
+      refreshed,
+      'registered state stores refreshed container',
+    )
 
-  // Run 3: Invalidation via [GEA_SYNC_MAP]
-  instance[GEA_SYNC_MAP](0)
-  instance._applyAllSpreads()
-  assert.strictEqual(queryCount, 2, 'Should re-query after __geaSyncMap clears cache')
-
-  // Run 4: Invalidation via onAfterRender
-  instance.onAfterRender()
-  instance._applyAllSpreads()
-  assert.strictEqual(queryCount, 3, 'Should re-query after onAfterRender clears cache')
-
-  // Run 5: Transition Persistence (Machine Transition)
-  // Logic: Scheduling should NOT clear cache anymore. State-only transitions should be fast.
-  instance._spreadScheduled = false
-  instance._scheduleSpreadApplication()
-  await Promise.resolve()
-  assert.strictEqual(queryCount, 3, 'Should HIT cache during machine transition (NO re-query)')
-
-  // Run 6: Structural Change Invalidation (Re-render)
-  // Simulate a re-render that might have added elements
-  const newThumb = document.createElement('span')
-  newThumb.setAttribute('data-part', 'item')
-  instance.el.appendChild(newThumb)
-
-  instance.onAfterRender()
-  instance._applyAllSpreads()
-  assert.strictEqual(queryCount, 4, 'Should re-query after onAfterRender clears cache')
-
-  const cachedElements = instance._elementCache.get('[data-part="item"]')
-  assert.strictEqual(cachedElements.length, 2, 'Should find the newly added element after invalidation')
-
-  // Run 6: Memory Leak Check (Dispose)
-  instance.dispose()
-  assert.strictEqual(instance._elementCache.size, 0, 'Should clear element cache on dispose')
-  assert.strictEqual(instance._zagIdMap.size, 0, 'Should clear zag ID map on dispose')
+    instance.unregisterListState('items')
+    assert.equal((instance as any)._listStates.has('items'), false, 'list state can be unregistered')
+  } finally {
+    restoreDom()
+  }
 })

@@ -2,7 +2,7 @@
 
 Gea can be used directly in the browser without any build tools, bundlers, or package managers. Load the runtime from a CDN and start writing components in a plain `<script>` tag.
 
-The browser bundle is **20 KB gzipped** and includes everything: `Store`, `Component`, `Router`, event delegation, and list reconciliation.
+The no-build browser globals are ~4.1 kb gzipped for `gea-runtime.js`, plus ~4.7 kb for `gea-router.js` when routing is needed.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ The browser bundle is **20 KB gzipped** and includes everything: `Store`, `Compo
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <script src="https://unpkg.com/@geajs/core/dist/gea.js"></script>
+  <script src="https://unpkg.com/@geajs/core/dist/gea-runtime.js"></script>
 </head>
 <body>
   <div id="app"></div>
@@ -165,13 +165,35 @@ get events() {
 
 Event handlers receive the native DOM event. Use `data-*` attributes on elements to pass identifiers to handlers, then read them from `e.target.dataset`.
 
+## Adding Router APIs
+
+For Vite or any ESM bundler, import router APIs from the public root package. The router is still tree-shaken out when you do not import it.
+
+```ts
+import { router, createRouter, Link, RouterView } from '@geajs/core'
+```
+
+For no-build browser pages, load `gea-router.js` after `gea-runtime.js` only when the page needs routing. It exposes a separate `geaRouter` global.
+
+```html
+<script src="https://unpkg.com/@geajs/core/dist/gea-runtime.js"></script>
+<script src="https://unpkg.com/@geajs/core/dist/gea-router.js"></script>
+<script>
+  const { Store, Component } = gea
+  const { router, createRouter, matchRoute } = geaRouter
+
+  router.navigate('/about')
+  console.log(router.path)
+</script>
+```
+
 ## Adding JSX
 
 You can use JSX in the browser by adding [Babel Standalone](https://babeljs.io/docs/babel-standalone). This compiles `<script type="text/babel">` tags in the browser at runtime.
 
 ```html
 <head>
-  <script src="https://unpkg.com/@geajs/core/dist/gea.js"></script>
+  <script src="https://unpkg.com/@geajs/core/dist/gea-runtime.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
@@ -231,11 +253,11 @@ This means JSX in the browser path is syntactic sugar over template literals. Th
 
 ### Trade-offs
 
-Babel Standalone adds **~200 KB gzipped** to the page. This is fine for prototyping and learning, but for production you should use the [Vite plugin](tooling/vite-plugin.md) which compiles JSX at build time and adds automatic reactivity wiring.
+Babel Standalone adds **~200 kb gzipped** to the page. This is fine for prototyping and learning, but for production you should use the [Vite plugin](tooling/vite-plugin.md) which compiles JSX at build time and adds automatic reactivity wiring.
 
 | | Browser (no build) | Browser + Babel | Vite (compiled) |
 |---|---|---|---|
-| Bundle size | 20 KB | ~220 KB | ~15 KB + your app |
+| Bundle size | ~4.1 kb runtime global, +~4.7 kb router global | ~204 kb + runtime global | 121 B brotli hello world, 4.9 kb brotli todo JS, ~7.3 kb with router |
 | JSX | No (template literals) | Yes | Yes |
 | Automatic reactivity | No (manual `observe()`) | No (manual `observe()`) | Yes (compiler-generated) |
 | Build step | None | None | Vite |
@@ -254,5 +276,4 @@ See the complete working examples in the repository:
 - [`examples/runtime-only/`](https://github.com/dashersw/gea/tree/main/examples/runtime-only) — Template literals, no build step
 - [`examples/runtime-only-jsx/`](https://github.com/dashersw/gea/tree/main/examples/runtime-only-jsx) — JSX with Babel Standalone, no build step
 
-In the monorepo, `npx vite dev` for those folders serves **`/vendor/gea.js`** from the built IIFE bundle at `packages/gea/dist/gea.js` (run `npm run build -w @geajs/core` first) and **`/vendor/babel.min.js`** from the pinned file in [`tests/e2e/vendor/babel.min.js`](https://github.com/dashersw/gea/tree/main/tests/e2e/vendor). For a standalone HTML file outside the repo, keep using the unpkg script URLs from the quick start above.
-
+In the monorepo, `npx vite dev` for those folders serves **`/vendor/gea-runtime.js`** from the built IIFE bundle at `packages/gea/dist/gea-runtime.js` (run `npm run build -w @geajs/core` first) and **`/vendor/babel.min.js`** from the pinned file in [`tests/e2e/vendor/babel.min.js`](https://github.com/dashersw/gea/tree/main/tests/e2e/vendor). For a standalone HTML file outside the repo, keep using the unpkg script URLs from the quick start above.

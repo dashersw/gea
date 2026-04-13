@@ -13,6 +13,6 @@
   "devDependencies": {
     "vite": "^8.0.0",
     "@geajs/vite-plugin": "file:../../packages/vite-plugin-gea",
-    "typescript": "~5.8.0"
+    "typescript": "^6.0.3"
   }
 }

@@ -7,8 +7,7 @@ Layouts are normal Gea components. The router passes props to them — layouts d
 In path mode (the default), the layout receives `page`, `route`, and `params`.
 
 ```tsx
-import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Component, Link } from '@geajs/core'
 import { router } from '../router'
 import { cn } from '../utils/cn'
 import type { RouteProps } from '../router'

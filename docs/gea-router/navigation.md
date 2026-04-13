@@ -151,8 +151,7 @@ router.isExact('/dashboard')          // true only for /dashboard
 ### Example: Active Nav Links
 
 ```tsx
-import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Component, Link } from '@geajs/core'
 import { router } from './router'
 import { cn } from './utils/cn'
 

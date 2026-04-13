@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { runInSSRContext } from '../src/ssr-context.ts'
-import getUid from '../../gea/src/lib/base/uid.ts'
+import getUid from '../../gea/src/uid.ts'
 
 describe('SSR UID isolation', () => {
   it('concurrent SSR contexts get independent UID sequences', async () => {
@@ -18,8 +18,7 @@ describe('SSR UID isolation', () => {
     await Promise.all([run(0), run(1)])
 
     // Both contexts should produce the same deterministic sequence
-    assert.deepEqual(results[0], results[1],
-      'Concurrent SSR contexts should produce identical UID sequences')
+    assert.deepEqual(results[0], results[1], 'Concurrent SSR contexts should produce identical UID sequences')
   })
 
   it('UID sequence starts from seed 0 inside SSR context', () => {

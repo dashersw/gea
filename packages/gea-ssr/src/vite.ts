@@ -4,7 +4,8 @@ import { resolve } from 'node:path'
 import { flattenHeaders, copyHeadersToNodeResponse } from './types'
 import { pipeToNodeResponse } from './node'
 
-const ASSET_EXT_RE = /\.(?:js|css|ts|tsx|jsx|json|map|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|mp[34]|webm|ogg|wav)$/i
+const ASSET_EXT_RE =
+  /\.(?:js|css|ts|tsx|jsx|json|map|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|mp[34]|webm|ogg|wav)$/i
 
 export interface GeaSSROptions {
   serverEntry?: string
@@ -43,17 +44,11 @@ export function geaSSR(options?: GeaSSROptions): Plugin {
       return () => {
         server.middlewares.use(async (req, res, next) => {
           // Use originalUrl to bypass URL rewriting by upstream middleware
-          const url = ('originalUrl' in req && typeof req.originalUrl === 'string')
-            ? req.originalUrl
-            : req.url ?? '/'
+          const url = 'originalUrl' in req && typeof req.originalUrl === 'string' ? req.originalUrl : (req.url ?? '/')
 
           // Skip asset requests
           const pathname = url.split('?')[0]
-          if (
-            url.startsWith('/@') ||
-            url.startsWith('/node_modules') ||
-            ASSET_EXT_RE.test(pathname)
-          ) {
+          if (url.startsWith('/@') || url.startsWith('/node_modules') || ASSET_EXT_RE.test(pathname)) {
             return next()
           }
 
@@ -117,6 +112,5 @@ export function geaSSR(options?: GeaSSROptions): Plugin {
         })
       }
     },
-
   }
 }

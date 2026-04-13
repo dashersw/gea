@@ -12,14 +12,18 @@ class IssueStore extends Store {
   }
 
   async fetchIssue(issueId: string): Promise<void> {
-    this.isLoading = true
+    const shouldShowLoader = !this.issue || String(this.issue.id) !== String(issueId)
+    if (shouldShowLoader) {
+      this.issue = null
+      this.isLoading = true
+    }
     try {
       const data = await api.get(`/issues/${issueId}`)
       this.issue = data.issue
     } catch (e) {
       console.error('Failed to fetch issue:', e)
     } finally {
-      this.isLoading = false
+      if (shouldShowLoader) this.isLoading = false
     }
   }
 

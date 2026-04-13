@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   title: 'Gea',
-  description: 'A lightweight, reactive JavaScript UI framework with compile-time JSX and proxy-based stores.',
+  description: 'A compiler-first reactive JavaScript UI framework with compile-time JSX and proxy-based stores.',
   base: '/docs/',
   outDir: '../website/docs',
   head: [

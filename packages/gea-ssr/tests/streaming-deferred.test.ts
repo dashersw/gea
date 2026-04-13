@@ -17,7 +17,9 @@ async function readStream(stream: ReadableStream<Uint8Array>): Promise<string[]>
 describe('streaming with deferreds', () => {
   it('streams initial HTML then deferred resolution scripts', async () => {
     let resolveDeferred!: (v: string) => void
-    const deferredPromise = new Promise<string>(r => { resolveDeferred = r })
+    const deferredPromise = new Promise<string>((r) => {
+      resolveDeferred = r
+    })
 
     const stream = createSSRStream({
       shellBefore: '<html><body><div id="app">',
@@ -26,10 +28,12 @@ describe('streaming with deferreds', () => {
         appHtml: '<p>fast</p><div id="gea-deferred-1">Loading...</div>',
         stateJson: '{}',
       }),
-      deferreds: [{
-        id: 'gea-deferred-1',
-        promise: deferredPromise.then(v => `<p>${v}</p>`),
-      }],
+      deferreds: [
+        {
+          id: 'gea-deferred-1',
+          promise: deferredPromise.then((v) => `<p>${v}</p>`),
+        },
+      ],
     })
 
     resolveDeferred('slow data arrived')
@@ -66,10 +70,12 @@ describe('streaming with deferreds', () => {
         appHtml: '<div id="gea-err">Loading...</div>',
         stateJson: '{}',
       }),
-      deferreds: [{
-        id: 'gea-err',
-        promise: Promise.reject(new Error('fetch failed')),
-      }],
+      deferreds: [
+        {
+          id: 'gea-err',
+          promise: Promise.reject(new Error('fetch failed')),
+        },
+      ],
     })
 
     const chunks = await readStream(stream)

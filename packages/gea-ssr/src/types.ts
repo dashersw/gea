@@ -80,6 +80,7 @@ export interface GeaComponentInstance<P extends Record<string, unknown> = Record
   [GEA_INSTANTIATE_CHILD_COMPONENTS]?: () => void
   [GEA_SETUP_EVENT_DIRECTIVES]?: () => void
   onAfterRender?(): void
+  onAfterRenderAsync?(): void
   onAfterRenderHooks?(): void
   __geaRequestRender?(): void
 }

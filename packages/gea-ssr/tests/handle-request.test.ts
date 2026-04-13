@@ -1,14 +1,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { Component, GEA_CREATE_TEMPLATE } from '@geajs/core'
+import { GEA_SET_PROPS } from '@geajs/core/compiler-runtime'
 import { handleRequest } from '../src/handle-request.ts'
-import type { GeaComponentInstance, SSRContext } from '../src/types.ts'
+import type { SSRContext } from '../src/types.ts'
 import { isRecord } from '../src/types.ts'
-
-type Newable = new (props: Record<string, unknown>) => { toString(): string }
-
-function isNewable(value: unknown): value is Newable {
-  return typeof value === 'function'
-}
 
 async function readResponse(response: Response): Promise<string> {
   const reader = response.body!.getReader()
@@ -24,17 +20,20 @@ async function readResponse(response: Response): Promise<string> {
 
 const indexHtml = '<!DOCTYPE html><html><head><title>Test</title></head><body><div id="app"></div></body></html>'
 
-class TestApp implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props || {} }
-  template() { return '<h1>Home</h1>' }
+class TestApp extends Component {
+  [GEA_CREATE_TEMPLATE](): Node {
+    const h = document.createElement('h1')
+    h.textContent = 'Home'
+    return h
+  }
 }
 
-class UserView implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props || {} }
-  template() { return `<h1>User ${this.props.id || 'unknown'}</h1>` }
-  toString() { return this.template() }
+class UserView extends Component<{ id?: string }> {
+  [GEA_CREATE_TEMPLATE](): Node {
+    const h = document.createElement('h1')
+    h.textContent = `User ${this.props.id || 'unknown'}`
+    return h
+  }
 }
 
 describe('handleRequest', () => {
@@ -82,7 +81,10 @@ describe('handleRequest', () => {
       indexHtml,
       routes: {
         '/protected': {
-          guard: () => { guardCalled = true; return '/login' },
+          guard: () => {
+            guardCalled = true
+            return '/login'
+          },
           children: { '/page': TestApp },
         },
       },
@@ -123,8 +125,12 @@ describe('handleRequest', () => {
   it('returns 500 when both onBeforeRender and onError throw', async () => {
     const handler = handleRequest(TestApp, {
       indexHtml,
-      async onBeforeRender() { throw new Error('primary failure') },
-      onError() { throw new Error('handler also failed') },
+      async onBeforeRender() {
+        throw new Error('primary failure')
+      },
+      onError() {
+        throw new Error('handler also failed')
+      },
     })
     const response = await handler(new Request('http://localhost/'))
     assert.equal(response.status, 500)
@@ -145,10 +151,12 @@ describe('handleRequest', () => {
   })
 
   it('returns 404 when route resolves to wildcard', async () => {
-    class NotFoundApp implements GeaComponentInstance {
-      props: Record<string, unknown>
-      constructor(props?: Record<string, unknown>) { this.props = props || {} }
-      template() { return '<h1>Not Found</h1>' }
+    class NotFoundApp extends Component {
+      [GEA_CREATE_TEMPLATE](): Node {
+        const h = document.createElement('h1')
+        h.textContent = 'Not Found'
+        return h
+      }
     }
     const handler = handleRequest(TestApp, {
       indexHtml,
@@ -176,21 +184,27 @@ describe('handleRequest', () => {
   it('passes resolved route component and params to App', async () => {
     let receivedProps: Record<string, unknown> | null = null
 
-    class RoutedApp implements GeaComponentInstance {
-      props: Record<string, unknown>
-      constructor(props?: Record<string, unknown>) {
-        this.props = props || {}
-        receivedProps = this.props
-      }
-      template() {
-        const viewCtor = this.props.__ssrRouteComponent
-        if (isNewable(viewCtor)) {
+    class RoutedApp extends Component {
+      [GEA_CREATE_TEMPLATE](): Node {
+        receivedProps = this.props as Record<string, unknown>
+        const viewCtor = this.props.__ssrRouteComponent as any
+        const root = document.createElement('div')
+        if (typeof viewCtor === 'function') {
           const rawRouteProps = this.props.__ssrRouteProps
           const routeProps: Record<string, unknown> = isRecord(rawRouteProps) ? rawRouteProps : {}
-          const view = new viewCtor(routeProps)
-          return `<div>${view}</div>`
+          const view: any = new viewCtor()
+          const setProps = view[GEA_SET_PROPS]
+          if (typeof setProps === 'function') {
+            const thunks: Record<string, () => unknown> = {}
+            for (const k of Object.keys(routeProps)) {
+              const v = routeProps[k]
+              thunks[k] = () => v
+            }
+            setProps.call(view, thunks)
+          }
+          view.render(root)
         }
-        return '<div></div>'
+        return root
       }
     }
 

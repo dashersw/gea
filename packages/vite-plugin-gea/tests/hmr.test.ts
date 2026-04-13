@@ -142,7 +142,7 @@ describe('injectHMR', () => {
       assert.ok(code.includes('createHotComponentProxy'), 'should proxy component deps')
     })
 
-    it('shouldProxyDep overrides legacy: no proxy when callback returns false', () => {
+    it('shouldProxyDep overrides the default: no proxy when callback returns false', () => {
       const ast = parseModule(`
         import { Component } from '@geajs/core'
         import ChildComp from './child-comp.ts'

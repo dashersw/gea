@@ -1,31 +1,31 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { Component, GEA_CREATE_TEMPLATE } from '@geajs/core'
 import { renderToString } from '../src/render.ts'
-import type { GeaComponentInstance, GeaComponentConstructor } from '../src/types.ts'
 
-class WorkingComponent implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props ?? {} }
-  template() { return '<p>works</p>' }
+class WorkingComponent extends Component {
+  [GEA_CREATE_TEMPLATE](): Node {
+    const p = document.createElement('p')
+    p.textContent = 'works'
+    return p
+  }
 }
 
-class FailingComponent implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props ?? {} }
-  template(): string { throw new Error('render failed') }
+class FailingComponent extends Component {
+  [GEA_CREATE_TEMPLATE](): Node {
+    throw new Error('render failed')
+  }
 }
 
 describe('SSR error boundary', () => {
   it('renders normally when no error', () => {
-    const html = renderToString(
-      WorkingComponent satisfies GeaComponentConstructor,
-    )
+    const html = renderToString(WorkingComponent as any)
     assert.equal(html, '<p>works</p>')
   })
 
   it('returns fallback HTML when component throws and onRenderError is set', () => {
     const html = renderToString(
-      FailingComponent satisfies GeaComponentConstructor,
+      FailingComponent as any,
       {},
       {
         onRenderError: (err) => `<div class="ssr-error">Error: ${err.message}</div>`,
@@ -35,9 +35,6 @@ describe('SSR error boundary', () => {
   })
 
   it('re-throws when no onRenderError handler', () => {
-    assert.throws(
-      () => renderToString(FailingComponent satisfies GeaComponentConstructor),
-      /render failed/,
-    )
+    assert.throws(() => renderToString(FailingComponent as any), /render failed/)
   })
 })

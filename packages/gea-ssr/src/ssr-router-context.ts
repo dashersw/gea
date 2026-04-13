@@ -22,6 +22,7 @@ interface SSRRouterState {
   navigate: (...args: unknown[]) => void
   dispose: () => void
   setRoutes: (...args: unknown[]) => void
+  observe: (path: unknown, fn: unknown) => () => void
   getComponentAtDepth: () => null
 }
 
@@ -65,6 +66,17 @@ export function createSSRRouterState(routeResult: ServerRouteResult): SSRRouterS
     navigate: noop,
     dispose: noop,
     setRoutes: noop,
-    getComponentAtDepth: () => null,
+    // RouterView/Outlet subscribe to router.path/error/query via `observe` —
+    // on the server there are no subsequent changes to observe, so return a
+    // noop unsubscribe. Without this stub the subscription throws and the
+    // surrounding onAfterRender aborts before the view is mounted.
+    observe(_path: unknown, _fn: unknown) {
+      return noop
+    },
+    getComponentAtDepth: (() => {
+      return routeResult.component
+        ? { component: routeResult.component, props: { ...routeResult.params }, cacheKey: null }
+        : null
+    }) as any,
   }
 }

@@ -111,6 +111,14 @@ function setInputValue(el: HTMLInputElement, value: string) {
   el.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+async function typeInputValue(el: HTMLInputElement, value: string) {
+  for (const char of value) {
+    el.value += char
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    await settleUi()
+  }
+}
+
 describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', { concurrency: false }, () => {
   let restoreDom: () => void
   let root: HTMLElement
@@ -169,14 +177,18 @@ describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', {
     const cardInput = root.querySelector('input[placeholder^="Card number"]') as HTMLInputElement
     const expiryInput = root.querySelector('input[placeholder="MM/YY"]') as HTMLInputElement
     setInputValue(nameInput, 'Jane Smith')
-    setInputValue(cardInput, '4242424242424242')
-    setInputValue(expiryInput, '1228')
+    await typeInputValue(cardInput, '4242 4242 4242 424242')
+    await typeInputValue(expiryInput, '12/22')
     await settleUi()
+
+    assert.equal(cardInput.value, '4242 4242 4242 4242')
+    assert.equal(expiryInput.value, '12/22')
 
     const payBtn = [...root.querySelectorAll('.payment-form .btn-primary')].find((b) =>
       b.textContent?.includes('Pay'),
     ) as HTMLButtonElement
     assert.ok(payBtn)
+    assert.equal(payBtn.disabled, false)
     payBtn.click()
     await settleUi()
 
@@ -188,5 +200,12 @@ describe('examples/flight-checkin in JSDOM (ported from flight-checkin.spec)', {
     await settleUi()
 
     assert.ok(root.querySelector('.boarding-pass'))
+    const copySvg = root.querySelector('.confirmation-copy-button svg')
+    const copyPath = root.querySelector('.confirmation-copy-button svg path')
+    assert.ok(copySvg)
+    assert.ok(copyPath)
+    assert.equal(copySvg.namespaceURI, 'http://www.w3.org/2000/svg')
+    assert.equal(copyPath.namespaceURI, 'http://www.w3.org/2000/svg')
+    assert.match(copyPath.getAttribute('d') ?? '', /^M16/)
   })
 })

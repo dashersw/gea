@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { GEA_PROXY_GET_RAW_TARGET, setUidProvider } from '@geajs/core'
+import { GEA_PROXY_GET_RAW_TARGET } from '@geajs/core'
+import { setUidProvider } from '@geajs/core/ssr'
 import { STORE_IMPL_OWN_KEYS } from './types'
 
 export { STORE_IMPL_OWN_KEYS } from './types'

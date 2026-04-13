@@ -345,13 +345,12 @@ test.describe('kanban surgical DOM updates', () => {
     async function simulateDrop(page: any, taskId: string, fromColumnId: string, targetColumnIndex: number) {
       await page.evaluate(
         ({ taskId, fromColumnId, targetColIdx }: any) => {
-          const targetCol = document.querySelectorAll('.kanban-column')[targetColIdx] as any
-          const sym = Object.getOwnPropertySymbols(targetCol).find((s: any) => s.description === 'gea.dom.component')
-          const comp = sym ? targetCol[sym] : null
-          if (!comp) throw new Error('No component found on target column')
+          const targetCol = document.querySelectorAll('.kanban-column')[targetColIdx] as HTMLElement
+          if (!targetCol) throw new Error('Target column not found')
           const dt = new DataTransfer()
           dt.setData('application/json', JSON.stringify({ taskId, fromColumnId }))
-          comp.__event_drop_2({ preventDefault() {}, dataTransfer: dt })
+          const evt = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })
+          targetCol.dispatchEvent(evt)
         },
         { taskId, fromColumnId, targetColIdx: targetColumnIndex },
       )

@@ -1,5 +1,5 @@
 import View from './view'
-import { ComponentManager } from '@geajs/core'
+import { _getGestureHandler } from '../setup'
 import math from './math'
 
 enum ViewManagerState {
@@ -240,7 +240,7 @@ class ViewManager {
         break
       }
       case ViewManagerState.SIDEBAR_OPEN:
-        if ((ComponentManager.getInstance() as any).gestureHandler.canTap) return
+        if (_getGestureHandler().canTap) return
         this.toggleSidebar_(false)
         break
       default:
@@ -372,7 +372,7 @@ class ViewManager {
   }
 
   private openSidebarTouchMove_(e: TouchEvent): void {
-    if ((ComponentManager.getInstance() as any).gestureHandler.canTap) return
+    if (_getGestureHandler().canTap) return
 
     const clientX = (e.changedTouches && e.changedTouches[0].clientX) || 0
     this.lastTouches_.push(this.firstX_ - clientX)

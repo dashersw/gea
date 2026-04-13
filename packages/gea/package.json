@@ -2,17 +2,13 @@
   "name": "@geajs/core",
   "type": "module",
   "version": "1.2.3",
-  "description": "A lightweight, reactive JavaScript UI framework with compile-time JSX and proxy-based stores",
+  "description": "A compiler-first reactive JavaScript UI framework with compile-time JSX and proxy-based stores",
   "main": "./dist/index.mjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
   "files": [
     "dist",
-    "tsconfig.json",
-    "jsx-runtime.mjs",
-    "jsx-runtime.d.mts",
-    "jsx-dev-runtime.mjs",
-    "jsx-dev-runtime.d.mts"
+    "tsconfig.json"
   ],
   "exports": {
     ".": {
@@ -21,19 +17,29 @@
       "import": "./dist/index.mjs"
     },
     "./router": {
-      "source": "./src/lib/router/index.ts",
+      "source": "./src/router/index.ts",
       "types": "./dist/router.d.mts",
       "import": "./dist/router.mjs"
     },
+    "./compiler-runtime": {
+      "source": "./src/compiler-runtime.ts",
+      "types": "./dist/compiler-runtime.d.mts",
+      "import": "./dist/compiler-runtime.mjs"
+    },
     "./jsx-runtime": {
       "source": "./src/jsx-runtime.ts",
-      "types": "./jsx-runtime.d.mts",
-      "import": "./jsx-runtime.mjs"
+      "types": "./dist/jsx-runtime.d.mts",
+      "import": "./dist/jsx-runtime.mjs"
     },
     "./jsx-dev-runtime": {
       "source": "./src/jsx-dev-runtime.ts",
-      "types": "./jsx-dev-runtime.d.mts",
-      "import": "./jsx-dev-runtime.mjs"
+      "types": "./dist/jsx-dev-runtime.d.mts",
+      "import": "./dist/jsx-dev-runtime.mjs"
+    },
+    "./ssr": {
+      "source": "./src/ssr.ts",
+      "types": "./dist/ssr.d.mts",
+      "import": "./dist/ssr.mjs"
     }
   },
   "repository": {
@@ -54,11 +60,10 @@
   "scripts": {
     "build": "tsdown --config-loader unrun",
     "prepublishOnly": "npm run build",
-    "size": "node -e \"const{gzipSync}=require('zlib'),{readFileSync}=require('fs');const b=gzipSync(readFileSync('dist/gea.js'));console.log('gzip size: '+(b.length/1024).toFixed(2)+' kB')\"",
     "ts-type-check": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "tsx --conditions source --import ./tests/preload.ts --test tests/*.test.ts --test tests/examples/*.test.ts",
-    "test:coverage": "c8 --reporter=text --reporter=lcov tsx --conditions source --import ./tests/preload.ts --test tests/*.test.ts --test tests/examples/*.test.ts"
+    "test": "tsx --conditions source --import ./tests/preload.ts --test tests/*.test.ts tests/examples/*.test.ts tests/runtime/*.test.ts",
+    "test:coverage": "c8 --reporter=text --reporter=lcov tsx --conditions source --import ./tests/preload.ts --test tests/*.test.ts tests/examples/*.test.ts tests/runtime/*.test.ts"
   },
   "publishConfig": {
     "access": "public"
@@ -80,6 +85,6 @@
     "quill": "^2.0.3",
     "tsdown": "^0.21.2",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.0"
+    "typescript": "^6.0.3"
   }
 }

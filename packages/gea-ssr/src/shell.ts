@@ -13,14 +13,14 @@ export function parseShell(indexHtml: string, appElementId: string): ShellParts 
   if (!match) {
     throw new Error(
       `Could not find element with id="${appElementId}" in index.html. ` +
-      `Make sure your index.html contains an element with id="${appElementId}" (e.g. <div id="${appElementId}"></div>).`,
+        `Make sure your index.html contains an element with id="${appElementId}" (e.g. <div id="${appElementId}"></div>).`,
     )
   }
 
   if (match.index === undefined) {
     throw new Error(
       `Could not find element with id="${appElementId}" in index.html. ` +
-      `Make sure your index.html contains an element with id="${appElementId}" (e.g. <div id="${appElementId}"></div>).`,
+        `Make sure your index.html contains an element with id="${appElementId}" (e.g. <div id="${appElementId}"></div>).`,
     )
   }
   const splitIndex = match.index + match[1].length

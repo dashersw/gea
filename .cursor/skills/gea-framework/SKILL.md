@@ -1,6 +1,6 @@
 ---
 name: gea-framework
-description: Guide for building applications with Gea — a lightweight, reactive JavaScript UI framework with proxy-based stores, JSX components, and automatic DOM patching. Use when creating components, stores, or working with Gea's reactivity system.
+description: Use when creating Gea applications, components, stores, routes, SSR entry points, JSX templates, or working with Gea reactivity and DOM patching.
 ---
 
 # Gea Framework
@@ -180,6 +180,7 @@ import { router } from './router'
 import AppShell from './views/AppShell'
 import Home from './views/Home'
 import About from './views/About'
+import UserProfile from './views/UserProfile'
 import NotFound from './views/NotFound'
 
 router.setRoutes({
@@ -279,10 +280,11 @@ Guards on nested groups stack parent → child. Guards are intentionally synchro
 - Named params: `/users/:id` — extracted as `{ id: '42' }`
 - Wildcard: `*` — matches any unmatched path
 - Redirects: `'/old': '/new'` — string values trigger a redirect
+- Lazy routes: `'/admin': () => import('./views/Admin')` — code-split route components
 
 ### Link
 
-Renders an `<a>` tag that navigates with `history.pushState`. Modifier keys (Cmd/Ctrl+click) open in a new tab.
+Renders an `<a>` tag that navigates with `history.pushState`. Modifier keys (Cmd/Ctrl+click) open in a new tab. Active links receive `data-active` and an `active` class; pass `exact` to require an exact path match.
 
 ```jsx
 <Link to="/about" label="About" class="nav-link" />
@@ -294,9 +296,11 @@ Renders an `<a>` tag that navigates with `history.pushState`. Modifier keys (Cmd
 import { router } from './router'
 
 router.push('/about')         // pushState
+router.navigate('/about')     // alias for push
 router.replace('/login')      // replaceState
 router.back()
 router.forward()
+router.go(-2)
 ```
 
 ### Route Parameters
@@ -360,7 +364,7 @@ Gea JSX differs from React JSX in several ways:
 
 Both native-style (`click`, `change`) and React-style (`onClick`, `onChange`) event attribute names are supported. Native-style is preferred by convention.
 
-Supported event attributes: `click`, `dblclick`, `input`, `change`, `keydown`, `keyup`, `blur`, `focus`, `mousedown`, `mouseup`, `submit`, `dragstart`, `dragend`, `dragover`, `dragleave`, `drop`.
+Supported event attributes include mouse, keyboard, form, drag, touch, pointer, wheel, scroll, animation, and transition events: `click`, `dblclick`, `input`, `change`, `submit`, `keydown`, `keyup`, `blur`, `focus`, `pointerdown`, `pointerup`, `pointermove`, `touchstart`, `touchmove`, `touchend`, `wheel`, `scroll`, `dragstart`, `dragend`, `dragover`, `dragleave`, `drop`, `animationstart`, `animationend`, `transitionstart`, `transitionend`, and related variants.
 
 With `@geajs/mobile`: `tap`, `longTap`, `swipeRight`, `swipeUp`, `swipeLeft`, `swipeDown`.
 
@@ -408,7 +412,7 @@ export default class Canvas extends Component {
 }
 ```
 
-The compiler replaces `ref` with a `data-gea-ref` marker and generates a `__setupRefs()` method that assigns the DOM element to the specified component property after render. Multiple refs on different elements are supported.
+The compiler emits a direct assignment that sets the component property to the DOM element after the template is cloned. Multiple refs on different elements are supported.
 
 ### Compiler Errors (Unsupported Patterns)
 
@@ -491,6 +495,32 @@ export default defineConfig({
 
 The `@geajs/vite-plugin` Vite plugin handles JSX transformation, reactivity wiring, event delegation generation, and HMR.
 
+## SSR
+
+`@geajs/ssr` provides server rendering and hydration for Gea apps. Use `handleRequest(App, options)` for Fetch-style request handlers, `hydrate(App, element, { storeRegistry })` on the client, and `geaSSR()` in Vite for development middleware. SSR can serialize registered stores, resolve route configs on the server, stream HTML, and inject head tags.
+
+```ts
+// server.ts
+import { handleRequest } from '@geajs/ssr'
+import App from './src/App'
+import store from './src/store'
+
+export default handleRequest(App, {
+  storeRegistry: { AppStore: store },
+})
+```
+
+```ts
+// src/main.ts
+import { hydrate } from '@geajs/ssr/client'
+import App from './App'
+import store from './store'
+
+hydrate(App, document.getElementById('app'), {
+  storeRegistry: { AppStore: store },
+})
+```
+
 ## @geajs/ui Component Library
 
 `@geajs/ui` is a Tailwind-styled, Zag.js-powered component library for Gea. It provides ~35 ready-to-use components: simple styled primitives (Button, Card, Input) and behavior-rich interactive widgets (Select, Dialog, Tabs, Toast). For full usage instructions, component API, and examples, see the **gea-ui-components** skill in `skills/gea-ui-components/`.
@@ -503,6 +533,7 @@ The `@geajs/vite-plugin` Vite plugin handles JSX transformation, reactivity wiri
 | `@geajs/ui` | [npm](https://www.npmjs.com/package/@geajs/ui) | Tailwind + Zag.js component library — Button, Select, Dialog, Tabs, Toast, etc. |
 | `@geajs/mobile` | [npm](https://www.npmjs.com/package/@geajs/mobile) | Mobile UI primitives — views, navigation, gestures, layout |
 | `@geajs/vite-plugin` | [npm](https://www.npmjs.com/package/@geajs/vite-plugin) | Vite plugin — JSX transform, reactivity wiring, HMR |
+| `@geajs/ssr` | [npm](https://www.npmjs.com/package/@geajs/ssr) | Server-side rendering, hydration, streaming, store serialization, Vite SSR middleware |
 | `create-gea` | [npm](https://www.npmjs.com/package/create-gea) | Project scaffolder (`npm create gea@latest`) |
 | `gea-tools` | — | VS Code / Cursor extension for Gea JSX code intelligence |
 

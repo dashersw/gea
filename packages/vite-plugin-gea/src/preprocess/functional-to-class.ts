@@ -17,11 +17,7 @@ import type { NodePath } from '../utils/babel-interop.ts'
  *
  * Mutates the AST in place.
  */
-export function convertFunctionalToClass(
-  ast: t.File,
-  info: { name: string },
-  imports: Map<string, string>,
-): void {
+export function convertFunctionalToClass(ast: t.File, info: { name: string }, imports: Map<string, string>): void {
   const name = info.name
   let params: (t.Identifier | t.Pattern | t.RestElement)[] = [t.identifier('props')]
   let templateBody: t.Statement[] = []
@@ -33,23 +29,15 @@ export function convertFunctionalToClass(
       exportPath = path
       const decl = path.node.declaration
 
-      const extractFunction = (
-        fn: t.FunctionDeclaration | t.ArrowFunctionExpression | t.FunctionExpression,
-      ) => {
+      const extractFunction = (fn: t.FunctionDeclaration | t.ArrowFunctionExpression | t.FunctionExpression) => {
         if (fn.params.length > 0) {
-          params = fn.params.map(
-            (p) => t.cloneNode(p) as t.Identifier | t.Pattern | t.RestElement,
-          )
+          params = fn.params.map((p) => t.cloneNode(p) as t.Identifier | t.Pattern | t.RestElement)
         }
 
         if (t.isBlockStatement(fn.body)) {
-          const returnIdx = fn.body.body.findIndex(
-            (s) => t.isReturnStatement(s) && (s as t.ReturnStatement).argument,
-          )
+          const returnIdx = fn.body.body.findIndex((s) => t.isReturnStatement(s) && (s as t.ReturnStatement).argument)
           if (returnIdx >= 0) {
-            templateBody = fn.body.body
-              .slice(0, returnIdx + 1)
-              .map((s) => t.cloneNode(s) as t.Statement)
+            templateBody = fn.body.body.slice(0, returnIdx + 1).map((s) => t.cloneNode(s) as t.Statement)
           }
         } else {
           // Arrow with expression body
@@ -64,9 +52,7 @@ export function convertFunctionalToClass(
       } else if (t.isIdentifier(decl)) {
         // `const Foo = () => ...; export default Foo`
         const binding = path.scope.getBinding(decl.name)
-        const init = binding?.path?.isVariableDeclarator()
-          ? (binding.path.node as t.VariableDeclarator).init
-          : null
+        const init = binding?.path?.isVariableDeclarator() ? (binding.path.node as t.VariableDeclarator).init : null
 
         if (t.isArrowFunctionExpression(init) || t.isFunctionExpression(init)) {
           extractFunction(init)
@@ -94,12 +80,7 @@ export function convertFunctionalToClass(
     firstStmt.declarations.length === 1
   ) {
     const decl = firstStmt.declarations[0]
-    if (
-      decl &&
-      t.isObjectPattern(decl.id) &&
-      decl.init &&
-      t.isIdentifier(decl.init, { name: firstParam.name })
-    ) {
+    if (decl && t.isObjectPattern(decl.id) && decl.init && t.isIdentifier(decl.init, { name: firstParam.name })) {
       params = [t.cloneNode(decl.id)]
       templateBody = templateBody.slice(1)
     }
@@ -107,18 +88,9 @@ export function convertFunctionalToClass(
 
   ensureComponentImport(ast, imports)
 
-  const templateMethod = t.classMethod(
-    'method',
-    t.identifier('template'),
-    params,
-    t.blockStatement(templateBody),
-  )
+  const templateMethod = t.classMethod('method', t.identifier('template'), params, t.blockStatement(templateBody))
 
-  const classDecl = t.classDeclaration(
-    t.identifier(name),
-    t.identifier('Component'),
-    t.classBody([templateMethod]),
-  )
+  const classDecl = t.classDeclaration(t.identifier(name), t.identifier('Component'), t.classBody([templateMethod]))
 
   if (removeVarDeclPath) {
     removeVarDeclPath.remove()
@@ -139,9 +111,7 @@ function ensureComponentImport(ast: t.File, imports: Map<string, string>): void 
   // Check if there is already an import from @geajs/core
   for (const node of ast.program.body) {
     if (t.isImportDeclaration(node) && node.source.value === source) {
-      node.specifiers.push(
-        t.importSpecifier(t.identifier('Component'), t.identifier('Component')),
-      )
+      node.specifiers.push(t.importSpecifier(t.identifier('Component'), t.identifier('Component')))
       imports.set('Component', source)
       return
     }

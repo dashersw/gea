@@ -5,7 +5,7 @@ export default class Draggable extends Component {
   _didDrag = false
 
   _onPointerDown(e: PointerEvent) {
-    const el = (e.currentTarget as HTMLElement).closest('.gea-draggable') as HTMLElement
+    const el = (e.target as HTMLElement).closest('.gea-draggable') as HTMLElement
     if (!el) return
     this._didDrag = false
     dndManager.startTracking(e, this.props.draggableId as string, el)

@@ -1,56 +1,66 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { Component } from '@geajs/core'
 import { renderToString } from '../src/render.ts'
-import type { GeaComponentInstance } from '../src/types.ts'
+import { GEA_CREATE_TEMPLATE } from '@geajs/core'
 
-class SimpleComponent implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props || {} }
-  template() { return '<div>Hello World</div>' }
-}
+// The v2 SSR path uses real @geajs/core Component instances: the compiler emits
+// a `[GEA_CREATE_TEMPLATE](disposer)` method on each subclass that returns a
+// DOM Node. Tests here short-circuit the compiler by defining that method
+// directly.
 
-class PropsComponent implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props || {} }
-  template() { return `<div>${this.props.name}</div>` }
-}
-
-// Simulates real Component base class which calls created() in constructor.
-// renderToString triggers created() via constructor, not explicitly.
-class ComponentWithCreated implements GeaComponentInstance {
-  props: Record<string, unknown>
-  state = ''
-  constructor(props?: Record<string, unknown>) {
-    this.props = props || {}
-    this.created(this.props)
+class SimpleComponent extends Component {
+  [GEA_CREATE_TEMPLATE](): Node {
+    const d = document.createElement('div')
+    d.textContent = 'Hello World'
+    return d
   }
-  created(_props: Record<string, unknown>) { this.state = 'initialized' }
-  template() { return `<div>${this.state}</div>` }
+}
+
+class PropsComponent extends Component<{ name: string }> {
+  [GEA_CREATE_TEMPLATE](): Node {
+    const d = document.createElement('div')
+    d.textContent = String(this.props.name)
+    return d
+  }
+}
+
+class ComponentWithCreated extends Component {
+  state = ''
+  created() {
+    this.state = 'initialized'
+  }
+  [GEA_CREATE_TEMPLATE](): Node {
+    const d = document.createElement('div')
+    d.textContent = this.state
+    return d
+  }
+}
+
+class EmptyTemplate extends Component {
+  [GEA_CREATE_TEMPLATE](): Node {
+    return document.createDocumentFragment()
+  }
 }
 
 describe('renderToString', () => {
   it('renders a simple component to HTML string', () => {
-    const html = renderToString(SimpleComponent)
+    const html = renderToString(SimpleComponent as any)
     assert.equal(html, '<div>Hello World</div>')
   })
 
   it('passes props to component', () => {
-    const html = renderToString(PropsComponent, { name: 'Gea' })
+    const html = renderToString(PropsComponent as any, { name: 'Gea' })
     assert.equal(html, '<div>Gea</div>')
   })
 
   it('created() runs via constructor before template()', () => {
-    const html = renderToString(ComponentWithCreated)
+    const html = renderToString(ComponentWithCreated as any)
     assert.equal(html, '<div>initialized</div>')
   })
 
   it('returns empty string for empty template', () => {
-    class EmptyTemplate implements GeaComponentInstance {
-      props: Record<string, unknown>
-      constructor(props?: Record<string, unknown>) { this.props = props || {} }
-      template() { return '' }
-    }
-    const html = renderToString(EmptyTemplate)
+    const html = renderToString(EmptyTemplate as any)
     assert.equal(html, '')
   })
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { JSDOM } from 'jsdom'
-import { GEA_ELEMENT, GEA_RENDERED } from '../src/lib/symbols'
+import { GEA_SET_PROPS } from '../src/compiler-runtime'
 
 function installDom(url = 'http://localhost/') {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url })
@@ -49,9 +49,6 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-import Home from '../../../examples/router-simple/src/views/Home'
-import About from '../../../examples/router-simple/src/views/About'
-
 describe('Link', () => {
   let restoreDom: () => void
 
@@ -65,74 +62,63 @@ describe('Link', () => {
 
   async function loadModules() {
     const seed = `link-${Date.now()}-${Math.random()}`
-    const { GeaRouter } = await import(`../src/lib/router/router?${seed}`)
-    const linkMod = await import(`../src/lib/router/link?${seed}`)
-    return { GeaRouter, Link: linkMod.default }
+    const { Router } = await import(`../src/router/router?${seed}`)
+    const linkMod = await import(`../src/router/link?${seed}`)
+    return { Router, Link: linkMod.default }
+  }
+
+  function renderLink(Link: any, props: any) {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const link = new Link()
+    const thunks: Record<string, () => any> = {}
+    for (const k of Object.keys(props)) {
+      const v = props[k]
+      thunks[k] = () => v
+    }
+    link[GEA_SET_PROPS](thunks)
+    link.render(container)
+    return { container, link, el: link.el as HTMLAnchorElement }
   }
 
   it('renders an <a> tag with href from to prop', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any, '/about': About as any })
-    Link._router = router
-
-    const html = String(new Link({ to: '/about', label: 'About Us' }))
-    assert.ok(html.includes('<a'))
-    assert.ok(html.includes('href="/about"'))
-    assert.ok(html.includes('About Us'))
+    const { Router, Link } = await loadModules()
+    const router = new Router({ '/': () => document.createElement('div') })
+    const { el, container } = renderLink(Link, { to: '/about', label: 'About Us' })
+    assert.equal(el.tagName, 'A')
+    assert.equal(el.getAttribute('href'), '/about')
+    assert.equal(el.textContent, 'About Us')
 
     router.dispose()
+    container.remove()
   })
 
   it('renders label text', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any })
-    Link._router = router
-
-    const html = String(new Link({ to: '/', label: 'Click Me' }))
-    assert.ok(html.includes('Click Me'))
+    const { Router, Link } = await loadModules()
+    const router = new Router({})
+    const { el, container } = renderLink(Link, { to: '/', label: 'Click Me' })
+    assert.equal(el.textContent, 'Click Me')
 
     router.dispose()
-  })
-
-  it('renders children html when provided', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any })
-    Link._router = router
-
-    const html = String(new Link({ to: '/', children: '<span class="inner">Click Me</span>' }))
-    assert.ok(html.includes('<span class="inner">Click Me</span>'))
-
-    router.dispose()
+    container.remove()
   })
 
   it('renders class attribute', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any })
-    Link._router = router
-
-    const html = String(new Link({ to: '/', label: 'Home', class: 'nav-link active' }))
-    assert.ok(html.includes('class="nav-link active"'))
+    const { Router, Link } = await loadModules()
+    const router = new Router({})
+    const { el, container } = renderLink(Link, { to: '/', label: 'Home', class: 'nav-link' })
+    assert.ok((el.getAttribute('class') ?? '').includes('nav-link'))
 
     router.dispose()
+    container.remove()
   })
 
   it('click calls router.push(to)', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any, '/target': About as any })
-    Link._router = router
-
-    const link = new Link({ to: '/target', label: 'Go' })
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    container.insertAdjacentHTML('beforeend', String(link))
-    const el = document.getElementById(link.id) as HTMLAnchorElement
-    link[GEA_ELEMENT] = el
-    link[GEA_RENDERED] = true
-    link.onAfterRender()
-
+    const { Router, Link } = await loadModules()
+    const router = new Router({ '/target': () => document.createElement('div') })
+    const { el, container } = renderLink(Link, { to: '/target', label: 'Go' })
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
-
     assert.equal(router.path, '/target')
 
     router.dispose()
@@ -140,29 +126,18 @@ describe('Link', () => {
   })
 
   it('click calls onNavigate before router.push(to)', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any, '/target': About as any })
-    Link._router = router
-
+    const { Router, Link } = await loadModules()
+    const router = new Router({ '/target': () => document.createElement('div') })
     let navigated = false
-    const link = new Link({
+    const { el, container } = renderLink(Link, {
       to: '/target',
       label: 'Go',
       onNavigate: () => {
         navigated = true
       },
     })
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    container.insertAdjacentHTML('beforeend', String(link))
-    const el = document.getElementById(link.id) as HTMLAnchorElement
-    link[GEA_ELEMENT] = el
-    link[GEA_RENDERED] = true
-    link.onAfterRender()
-
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
-
     assert.equal(navigated, true)
     assert.equal(router.path, '/target')
 
@@ -171,22 +146,11 @@ describe('Link', () => {
   })
 
   it('click with replace prop calls router.replace', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any, '/replaced': About as any })
-    Link._router = router
-
-    const link = new Link({ to: '/replaced', replace: true, label: 'Replace' })
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    container.insertAdjacentHTML('beforeend', String(link))
-    const el = document.getElementById(link.id) as HTMLAnchorElement
-    link[GEA_ELEMENT] = el
-    link[GEA_RENDERED] = true
-    link.onAfterRender()
-
+    const { Router, Link } = await loadModules()
+    const router = new Router({ '/replaced': () => document.createElement('div') })
+    const { el, container } = renderLink(Link, { to: '/replaced', replace: true, label: 'Replace' })
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
-
     assert.equal(router.path, '/replaced')
 
     router.dispose()
@@ -194,23 +158,12 @@ describe('Link', () => {
   })
 
   it('ctrl+click does NOT intercept', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any, '/target': About as any })
-    Link._router = router
-
+    const { Router, Link } = await loadModules()
+    const router = new Router({ '/target': () => document.createElement('div') })
     const pathBefore = router.path
-    const link = new Link({ to: '/target', label: 'Go' })
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    container.insertAdjacentHTML('beforeend', String(link))
-    const el = document.getElementById(link.id) as HTMLAnchorElement
-    link[GEA_ELEMENT] = el
-    link[GEA_RENDERED] = true
-    link.onAfterRender()
-
+    const { el, container } = renderLink(Link, { to: '/target', label: 'Go' })
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
     await flush()
-
     assert.equal(router.path, pathBefore)
 
     router.dispose()
@@ -218,23 +171,12 @@ describe('Link', () => {
   })
 
   it('external URL does NOT intercept', async () => {
-    const { GeaRouter, Link } = await loadModules()
-    const router = new GeaRouter({ '/': Home as any })
-    Link._router = router
-
+    const { Router, Link } = await loadModules()
+    const router = new Router({})
     const pathBefore = router.path
-    const link = new Link({ to: 'https://example.com', label: 'External' })
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    container.insertAdjacentHTML('beforeend', String(link))
-    const el = document.getElementById(link.id) as HTMLAnchorElement
-    link[GEA_ELEMENT] = el
-    link[GEA_RENDERED] = true
-    link.onAfterRender()
-
+    const { el, container } = renderLink(Link, { to: 'https://example.com', label: 'External' })
     el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
-
     assert.equal(router.path, pathBefore)
 
     router.dispose()

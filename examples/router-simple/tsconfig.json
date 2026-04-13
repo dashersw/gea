@@ -1,16 +1,5 @@
 {
-  "extends": "../../packages/gea/tsconfig.json",
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@geajs/core": [
-        "../../packages/gea/src"
-      ],
-      "@geajs/core/jsx-runtime": [
-        "../../packages/gea/src/jsx-runtime"
-      ]
-    }
-  },
+  "extends": "../shared/tsconfig.json",
   "include": [
     "**/*.ts",
     "**/*.tsx",
@@ -19,6 +8,9 @@
   ],
   "exclude": [
     "dist",
-    "node_modules"
+    "node_modules",
+    "vite.config.ts",
+    "vite.config.*.ts",
+    "playwright.config.ts"
   ]
 }

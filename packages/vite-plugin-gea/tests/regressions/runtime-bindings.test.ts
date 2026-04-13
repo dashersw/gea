@@ -2,297 +2,85 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
+import { countTemplateCreates } from './runtime-conditional-slots-helpers'
 
-test('runtime-only bindings update when state changes after render', async () => {
+test('ported runtime bindings: text, class, boolean attrs, style, and value patch in place', async () => {
   const restoreDom = installDom()
 
   try {
-    const seed = `runtime-${Date.now()}-binding`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const RuntimeBindingComponent = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class RuntimeBindingComponent extends Component {
-          count = 0
-
-          template() {
-            return <div class="count">{this.count}</div>
-          }
-        }
-      `,
-      '/virtual/RuntimeBindingComponent.jsx',
-      'RuntimeBindingComponent',
-      { Component },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const component = new RuntimeBindingComponent()
-    component.render(root)
-
-    assert.equal(component.el.textContent?.trim(), '0')
-
-    component.count = 1
-    await flushMicrotasks()
-
-    assert.equal(component.el.textContent?.trim(), '1')
-    component.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('simple conditional class bindings toggle on and off', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-simple-class-toggle`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const ToggleClassComponent = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class ToggleClassComponent extends Component {
-          active = false
-
-          template() {
-            return <div class={this.active ? 'panel active' : 'panel'}>Panel</div>
-          }
-        }
-      `,
-      '/virtual/ToggleClassComponent.jsx',
-      'ToggleClassComponent',
-      { Component },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const component = new ToggleClassComponent()
-    component.render(root)
-
-    assert.equal(component.el.className, 'panel')
-
-    component.active = true
-    await flushMicrotasks()
-    assert.equal(component.el.className, 'panel active')
-
-    component.active = false
-    await flushMicrotasks()
-    assert.equal(component.el.className, 'panel')
-
-    component.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('mapped transition style attributes update and remove without replacing rows', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-mapped-transition-style`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const AnimatedList = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class AnimatedList extends Component {
-          items = [{ id: 1, label: 'toast', visible: false }]
-
-          template() {
-            return (
-              <div class="items">
-                {this.items.map(item => (
-                  <div
-                    key={item.id}
-                    class="toast"
-                    style={
-                      item.visible
-                        ? 'opacity: 1; transform: translateY(0); transition: opacity 150ms ease, transform 150ms ease;'
-                        : null
-                    }
-                  >
-                    {item.label}
-                  </div>
-                ))}
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/AnimatedList.jsx',
-      'AnimatedList',
-      { Component },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const component = new AnimatedList()
-    component.render(root)
-    await flushMicrotasks()
-
-    const rowBefore = component.el.querySelector('.toast') as HTMLElement
-    assert.equal(rowBefore.getAttribute('style'), null)
-
-    component.items[0].visible = true
-    await flushMicrotasks()
-
-    const rowVisible = component.el.querySelector('.toast') as HTMLElement
-    assert.equal(rowVisible, rowBefore)
-    assert.match(rowVisible.getAttribute('style') || '', /transition:\s*opacity 150ms ease, transform 150ms ease;/)
-    assert.match(rowVisible.getAttribute('style') || '', /opacity:\s*1/)
-    assert.match(rowVisible.getAttribute('style') || '', /transform:\s*translateY\(0\)/)
-
-    component.items[0].visible = false
-    await flushMicrotasks()
-
-    const rowAfter = component.el.querySelector('.toast') as HTMLElement
-    assert.equal(rowAfter, rowBefore)
-    assert.equal(rowAfter.getAttribute('style'), null)
-
-    component.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('single array item property updates refresh mapped class bindings', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-todo-completed-class`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const TodoList = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class TodoList extends Component {
-          todos = [{ id: 1, text: 'First todo', completed: false }]
-
-          toggle(todo) {
-            todo.completed = !todo.completed
-          }
-
-          template() {
-            return (
-              <div class="todo-list">
-                <div class="todo-items">
-                  {this.todos.map(todo => (
-                    <div class={\`todo-item\${todo.completed ? ' completed' : ''}\`} key={todo.id}>
-                      <input type="checkbox" checked={todo.completed} change={() => this.toggle(todo)} />
-                      <span>{todo.text}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          }
-        }
-      `,
-      '/virtual/TodoListCompletedClass.jsx',
-      'TodoList',
-      { Component },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const view = new TodoList()
-    view.render(root)
-    await flushMicrotasks()
-
-    const rowBefore = view.el.querySelector('.todo-item') as HTMLElement | null
-    const checkboxBefore = view.el.querySelector('input[type="checkbox"]') as HTMLInputElement | null
-
-    assert.ok(rowBefore)
-    assert.ok(checkboxBefore)
-    assert.equal(rowBefore?.className, 'todo-item')
-    assert.equal(checkboxBefore?.checked, false)
-
-    view.todos[0].completed = true
-    await flushMicrotasks()
-
-    const rowAfter = view.el.querySelector('.todo-item') as HTMLElement | null
-    const checkboxAfter = view.el.querySelector('input[type="checkbox"]') as HTMLInputElement | null
-
-    assert.ok(rowAfter)
-    assert.ok(checkboxAfter)
-    assert.equal(rowAfter?.className, 'todo-item completed')
-    assert.equal(checkboxAfter?.checked, true)
-
-    view.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('store-dependent class binding on root element patches without full rerender', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-store-class-no-rerender`
+    const seed = `bindings-ported-${Date.now()}`
     const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
-    const store = new Store({ highlightedId: null as string | null })
+    const store = new Store({
+      label: 'Alpha',
+      active: false,
+      disabled: false,
+      color: 'red',
+      name: 'Ada',
+    }) as {
+      label: string
+      active: boolean
+      disabled: boolean
+      color: string
+      name: string
+    }
 
-    const MyColumn = await compileJsxComponent(
+    const BindingProbe = await compileJsxComponent(
       `
         import { Component } from '@geajs/core'
-        import store from './store.ts'
+        import store from './store'
 
-        export default class MyColumn extends Component {
-          template({ id, title }) {
-            const isHighlighted = store.highlightedId === id
+        export default class BindingProbe extends Component {
+          template() {
             return (
-              <div class={\`column \${isHighlighted ? 'highlighted' : ''}\`}>
-                <h2>{title}</h2>
-                <p>Static content</p>
-              </div>
+              <section class={store.active ? 'card active' : 'card'} style={{ color: store.color }}>
+                <span class="label">{store.label}</span>
+                <button class="action" disabled={store.disabled}>Go</button>
+                <input class="name" value={store.name} input={(e) => store.name = e.target.value} />
+              </section>
             )
           }
         }
       `,
-      '/virtual/MyColumn.jsx',
-      'MyColumn',
+      '/virtual/BindingProbe.tsx',
+      'BindingProbe',
       { Component, store },
     )
 
     const root = document.createElement('div')
     document.body.appendChild(root)
-
-    const view = new MyColumn({ id: 'col1', title: 'Column One' })
+    const view = new BindingProbe()
     view.render(root)
-
-    const elBefore = view.el
-    const h2Before = view.el.querySelector('h2')
-    assert.ok(elBefore)
-    assert.ok(h2Before)
-    assert.match(elBefore.className, /column/)
-    assert.doesNotMatch(elBefore.className, /highlighted/)
-
-    store.highlightedId = 'col1'
     await flushMicrotasks()
 
-    assert.match(view.el.className, /highlighted/)
-    assert.equal(view.el, elBefore, 'root element must be preserved (no full rerender)')
-    assert.equal(view.el.querySelector('h2'), h2Before, 'child h2 must be preserved')
+    const creates = countTemplateCreates(view)
+    const section = root.querySelector('section') as HTMLElement
+    const label = root.querySelector('.label') as HTMLElement
+    const button = root.querySelector('.action') as HTMLButtonElement
+    const input = root.querySelector('.name') as HTMLInputElement
 
-    store.highlightedId = 'col2'
+    assert.equal(label.textContent, 'Alpha')
+    assert.equal(section.className, 'card')
+    assert.equal(section.style.color, 'red')
+    assert.equal(button.hasAttribute('disabled'), false)
+    assert.equal(input.value, 'Ada')
+
+    store.label = 'Beta'
+    store.active = true
+    store.disabled = true
+    store.color = 'blue'
+    store.name = 'Grace'
     await flushMicrotasks()
 
-    assert.doesNotMatch(view.el.className, /highlighted/)
-    assert.equal(view.el, elBefore, 'root element must still be preserved after un-highlighting')
+    assert.equal(root.querySelector('section'), section, 'root element should be patched, not rebuilt')
+    assert.equal(root.querySelector('.label'), label, 'text binding node should be stable')
+    assert.equal(root.querySelector('.action'), button, 'button should be stable')
+    assert.equal(root.querySelector('.name'), input, 'input should be stable')
+    assert.equal(label.textContent, 'Beta')
+    assert.equal(section.className, 'card active')
+    assert.equal(section.style.color, 'blue')
+    assert.equal(button.hasAttribute('disabled'), true)
+    assert.equal(input.value, 'Grace')
+    assert.equal(creates(), 0, 'binding updates should not invoke the template builder again')
 
     view.dispose()
     await flushMicrotasks()
@@ -301,139 +89,70 @@ test('store-dependent class binding on root element patches without full rerende
   }
 })
 
-test('disabled={false} on a <button> must NOT produce a disabled attribute in the DOM', async () => {
+test('ported runtime bindings: mapped row property changes patch attributes without replacing rows', async () => {
   const restoreDom = installDom()
 
   try {
-    const seed = `runtime-${Date.now()}-button-disabled-false`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
+    const seed = `bindings-map-${Date.now()}`
+    const [{ default: Component }, { Store }] = await loadRuntimeModules(seed)
+    const store = new Store({
+      rows: [
+        { id: 'a', label: 'Alpha', done: false },
+        { id: 'b', label: 'Beta', done: true },
+      ],
+    }) as {
+      rows: Array<{ id: string; label: string; done: boolean }>
+    }
 
-    const { readFileSync } = await import('node:fs')
-    const { join, dirname } = await import('node:path')
-    const { fileURLToPath } = await import('node:url')
-    const geaUiRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../gea-ui/src')
-    const { cn } = await import('../../../gea-ui/src/utils/cn')
-
-    const Button = await compileJsxComponent(
-      readFileSync(join(geaUiRoot, 'components/button.tsx'), 'utf8'),
-      join(geaUiRoot, 'components/button.tsx'),
-      'Button',
-      { Component, cn },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const btn = new Button({ disabled: false, variant: 'default' })
-    btn.render(root)
-    await flushMicrotasks()
-
-    const el = btn.el.querySelector('button') || btn.el
-    assert.ok(el, 'button element must exist')
-    assert.equal(
-      el.hasAttribute('disabled'),
-      false,
-      'button with disabled={false} must NOT have the disabled attribute',
-    )
-
-    btn.dispose()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('static style object renders as inline CSS on the DOM element', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-static-style-obj`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const StyledBox = await compileJsxComponent(
+    const RowList = await compileJsxComponent(
       `
         import { Component } from '@geajs/core'
+        import store from './store'
 
-        export default class StyledBox extends Component {
+        export default class RowList extends Component {
           template() {
-            return <div style={{ backgroundColor: 'red', padding: '10px', fontSize: '14px' }}>Box</div>
+            return (
+              <ul class="rows">
+                {store.rows.map(row => (
+                  <li key={row.id} class={row.done ? 'row done' : 'row'} data-state={row.done ? 'done' : 'todo'}>
+                    {row.label}
+                  </li>
+                ))}
+              </ul>
+            )
           }
         }
       `,
-      '/virtual/StyledBox.jsx',
-      'StyledBox',
-      { Component },
+      '/virtual/RowList.tsx',
+      'RowList',
+      { Component, store },
     )
 
     const root = document.createElement('div')
     document.body.appendChild(root)
-
-    const component = new StyledBox()
-    component.render(root)
+    const view = new RowList()
+    view.render(root)
     await flushMicrotasks()
 
-    const el = component.el as HTMLElement
-    assert.ok(el, 'Component element should exist')
-    assert.ok(!el.getAttribute('style')?.includes('[object Object]'), 'Style should not be [object Object]')
-    assert.ok(
-      el.style.backgroundColor === 'red' || el.getAttribute('style')?.includes('background-color'),
-      'background-color should be applied',
+    const rowsBefore = Array.from(root.querySelectorAll('li'))
+    assert.deepEqual(
+      rowsBefore.map((row) => row.textContent),
+      ['Alpha', 'Beta'],
     )
+    assert.equal(rowsBefore[0].className, 'row')
 
-    component.dispose()
-    root.remove()
-    await flushMicrotasks()
-  } finally {
-    restoreDom()
-  }
-})
-
-test('dynamic style object renders and updates CSS on state change', async () => {
-  const restoreDom = installDom()
-
-  try {
-    const seed = `runtime-${Date.now()}-dyn-style-obj`
-    const [{ default: Component }] = await loadRuntimeModules(seed)
-
-    const DynStyle = await compileJsxComponent(
-      `
-        import { Component } from '@geajs/core'
-
-        export default class DynStyle extends Component {
-          textColor = 'blue'
-
-          template() {
-            return <div style={{ color: this.textColor }}>Colorful</div>
-          }
-        }
-      `,
-      '/virtual/DynStyle.jsx',
-      'DynStyle',
-      { Component },
-    )
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-
-    const component = new DynStyle()
-    component.render(root)
+    store.rows[0].done = true
+    store.rows[0].label = 'Alpha!'
     await flushMicrotasks()
 
-    const el = component.el as HTMLElement
-    assert.ok(el, 'Component element should exist')
-    assert.ok(!el.getAttribute('style')?.includes('[object Object]'), 'Style should not be [object Object]')
+    const rowsAfter = Array.from(root.querySelectorAll('li'))
+    assert.equal(rowsAfter[0], rowsBefore[0], 'dirty row should be patched in place')
+    assert.equal(rowsAfter[1], rowsBefore[1], 'untouched sibling should stay mounted')
+    assert.equal(rowsAfter[0].className, 'row done')
+    assert.equal(rowsAfter[0].getAttribute('data-state'), 'done')
+    assert.equal(rowsAfter[0].textContent, 'Alpha!')
 
-    component.textColor = 'green'
-    await flushMicrotasks()
-
-    const styleAfter = el.getAttribute('style') || el.style.cssText
-    assert.ok(
-      styleAfter.includes('green') || el.style.color === 'green',
-      `Style should reflect updated color "green", got style: "${styleAfter}", color: "${el.style.color}"`,
-    )
-
-    component.dispose()
-    root.remove()
+    view.dispose()
     await flushMicrotasks()
   } finally {
     restoreDom()

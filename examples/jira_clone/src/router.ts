@@ -1,3 +1,1 @@
-import { Router } from '@geajs/core/router'
-
-export const router = new Router()
+export { router } from '@geajs/core/router'

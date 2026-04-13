@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { describe, it, beforeEach, afterEach } from 'node:test'
+import { describe, it, afterEach } from 'node:test'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -33,7 +33,7 @@ describe('HMR circular dependency prevention', () => {
     it('injects hot.accept for directory import that resolves to component index file', () => {
       const root = createFixture({
         'src/router.ts': [
-          "import { createRouter } from '@geajs/core'",
+          "import { createRouter } from '@geajs/core/router'",
           "import Home, { About } from './pages'",
           "export const router = createRouter({ '/': Home, '/about': About } as const)",
         ].join('\n'),
@@ -53,7 +53,7 @@ describe('HMR circular dependency prevention', () => {
 
       const routerPath = join(root, 'src/router.ts')
       const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport Home, { About } from './pages'\nexport const router = createRouter({ '/': Home, '/about': About } as const)"
+        "import { createRouter } from '@geajs/core/router'\nimport Home, { About } from './pages'\nexport const router = createRouter({ '/': Home, '/about': About } as const)"
 
       const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
 
@@ -65,7 +65,7 @@ describe('HMR circular dependency prevention', () => {
     it('injects hot.accept for .tsx file import that resolves to component', () => {
       const root = createFixture({
         'src/router.ts': [
-          "import { createRouter } from '@geajs/core'",
+          "import { createRouter } from '@geajs/core/router'",
           "import Home from './home'",
           "export const router = createRouter({ '/': Home } as const)",
         ].join('\n'),
@@ -82,7 +82,7 @@ describe('HMR circular dependency prevention', () => {
 
       const routerPath = join(root, 'src/router.ts')
       const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport Home from './home'\nexport const router = createRouter({ '/': Home } as const)"
+        "import { createRouter } from '@geajs/core/router'\nimport Home from './home'\nexport const router = createRouter({ '/': Home } as const)"
 
       const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
 
@@ -93,7 +93,7 @@ describe('HMR circular dependency prevention', () => {
     it('does NOT inject HMR for imports that are not component files', () => {
       const root = createFixture({
         'src/router.ts': [
-          "import { createRouter } from '@geajs/core'",
+          "import { createRouter } from '@geajs/core/router'",
           "import { config } from './config'",
           'export const router = createRouter(config)',
         ].join('\n'),
@@ -105,7 +105,7 @@ describe('HMR circular dependency prevention', () => {
 
       const routerPath = join(root, 'src/router.ts')
       const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport { config } from './config'\nexport const router = createRouter(config)"
+        "import { createRouter } from '@geajs/core/router'\nimport { config } from './config'\nexport const router = createRouter(config)"
 
       const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
 
@@ -115,7 +115,7 @@ describe('HMR circular dependency prevention', () => {
     it('does NOT inject HMR in build mode (only serve)', () => {
       const root = createFixture({
         'src/router.ts': [
-          "import { createRouter } from '@geajs/core'",
+          "import { createRouter } from '@geajs/core/router'",
           "import Home from './pages'",
           "export const router = createRouter({ '/': Home } as const)",
         ].join('\n'),
@@ -132,7 +132,7 @@ describe('HMR circular dependency prevention', () => {
 
       const routerPath = join(root, 'src/router.ts')
       const routerCode =
-        "import { createRouter } from '@geajs/core'\nimport Home from './pages'\nexport const router = createRouter({ '/': Home } as const)"
+        "import { createRouter } from '@geajs/core/router'\nimport Home from './pages'\nexport const router = createRouter({ '/': Home } as const)"
 
       const result = plugin.transform.call({ environment: { name: 'client' } }, routerCode, routerPath)
 

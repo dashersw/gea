@@ -338,13 +338,16 @@ This works identically to passing an object to a JavaScript function — if the 
 
 ## Bundle Size
 
-| Stack | Min+Gzip | Includes |
+| Stack | Compressed size | Includes |
 | --- | --- | --- |
-| React 19 + ReactDOM | ~40 kb | Rendering only |
+| React 19.2.5 + React DOM 19.2.5 hello world | 50.8 kb brotli | Rendering + minimal mount |
+| React 19.2.5 + React DOM 19.2.5 todo app | 51.5 kb brotli JS / 52.3 kb brotli total | Interactive todo + identical CSS |
 | React 19 + ReactDOM + React Router 7 + Zustand 5 | **~74 kb** | Rendering + state + routing |
-| Gea | **~19 kb** | Rendering + state + routing |
+| Gea 1.3.0 hello world | **121 B brotli** | Compiled DOM creation |
+| Gea 1.3.0 todo app | **4.9 kb brotli JS / 5.6 kb brotli total** | Interactive todo + identical CSS |
+| Gea hello world + router | **~7.3 kb** | Compiled output + routing |
 
-A real-world React app needs at least a router and a state manager. With React Router and Zustand — two of the most lightweight options — the total comes to ~74 kb gzipped. Gea ships all three concerns built in at ~19 kb, making it **3.9x smaller** than a comparable React stack.
+In a fresh Vite 8.0.10 production hello-world build, React + React DOM ships 50.8 kb of brotli JavaScript. Gea ships 121 B because the compiler emits direct DOM creation and the framework runtime disappears from the bundle. In an equivalent interactive todo app with reactive state, input handling, filtering, item updates, and identical CSS, Gea ships 4.9 kb of brotli JavaScript while React ships 51.5 kb. A real-world React app usually starts by adding a router and a state manager; with React Router and Zustand, that moves the React stack to ~74 kb gzipped. Gea's useful baseline is not "how big is the framework?" but "what did this app actually use?"
 
 ## Event Handling
 

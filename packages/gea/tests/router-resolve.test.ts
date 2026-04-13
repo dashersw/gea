@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { resolveRoute } from '../src/lib/router/resolve'
-import type { RouteMap, RouteGroupConfig, RedirectConfig } from '../src/lib/router/types'
+import { resolveRoute } from '../src/router/resolve'
+import type { RouteMap, RouteGroupConfig, RedirectConfig } from '../src/router/types'
 
 import Home from '../../../examples/router-simple/src/views/Home'
 import About from '../../../examples/router-simple/src/views/About'

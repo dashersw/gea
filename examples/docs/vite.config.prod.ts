@@ -10,11 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   root: __dirname,
   base: '/docs/gea-ui-showcase/',
-  plugins: [
-    geaUiDevSourcePlugin(),
-    geaPlugin(),
-    tailwindcss(),
-  ],
+  plugins: [geaUiDevSourcePlugin(), geaPlugin(), tailwindcss()],
   resolve: {
     alias: geaViteAliases(__dirname),
   },

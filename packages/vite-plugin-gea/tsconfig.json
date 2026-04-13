@@ -5,25 +5,14 @@
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
     "emitDeclarationOnly": true,
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "jsx": "react-jsx",
-    "jsxImportSource": "@geajs/core",
-    "types": [
-      "node"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "types": ["node"],
     "declaration": true,
     "strict": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true
   },
-  "include": [
-    "./src/**/*.ts",
-    "./tests/**/*.ts",
-    "gea-env.d.ts"
-  ]
+  "include": ["./src/**/*.ts", "./tests/**/*.ts", "gea-env.d.ts"]
 }

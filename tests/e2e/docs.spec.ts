@@ -44,8 +44,10 @@ test.describe('docs component documentation', () => {
   })
 
   test('code blocks have syntax highlighting', async ({ page }) => {
-    // Prism.js adds .token classes
+    // Prism.js highlight runs inside a rAF after render. Auto-wait for the
+    // first token rather than a synchronous `.count()` snapshot.
     const tokens = page.locator('.demo-code .token')
+    await expect(tokens.first()).toBeAttached({ timeout: 3000 })
     const count = await tokens.count()
     expect(count).toBeGreaterThan(0)
   })

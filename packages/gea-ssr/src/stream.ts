@@ -70,22 +70,24 @@ export function createSSRStream(options: SSRStreamOptions): ReadableStream<Uint8
 
         // Stream deferred content resolutions individually
         if (deferreds && deferreds.length > 0) {
-          await Promise.all(deferreds.map(async (d) => {
-            let timer: ReturnType<typeof setTimeout> | undefined
-            try {
-              const html = await Promise.race([
-                d.promise,
-                new Promise<never>((_, reject) => {
-                  timer = setTimeout(() => reject(new Error('Deferred timed out')), timeout)
-                }),
-              ])
-              clearTimeout(timer)
-              controller.enqueue(encoder.encode(buildReplacementScript(d.id, html, nonceAttr)))
-            } catch {
-              clearTimeout(timer)
-              // Timeout or error: fallback HTML remains in place
-            }
-          }))
+          await Promise.all(
+            deferreds.map(async (d) => {
+              let timer: ReturnType<typeof setTimeout> | undefined
+              try {
+                const html = await Promise.race([
+                  d.promise,
+                  new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error('Deferred timed out')), timeout)
+                  }),
+                ])
+                clearTimeout(timer)
+                controller.enqueue(encoder.encode(buildReplacementScript(d.id, html, nonceAttr)))
+              } catch {
+                clearTimeout(timer)
+                // Timeout or error: fallback HTML remains in place
+              }
+            }),
+          )
         }
       } catch (error) {
         controller.error(error)

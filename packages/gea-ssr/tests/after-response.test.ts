@@ -1,15 +1,18 @@
 // packages/gea-ssr/tests/after-response.test.ts
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { Component, GEA_CREATE_TEMPLATE } from '@geajs/core'
 import { handleRequest } from '../src/handle-request.ts'
-import type { GeaComponentInstance, SSRContext } from '../src/types.ts'
+import type { SSRContext } from '../src/types.ts'
 
 const mockIndexHtml = '<!DOCTYPE html><html><body><div id="app"></div></body></html>'
 
-class TestApp implements GeaComponentInstance {
-  props: Record<string, unknown>
-  constructor(props?: Record<string, unknown>) { this.props = props || {} }
-  template() { return '<h1>Test</h1>' }
+class TestApp extends Component {
+  [GEA_CREATE_TEMPLATE](): Node {
+    const h = document.createElement('h1')
+    h.textContent = 'Test'
+    return h
+  }
 }
 
 async function consumeResponse(response: Response): Promise<string> {
@@ -29,13 +32,15 @@ describe('afterResponse', () => {
     let called = false
     const handler = handleRequest(TestApp, {
       indexHtml: mockIndexHtml,
-      afterResponse: async () => { called = true },
+      afterResponse: async () => {
+        called = true
+      },
     })
     const response = await handler(new Request('http://localhost/'))
     assert.equal(called, false, 'should not be called before consumption')
     await consumeResponse(response)
     // Give microtask a chance to run
-    await new Promise(r => setTimeout(r, 10))
+    await new Promise((r) => setTimeout(r, 10))
     assert.equal(called, true, 'should be called after consumption')
   })
 
@@ -44,11 +49,13 @@ describe('afterResponse', () => {
     const handler = handleRequest(TestApp, {
       routes: { '/items/:id': TestApp },
       indexHtml: mockIndexHtml,
-      afterResponse: async (ctx) => { receivedCtx = ctx },
+      afterResponse: async (ctx) => {
+        receivedCtx = ctx
+      },
     })
     const response = await handler(new Request('http://localhost/items/5'))
     await consumeResponse(response)
-    await new Promise(r => setTimeout(r, 10))
+    await new Promise((r) => setTimeout(r, 10))
     assert.equal(receivedCtx!.params.id, '5')
     assert.equal(receivedCtx!.route, '/items/:id')
   })
@@ -56,7 +63,9 @@ describe('afterResponse', () => {
   it('afterResponse errors do not affect response', async () => {
     const handler = handleRequest(TestApp, {
       indexHtml: mockIndexHtml,
-      afterResponse: async () => { throw new Error('cleanup failed') },
+      afterResponse: async () => {
+        throw new Error('cleanup failed')
+      },
     })
     const response = await handler(new Request('http://localhost/'))
     const html = await consumeResponse(response)
@@ -69,13 +78,15 @@ describe('afterResponse', () => {
     const handler = handleRequest(TestApp, {
       indexHtml: mockIndexHtml,
       async afterResponse() {
-        await new Promise(resolve => setTimeout(resolve, 50))
+        await new Promise((resolve) => setTimeout(resolve, 50))
         afterResponseCompleted = true
       },
     })
     const response = await handler(new Request('http://localhost/'))
     const reader = response.body!.getReader()
-    while (!(await reader.read()).done) { /* drain */ }
+    while (!(await reader.read()).done) {
+      /* drain */
+    }
     assert.ok(afterResponseCompleted, 'afterResponse must complete before stream closes')
   })
 
@@ -83,12 +94,16 @@ describe('afterResponse', () => {
     let called = false
     const handler = handleRequest(TestApp, {
       indexHtml: mockIndexHtml,
-      async onBeforeRender() { throw new Error('fail') },
-      afterResponse: async () => { called = true },
+      async onBeforeRender() {
+        throw new Error('fail')
+      },
+      afterResponse: async () => {
+        called = true
+      },
     })
     const response = await handler(new Request('http://localhost/'))
     assert.equal(response.status, 500)
-    await new Promise(r => setTimeout(r, 10))
+    await new Promise((r) => setTimeout(r, 10))
     assert.equal(called, false)
   })
 })

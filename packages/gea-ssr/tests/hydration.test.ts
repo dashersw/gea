@@ -196,47 +196,9 @@ describe('hydrate', () => {
     assert.equal(reRendered, false, 'hydrate must NOT trigger full re-render')
   })
 
-  it('preserves server-rendered DOM nodes without replacing them', () => {
-    setupDOM(
-      '<!doctype html><html><body><div id="app"><div id="0"><p id="server-paragraph">server content</p></div></div></body></html>',
-    )
-
-    const serverParagraph = document.getElementById('server-paragraph')
-
-    class App implements GeaComponentInstance {
-      props: Record<string, unknown>;
-      [GEA_ELEMENT]?: Element | null;
-      [GEA_RENDERED]?: boolean
-      constructor(props?: Record<string, unknown>) {
-        this.props = props || {}
-      }
-      template() {
-        return '<div id="0"><p id="server-paragraph">server content</p></div>'
-      }
-      [GEA_ATTACH_BINDINGS]() {}
-      [GEA_MOUNT_COMPILED_CHILD_COMPONENTS]() {}
-      [GEA_INSTANTIATE_CHILD_COMPONENTS]() {}
-      [GEA_SETUP_EVENT_DIRECTIVES]() {}
-      onAfterRender() {}
-      onAfterRenderHooks() {}
-      __geaRequestRender() {
-        const el = this[GEA_ELEMENT]
-        if (el && el.parentElement) {
-          const newEl = document.createElement('div')
-          newEl.id = '0'
-          newEl.innerHTML = '<p id="server-paragraph">server content</p>'
-          el.parentElement.replaceChild(newEl, el)
-          this[GEA_ELEMENT] = newEl
-        }
-      }
-    }
-
-    const el = document.getElementById('app')!
-    hydrate(App, el)
-
-    const postHydrationParagraph = document.getElementById('server-paragraph')
-    assert.strictEqual(postHydrationParagraph, serverParagraph, 'Hydration should adopt existing DOM, not replace it')
-  })
+  // NOTE: v1-era `__geaRequestRender`-based hydration preservation test removed.
+  // The v2 hydration path adopts existing DOM through a different mechanism
+  // (see `adopts existing SSR content and activates interactivity`).
 
   it('restores store state before App construction', () => {
     setupDOM('<!doctype html><html><body><div id="app"><div id="0">content</div></div></body></html>')

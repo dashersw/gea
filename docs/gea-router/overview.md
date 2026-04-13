@@ -2,6 +2,8 @@
 
 A store-based router for Gea. Routes are a plain configuration object. The router is a Store. Navigation is method calls. No providers, no hooks, no context.
 
+In ESM apps, router APIs are part of the public `@geajs/core` root export and are tree-shaken out when unused. The `@geajs/core/router` subpath is also available as a direct router entry. In no-build browser pages using `dist/gea-runtime.js`, load `dist/gea-router.js` only when routing is needed.
+
 ## Philosophy
 
 **The router is a Store.** It holds reactive properties — `path`, `params`, `query`, `page` — just like any other Gea store. Components read from it directly. The Vite plugin handles reactivity. There is nothing new to learn.
@@ -44,8 +46,7 @@ export default class App extends Component {
 
 ```tsx
 // views/Project.tsx
-import { Component } from '@geajs/core'
-import { Link } from '@geajs/core'
+import { Component, Link } from '@geajs/core'
 import projectStore from '../stores/project-store'
 
 export default class Project extends Component {

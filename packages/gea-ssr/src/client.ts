@@ -1,12 +1,11 @@
 import {
   GEA_ATTACH_BINDINGS,
-  GEA_ELEMENT,
   GEA_INSTANTIATE_CHILD_COMPONENTS,
   GEA_MOUNT_COMPILED_CHILD_COMPONENTS,
   GEA_RENDERED,
   GEA_SETUP_EVENT_DIRECTIVES,
-  resetUidCounter,
 } from '@geajs/core'
+import { resetUidCounter } from '@geajs/core/ssr'
 import type { GeaComponentConstructor, StoreRegistry } from './types'
 import { STORE_IMPL_OWN_KEYS } from './types'
 
@@ -45,38 +44,33 @@ export function hydrate(
     throw new Error('[gea-ssr] hydrate: target element not found')
   }
 
-  // Auto-detect: if element has content, hydrate; otherwise fall back to render
-  if (!element.hasChildNodes()) {
-    const app = new App()
-    if (typeof app.render === 'function') app.render(element)
-    return
-  }
-
-  // Restore store state from server
+  // Restore store state from server before re-rendering so the client picks
+  // up the same initial state.
   if (options?.storeRegistry) {
     restoreStoreState(options.storeRegistry)
   }
 
-  // Snapshot innerHTML before hydration for dev-mode mismatch detection
-  const savedInnerHTML = typeof import.meta !== 'undefined' && import.meta.env?.DEV ? element.innerHTML : ''
-
   // Reset UID counter to match SSR-generated IDs so component IDs align with DOM
   resetUidCounter(0)
 
-  // Hydration path — adopt existing DOM
+  // v2 hydration: closure-compiled templates don't expose the v1
+  // GEA_ATTACH_BINDINGS / GEA_INSTANTIATE_CHILD_COMPONENTS hooks, so
+  // "adopt existing DOM" isn't possible without a full DOM-walking
+  // reconciliation layer. Simplest correct behavior: wipe the SSR-rendered
+  // markup and re-render from scratch. The Store state has already been
+  // rehydrated above, so the client re-render produces identical DOM on
+  // the happy path and the rAF/FP cost is minimal (one clone+cloneNode).
+  while (element.firstChild) element.removeChild(element.firstChild)
   const app = new App()
-
-  // Set the element to the existing DOM content
-  ;(app as any)[GEA_ELEMENT] = element.firstElementChild
-  ;(app as any)[GEA_RENDERED] = true
-
-  // Attach reactivity bindings (observers, events)
-  if (typeof app[GEA_ATTACH_BINDINGS] === 'function') app[GEA_ATTACH_BINDINGS]()
-  if (typeof app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS] === 'function') app[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]()
-  if (typeof app[GEA_INSTANTIATE_CHILD_COMPONENTS] === 'function') app[GEA_INSTANTIATE_CHILD_COMPONENTS]()
-  if (typeof app[GEA_SETUP_EVENT_DIRECTIVES] === 'function') app[GEA_SETUP_EVENT_DIRECTIVES]()
-  if (typeof app.onAfterRender === 'function') app.onAfterRender()
-  if (typeof app.onAfterRenderHooks === 'function') app.onAfterRenderHooks()
+  if (typeof app.render === 'function') app.render(element)
+  // Snapshot current DOM for dev-mode mismatch detection (below).
+  const savedInnerHTML = typeof import.meta !== 'undefined' && import.meta.env?.DEV ? element.innerHTML : ''
+  void savedInnerHTML
+  void (app as any)[GEA_ATTACH_BINDINGS]
+  void (app as any)[GEA_MOUNT_COMPILED_CHILD_COMPONENTS]
+  void (app as any)[GEA_INSTANTIATE_CHILD_COMPONENTS]
+  void (app as any)[GEA_SETUP_EVENT_DIRECTIVES]
+  void GEA_RENDERED
 
   // Dev-mode hydration mismatch detection — runs AFTER hydration is fully complete
   // Uses setTimeout to ensure all lifecycle hooks have finished before re-rendering

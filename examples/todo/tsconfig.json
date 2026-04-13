@@ -8,6 +8,9 @@
   ],
   "exclude": [
     "dist",
-    "node_modules"
+    "node_modules",
+    "vite.config.ts",
+    "vite.config.*.ts",
+    "playwright.config.ts"
   ]
 }

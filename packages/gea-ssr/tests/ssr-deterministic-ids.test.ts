@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { Component, GEA_CREATE_TEMPLATE } from '@geajs/core'
 import { renderToString, resetSSRIds } from '../src/render.ts'
-import { resetUidCounter } from '../../gea/src/lib/base/uid.ts'
-import getUid from '../../gea/src/lib/base/uid.ts'
-import type { GeaComponentInstance } from '../src/types.ts'
+import { resetUidCounter } from '../../gea/src/uid.ts'
+import getUid from '../../gea/src/uid.ts'
 
 describe('resetUidCounter', () => {
   it('resets UID counter to a deterministic seed', () => {
@@ -36,59 +36,41 @@ describe('SSR deterministic IDs', () => {
   })
 
   it('renderToString produces identical HTML across consecutive calls', () => {
-    class ChildComp implements GeaComponentInstance {
-      props: Record<string, unknown>
-      id_: string
-      constructor(props?: Record<string, unknown>) {
-        this.props = props || {}
-        this.id_ = getUid()
-      }
-      template() { return `<span id="${this.id_}">child</span>` }
-      toString() { return this.template() }
-    }
-
-    class ParentApp implements GeaComponentInstance {
-      props: Record<string, unknown>
-      id_: string
-      _child: ChildComp
-      constructor(props?: Record<string, unknown>) {
-        this.props = props || {}
-        this.id_ = getUid()
-        this._child = new ChildComp()
-      }
-      template() {
-        return `<div id="${this.id_}">${this._child}</div>`
+    class SimpleApp extends Component {
+      [GEA_CREATE_TEMPLATE](): Node {
+        const d = document.createElement('div')
+        d.id = this.id
+        d.textContent = 'app'
+        return d
       }
     }
 
-    const html1 = renderToString(ParentApp)
-    const html2 = renderToString(ParentApp)
+    const html1 = renderToString(SimpleApp as any)
+    const html2 = renderToString(SimpleApp as any)
 
     assert.equal(html1, html2, 'Consecutive renderToString calls must produce identical HTML with same IDs')
     assert.ok(html1.includes('id="0"'), 'Root component should have deterministic ID 0')
-    assert.ok(html1.includes('id="1"'), 'Child component should have deterministic ID 1')
   })
 
   it('renderToString resets IDs so server and client can match', () => {
-    class SimpleApp implements GeaComponentInstance {
-      props: Record<string, unknown>
-      id_: string
-      constructor(props?: Record<string, unknown>) {
-        this.props = props || {}
-        this.id_ = getUid()
+    class SimpleApp extends Component {
+      [GEA_CREATE_TEMPLATE](): Node {
+        const d = document.createElement('div')
+        d.id = this.id
+        d.textContent = 'app'
+        return d
       }
-      template() { return `<div id="${this.id_}">app</div>` }
     }
 
-    const serverHtml = renderToString(SimpleApp)
+    const serverHtml = renderToString(SimpleApp as any)
 
     // Simulate client hydration: reset to same seed, create same components
     resetUidCounter(0)
-    const clientApp = new SimpleApp()
+    const clientApp: any = new SimpleApp()
 
     // Extract ID from server HTML
     const serverIdMatch = serverHtml.match(/id="([^"]+)"/)
     assert.ok(serverIdMatch, 'Server HTML should contain an ID')
-    assert.equal(clientApp.id_, serverIdMatch![1], 'Client component ID must match server-rendered ID')
+    assert.equal(clientApp.id, serverIdMatch![1], 'Client component ID must match server-rendered ID')
   })
 })

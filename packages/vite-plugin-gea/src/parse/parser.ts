@@ -151,9 +151,7 @@ function nodeReturnsJSX(node: t.Node): boolean {
 
 /** Check if a block statement has a return that yields JSX. */
 function bodyReturnsJSX(block: t.BlockStatement): boolean {
-  const ret = block.body.find(
-    (s): s is t.ReturnStatement => t.isReturnStatement(s) && s.argument != null,
-  )
+  const ret = block.body.find((s): s is t.ReturnStatement => t.isReturnStatement(s) && s.argument != null)
   return !!ret && nodeReturnsJSX(ret.argument!)
 }
 

@@ -1,14 +1,11 @@
+import { GEA_PROXY_GET_RAW_TARGET, GEA_PROXY_IS_PROXY, GEA_PROXY_RAW, type Store } from '@geajs/core'
 import {
   findPropertyDescriptor,
-  GEA_PROXY_GET_RAW_TARGET,
-  GEA_PROXY_IS_PROXY,
-  GEA_PROXY_RAW,
   isClassConstructorValue,
   rootDeleteProperty,
   rootGetValue,
   rootSetValue,
-  type Store,
-} from '@geajs/core'
+} from '@geajs/core/ssr'
 import { resolveOverlay } from './ssr-context'
 
 /** Sentinel for SSR overlay deletes — must match overlay checks in traps below */

@@ -202,37 +202,41 @@ test.describe('flight check-in multi-step flow and surgical DOM updates', () => 
 
   test('option selection is mutually exclusive within a step', async ({ page }) => {
     const luggage = stepSection(page, 'Select Luggage')
-    // Click first option (use item id — duplicate DOM can make nth() ambiguous)
-    await luggage.locator('[data-gid="carry-on"]').click()
+    const carryOn = luggage.locator('.option-item', { hasText: 'Carry-on bag' })
+    const checkedOne = luggage.locator('.option-item', { hasText: '1 checked bag' })
+    const checkedTwo = luggage.locator('.option-item', { hasText: '2 checked bags' })
+
+    await carryOn.click()
     await expect(luggage.locator('.option-item.selected')).toHaveCount(1)
 
     // Click second option — first should deselect
-    await luggage.locator('[data-gid="checked-1"]').click()
+    await checkedOne.click()
     await expect(luggage.locator('.option-item.selected')).toHaveCount(1)
-    await expect(luggage.locator('[data-gid="checked-1"]')).toHaveClass(/selected/)
-    await expect(luggage.locator('[data-gid="carry-on"]')).not.toHaveClass(/selected/)
+    await expect(checkedOne).toHaveClass(/selected/)
+    await expect(carryOn).not.toHaveClass(/selected/)
 
     // Click third option
-    await luggage.locator('[data-gid="checked-2"]').click()
+    await checkedTwo.click()
     await expect(luggage.locator('.option-item.selected')).toHaveCount(1)
-    await expect(luggage.locator('[data-gid="checked-2"]')).toHaveClass(/selected/)
+    await expect(checkedTwo).toHaveClass(/selected/)
   })
 
   test('selecting an option preserves correct option count and structure', async ({ page }) => {
     const luggage = stepSection(page, 'Select Luggage')
-    const countBefore = await luggage.locator('.option-item[data-gid]').count()
+    const countBefore = await luggage.locator('.option-item').count()
+    const checkedOne = luggage.locator('.option-item', { hasText: '1 checked bag' })
 
     // Click second option
-    await luggage.locator('[data-gid="checked-1"]').click()
-    await expect(luggage.locator('[data-gid="checked-1"]')).toHaveClass(/selected/)
+    await checkedOne.click()
+    await expect(checkedOne).toHaveClass(/selected/)
 
     // Option count must remain the same (no duplication or loss)
-    await expect(luggage.locator('.option-item[data-gid]')).toHaveCount(countBefore)
+    await expect(luggage.locator('.option-item')).toHaveCount(countBefore)
 
     // Each option should still have a label
-    const ids = ['carry-on', 'checked-1', 'checked-2', 'checked-3']
-    for (const id of ids) {
-      await expect(luggage.locator(`[data-gid="${id}"] .label`)).not.toBeEmpty()
+    const labels = ['Carry-on bag', '1 checked bag', '2 checked bags', '3 checked bags']
+    for (const label of labels) {
+      await expect(luggage.locator('.option-item', { hasText: label }).locator('.label')).not.toBeEmpty()
     }
   })
 
@@ -263,6 +267,18 @@ test.describe('flight check-in multi-step flow and surgical DOM updates', () => 
     await stepSection(page, 'Review & Payment').getByRole('button', { name: 'View Boarding Pass' }).first().click()
     await expect(page.locator('.success-message')).toBeVisible()
 
+    const copyIcon = page.locator('.confirmation-copy-button svg')
+    const copyIconPath = copyIcon.locator('path')
+    await expect(copyIcon).toBeVisible()
+    await expect(copyIconPath).toHaveAttribute('d', /^M16/)
+    expect(await copyIconPath.evaluate((el) => el.namespaceURI)).toBe('http://www.w3.org/2000/svg')
+    const iconBox = await copyIconPath.evaluate((el) => {
+      const box = (el as SVGGraphicsElement).getBBox()
+      return { width: box.width, height: box.height }
+    })
+    expect(iconBox.width).toBeGreaterThan(0)
+    expect(iconBox.height).toBeGreaterThan(0)
+
     // Click copy button
     await page.locator('.confirmation-copy-button').click()
     await expect(page.locator('.confirmation-copy-button.copied')).toBeVisible({ timeout: 500 })
@@ -284,8 +300,9 @@ test.describe('flight check-in multi-step flow and surgical DOM updates', () => 
 
       // Select a different option
       const luggage = stepSection(page, 'Select Luggage')
-      await luggage.locator('[data-gid="checked-2"]').click()
-      await expect(luggage.locator('[data-gid="checked-2"]')).toHaveClass(/selected/)
+      const checkedTwo = luggage.locator('.option-item', { hasText: '2 checked bags' })
+      await checkedTwo.click()
+      await expect(checkedTwo).toHaveClass(/selected/)
 
       // Verify the mount root survived
       const markerSurvived = await page.locator('[data-dom-stability-marker="original"]').count()

@@ -42,7 +42,8 @@
   "scripts": {
     "prepublishOnly": "tsdown",
     "build": "tsdown",
-    "test": "tsx --conditions source --test 'tests/**/*.test.ts'",
+    "test": "NODE_OPTIONS=--max-old-space-size=8192 tsx --conditions source --test tests/*.test.ts tests/regressions/*.test.ts tests/closure-codegen/*.test.ts",
+    "test:benchmark": "NODE_OPTIONS=--max-old-space-size=8192 tsx --conditions source --test tests/regressions/js-framework-benchmark-ops.test.ts",
     "test:e2e": "npx playwright test --config=../../tests/e2e/playwright.config.ts",
     "build:browser": "rollup -c rollup.browser.config.js",
     "build:codemirror": "rollup -c rollup.codemirror.config.js",
@@ -74,7 +75,7 @@
     "rollup-plugin-esbuild": "^6.2.1",
     "tsdown": "^0.21.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   },
   "peerDependencies": {
     "vite": "^8.0.0"

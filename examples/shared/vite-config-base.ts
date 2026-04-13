@@ -23,7 +23,10 @@ export function geaUiDevSourcePlugin(): Plugin {
 /** `@geajs/core/router` must resolve before the `@geajs/core` directory alias. */
 export function geaCoreAliases(packagesDir: string) {
   return [
-    { find: '@geajs/core/router', replacement: resolve(packagesDir, 'gea/src/lib/router/index.ts') },
+    { find: '@geajs/core/jsx-dev-runtime', replacement: resolve(packagesDir, 'gea/src/jsx-dev-runtime.ts') },
+    { find: '@geajs/core/jsx-runtime', replacement: resolve(packagesDir, 'gea/src/jsx-runtime.ts') },
+    { find: '@geajs/core/router', replacement: resolve(packagesDir, 'gea/src/router/index.ts') },
+    { find: '@geajs/core/ssr', replacement: resolve(packagesDir, 'gea/src/ssr.ts') },
     { find: '@geajs/core', replacement: resolve(packagesDir, 'gea/src') },
   ]
 }
@@ -46,6 +49,11 @@ export function createConfig(metaUrl: string, port: number) {
   return defineConfig({
     root: __dirname,
     plugins: [geaUiDevSourcePlugin(), geaPlugin(), tailwindcss()],
+    // No jsx-runtime — the gea plugin compiles every JSX site. If esbuild saw a
+    // JSX element here it would try to auto-import jsx-dev-runtime, which no
+    // longer exists. `preserve` means esbuild leaves JSX untouched; the gea
+    // plugin (enforce:"pre") must have already rewritten it.
+    esbuild: { jsx: 'preserve' },
     resolve: {
       alias: geaViteAliases(__dirname),
     },

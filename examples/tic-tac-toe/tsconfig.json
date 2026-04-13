@@ -1,24 +1,16 @@
 {
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "lib": [
-      "ES2020",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "declaration": false,
-    "noEmit": true,
-    "strict": false,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "skipLibCheck": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "@geajs/core"
-  },
+  "extends": "../shared/tsconfig.json",
   "include": [
-    "src/**/*",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.d.ts",
     "../../packages/vite-plugin-gea/gea-env.d.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "vite.config.ts",
+    "vite.config.*.ts",
+    "playwright.config.ts"
   ]
 }

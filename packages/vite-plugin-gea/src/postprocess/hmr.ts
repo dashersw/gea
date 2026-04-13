@@ -1,6 +1,6 @@
 import { t } from '../utils/babel-interop.ts'
 import { id, js, jsExpr } from 'eszter'
-import { ensureImport } from '../codegen/member-chain.ts'
+import { ensureImport } from '../utils/imports.ts'
 
 const hot = () => t.memberExpression(t.metaProperty(t.identifier('import'), t.identifier('meta')), t.identifier('hot'))
 
@@ -11,7 +11,7 @@ const isRelative = (p: string) => p.startsWith('./') || p.startsWith('../')
 const invalidateCb = () => jsExpr`() => ${hot()}.invalidate()`
 
 /** Fallback heuristic when the plugin does not supply `shouldProxyDep`. */
-const legacyShouldProxyDep = (p: string) =>
+const defaultShouldProxyDep = (p: string) =>
   /\.(js|ts)$/.test(p) && !p.match(/(store|state|actions|utils|helpers?|config|constants?)/i)
 
 /**
@@ -40,7 +40,7 @@ export function injectHMR(
   ensureImport(ast, hmrImportSource, 'registerComponentInstance')
   ensureImport(ast, hmrImportSource, 'unregisterComponentInstance')
 
-  const proxyDep = shouldProxyDep ?? legacyShouldProxyDep
+  const proxyDep = shouldProxyDep ?? defaultShouldProxyDep
   const proxiedDeps = rewriteComponentDeps(ast, componentImports, proxyDep)
   if (proxiedDeps.length > 0) {
     ensureImport(ast, hmrImportSource, 'createHotComponentProxy')
@@ -107,14 +107,14 @@ export function injectHMR(
     hmrStmts.push(js`const ${id('__origCreated' + suffix)} = ${id(cn)}.prototype.created;`)
     hmrStmts.push(
       js`${id(cn)}.prototype.created = function(__geaProps) {
-        registerComponentInstance(this.constructor.name, this);
+        registerComponentInstance(${cn}, this);
         return ${id('__origCreated' + suffix)}.call(this, __geaProps);
       };`,
     )
     hmrStmts.push(js`const ${id('__origDispose' + suffix)} = ${id(cn)}.prototype.dispose;`)
     hmrStmts.push(
       js`${id(cn)}.prototype.dispose = function() {
-        unregisterComponentInstance(this.constructor.name, this);
+        unregisterComponentInstance(${cn}, this);
         return ${id('__origDispose' + suffix)}.call(this);
       };`,
     )

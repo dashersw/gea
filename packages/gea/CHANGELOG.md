@@ -61,7 +61,7 @@
   - **Children diff-patch**: Changed `emitInnerHTML` to use `Component[GEA_PATCH_NODE]` for in-place DOM diff-patching when the children prop updates, preserving existing DOM node references and runtime-added attributes instead of replacing via `innerHTML`
 
   ### @geajs/core (patch)
-  - **dnd-manager symbol APIs**: Updated `DndManager._getComponentFromElement`, `_findCompiledArray`, and `_performTransfer` in `gea-ui` to use the correct GEA symbol APIs (`GEA_DOM_COMPONENT`, `geaListItemsSymbol`, `GEA_PARENT_COMPONENT`, `GEA_PROXY_GET_RAW_TARGET`) instead of legacy string property names
+  - **dnd-manager symbol APIs**: Updated `DndManager._getComponentFromElement`, `_findCompiledArray`, and `_performTransfer` in `gea-ui` to use the correct GEA symbol APIs (`GEA_DOM_COMPONENT`, `geaListItemsSymbol`, `GEA_PARENT_COMPONENT`, `GEA_PROXY_GET_RAW_TARGET`) instead of string property names
 
 - [`d04312e`](https://github.com/dashersw/gea/commit/d04312e2fcfd65dbd9ec9ac9f1cade624ec04898) Thanks [@dashersw](https://github.com/dashersw)! - Fix cascading flush failures: when an observer handler throws during `Store.flushAll()` or the global microtask flush, remaining stores in the batch are no longer skipped. Each store's flush is now isolated with try/catch so one error does not block other stores (e.g. dialog close) from updating.
 

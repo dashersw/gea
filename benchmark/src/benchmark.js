@@ -1,6 +1,16 @@
 import { Component } from 'gea'
 import store from './store.ts'
 
+function Button({ id, text, click }) {
+  return (
+    <div class="col-sm-6 smallpad">
+      <button type="button" class="btn btn-primary btn-block" id={id} click={click}>
+        {text}
+      </button>
+    </div>
+  )
+}
+
 export default class Benchmark extends Component {
   template() {
     return (
@@ -12,42 +22,18 @@ export default class Benchmark extends Component {
             </div>
             <div class="col-md-6">
               <div class="row">
-                <div class="col-sm-6 smallpad">
-                  <button type="button" class="btn btn-primary btn-block" id="run" click={() => store.run()}>
-                    Create 1,000 rows
-                  </button>
-                </div>
-                <div class="col-sm-6 smallpad">
-                  <button type="button" class="btn btn-primary btn-block" id="runlots" click={() => store.runLots()}>
-                    Create 10,000 rows
-                  </button>
-                </div>
-                <div class="col-sm-6 smallpad">
-                  <button type="button" class="btn btn-primary btn-block" id="add" click={() => store.add()}>
-                    Append 1,000 rows
-                  </button>
-                </div>
-                <div class="col-sm-6 smallpad">
-                  <button type="button" class="btn btn-primary btn-block" id="update" click={() => store.update()}>
-                    Update every 10th row
-                  </button>
-                </div>
-                <div class="col-sm-6 smallpad">
-                  <button type="button" class="btn btn-primary btn-block" id="clear" click={() => store.clear()}>
-                    Clear
-                  </button>
-                </div>
-                <div class="col-sm-6 smallpad">
-                  <button type="button" class="btn btn-primary btn-block" id="swaprows" click={() => store.swapRows()}>
-                    Swap Rows
-                  </button>
-                </div>
+                <Button id="run" text="Create 1,000 rows" click={() => store.run()} />
+                <Button id="runlots" text="Create 10,000 rows" click={() => store.runLots()} />
+                <Button id="add" text="Append 1,000 rows" click={() => store.add()} />
+                <Button id="update" text="Update every 10th row" click={() => store.update()} />
+                <Button id="clear" text="Clear" click={() => store.clear()} />
+                <Button id="swaprows" text="Swap Rows" click={() => store.swapRows()} />
               </div>
             </div>
           </div>
         </div>
         <table class="table table-hover table-striped test-data">
-          <tbody id="tbody">
+          <tbody>
             {store.data.map((item, index) => (
               <tr key={item.id} class={store.selected === item.id ? 'danger' : ''}>
                 <td class="col-md-1">{item.id}</td>

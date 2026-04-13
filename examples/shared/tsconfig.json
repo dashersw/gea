@@ -1,27 +1,17 @@
 {
   "extends": "../../packages/gea/tsconfig.json",
   "compilerOptions": {
-    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@geajs/core",
     "paths": {
-      "@geajs/core": [
-        "../../packages/gea/src"
-      ],
-      "@geajs/core/jsx-runtime": [
-        "../../packages/gea/src/jsx-runtime"
-      ],
-      "@geajs/ui": [
-        "../../packages/gea-ui/src"
-      ]
+      "@geajs/core": ["../../packages/gea/src"],
+      "@geajs/core/*": ["../../packages/gea/src/*"],
+      "@geajs/ui": ["../../packages/gea-ui/src"],
+      "@geajs/ui/*": ["../../packages/gea-ui/src/*"],
+      "@geajs/mobile": ["../../packages/gea-mobile/src"],
+      "@geajs/mobile/*": ["../../packages/gea-mobile/src/*"]
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    "**/*.d.ts",
-    "../../packages/vite-plugin-gea/gea-env.d.ts"
-  ],
-  "exclude": [
-    "dist",
-    "node_modules"
-  ]
+  "include": ["**/*.ts", "**/*.tsx", "**/*.d.ts", "../../packages/vite-plugin-gea/gea-env.d.ts"],
+  "exclude": ["dist", "node_modules", "vite-config-base.ts", "runtime-only-vite-plugin.ts"]
 }

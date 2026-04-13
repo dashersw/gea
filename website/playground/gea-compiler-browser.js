@@ -44473,9 +44473,7 @@ function nodeReturnsJSX(node) {
   return false;
 }
 function bodyReturnsJSX(block) {
-  const ret = block.body.find(
-    (s) => libExports.isReturnStatement(s) && s.argument != null
-  );
+  const ret = block.body.find((s) => libExports.isReturnStatement(s) && s.argument != null);
   return !!ret && nodeReturnsJSX(ret.argument);
 }
 function throwIfReturnsJSX(name, body) {
@@ -44486,6 +44484,3475 @@ function throwIfReturnsJSX(name, body) {
     err.__geaCompileError = true;
     throw err;
   }
+}
+
+function createEmitContext(reactiveRoot) {
+  return {
+    templateDecls: [],
+    importsNeeded: /* @__PURE__ */ new Set(),
+    tplCounter: 0,
+    listCounter: 0,
+    relClassCounter: 0,
+    reactiveRoot: reactiveRoot ?? libExports.thisExpression(),
+    bindings: /* @__PURE__ */ new Map(),
+    classGetters: /* @__PURE__ */ new Set()
+  };
+}
+function collectBindings(stmts, bindings) {
+  for (const stmt of stmts) {
+    if (!libExports.isVariableDeclaration(stmt)) continue;
+    for (const decl of stmt.declarations) {
+      if (!decl.init) continue;
+      if (libExports.isObjectPattern(decl.id)) {
+        for (const prop of decl.id.properties) {
+          if (!libExports.isObjectProperty(prop)) continue;
+          if (!libExports.isIdentifier(prop.key)) continue;
+          const sourceKey = prop.key.name;
+          let localName;
+          if (libExports.isIdentifier(prop.value)) localName = prop.value.name;
+          else continue;
+          const mem = libExports.memberExpression(cloneExpr$2(decl.init), libExports.identifier(sourceKey));
+          bindings.set(localName, mem);
+        }
+      } else if (libExports.isIdentifier(decl.id)) {
+        bindings.set(decl.id.name, cloneExpr$2(decl.init));
+      }
+    }
+  }
+}
+function cloneExpr$2(expr) {
+  return libExports.cloneNode(expr);
+}
+
+function cloneExpr$1(expr) {
+  return libExports.cloneNode(expr);
+}
+function substituteBindings(expr, bindings) {
+  if (!expr || bindings.size === 0) return expr;
+  if (libExports.isIdentifier(expr)) {
+    const b = bindings.get(expr.name);
+    if (b) {
+      const scoped = new Map(bindings);
+      scoped.delete(expr.name);
+      return substituteBindings(cloneExpr$1(b), scoped);
+    }
+    return expr;
+  }
+  if (libExports.isMemberExpression(expr)) {
+    return {
+      ...expr,
+      object: substituteBindings(expr.object, bindings),
+      // For computed member access `obj[expr]`, the property is an Expression
+      // that may reference bindings too (e.g. `variants[props.variant || 'x']`).
+      property: expr.computed ? substituteBindings(expr.property, bindings) : expr.property
+    };
+  }
+  if (libExports.isCallExpression(expr)) {
+    return {
+      ...expr,
+      callee: substituteBindings(expr.callee, bindings),
+      arguments: expr.arguments.map((a) => substituteBindings(a, bindings))
+    };
+  }
+  if (libExports.isBinaryExpression(expr) || libExports.isLogicalExpression(expr)) {
+    return { ...expr, left: substituteBindings(expr.left, bindings), right: substituteBindings(expr.right, bindings) };
+  }
+  if (libExports.isConditionalExpression(expr)) {
+    return {
+      ...expr,
+      test: substituteBindings(expr.test, bindings),
+      consequent: substituteBindings(expr.consequent, bindings),
+      alternate: substituteBindings(expr.alternate, bindings)
+    };
+  }
+  if (libExports.isUnaryExpression(expr) || libExports.isUpdateExpression(expr)) {
+    return { ...expr, argument: substituteBindings(expr.argument, bindings) };
+  }
+  if (libExports.isTemplateLiteral(expr)) {
+    return { ...expr, expressions: expr.expressions.map((e) => substituteBindings(e, bindings)) };
+  }
+  if (libExports.isOptionalMemberExpression(expr)) {
+    return {
+      ...expr,
+      object: substituteBindings(expr.object, bindings),
+      property: expr.computed ? substituteBindings(expr.property, bindings) : expr.property
+    };
+  }
+  if (libExports.isOptionalCallExpression(expr)) {
+    return {
+      ...expr,
+      callee: substituteBindings(expr.callee, bindings),
+      arguments: expr.arguments.map((a) => substituteBindings(a, bindings))
+    };
+  }
+  if (libExports.isArrowFunctionExpression(expr) || libExports.isFunctionExpression(expr)) {
+    const paramNames = /* @__PURE__ */ new Set();
+    for (const p of expr.params) {
+      if (libExports.isIdentifier(p)) paramNames.add(p.name);
+      else if (libExports.isObjectPattern(p)) {
+        for (const prop of p.properties) {
+          if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.value)) paramNames.add(prop.value.name);
+        }
+      }
+    }
+    const shadowed = new Map(bindings);
+    for (const k of paramNames) shadowed.delete(k);
+    if (shadowed.size === 0) return expr;
+    return { ...expr, body: substituteBindings(expr.body, shadowed) };
+  }
+  if (libExports.isBlockStatement(expr)) {
+    return { ...expr, body: expr.body.map((s) => substituteBindings(s, bindings)) };
+  }
+  if (libExports.isExpressionStatement(expr)) {
+    return { ...expr, expression: substituteBindings(expr.expression, bindings) };
+  }
+  if (libExports.isReturnStatement(expr)) {
+    return expr.argument ? { ...expr, argument: substituteBindings(expr.argument, bindings) } : expr;
+  }
+  if (libExports.isIfStatement(expr)) {
+    return {
+      ...expr,
+      test: substituteBindings(expr.test, bindings),
+      consequent: substituteBindings(expr.consequent, bindings),
+      alternate: expr.alternate ? substituteBindings(expr.alternate, bindings) : null
+    };
+  }
+  if (libExports.isVariableDeclaration(expr)) {
+    return {
+      ...expr,
+      declarations: expr.declarations.map((d) => ({
+        ...d,
+        init: d.init ? substituteBindings(d.init, bindings) : null
+      }))
+    };
+  }
+  if (libExports.isTryStatement(expr)) {
+    return {
+      ...expr,
+      block: substituteBindings(expr.block, bindings),
+      handler: expr.handler ? { ...expr.handler, body: substituteBindings(expr.handler.body, bindings) } : null,
+      finalizer: expr.finalizer ? substituteBindings(expr.finalizer, bindings) : null
+    };
+  }
+  if (libExports.isForStatement(expr) || libExports.isForInStatement(expr) || libExports.isForOfStatement(expr)) {
+    return { ...expr, body: substituteBindings(expr.body, bindings) };
+  }
+  if (libExports.isWhileStatement(expr) || libExports.isDoWhileStatement(expr)) {
+    return { ...expr, test: substituteBindings(expr.test, bindings), body: substituteBindings(expr.body, bindings) };
+  }
+  if (libExports.isSwitchStatement(expr)) {
+    return {
+      ...expr,
+      discriminant: substituteBindings(expr.discriminant, bindings),
+      cases: expr.cases.map((c) => ({
+        ...c,
+        consequent: c.consequent.map((s) => substituteBindings(s, bindings))
+      }))
+    };
+  }
+  if (libExports.isArrayExpression(expr)) {
+    return { ...expr, elements: expr.elements.map((e) => e ? substituteBindings(e, bindings) : e) };
+  }
+  if (libExports.isObjectExpression(expr)) {
+    return {
+      ...expr,
+      properties: expr.properties.map(
+        (p) => libExports.isObjectProperty(p) ? { ...p, value: substituteBindings(p.value, bindings) } : p
+      )
+    };
+  }
+  if (libExports.isSpreadElement(expr)) {
+    return { ...expr, argument: substituteBindings(expr.argument, bindings) };
+  }
+  if (libExports.isNewExpression(expr)) {
+    return {
+      ...expr,
+      callee: substituteBindings(expr.callee, bindings),
+      arguments: expr.arguments.map((a) => substituteBindings(a, bindings))
+    };
+  }
+  if (libExports.isSequenceExpression(expr)) {
+    return { ...expr, expressions: expr.expressions.map((e) => substituteBindings(e, bindings)) };
+  }
+  if (libExports.isAssignmentExpression(expr)) {
+    return { ...expr, right: substituteBindings(expr.right, bindings) };
+  }
+  if (libExports.isJSXElement(expr)) {
+    const newOpening = {
+      ...expr.openingElement,
+      attributes: expr.openingElement.attributes.map((a) => {
+        if (libExports.isJSXAttribute(a) && a.value && libExports.isJSXExpressionContainer(a.value) && !libExports.isJSXEmptyExpression(a.value.expression)) {
+          return { ...a, value: { ...a.value, expression: substituteBindings(a.value.expression, bindings) } };
+        }
+        return a;
+      })
+    };
+    const newChildren = expr.children.map((c) => substituteBindings(c, bindings));
+    return { ...expr, openingElement: newOpening, children: newChildren };
+  }
+  if (libExports.isJSXFragment(expr)) {
+    return { ...expr, children: expr.children.map((c) => substituteBindings(c, bindings)) };
+  }
+  if (libExports.isJSXExpressionContainer(expr) && !libExports.isJSXEmptyExpression(expr.expression)) {
+    return { ...expr, expression: substituteBindings(expr.expression, bindings) };
+  }
+  if (libExports.isJSXText(expr) || libExports.isJSXSpreadChild(expr) || libExports.isJSXEmptyExpression(expr)) {
+    return expr;
+  }
+  return expr;
+}
+
+const SVG_TEMPLATE_ROOT_TAGS = /* @__PURE__ */ new Set([
+  "svg",
+  "animate",
+  "animatemotion",
+  "animatetransform",
+  "circle",
+  "clippath",
+  "defs",
+  "ellipse",
+  "feblend",
+  "fecolormatrix",
+  "fecomponenttransfer",
+  "fecomposite",
+  "feconvolvematrix",
+  "fediffuselighting",
+  "fedisplacementmap",
+  "fedistantlight",
+  "fedropshadow",
+  "feflood",
+  "fefunca",
+  "fefuncb",
+  "fefuncg",
+  "fefuncr",
+  "fegaussianblur",
+  "feimage",
+  "femerge",
+  "femergenode",
+  "femorphology",
+  "feoffset",
+  "fepointlight",
+  "fespecularlighting",
+  "fespotlight",
+  "fetile",
+  "feturbulence",
+  "filter",
+  "foreignobject",
+  "g",
+  "image",
+  "line",
+  "lineargradient",
+  "marker",
+  "mask",
+  "metadata",
+  "mpath",
+  "path",
+  "pattern",
+  "polygon",
+  "polyline",
+  "radialgradient",
+  "rect",
+  "set",
+  "stop",
+  "symbol",
+  "text",
+  "textpath",
+  "tspan",
+  "use"
+]);
+function isSvgTemplateHtml(html) {
+  const match = /^<([A-Za-z][\w:-]*)[\s/>]/.exec(html.trimStart());
+  return !!match && SVG_TEMPLATE_ROOT_TAGS.has(match[1].toLowerCase());
+}
+function emitTemplateDecl(html, tplName) {
+  const rootName = tplName + "_root";
+  const createName = tplName + "_create";
+  const tl = libExports.identifier("t");
+  const statements = [
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        tl,
+        libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createElement")), [
+          libExports.stringLiteral("template")
+        ])
+      )
+    ])
+  ];
+  if (isSvgTemplateHtml(html)) {
+    const svg = libExports.identifier("s");
+    statements.push(
+      libExports.variableDeclaration("const", [
+        libExports.variableDeclarator(
+          svg,
+          libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createElementNS")), [
+            libExports.stringLiteral("http://www.w3.org/2000/svg"),
+            libExports.stringLiteral("svg")
+          ])
+        )
+      ]),
+      libExports.expressionStatement(
+        libExports.assignmentExpression("=", libExports.memberExpression(svg, libExports.identifier("innerHTML")), libExports.stringLiteral(html))
+      ),
+      libExports.whileStatement(
+        libExports.memberExpression(svg, libExports.identifier("firstChild")),
+        libExports.blockStatement([
+          libExports.expressionStatement(
+            libExports.callExpression(
+              libExports.memberExpression(libExports.memberExpression(tl, libExports.identifier("content")), libExports.identifier("appendChild")),
+              [libExports.memberExpression(svg, libExports.identifier("firstChild"))]
+            )
+          )
+        ])
+      )
+    );
+  } else {
+    statements.push(
+      libExports.expressionStatement(
+        libExports.assignmentExpression("=", libExports.memberExpression(tl, libExports.identifier("innerHTML")), libExports.stringLiteral(html))
+      )
+    );
+  }
+  statements.push(
+    libExports.returnStatement(libExports.memberExpression(libExports.memberExpression(tl, libExports.identifier("content")), libExports.identifier("firstChild")))
+  );
+  return [
+    libExports.variableDeclaration("let", [libExports.variableDeclarator(libExports.identifier(rootName), libExports.nullLiteral())]),
+    libExports.functionDeclaration(libExports.identifier(createName), [], libExports.blockStatement(statements))
+  ];
+}
+function emitTemplateCloneExpression(tplName) {
+  const rootId = libExports.identifier(tplName + "_root");
+  const lazyRoot = libExports.logicalExpression(
+    "||",
+    rootId,
+    libExports.assignmentExpression("=", libExports.cloneNode(rootId), libExports.callExpression(libExports.identifier(tplName + "_create"), []))
+  );
+  return libExports.callExpression(libExports.memberExpression(lazyRoot, libExports.identifier("cloneNode")), [libExports.booleanLiteral(true)]);
+}
+
+function emitWalkExpr(root, walk, walkKinds) {
+  let out = root;
+  {
+    for (const i of walk) {
+      if (i === 0) {
+        out = libExports.memberExpression(out, libExports.identifier("firstChild"));
+      } else {
+        out = libExports.memberExpression(libExports.memberExpression(out, libExports.identifier("childNodes")), libExports.numericLiteral(i), true);
+      }
+    }
+    return out;
+  }
+}
+
+function buildMapBranchFn(mapExpr, ctx) {
+  const arrowExpr = mapExpr.arguments[0];
+  const params = arrowExpr.params;
+  const body = libExports.isBlockStatement(arrowExpr.body) ? arrowExpr.body : null;
+  const returned = body ? body.body.find((s) => libExports.isReturnStatement(s))?.argument : arrowExpr.body;
+  if (!returned || !(libExports.isJSXElement(returned) || libExports.isJSXFragment(returned))) {
+    return libExports.arrowFunctionExpression(
+      [libExports.identifier("d")],
+      libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createComment")), [
+        libExports.stringLiteral("")
+      ])
+    );
+  }
+  ctx.importsNeeded.add("keyedList");
+  const itemParam = params[0] && libExports.isIdentifier(params[0]) ? params[0].name : "item";
+  const idxParam = params[1] && libExports.isIdentifier(params[1]) ? params[1].name : "idx";
+  let keyExpr = libExports.identifier(idxParam);
+  if (libExports.isJSXElement(returned)) {
+    for (const attr of returned.openingElement.attributes) {
+      if (libExports.isJSXAttribute(attr) && libExports.isJSXIdentifier(attr.name, { name: "key" })) {
+        if (attr.value && libExports.isJSXExpressionContainer(attr.value) && !libExports.isJSXEmptyExpression(attr.value.expression)) {
+          keyExpr = attr.value.expression;
+        }
+      }
+    }
+  }
+  const createItemBlock = compileJsxToBlock(returned, ctx);
+  const createItemFn = libExports.arrowFunctionExpression(
+    [libExports.identifier(itemParam), libExports.identifier(idxParam), libExports.identifier("d")],
+    createItemBlock
+  );
+  ctx.importsNeeded.add("createItemObservable");
+  ctx.importsNeeded.add("createItemProxy");
+  ctx.importsNeeded.add("_rescue");
+  ctx.importsNeeded.add("GEA_PROXY_RAW");
+  const listId = "L" + ctx.listCounter++;
+  const rqName = "__rq_" + listId;
+  ctx.templateDecls.push(
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(libExports.identifier(rqName), libExports.newExpression(libExports.identifier("Map"), []))
+    ])
+  );
+  const ciName = "__ki_" + listId;
+  const sourceExpr = mapExpr.callee.object;
+  const unwrapExpr = (expr) => libExports.logicalExpression(
+    "||",
+    libExports.logicalExpression(
+      "&&",
+      libExports.logicalExpression(
+        "&&",
+        libExports.cloneNode(expr, true),
+        libExports.binaryExpression("===", libExports.unaryExpression("typeof", libExports.cloneNode(expr, true)), libExports.stringLiteral("object"))
+      ),
+      libExports.memberExpression(libExports.cloneNode(expr, true), libExports.identifier("GEA_PROXY_RAW"), true)
+    ),
+    libExports.cloneNode(expr, true)
+  );
+  const createEntryBody = [];
+  createEntryBody.push(
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier("__k"), libExports.cloneNode(keyExpr, true))]),
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        libExports.identifier("__r"),
+        libExports.callExpression(libExports.identifier("_rescue"), [
+          libExports.identifier(rqName),
+          libExports.callExpression(libExports.identifier("String"), [libExports.identifier("__k")])
+        ])
+      )
+    ]),
+    libExports.ifStatement(libExports.identifier("__r"), libExports.blockStatement([libExports.returnStatement(libExports.identifier("__r"))])),
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        libExports.identifier("__rd"),
+        libExports.callExpression(libExports.memberExpression(libExports.identifier("d"), libExports.identifier("child")), [])
+      )
+    ]),
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        libExports.identifier("__obs"),
+        libExports.callExpression(libExports.identifier("createItemObservable"), [libExports.identifier(itemParam)])
+      )
+    ]),
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        libExports.identifier("__li"),
+        libExports.conditionalExpression(
+          libExports.logicalExpression(
+            "&&",
+            libExports.binaryExpression("!==", libExports.identifier(itemParam), libExports.nullLiteral()),
+            libExports.binaryExpression("===", libExports.unaryExpression("typeof", libExports.identifier(itemParam)), libExports.stringLiteral("object"))
+          ),
+          libExports.callExpression(libExports.identifier("createItemProxy"), [libExports.identifier("__obs")]),
+          libExports.identifier(itemParam)
+        )
+      )
+    ]),
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        libExports.identifier("__el"),
+        libExports.callExpression(libExports.identifier(ciName), [libExports.identifier("__li"), libExports.identifier(idxParam), libExports.identifier("__rd")])
+      )
+    ]),
+    libExports.returnStatement(
+      libExports.objectExpression([
+        libExports.objectProperty(libExports.identifier("key"), libExports.identifier("__k")),
+        libExports.objectProperty(libExports.identifier("item"), unwrapExpr(libExports.identifier(itemParam))),
+        libExports.objectProperty(libExports.identifier("element"), libExports.identifier("__el")),
+        libExports.objectProperty(libExports.identifier("disposer"), libExports.identifier("__rd")),
+        libExports.objectProperty(libExports.identifier("obs"), libExports.identifier("__obs"))
+      ])
+    )
+  );
+  const createEntryFn = libExports.arrowFunctionExpression(
+    [libExports.identifier(itemParam), libExports.identifier(idxParam)],
+    libExports.blockStatement(createEntryBody)
+  );
+  const patchEntryFn = libExports.arrowFunctionExpression(
+    [libExports.identifier("e"), libExports.identifier("newItem"), libExports.identifier("newIdx")],
+    libExports.blockStatement([
+      libExports.expressionStatement(
+        libExports.assignmentExpression(
+          "=",
+          libExports.memberExpression(libExports.identifier("e"), libExports.identifier("item")),
+          unwrapExpr(libExports.identifier("newItem"))
+        )
+      ),
+      libExports.expressionStatement(
+        libExports.assignmentExpression(
+          "=",
+          libExports.memberExpression(libExports.memberExpression(libExports.identifier("e"), libExports.identifier("obs")), libExports.identifier("current")),
+          libExports.identifier("newItem")
+        )
+      ),
+      libExports.expressionStatement(
+        libExports.callExpression(
+          libExports.memberExpression(libExports.memberExpression(libExports.identifier("e"), libExports.identifier("obs")), libExports.identifier("_fire")),
+          []
+        )
+      )
+    ])
+  );
+  const config = libExports.objectExpression([
+    libExports.objectProperty(libExports.identifier("container"), libExports.identifier("root")),
+    libExports.objectProperty(libExports.identifier("anchor"), libExports.identifier("anchor")),
+    libExports.objectProperty(libExports.identifier("disposer"), libExports.identifier("d")),
+    libExports.objectProperty(libExports.identifier("root"), ctx.reactiveRoot),
+    libExports.objectProperty(libExports.identifier("pending"), libExports.identifier(rqName)),
+    libExports.objectProperty(libExports.identifier("path"), libExports.arrowFunctionExpression([], sourceExpr)),
+    libExports.objectProperty(
+      libExports.identifier("key"),
+      libExports.arrowFunctionExpression([libExports.identifier(itemParam), libExports.identifier(idxParam)], keyExpr)
+    ),
+    libExports.objectProperty(libExports.identifier("createEntry"), createEntryFn),
+    libExports.objectProperty(libExports.identifier("patchEntry"), patchEntryFn)
+  ]);
+  const body2 = libExports.blockStatement([
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        libExports.identifier("root"),
+        libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createElement")), [
+          libExports.stringLiteral("span")
+        ])
+      )
+    ]),
+    libExports.expressionStatement(
+      libExports.callExpression(libExports.memberExpression(libExports.identifier("root"), libExports.identifier("setAttribute")), [
+        libExports.stringLiteral("style"),
+        libExports.stringLiteral("display:contents")
+      ])
+    ),
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        libExports.identifier("anchor"),
+        libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createComment")), [
+          libExports.stringLiteral("")
+        ])
+      )
+    ]),
+    libExports.expressionStatement(
+      libExports.callExpression(libExports.memberExpression(libExports.identifier("root"), libExports.identifier("appendChild")), [libExports.identifier("anchor")])
+    ),
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier(ciName), createItemFn)]),
+    libExports.expressionStatement(libExports.callExpression(libExports.identifier("keyedList"), [config])),
+    libExports.returnStatement(libExports.identifier("root"))
+  ]);
+  return libExports.arrowFunctionExpression([libExports.identifier("d")], body2);
+}
+
+function cloneExpr(expr) {
+  return libExports.cloneNode(expr);
+}
+function touchKey(root, prop) {
+  if (libExports.isThisExpression(root)) return libExports.isIdentifier(prop) ? `this.${prop.name}` : null;
+  if (!libExports.isIdentifier(root)) return null;
+  if (libExports.isIdentifier(prop)) return `${root.name}.${prop.name}`;
+  if (libExports.isStringLiteral(prop) || libExports.isNumericLiteral(prop)) return `${root.name}.${String(prop.value)}`;
+  return null;
+}
+function firstTrackedMember(expr) {
+  const chain = [];
+  let cur = expr;
+  while (libExports.isMemberExpression(cur) || libExports.isOptionalMemberExpression(cur)) {
+    chain.unshift(cur);
+    cur = cur.object;
+  }
+  if (!libExports.isIdentifier(cur) && !libExports.isThisExpression(cur) || chain.length === 0) return null;
+  const first = chain[0];
+  if (libExports.isThisExpression(cur) && !first.computed && libExports.isIdentifier(first.property, { name: "props" }) && chain.length > 1) {
+    const second = chain[1];
+    const key2 = libExports.isIdentifier(second.property) ? `this.props.${second.property.name}` : libExports.isStringLiteral(second.property) || libExports.isNumericLiteral(second.property) ? `this.props.${String(second.property.value)}` : null;
+    return key2 ? {
+      key: key2,
+      expr: libExports.memberExpression(
+        libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")),
+        cloneExpr(second.property),
+        second.computed
+      )
+    } : null;
+  }
+  const key = touchKey(cur, first.property);
+  return key ? {
+    key,
+    expr: libExports.memberExpression(cloneExpr(cur), cloneExpr(first.property), first.computed)
+  } : null;
+}
+function collectTrackedMembers(node, out) {
+  if (!node || typeof node !== "object") return;
+  if (libExports.isArrowFunctionExpression(node) || libExports.isFunctionExpression(node) || libExports.isFunctionDeclaration(node)) return;
+  if (libExports.isMemberExpression(node) || libExports.isOptionalMemberExpression(node)) {
+    const touch = firstTrackedMember(node);
+    if (touch) out.set(touch.key, touch.expr);
+  }
+  for (const k of Object.keys(node)) {
+    if (k === "loc" || k === "start" || k === "end" || k === "type" || k === "extra" || k.endsWith("Comments")) continue;
+    const v = node[k];
+    if (Array.isArray(v)) for (const item of v) collectTrackedMembers(item, out);
+    else collectTrackedMembers(v, out);
+  }
+}
+function collectSkippedTrackedMembers(node, out) {
+  if (!node || typeof node !== "object") return;
+  if (libExports.isArrowFunctionExpression(node) || libExports.isFunctionExpression(node) || libExports.isFunctionDeclaration(node)) return;
+  if (libExports.isLogicalExpression(node)) {
+    collectTrackedMembers(node.right, out);
+    collectSkippedTrackedMembers(node.left, out);
+    collectSkippedTrackedMembers(node.right, out);
+    return;
+  }
+  if (libExports.isConditionalExpression(node)) {
+    collectTrackedMembers(node.consequent, out);
+    collectTrackedMembers(node.alternate, out);
+    collectSkippedTrackedMembers(node.test, out);
+    collectSkippedTrackedMembers(node.consequent, out);
+    collectSkippedTrackedMembers(node.alternate, out);
+    return;
+  }
+  for (const k of Object.keys(node)) {
+    if (k === "loc" || k === "start" || k === "end" || k === "type" || k === "extra" || k.endsWith("Comments")) continue;
+    const v = node[k];
+    if (Array.isArray(v)) for (const item of v) collectSkippedTrackedMembers(item, out);
+    else collectSkippedTrackedMembers(v, out);
+  }
+}
+function eagerTrackSkippedReads(expr) {
+  const touches = /* @__PURE__ */ new Map();
+  collectSkippedTrackedMembers(expr, touches);
+  if (touches.size === 0) return expr;
+  return libExports.sequenceExpression([...Array.from(touches.values()).map((e) => libExports.unaryExpression("void", e)), expr]);
+}
+function getterPathOrGetter(expr) {
+  return { kind: "getter", value: libExports.arrowFunctionExpression([], eagerTrackSkippedReads(expr)) };
+}
+function tryExtractPathAndRoot(expr) {
+  const parts = [];
+  let cur = expr;
+  while (libExports.isMemberExpression(cur)) {
+    if (cur.computed) {
+      if (!libExports.isStringLiteral(cur.property) && !libExports.isNumericLiteral(cur.property)) return null;
+      parts.unshift(String(cur.property.value));
+    } else {
+      if (!libExports.isIdentifier(cur.property)) return null;
+      parts.unshift(cur.property.name);
+    }
+    cur = cur.object;
+  }
+  if (libExports.isThisExpression(cur)) return { root: libExports.thisExpression(), path: parts };
+  if (libExports.isIdentifier(cur)) return { root: libExports.identifier(cur.name), path: parts };
+  return null;
+}
+
+function emitConditionalSlot(slot, stmts, ctx) {
+  ctx.importsNeeded.add("conditional");
+  const anchorId = libExports.identifier("anchor" + slot.index);
+  const condFn = libExports.arrowFunctionExpression([], eagerTrackSkippedReads(substituteBindings(slot.expr, ctx.bindings)));
+  const mkTrue = buildBranchFn(slot.payload.mkTrue, ctx);
+  const mkFalse = slot.payload.mkFalse ? buildBranchFn(slot.payload.mkFalse, ctx) : libExports.identifier("undefined");
+  stmts.push(
+    libExports.expressionStatement(
+      libExports.callExpression(libExports.identifier("conditional"), [
+        libExports.memberExpression(anchorId, libExports.identifier("parentNode")),
+        anchorId,
+        libExports.identifier("d"),
+        ctx.reactiveRoot,
+        condFn,
+        mkTrue,
+        mkFalse
+      ])
+    )
+  );
+}
+function buildBranchFn(branchExpr, ctx) {
+  if (!branchExpr || libExports.isNullLiteral(branchExpr) || libExports.isIdentifier(branchExpr, { name: "undefined" })) {
+    return libExports.arrowFunctionExpression(
+      [libExports.identifier("d")],
+      libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createComment")), [
+        libExports.stringLiteral("")
+      ])
+    );
+  }
+  if (libExports.isStringLiteral(branchExpr)) {
+    return libExports.arrowFunctionExpression(
+      [libExports.identifier("d")],
+      libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createTextNode")), [branchExpr])
+    );
+  }
+  if (libExports.isJSXElement(branchExpr) || libExports.isJSXFragment(branchExpr)) {
+    const block = compileJsxToBlock(branchExpr, ctx);
+    return libExports.arrowFunctionExpression([libExports.identifier("d")], block);
+  }
+  if (libExports.isCallExpression(branchExpr) && branchExpr.arguments.length === 0 && branchExpr.callee.__geaHoistedIIFE && libExports.isBlockStatement(branchExpr.callee.body)) {
+    const block = branchExpr.callee.body;
+    const last = block.body[block.body.length - 1];
+    if (last && libExports.isReturnStatement(last) && last.argument && (libExports.isJSXElement(last.argument) || libExports.isJSXFragment(last.argument))) {
+      const hoisted = block.body.slice(0, -1).map((s) => substituteBindings(s, ctx.bindings));
+      const saved = new Map(ctx.bindings);
+      collectBindings(hoisted, ctx.bindings);
+      let inner;
+      try {
+        inner = compileJsxToBlock(last.argument, ctx);
+      } finally {
+        ctx.bindings.clear();
+        for (const [k, v] of saved) ctx.bindings.set(k, v);
+      }
+      const keptHoisted = hoisted.filter((s) => !libExports.isVariableDeclaration(s));
+      const combined = libExports.blockStatement([...keptHoisted, ...inner.body]);
+      return libExports.arrowFunctionExpression([libExports.identifier("d")], combined);
+    }
+  }
+  const substituted = substituteBindings(branchExpr, ctx.bindings);
+  if (libExports.isIdentifier(substituted) || libExports.isMemberExpression(substituted)) {
+    return libExports.arrowFunctionExpression(
+      [libExports.identifier("d")],
+      libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createTextNode")), [
+        libExports.callExpression(libExports.identifier("String"), [substituted])
+      ])
+    );
+  }
+  if (libExports.isCallExpression(substituted) && libExports.isMemberExpression(substituted.callee) && !substituted.callee.computed && libExports.isIdentifier(substituted.callee.property, { name: "map" }) && substituted.arguments.length >= 1 && (libExports.isArrowFunctionExpression(substituted.arguments[0]) || libExports.isFunctionExpression(substituted.arguments[0]))) {
+    return buildMapBranchFn(substituted, ctx);
+  }
+  return libExports.arrowFunctionExpression(
+    [libExports.identifier("d")],
+    libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createComment")), [
+      libExports.stringLiteral("")
+    ])
+  );
+}
+
+function buildCreateTemplateMethod(jsxRoot, ctx, preceding) {
+  if (preceding && preceding.length > 0) collectBindings(preceding, ctx.bindings);
+  const jsxBlock = compileJsxToBlock(jsxRoot, ctx);
+  const keptPreceding = (preceding ?? []).filter((s) => {
+    if (libExports.isReturnStatement(s) || libExports.isThrowStatement(s)) return false;
+    if (libExports.isVariableDeclaration(s)) {
+      const allPatterns = s.declarations.every((d) => libExports.isObjectPattern(d.id) || libExports.isArrayPattern(d.id));
+      if (allPatterns) return false;
+    }
+    return true;
+  }).map((s) => substituteBindings(s, ctx.bindings)).map((s) => lowerJsxInStatement(s, ctx));
+  const stmts = keptPreceding.concat(jsxBlock.body);
+  return libExports.classMethod(
+    "method",
+    libExports.identifier("GEA_CREATE_TEMPLATE"),
+    [libExports.identifier("d")],
+    libExports.blockStatement(stmts),
+    true,
+    false
+  );
+}
+function lowerJsxInStatement(stmt, ctx) {
+  if (!stmt) return stmt;
+  if (libExports.isReturnStatement(stmt)) {
+    if (stmt.argument && (libExports.isJSXElement(stmt.argument) || libExports.isJSXFragment(stmt.argument))) {
+      const block = compileJsxToBlock(stmt.argument, ctx);
+      return libExports.blockStatement(block.body);
+    }
+    return stmt.argument ? { ...stmt, argument: lowerJsxInExpression(stmt.argument, ctx) } : stmt;
+  }
+  if (libExports.isIfStatement(stmt)) {
+    return {
+      ...stmt,
+      test: lowerJsxInExpression(stmt.test, ctx),
+      consequent: lowerJsxInStatement(stmt.consequent, ctx),
+      alternate: stmt.alternate ? lowerJsxInStatement(stmt.alternate, ctx) : null
+    };
+  }
+  if (libExports.isBlockStatement(stmt)) {
+    return { ...stmt, body: stmt.body.map((s) => lowerJsxInStatement(s, ctx)) };
+  }
+  if (libExports.isExpressionStatement(stmt)) {
+    return { ...stmt, expression: lowerJsxInExpression(stmt.expression, ctx) };
+  }
+  if (libExports.isVariableDeclaration(stmt)) {
+    return {
+      ...stmt,
+      declarations: stmt.declarations.map((d) => ({
+        ...d,
+        init: d.init ? lowerJsxInExpression(d.init, ctx) : null
+      }))
+    };
+  }
+  if (libExports.isForStatement(stmt) || libExports.isForInStatement(stmt) || libExports.isForOfStatement(stmt)) {
+    return { ...stmt, body: lowerJsxInStatement(stmt.body, ctx) };
+  }
+  if (libExports.isWhileStatement(stmt) || libExports.isDoWhileStatement(stmt)) {
+    return { ...stmt, body: lowerJsxInStatement(stmt.body, ctx) };
+  }
+  if (libExports.isSwitchStatement(stmt)) {
+    return {
+      ...stmt,
+      cases: stmt.cases.map((c) => ({
+        ...c,
+        consequent: c.consequent.map((s) => lowerJsxInStatement(s, ctx))
+      }))
+    };
+  }
+  if (libExports.isTryStatement(stmt)) {
+    return {
+      ...stmt,
+      block: lowerJsxInStatement(stmt.block, ctx),
+      handler: stmt.handler ? { ...stmt.handler, body: lowerJsxInStatement(stmt.handler.body, ctx) } : null,
+      finalizer: stmt.finalizer ? lowerJsxInStatement(stmt.finalizer, ctx) : null
+    };
+  }
+  return stmt;
+}
+function containsJsx(node) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isJSXElement(node) || libExports.isJSXFragment(node)) return true;
+  for (const k of Object.keys(node)) {
+    if (k === "loc" || k === "start" || k === "end" || k === "type") continue;
+    const v = node[k];
+    if (Array.isArray(v)) {
+      for (const x of v) if (containsJsx(x)) return true;
+    } else if (v && typeof v === "object") {
+      if (containsJsx(v)) return true;
+    }
+  }
+  return false;
+}
+function lowerJsxInExpression(expr, ctx) {
+  if (!expr) return expr;
+  if (libExports.isJSXElement(expr) || libExports.isJSXFragment(expr)) {
+    const block = compileJsxToBlock(expr, ctx);
+    return libExports.callExpression(libExports.arrowFunctionExpression([], block), []);
+  }
+  if (libExports.isConditionalExpression(expr)) {
+    return {
+      ...expr,
+      test: lowerJsxInExpression(expr.test, ctx),
+      consequent: lowerJsxInExpression(expr.consequent, ctx),
+      alternate: lowerJsxInExpression(expr.alternate, ctx)
+    };
+  }
+  if (libExports.isLogicalExpression(expr) || libExports.isBinaryExpression(expr)) {
+    return { ...expr, left: lowerJsxInExpression(expr.left, ctx), right: lowerJsxInExpression(expr.right, ctx) };
+  }
+  if (libExports.isCallExpression(expr) || libExports.isOptionalCallExpression(expr)) {
+    return {
+      ...expr,
+      callee: lowerJsxInExpression(expr.callee, ctx),
+      arguments: expr.arguments.map((a) => lowerJsxInExpression(a, ctx))
+    };
+  }
+  if (libExports.isMemberExpression(expr) || libExports.isOptionalMemberExpression(expr)) {
+    return {
+      ...expr,
+      object: lowerJsxInExpression(expr.object, ctx),
+      property: expr.computed ? lowerJsxInExpression(expr.property, ctx) : expr.property
+    };
+  }
+  if (libExports.isUnaryExpression(expr) || libExports.isUpdateExpression(expr)) {
+    return { ...expr, argument: lowerJsxInExpression(expr.argument, ctx) };
+  }
+  if (libExports.isArrayExpression(expr)) {
+    return { ...expr, elements: expr.elements.map((e) => e ? lowerJsxInExpression(e, ctx) : e) };
+  }
+  if (libExports.isObjectExpression(expr)) {
+    return {
+      ...expr,
+      properties: expr.properties.map(
+        (p) => libExports.isObjectProperty(p) ? { ...p, value: lowerJsxInExpression(p.value, ctx) } : p
+      )
+    };
+  }
+  if (libExports.isTemplateLiteral(expr)) {
+    return { ...expr, expressions: expr.expressions.map((e) => lowerJsxInExpression(e, ctx)) };
+  }
+  if (libExports.isAssignmentExpression(expr)) {
+    return { ...expr, right: lowerJsxInExpression(expr.right, ctx) };
+  }
+  if (libExports.isSequenceExpression(expr)) {
+    return { ...expr, expressions: expr.expressions.map((e) => lowerJsxInExpression(e, ctx)) };
+  }
+  if (libExports.isNewExpression(expr)) {
+    return {
+      ...expr,
+      callee: lowerJsxInExpression(expr.callee, ctx),
+      arguments: expr.arguments.map((a) => lowerJsxInExpression(a, ctx))
+    };
+  }
+  if (libExports.isArrowFunctionExpression(expr) || libExports.isFunctionExpression(expr)) {
+    const body = libExports.isBlockStatement(expr.body) ? lowerJsxInStatement(expr.body, ctx) : lowerJsxInExpression(expr.body, ctx);
+    return { ...expr, body };
+  }
+  return expr;
+}
+
+function expressionToPathOrGetter(expr, ctx, opts) {
+  if (ctx && containsJsx(expr)) {
+    expr = lowerJsxInExpression(expr, ctx);
+  }
+  if (ctx && libExports.isIdentifier(ctx.reactiveRoot) && ctx.reactiveRoot.name === "props") {
+    return getterPathOrGetter(expr);
+  }
+  const info = tryExtractPathAndRoot(expr);
+  if (info) {
+    if (info.path[0] === "props") {
+      return getterPathOrGetter(expr);
+    }
+    const rootIsThis = libExports.isThisExpression(info.root);
+    const ctxRootIsThis = ctx ? libExports.isThisExpression(ctx.reactiveRoot) : true;
+    if (rootIsThis === ctxRootIsThis) {
+      if (rootIsThis && ctx && ctx.classGetters.has(info.path[0])) {
+        return getterPathOrGetter(expr);
+      }
+      return { kind: "path", value: libExports.arrayExpression(info.path.map((p) => libExports.stringLiteral(p))) };
+    }
+    if (opts?.allowForeignRoot && libExports.isIdentifier(info.root)) {
+      return { kind: "path", value: libExports.arrayExpression(info.path.map((p) => libExports.stringLiteral(p))), root: info.root };
+    }
+    return getterPathOrGetter(expr);
+  }
+  return getterPathOrGetter(expr);
+}
+
+function buildKeyedListConfig(options) {
+  const cfgProps = [
+    libExports.objectProperty(libExports.identifier("container"), libExports.memberExpression(options.anchorId, libExports.identifier("parentNode"))),
+    libExports.objectProperty(libExports.identifier("anchor"), options.anchorId),
+    libExports.objectProperty(libExports.identifier("disposer"), libExports.identifier("d")),
+    libExports.objectProperty(libExports.identifier("root"), options.listRoot),
+    libExports.objectProperty(libExports.identifier("pending"), libExports.identifier(options.pendingName)),
+    libExports.objectProperty(libExports.identifier("path"), options.path),
+    libExports.objectProperty(libExports.identifier("key"), options.keyFn),
+    libExports.objectProperty(libExports.identifier("createEntry"), options.createEntryArrow),
+    libExports.objectProperty(libExports.identifier("patchEntry"), options.patchEntryArrow)
+  ];
+  addRelationalClassCallbacks(cfgProps, options.relMatches, options.itemParam);
+  return libExports.objectExpression(cfgProps);
+}
+function addRelationalClassCallbacks(cfgProps, relMatches, itemParam) {
+  if (relMatches.length === 0 || !libExports.isIdentifier(itemParam)) return;
+  const eId = libExports.identifier("e");
+  const byKeyMatches = relMatches.filter((m) => m.useByKey);
+  const mapMatches = relMatches.filter((m) => !m.useByKey);
+  if (mapMatches.length > 0) {
+    const body = mapMatches.map((m) => {
+      const mapId = libExports.identifier("__rowEls_" + m.id);
+      const keyRead = libExports.memberExpression(libExports.memberExpression(eId, libExports.identifier("item")), libExports.identifier(m.itemKeyProp));
+      return libExports.expressionStatement(libExports.unaryExpression("delete", libExports.memberExpression(mapId, keyRead, true)));
+    });
+    cfgProps.push(
+      libExports.objectProperty(libExports.identifier("onItemRemove"), libExports.arrowFunctionExpression([eId], libExports.blockStatement(body)))
+    );
+  }
+  if (byKeyMatches.length > 0) {
+    const bkArg = libExports.identifier("bk");
+    const assignStmts = byKeyMatches.map(
+      (m) => libExports.expressionStatement(libExports.assignmentExpression("=", libExports.identifier("__byKey_" + m.id), libExports.cloneNode(bkArg, true)))
+    );
+    cfgProps.push(
+      libExports.objectProperty(
+        libExports.identifier("onByKeyCreated"),
+        libExports.arrowFunctionExpression([bkArg], libExports.blockStatement(assignStmts))
+      )
+    );
+  }
+}
+
+function extractWalkFromExpr(expr) {
+  const w = extractWalkAndKindsFromExpr(expr);
+  return w ? w.walk : null;
+}
+function extractWalkAndKindsFromExpr(expr) {
+  return extractWalkAndKindsFromExprRootedAt(expr, "root");
+}
+function cloneAndSubstituteIdents(node, subst) {
+  if (!node || typeof node !== "object") return node;
+  if (node.type === "Identifier" && subst[node.name] !== void 0) return libExports.identifier(subst[node.name]);
+  const clone = { type: node.type };
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || key === "start" || key === "end" || key === "leadingComments" || key === "trailingComments" || key === "innerComments")
+      continue;
+    const v = node[key];
+    if (Array.isArray(v)) clone[key] = v.map((x) => cloneAndSubstituteIdents(x, subst));
+    else if (v && typeof v === "object" && typeof v.type === "string") clone[key] = cloneAndSubstituteIdents(v, subst);
+    else clone[key] = v;
+  }
+  return clone;
+}
+function extractWalkAndKindsFromExprRootedAt(expr, rootName) {
+  const kinds = [];
+  const walk = [];
+  let cur = expr;
+  while (cur && libExports.isMemberExpression(cur)) {
+    if (cur.computed) {
+      const prop = cur.property;
+      if (!libExports.isNumericLiteral(prop)) return null;
+      const inner = cur.object;
+      if (!libExports.isMemberExpression(inner) || inner.computed || !libExports.isIdentifier(inner.property, { name: "childNodes" })) {
+        return null;
+      }
+      const n = prop.value;
+      kinds.unshift({ child: n });
+      walk.unshift(n);
+      cur = inner.object;
+      continue;
+    }
+    if (!libExports.isIdentifier(cur.property)) return null;
+    const propName = cur.property.name;
+    if (propName === "nextElementSibling") {
+      let count = 1;
+      cur = cur.object;
+      while (libExports.isMemberExpression(cur) && !cur.computed && libExports.isIdentifier(cur.property, { name: "nextElementSibling" })) {
+        count++;
+        cur = cur.object;
+      }
+      if (!libExports.isMemberExpression(cur) || cur.computed || !libExports.isIdentifier(cur.property, { name: "firstElementChild" })) {
+        return null;
+      }
+      kinds.unshift({ elem: count });
+      walk.unshift(count);
+      cur = cur.object;
+      continue;
+    }
+    if (propName === "firstElementChild") {
+      kinds.unshift({ elem: 0 });
+      walk.unshift(0);
+      cur = cur.object;
+      continue;
+    }
+    if (propName === "firstChild") {
+      kinds.unshift({ child: 0 });
+      walk.unshift(0);
+      cur = cur.object;
+      continue;
+    }
+    return null;
+  }
+  return libExports.isIdentifier(cur, { name: rootName }) ? { walk, walkKinds: kinds } : null;
+}
+function rewriteWalksWithPrefixPiggyback(node, declWalks) {
+  if (!node || typeof node !== "object") return node;
+  if (libExports.isMemberExpression(node) && (node.computed || libExports.isIdentifier(node.property) && (node.property.name === "firstChild" || node.property.name === "firstElementChild" || node.property.name === "nextElementSibling"))) {
+    const wk = extractWalkAndKindsFromExprRootedAt(node, "root");
+    if (wk) {
+      let best = null;
+      for (const dw of declWalks) {
+        if (dw.walk.length === 0 || dw.walk.length >= wk.walk.length) continue;
+        let isPrefix = true;
+        for (let i = 0; i < dw.walk.length; i++) {
+          if (dw.walk[i] !== wk.walk[i]) {
+            isPrefix = false;
+            break;
+          }
+        }
+        if (isPrefix && (!best || dw.walk.length > best.walk.length)) best = dw;
+      }
+      if (best) {
+        const suffix = wk.walk.slice(best.walk.length);
+        wk.walkKinds.slice(best.walk.length);
+        return emitWalkExpr(libExports.identifier(best.name), suffix);
+      }
+    }
+  }
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || key === "start" || key === "end" || key === "leadingComments" || key === "trailingComments" || key === "innerComments")
+      continue;
+    const v = node[key];
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) v[i] = rewriteWalksWithPrefixPiggyback(v[i], declWalks);
+    } else if (v && typeof v === "object" && typeof v.type === "string") {
+      node[key] = rewriteWalksWithPrefixPiggyback(v, declWalks);
+    }
+  }
+  return node;
+}
+
+function applyPatchRowPlan(block, plan, itemName, idxParam) {
+  const keep2 = pruneExtractedCreateItemStatements(plan.keep, plan.deadBindings);
+  const returnIdx = findReturnIndex(keep2);
+  const subst = { el: "root" };
+  if (itemName !== "item") subst.item = itemName;
+  const declWalks = collectDeclWalks(keep2);
+  const inlineStmts = plan.initStmts.map((stmt) => {
+    const cloned = cloneAndSubstituteIdents(stmt, subst);
+    return rewriteWalksWithPrefixPiggyback(cloned, declWalks);
+  });
+  keep2.splice(returnIdx, 0, ...inlineStmts);
+  block.body = keep2;
+  const elParam = libExports.identifier("el");
+  const itemParam = libExports.identifier("item");
+  const prevParam = libExports.identifier("prev");
+  const idxId = libExports.isIdentifier(idxParam) ? idxParam : libExports.identifier("idx");
+  return libExports.arrowFunctionExpression([elParam, itemParam, prevParam, idxId], libExports.blockStatement(plan.patchStmts));
+}
+function pruneExtractedCreateItemStatements(keep, deadBindings) {
+  const keep2 = [];
+  for (const stmt of keep) {
+    if (libExports.isVariableDeclaration(stmt)) {
+      const kept = stmt.declarations.filter((d) => !(libExports.isIdentifier(d.id) && deadBindings.has(d.id.name)));
+      if (kept.length === 0) continue;
+      if (kept.length !== stmt.declarations.length) {
+        keep2.push(libExports.variableDeclaration(stmt.kind, kept));
+        continue;
+      }
+    }
+    if (isDeadReplaceWith(stmt, deadBindings)) continue;
+    keep2.push(stmt);
+  }
+  return keep2;
+}
+function isDeadReplaceWith(stmt, deadBindings) {
+  if (!libExports.isExpressionStatement(stmt) || !libExports.isCallExpression(stmt.expression)) return false;
+  const call = stmt.expression;
+  return libExports.isMemberExpression(call.callee) && libExports.isIdentifier(call.callee.property, { name: "replaceWith" }) && call.arguments.length === 1 && libExports.isIdentifier(call.arguments[0]) && deadBindings.has(call.arguments[0].name);
+}
+function findReturnIndex(stmts) {
+  for (let i = stmts.length - 1; i >= 0; i--) {
+    if (libExports.isReturnStatement(stmts[i])) return i;
+  }
+  return stmts.length;
+}
+function collectDeclWalks(stmts) {
+  const declWalks = [];
+  for (const stmt of stmts) {
+    if (!libExports.isVariableDeclaration(stmt)) continue;
+    for (const d of stmt.declarations) {
+      if (!libExports.isIdentifier(d.id) || !d.init) continue;
+      const w = extractWalkFromExpr(d.init);
+      if (w) declWalks.push({ name: d.id.name, walk: w });
+    }
+  }
+  return declWalks;
+}
+
+function buildPatchWrite(input) {
+  const itemPath = extractItemPath(input.getterBody, input.itemName);
+  if (!itemPath || itemPath.length === 0) return { kind: "keep" };
+  if (input.kind === "attr") {
+    const attrName = input.args[3];
+    if (!libExports.isStringLiteral(attrName)) return { kind: "keep" };
+    if (attrName.value === "key") return { kind: "drop" };
+  }
+  const isDirectText = input.kind === "text" && !input.nonDirectTextWalks.has(input.walkName);
+  const canStash = input.walk.length > 0 && (input.kind !== "text" || isDirectText);
+  const slotN = canStash ? getStashSlot(input.stashSlots, input.walk) : null;
+  const elParam = libExports.identifier("el");
+  const itemParam = libExports.identifier("item");
+  const nodeExpr = slotN !== null ? libExports.memberExpression(elParam, libExports.identifier("__r" + slotN)) : input.walk.length === 0 ? elParam : emitWalkExpr(elParam, input.walk, input.walkKinds);
+  const initNodeExpr = input.walk.length === 0 ? elParam : emitWalkExpr(elParam, input.walk, input.walkKinds);
+  const itemAccess = buildItemAccess(itemParam, itemPath);
+  const lazyCacheExpr = slotN !== null ? libExports.logicalExpression(
+    "||",
+    libExports.memberExpression(elParam, libExports.identifier("__r" + slotN)),
+    libExports.assignmentExpression(
+      "=",
+      libExports.memberExpression(elParam, libExports.identifier("__r" + slotN)),
+      emitWalkExpr(elParam, input.walk, input.walkKinds)
+    )
+  ) : nodeExpr;
+  const patchStmt = buildPatchStatement(input.kind, input.args, lazyCacheExpr, itemAccess, itemPath);
+  const initStmt = buildInitStatement(input.kind, input.args, initNodeExpr, itemPath);
+  const deadBindings = input.kind === "text" ? [input.targetName, input.walkName] : [input.targetName];
+  return { kind: "write", patchStmt, initStmt, deadBindings };
+}
+function getStashSlot(stashSlots, walk) {
+  const key = walk.join(",");
+  const existing = stashSlots.get(key);
+  if (existing !== void 0) return existing;
+  const slot = stashSlots.size;
+  stashSlots.set(key, slot);
+  return slot;
+}
+function buildPatchStatement(kind, args, lazyCacheExpr, itemAccess, itemPath) {
+  const n = libExports.identifier("__n");
+  if (kind === "text") {
+    return libExports.blockStatement([
+      libExports.variableDeclaration("const", [libExports.variableDeclarator(n, lazyCacheExpr)]),
+      libExports.expressionStatement(
+        libExports.assignmentExpression("=", libExports.memberExpression(n, libExports.identifier("nodeValue")), textValueExpression(itemAccess))
+      )
+    ]);
+  }
+  if (kind === "value") {
+    return libExports.blockStatement([
+      libExports.variableDeclaration("const", [libExports.variableDeclarator(n, lazyCacheExpr)]),
+      libExports.expressionStatement(libExports.assignmentExpression("=", libExports.memberExpression(n, libExports.identifier("value")), itemAccess))
+    ]);
+  }
+  return libExports.blockStatement([
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(n, lazyCacheExpr)]),
+    libExports.expressionStatement(
+      libExports.callExpression(libExports.memberExpression(n, libExports.identifier("setAttribute")), [
+        args[3],
+        libExports.callExpression(libExports.identifier("String"), [buildItemAccess(libExports.identifier("item"), itemPath)])
+      ])
+    )
+  ]);
+}
+function buildInitStatement(kind, args, initNodeExpr, itemPath) {
+  const itemParam = libExports.identifier("item");
+  if (kind === "text") {
+    const n = libExports.identifier("__n");
+    return libExports.blockStatement([
+      libExports.variableDeclaration("const", [libExports.variableDeclarator(n, initNodeExpr)]),
+      libExports.expressionStatement(
+        libExports.assignmentExpression(
+          "=",
+          libExports.memberExpression(n, libExports.identifier("nodeValue")),
+          textValueExpression(buildItemAccess(itemParam, itemPath))
+        )
+      )
+    ]);
+  }
+  if (kind === "value") {
+    return libExports.expressionStatement(
+      libExports.assignmentExpression(
+        "=",
+        libExports.memberExpression(initNodeExpr, libExports.identifier("value")),
+        buildItemAccess(itemParam, itemPath)
+      )
+    );
+  }
+  return libExports.expressionStatement(
+    libExports.callExpression(libExports.memberExpression(initNodeExpr, libExports.identifier("setAttribute")), [
+      args[3],
+      libExports.callExpression(libExports.identifier("String"), [buildItemAccess(itemParam, itemPath)])
+    ])
+  );
+}
+function textValueExpression(value) {
+  return libExports.templateLiteral(
+    [libExports.templateElement({ raw: "", cooked: "" }, false), libExports.templateElement({ raw: "", cooked: "" }, true)],
+    [libExports.logicalExpression("??", value, libExports.stringLiteral(""))]
+  );
+}
+function buildItemAccess(base, itemPath) {
+  let e = base;
+  for (const p of itemPath) {
+    e = /^\d+$/.test(p) ? libExports.memberExpression(e, libExports.numericLiteral(Number(p)), true) : libExports.memberExpression(e, libExports.identifier(p));
+  }
+  return e;
+}
+function extractItemPath(expr, itemName) {
+  const parts = [];
+  let cur = expr;
+  while (libExports.isMemberExpression(cur)) {
+    if (cur.computed) {
+      if (!libExports.isStringLiteral(cur.property) && !libExports.isNumericLiteral(cur.property)) return null;
+      parts.unshift(String(cur.property.value));
+    } else {
+      if (!libExports.isIdentifier(cur.property)) return null;
+      parts.unshift(cur.property.name);
+    }
+    cur = cur.object;
+  }
+  return libExports.isIdentifier(cur, { name: itemName }) ? parts : null;
+}
+
+function collectPatchRowPlan(block, itemName) {
+  const walks = /* @__PURE__ */ new Map();
+  const walkKindsMap = /* @__PURE__ */ new Map();
+  for (const stmt of block.body) {
+    if (!libExports.isVariableDeclaration(stmt)) continue;
+    for (const d of stmt.declarations) {
+      if (!libExports.isIdentifier(d.id) || !d.init) continue;
+      const wk = extractWalkAndKindsFromExpr(d.init);
+      if (!wk) continue;
+      walks.set(d.id.name, wk.walk);
+      walkKindsMap.set(d.id.name, wk.walkKinds);
+    }
+  }
+  const nonDirectTextWalks = collectNonDirectTextWalks(block);
+  const plan = { patchStmts: [], initStmts: [], keep: [], deadBindings: /* @__PURE__ */ new Set() };
+  const stashSlots = /* @__PURE__ */ new Map();
+  for (const stmt of block.body) {
+    const call = extractReactiveCall(stmt);
+    if (!call) {
+      plan.keep.push(stmt);
+      continue;
+    }
+    const targetVar = call.args[0];
+    if (!libExports.isIdentifier(targetVar)) {
+      plan.keep.push(stmt);
+      continue;
+    }
+    const walkName = call.kind === "text" ? "marker" + targetVar.name.slice(1) : targetVar.name;
+    const walk = walks.get(walkName);
+    if (!walk) {
+      plan.keep.push(stmt);
+      continue;
+    }
+    const result = buildPatchWrite({
+      kind: call.kind,
+      args: call.args,
+      getterBody: call.getterBody,
+      targetName: targetVar.name,
+      walkName,
+      walk,
+      walkKinds: walkKindsMap.get(walkName),
+      itemName,
+      nonDirectTextWalks,
+      stashSlots
+    });
+    if (result.kind === "keep") plan.keep.push(stmt);
+    else if (result.kind === "write") {
+      plan.patchStmts.push(result.patchStmt);
+      plan.initStmts.push(result.initStmt);
+      for (const name of result.deadBindings) plan.deadBindings.add(name);
+    }
+  }
+  return plan;
+}
+function collectNonDirectTextWalks(block) {
+  const nonDirectTextWalks = /* @__PURE__ */ new Set();
+  for (const stmt of block.body) {
+    if (!libExports.isExpressionStatement(stmt) || !libExports.isCallExpression(stmt.expression)) continue;
+    const call = stmt.expression;
+    if (!libExports.isMemberExpression(call.callee) || !libExports.isIdentifier(call.callee.property, { name: "replaceWith" })) continue;
+    if (libExports.isIdentifier(call.callee.object)) nonDirectTextWalks.add(call.callee.object.name);
+  }
+  return nonDirectTextWalks;
+}
+function extractReactiveCall(stmt) {
+  if (!libExports.isExpressionStatement(stmt) || !libExports.isCallExpression(stmt.expression)) return null;
+  const call = stmt.expression;
+  if (!libExports.isIdentifier(call.callee)) return null;
+  const name = call.callee.name;
+  const kind = name === "reactiveText" ? "text" : name === "reactiveAttr" ? "attr" : name === "reactiveValue" ? "value" : null;
+  if (!kind) return null;
+  const args = call.arguments;
+  const getterArg = kind === "attr" ? args[4] : args[3];
+  if (!libExports.isArrowFunctionExpression(getterArg) || libExports.isBlockStatement(getterArg.body)) return null;
+  return { kind, args, getterBody: getterArg.body };
+}
+
+function isLowercaseJsxTagRoot(el) {
+  if (!libExports.isJSXElement(el)) return false;
+  const name = el.openingElement?.name;
+  if (!name || name.type !== "JSXIdentifier") return false;
+  const first = name.name.charAt(0);
+  return first >= "a" && first <= "z";
+}
+let __sharedHandlerCounter = 0;
+function extractSharedHandlersFromBlock(block, itemName, outerStmts, ctx) {
+  ctx.importsNeeded.add("GEA_DOM_ITEM");
+  for (const stmt of block.body) {
+    if (!libExports.isVariableDeclaration(stmt)) continue;
+    for (const d of stmt.declarations) {
+      if (!libExports.isIdentifier(d.id) || !d.init) continue;
+      if (!/^h\d+$/.test(d.id.name)) continue;
+      if (!libExports.isArrowFunctionExpression(d.init) && !libExports.isFunctionExpression(d.init)) continue;
+      const handlerFn = d.init;
+      if (!referencesIdentifier(handlerFn.body, itemName)) continue;
+      const origParams = handlerFn.params ?? [];
+      if (origParams.length > 1) continue;
+      const sharedId = libExports.identifier("__hm_" + __sharedHandlerCounter++);
+      const eParam = libExports.identifier("e");
+      const nId = libExports.identifier("n");
+      const symRead = libExports.memberExpression(nId, libExports.identifier("GEA_DOM_ITEM"), true);
+      const walkTest = libExports.logicalExpression("&&", nId, libExports.binaryExpression("===", symRead, libExports.identifier("undefined")));
+      const bodyStmts = [
+        libExports.variableDeclaration("let", [libExports.variableDeclarator(nId, libExports.memberExpression(eParam, libExports.identifier("target")))]),
+        libExports.whileStatement(
+          walkTest,
+          libExports.expressionStatement(libExports.assignmentExpression("=", nId, libExports.memberExpression(nId, libExports.identifier("parentNode"))))
+        ),
+        libExports.ifStatement(libExports.unaryExpression("!", nId), libExports.returnStatement()),
+        libExports.variableDeclaration("const", [
+          libExports.variableDeclarator(libExports.identifier(itemName), libExports.memberExpression(nId, libExports.identifier("GEA_DOM_ITEM"), true))
+        ])
+      ];
+      const origBody = handlerFn.body;
+      if (libExports.isBlockStatement(origBody)) {
+        for (const s of origBody.body) bodyStmts.push(s);
+      } else {
+        bodyStmts.push(libExports.expressionStatement(origBody));
+      }
+      const sharedArrow = libExports.arrowFunctionExpression([eParam], libExports.blockStatement(bodyStmts));
+      outerStmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(sharedId, sharedArrow)]));
+      d.__sharedHandlerId = sharedId.name;
+      d.init = libExports.cloneNode(sharedId);
+    }
+  }
+  const localToShared = collectSharedHandlerAliases(block);
+  if (localToShared.size > 0) {
+    rewriteSharedHandlerReferences(block, localToShared);
+    dropSharedHandlerAliases(block, new Set(localToShared.keys()));
+  }
+  return localToShared;
+}
+function referencesIdentifier(node, name) {
+  if (!node || typeof node !== "object") return false;
+  if (node.type === "Identifier" && node.name === name) return true;
+  if ((node.type === "FunctionExpression" || node.type === "FunctionDeclaration" || node.type === "ArrowFunctionExpression") && Array.isArray(node.params)) {
+    for (const p of node.params) {
+      if (p && p.type === "Identifier" && p.name === name) return false;
+    }
+  }
+  for (const key of Object.keys(node)) {
+    if (isMetadataKey$1(key)) continue;
+    const v = node[key];
+    if (Array.isArray(v)) {
+      for (const c of v) if (referencesIdentifier(c, name)) return true;
+    } else if (v && typeof v === "object" && typeof v.type === "string") {
+      if (referencesIdentifier(v, name)) return true;
+    }
+  }
+  return false;
+}
+function collectSharedHandlerAliases(block) {
+  const localToShared = /* @__PURE__ */ new Map();
+  for (const stmt of block.body) {
+    if (!libExports.isVariableDeclaration(stmt)) continue;
+    for (const d of stmt.declarations) {
+      const sid = d.__sharedHandlerId;
+      if (sid && libExports.isIdentifier(d.id)) localToShared.set(d.id.name, sid);
+    }
+  }
+  return localToShared;
+}
+function rewriteSharedHandlerReferences(block, localToShared) {
+  const rewriteId = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        const c = node[i];
+        if (c && libExports.isIdentifier(c) && localToShared.has(c.name)) node[i] = libExports.identifier(localToShared.get(c.name));
+        else rewriteId(c);
+      }
+      return;
+    }
+    if (libExports.isVariableDeclarator(node)) {
+      rewriteValuePosition(node, "init", localToShared, rewriteId);
+      return;
+    }
+    if (libExports.isMemberExpression(node)) {
+      rewriteValuePosition(node, "object", localToShared, rewriteId);
+      if (node.computed) rewriteId(node.property);
+      return;
+    }
+    if (libExports.isObjectProperty(node)) {
+      if (node.computed) rewriteValuePosition(node, "key", localToShared, rewriteId);
+      rewriteValuePosition(node, "value", localToShared, rewriteId);
+      return;
+    }
+    for (const key of Object.keys(node)) {
+      if (isMetadataKey$1(key)) continue;
+      const child = node[key];
+      if (!child || typeof child !== "object") continue;
+      if (libExports.isIdentifier(child) && localToShared.has(child.name))
+        node[key] = libExports.identifier(localToShared.get(child.name));
+      else rewriteId(child);
+    }
+  };
+  for (const stmt of block.body) rewriteId(stmt);
+}
+function rewriteValuePosition(node, key, localToShared, recurse) {
+  const child = node[key];
+  if (!child) return;
+  if (libExports.isIdentifier(child) && localToShared.has(child.name)) node[key] = libExports.identifier(localToShared.get(child.name));
+  else recurse(child);
+}
+function dropSharedHandlerAliases(block, dropDecls) {
+  block.body = block.body.filter((stmt) => {
+    if (!libExports.isVariableDeclaration(stmt)) return true;
+    const kept = stmt.declarations.filter((d) => !(libExports.isIdentifier(d.id) && dropDecls.has(d.id.name)));
+    if (kept.length === stmt.declarations.length) return true;
+    if (kept.length === 0) return false;
+    stmt.declarations = kept;
+    return true;
+  });
+}
+function isMetadataKey$1(key) {
+  return key === "loc" || key === "start" || key === "end" || key === "range" || key === "type" || key === "leadingComments" || key === "trailingComments" || key === "innerComments" || key === "extra";
+}
+
+function createItemBodyReferencesRowDisposer(fn) {
+  if (!libExports.isArrowFunctionExpression(fn) || !libExports.isBlockStatement(fn.body)) return true;
+  const param3 = fn.params[2];
+  const dName = libExports.isIdentifier(param3) ? param3.name : "d";
+  const safeCallees = /* @__PURE__ */ new Set(["delegateEvent"]);
+  let found = false;
+  const walk = (node, inSafeCall) => {
+    if (found || !node || typeof node !== "object") return;
+    if (libExports.isIdentifier(node, { name: dName })) {
+      if (!inSafeCall) found = true;
+      return;
+    }
+    const isSafeCall = libExports.isCallExpression(node) && libExports.isIdentifier(node.callee) && safeCallees.has(node.callee.name);
+    for (const k of Object.keys(node)) {
+      if (k === "loc" || k === "start" || k === "end") continue;
+      const v = node[k];
+      if (Array.isArray(v)) {
+        for (const n of v) walk(n, isSafeCall || inSafeCall);
+      } else if (v && typeof v === "object" && typeof v.type === "string") {
+        walk(v, isSafeCall || inSafeCall);
+      }
+    }
+  };
+  walk(fn.body, false);
+  return found;
+}
+function createItemBodyReferencesItemInReactiveGetter(fn, itemName) {
+  if (!libExports.isArrowFunctionExpression(fn) || !libExports.isBlockStatement(fn.body)) return false;
+  const reactiveCallees = /* @__PURE__ */ new Set([
+    "reactiveText",
+    "reactiveAttr",
+    "reactiveBool",
+    "reactiveClass",
+    "reactiveStyle",
+    "reactiveValue"
+  ]);
+  let found = false;
+  const walkExpr = (e) => {
+    if (found || !e || typeof e !== "object") return;
+    if (libExports.isIdentifier(e, { name: itemName })) {
+      found = true;
+      return;
+    }
+    for (const k of Object.keys(e)) {
+      if (k === "loc" || k === "start" || k === "end") continue;
+      const v = e[k];
+      if (Array.isArray(v)) {
+        for (const n of v) walkExpr(n);
+      } else if (v && typeof v === "object" && typeof v.type === "string") walkExpr(v);
+    }
+  };
+  for (const stmt of fn.body.body) {
+    if (!libExports.isExpressionStatement(stmt) || !libExports.isCallExpression(stmt.expression)) continue;
+    const call = stmt.expression;
+    if (!libExports.isIdentifier(call.callee) || !reactiveCallees.has(call.callee.name)) continue;
+    const last = call.arguments[call.arguments.length - 1];
+    if (libExports.isArrowFunctionExpression(last) || libExports.isFunctionExpression(last)) {
+      walkExpr(last.body);
+      if (found) return true;
+    }
+  }
+  return false;
+}
+
+function extractPatchRowFromBlock(block, itemName, idxParam) {
+  const plan = collectPatchRowPlan(block, itemName);
+  if (plan.patchStmts.length === 0) return null;
+  return applyPatchRowPlan(block, plan, itemName, idxParam);
+}
+
+function detectAndStripRelationalClass(jsxEl, itemName, ctx) {
+  const open = jsxEl.openingElement;
+  if (!open || !Array.isArray(open.attributes)) return [];
+  const matches = [];
+  const keep = [];
+  for (const attr of open.attributes) {
+    if (!libExports.isJSXAttribute(attr)) {
+      keep.push(attr);
+      continue;
+    }
+    if (!libExports.isJSXIdentifier(attr.name) || attr.name.name !== "class" && attr.name.name !== "className") {
+      keep.push(attr);
+      continue;
+    }
+    if (!attr.value || !libExports.isJSXExpressionContainer(attr.value)) {
+      keep.push(attr);
+      continue;
+    }
+    const expr = attr.value.expression;
+    if (!libExports.isConditionalExpression(expr)) {
+      keep.push(attr);
+      continue;
+    }
+    if (!libExports.isBinaryExpression(expr.test) || expr.test.operator !== "===") {
+      keep.push(attr);
+      continue;
+    }
+    const cls = extractToggleClass(expr.consequent, expr.alternate);
+    if (!cls) {
+      keep.push(attr);
+      continue;
+    }
+    const parts = identifyStoreAndItem(expr.test.left, expr.test.right, itemName);
+    if (!parts) {
+      keep.push(attr);
+      continue;
+    }
+    const storeExpr = substituteBindings(parts.storeExpr, ctx.bindings);
+    const info = tryExtractPathAndRoot(storeExpr);
+    if (!info) {
+      keep.push(attr);
+      continue;
+    }
+    if (info.path[0] === "props") {
+      keep.push(attr);
+      continue;
+    }
+    if (libExports.isThisExpression(info.root) && ctx.classGetters.has(info.path[0])) {
+      keep.push(attr);
+      continue;
+    }
+    const id = "r" + ctx.relClassCounter++;
+    matches.push({
+      id,
+      storePath: info.path,
+      storeRoot: info.root,
+      storeExpr,
+      itemKeyProp: parts.itemProp,
+      cls
+    });
+  }
+  if (matches.length > 0) open.attributes = keep;
+  return matches;
+}
+function extractToggleClass(consequent, alternate) {
+  const isEmpty = (n) => libExports.isStringLiteral(n) && n.value === "" || libExports.isNullLiteral(n) || libExports.isIdentifier(n, { name: "undefined" });
+  if (libExports.isStringLiteral(consequent) && consequent.value !== "" && isEmpty(alternate)) {
+    return consequent.value;
+  }
+  if (libExports.isStringLiteral(alternate) && alternate.value !== "" && isEmpty(consequent)) {
+    return null;
+  }
+  return null;
+}
+function identifyStoreAndItem(left, right, itemName) {
+  const asItemProp = (n) => {
+    if (!libExports.isMemberExpression(n) || n.computed) return null;
+    if (!libExports.isIdentifier(n.object, { name: itemName })) return null;
+    if (!libExports.isIdentifier(n.property)) return null;
+    return n.property.name;
+  };
+  const li = asItemProp(left);
+  const ri = asItemProp(right);
+  if (ri && !li) return { storeExpr: left, itemProp: ri };
+  if (li && !ri) return { storeExpr: right, itemProp: li };
+  return null;
+}
+function injectRelationalClassIntoCreateItem(block, matches, itemParam) {
+  const insertAt = 1;
+  const itemId = libExports.isIdentifier(itemParam) ? itemParam : libExports.identifier("item");
+  const perRow = [];
+  for (const m of matches) {
+    const keyReadForCmp = libExports.memberExpression(libExports.cloneNode(itemId), libExports.identifier(m.itemKeyProp));
+    const mapId = libExports.identifier("__rowEls_" + m.id);
+    if (!m.useByKey) {
+      const keyReadForReg = libExports.memberExpression(itemId, libExports.identifier(m.itemKeyProp));
+      perRow.push(
+        libExports.expressionStatement(
+          libExports.assignmentExpression("=", libExports.memberExpression(mapId, keyReadForReg, true), libExports.identifier("root"))
+        )
+      );
+    }
+    perRow.push(
+      libExports.ifStatement(
+        libExports.binaryExpression("===", libExports.cloneNode(m.storeExpr), keyReadForCmp),
+        libExports.expressionStatement(
+          libExports.assignmentExpression(
+            "=",
+            libExports.memberExpression(libExports.identifier("root"), libExports.identifier("className")),
+            libExports.stringLiteral(m.cls)
+          )
+        )
+      )
+    );
+  }
+  block.body.splice(insertAt, 0, ...perRow);
+}
+function emitRelationalClassSetup(m, stmts, _ctx) {
+  if (m.useByKey) {
+    const byKeyId = libExports.identifier("__byKey_" + m.id);
+    stmts.push(libExports.variableDeclaration("let", [libExports.variableDeclarator(byKeyId, libExports.nullLiteral())]));
+    const kArg = libExports.identifier("k");
+    const lookupArrow = libExports.arrowFunctionExpression(
+      [kArg],
+      libExports.logicalExpression(
+        "&&",
+        libExports.cloneNode(byKeyId),
+        libExports.optionalMemberExpression(
+          libExports.callExpression(libExports.memberExpression(libExports.cloneNode(byKeyId), libExports.identifier("get")), [kArg]),
+          libExports.identifier("element"),
+          false,
+          true
+        )
+      )
+    );
+    stmts.push(
+      libExports.expressionStatement(
+        libExports.callExpression(libExports.identifier("relationalClass"), [
+          libExports.identifier("d"),
+          m.storeRoot,
+          libExports.arrayExpression(m.storePath.map((p) => libExports.stringLiteral(p))),
+          lookupArrow,
+          libExports.stringLiteral(m.cls),
+          libExports.cloneNode(m.storeExpr)
+        ])
+      )
+    );
+    return;
+  }
+  const mapId = libExports.identifier("__rowEls_" + m.id);
+  stmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(mapId, libExports.objectExpression([]))]));
+  stmts.push(
+    libExports.expressionStatement(
+      libExports.callExpression(libExports.identifier("relationalClass"), [
+        libExports.identifier("d"),
+        m.storeRoot,
+        libExports.arrayExpression(m.storePath.map((p) => libExports.stringLiteral(p))),
+        libExports.cloneNode(mapId),
+        libExports.stringLiteral(m.cls),
+        libExports.cloneNode(m.storeExpr)
+      ])
+    )
+  );
+}
+function extractKeyFromJsxRoot(body) {
+  if (!body) return null;
+  const root = libExports.isJSXElement(body) ? body : null;
+  if (!root) return null;
+  for (const attr of root.openingElement.attributes) {
+    if (!libExports.isJSXAttribute(attr)) continue;
+    if (!libExports.isJSXIdentifier(attr.name, { name: "key" })) continue;
+    if (attr.value && libExports.isJSXExpressionContainer(attr.value)) return attr.value.expression;
+    if (attr.value && libExports.isStringLiteral(attr.value)) return attr.value;
+  }
+  return null;
+}
+
+function buildKeyedListCreateItem(options) {
+  const { cbBody, itemParam, idxParam, ctx, stmts, substitutedKeyExpr } = options;
+  let createItem;
+  let patchRowExpr = null;
+  let relMatches = [];
+  const prevRowHandlers = ctx._rowEventHandlers;
+  const rowEventTypes = /* @__PURE__ */ new Set();
+  if (cbBody && (libExports.isJSXElement(cbBody) || libExports.isJSXFragment(cbBody))) {
+    relMatches = detectRelationalClasses(cbBody, itemParam, ctx);
+    const prevInRow = ctx._inKeyedListRow;
+    const prevRowTypes = ctx._rowEventTypes;
+    ctx._inKeyedListRow = true;
+    ctx._rowEventTypes = rowEventTypes;
+    ctx._rowEventHandlers = {};
+    const block = compileJsxToBlock(cbBody, ctx);
+    ctx._inKeyedListRow = prevInRow;
+    ctx._rowEventTypes = prevRowTypes;
+    if (relMatches.length > 0) {
+      markRelationalClassesUsingByKey(relMatches, substitutedKeyExpr, itemParam);
+      injectRelationalClassIntoCreateItem(block, relMatches, itemParam);
+    }
+    const itemName = libExports.isIdentifier(itemParam) ? itemParam.name : null;
+    if (itemName) {
+      patchRowExpr = extractPatchRowFromBlock(block, itemName, idxParam);
+      const sharedHandlerMap = extractSharedHandlersFromBlock(block, itemName, stmts, ctx);
+      rewriteRowEventHandlers(ctx, sharedHandlerMap);
+    }
+    if (itemName && libExports.isJSXElement(cbBody) && isLowercaseJsxTagRoot(cbBody)) {
+      inlineKeyedListRootStamps(block.body, itemName, idxParam, substitutedKeyExpr, ctx);
+    }
+    createItem = libExports.arrowFunctionExpression([itemParam, idxParam, libExports.identifier("d")], block);
+  } else if (cbBody && (libExports.isConditionalExpression(cbBody) || libExports.isLogicalExpression(cbBody))) {
+    createItem = buildConditionalCreateItem(cbBody, itemParam, idxParam, ctx);
+  } else if (cbBody && libExports.isBlockStatement(cbBody)) {
+    createItem = buildBlockCreateItem(cbBody, itemParam, idxParam, ctx);
+  } else {
+    createItem = libExports.arrowFunctionExpression([itemParam, idxParam, libExports.identifier("d")], cbBody ?? libExports.nullLiteral());
+  }
+  return { createItem, patchRowExpr, relMatches, rowEventTypes, prevRowHandlers };
+}
+function detectRelationalClasses(cbBody, itemParam, ctx) {
+  if (!cbBody || !libExports.isJSXElement(cbBody)) return [];
+  const itemName = libExports.isIdentifier(itemParam) ? itemParam.name : null;
+  return itemName ? detectAndStripRelationalClass(cbBody, itemName, ctx) : [];
+}
+function markRelationalClassesUsingByKey(relMatches, substitutedKeyExpr, itemParam) {
+  for (const m of relMatches) {
+    if (substitutedKeyExpr && libExports.isMemberExpression(substitutedKeyExpr) && !substitutedKeyExpr.computed && libExports.isIdentifier(substitutedKeyExpr.property, { name: m.itemKeyProp }) && libExports.isIdentifier(substitutedKeyExpr.object) && libExports.isIdentifier(itemParam) && substitutedKeyExpr.object.name === itemParam.name) {
+      m.useByKey = true;
+    }
+  }
+}
+function rewriteRowEventHandlers(ctx, sharedHandlerMap) {
+  if (!ctx._rowEventHandlers) return;
+  for (const evType in ctx._rowEventHandlers) {
+    const table = ctx._rowEventHandlers[evType];
+    for (const [idx, name] of table) {
+      const shared = sharedHandlerMap.get(name);
+      if (shared) table.set(idx, shared);
+    }
+  }
+}
+function inlineKeyedListRootStamps(body, itemName, idxParam, substitutedKeyExpr, ctx) {
+  const keySource = substitutedKeyExpr ? libExports.cloneNode(substitutedKeyExpr, true) : libExports.logicalExpression(
+    "??",
+    libExports.logicalExpression(
+      "??",
+      libExports.optionalMemberExpression(libExports.identifier(itemName), libExports.identifier("id"), false, true),
+      libExports.identifier(itemName)
+    ),
+    libExports.isIdentifier(idxParam) ? idxParam : libExports.identifier("idx")
+  );
+  const stampStmts = [
+    libExports.expressionStatement(
+      libExports.assignmentExpression(
+        "=",
+        libExports.memberExpression(libExports.identifier("root"), libExports.identifier("GEA_DOM_ITEM"), true),
+        libExports.identifier(itemName)
+      )
+    ),
+    libExports.expressionStatement(
+      libExports.assignmentExpression(
+        "=",
+        libExports.memberExpression(libExports.identifier("root"), libExports.identifier("GEA_DOM_KEY"), true),
+        keySource
+      )
+    )
+  ];
+  ctx.importsNeeded.add("GEA_DOM_ITEM");
+  ctx.importsNeeded.add("GEA_DOM_KEY");
+  let rIdx = body.length;
+  for (let i = body.length - 1; i >= 0; i--) {
+    if (libExports.isReturnStatement(body[i])) {
+      rIdx = i;
+      break;
+    }
+  }
+  body.splice(rIdx, 0, ...stampStmts);
+}
+function buildConditionalCreateItem(cbBody, itemParam, idxParam, ctx) {
+  const bodyStmts = [];
+  let test;
+  let thenBranch;
+  let elseBranch;
+  if (libExports.isConditionalExpression(cbBody)) {
+    test = substituteBindings(cbBody.test, ctx.bindings);
+    thenBranch = cbBody.consequent;
+    elseBranch = cbBody.alternate;
+  } else {
+    test = substituteBindings(cbBody.left, ctx.bindings);
+    thenBranch = cbBody.right;
+    elseBranch = null;
+  }
+  bodyStmts.push(
+    libExports.ifStatement(
+      test,
+      libExports.blockStatement(compileBranch(thenBranch, ctx)),
+      libExports.blockStatement(compileBranch(elseBranch, ctx))
+    )
+  );
+  return libExports.arrowFunctionExpression([itemParam, idxParam, libExports.identifier("d")], libExports.blockStatement(bodyStmts));
+}
+function compileBranch(branch, ctx) {
+  if (!branch || libExports.isNullLiteral(branch) || libExports.isIdentifier(branch, { name: "undefined" })) {
+    return [
+      libExports.returnStatement(
+        libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createComment")), [
+          libExports.stringLiteral("")
+        ])
+      )
+    ];
+  }
+  if (libExports.isJSXElement(branch) || libExports.isJSXFragment(branch)) return compileJsxToBlock(branch, ctx).body;
+  return [libExports.returnStatement(branch)];
+}
+function buildBlockCreateItem(cbBody, itemParam, idxParam, ctx) {
+  const precedingStmts = [];
+  let inlined = false;
+  for (const stmt of cbBody.body) {
+    if (libExports.isReturnStatement(stmt) && stmt.argument && (libExports.isJSXElement(stmt.argument) || libExports.isJSXFragment(stmt.argument))) {
+      precedingStmts.push(...compileJsxToBlock(stmt.argument, ctx).body);
+      inlined = true;
+      break;
+    }
+    precedingStmts.push(stmt);
+  }
+  return libExports.arrowFunctionExpression(
+    [itemParam, idxParam, libExports.identifier("d")],
+    inlined ? libExports.blockStatement(precedingStmts) : cbBody
+  );
+}
+
+function buildKeyedListEntryArrows(options) {
+  const itemId = libExports.identifier("item");
+  const idxId = libExports.identifier("idx");
+  const newItemId = libExports.identifier("newItem");
+  const newIdxId = libExports.identifier("newIdx");
+  const eId = libExports.identifier("e");
+  options.importsNeeded.add("GEA_PROXY_RAW");
+  const createEntryArrow = buildCreateEntryArrow(options, itemId, idxId);
+  const patchEntryArrow = buildPatchEntryArrow(options, eId, newItemId, newIdxId);
+  return { createEntryArrow, patchEntryArrow };
+}
+function buildCreateEntryArrow(options, itemId, idxId) {
+  const { ciName, rqName, needsItemProxy, needsRowDisposer, importsNeeded } = options;
+  const createEntryStmts = [];
+  const kId = libExports.identifier("__k");
+  createEntryStmts.push(
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(kId, keyExprWith(options, itemId, idxId))])
+  );
+  importsNeeded.add("_rescue");
+  const rescuedId = libExports.identifier("__r");
+  const rawOnRescueId = libExports.identifier("__raw");
+  const rescueIfStmts = [
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(rawOnRescueId, buildUnwrap(itemId))])
+  ];
+  const rescueBody = buildRescueBody(options, rescuedId, rawOnRescueId, itemId, idxId);
+  rescueIfStmts.push(
+    libExports.ifStatement(
+      libExports.binaryExpression("!==", libExports.memberExpression(rescuedId, libExports.identifier("item")), rawOnRescueId),
+      libExports.blockStatement(rescueBody)
+    ),
+    libExports.returnStatement(rescuedId)
+  );
+  createEntryStmts.push(
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(
+        rescuedId,
+        libExports.callExpression(libExports.identifier("_rescue"), [
+          libExports.identifier(rqName),
+          libExports.callExpression(libExports.identifier("String"), [libExports.cloneNode(kId, true)])
+        ])
+      )
+    ]),
+    libExports.ifStatement(rescuedId, libExports.blockStatement(rescueIfStmts))
+  );
+  const rowDId = libExports.identifier("__rd");
+  if (needsRowDisposer) {
+    createEntryStmts.push(
+      libExports.variableDeclaration("const", [
+        libExports.variableDeclarator(
+          rowDId,
+          libExports.callExpression(libExports.memberExpression(libExports.identifier("d"), libExports.identifier("child")), [])
+        )
+      ])
+    );
+  } else {
+    importsNeeded.add("NOOP_DISPOSER");
+    createEntryStmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(rowDId, libExports.identifier("NOOP_DISPOSER"))]));
+  }
+  const obsId = libExports.identifier("__obs");
+  const liveItemId = libExports.identifier("__li");
+  if (needsItemProxy) {
+    createEntryStmts.push(
+      libExports.variableDeclaration("const", [
+        libExports.variableDeclarator(obsId, libExports.callExpression(libExports.identifier("createItemObservable"), [itemId]))
+      ]),
+      libExports.variableDeclaration("const", [
+        libExports.variableDeclarator(
+          liveItemId,
+          libExports.conditionalExpression(
+            libExports.logicalExpression(
+              "&&",
+              libExports.binaryExpression("!==", itemId, libExports.nullLiteral()),
+              libExports.binaryExpression("===", libExports.unaryExpression("typeof", itemId), libExports.stringLiteral("object"))
+            ),
+            libExports.callExpression(libExports.identifier("createItemProxy"), [obsId]),
+            itemId
+          )
+        )
+      ])
+    );
+  } else {
+    createEntryStmts.push(
+      libExports.variableDeclaration("const", [libExports.variableDeclarator(obsId, libExports.nullLiteral())]),
+      libExports.variableDeclaration("const", [libExports.variableDeclarator(liveItemId, itemId)])
+    );
+  }
+  const elementId = libExports.identifier("__el");
+  createEntryStmts.push(
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(elementId, libExports.callExpression(libExports.identifier(ciName), [liveItemId, idxId, rowDId]))
+    ]),
+    libExports.returnStatement(
+      libExports.objectExpression([
+        libExports.objectProperty(libExports.identifier("key"), kId),
+        libExports.objectProperty(libExports.identifier("item"), buildUnwrap(itemId)),
+        libExports.objectProperty(libExports.identifier("element"), elementId),
+        libExports.objectProperty(libExports.identifier("disposer"), rowDId),
+        libExports.objectProperty(libExports.identifier("obs"), obsId)
+      ])
+    )
+  );
+  return libExports.arrowFunctionExpression([itemId, idxId], libExports.blockStatement(createEntryStmts));
+}
+function buildRescueBody(options, rescuedId, rawOnRescueId, itemId, idxId) {
+  const body = [
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(libExports.identifier("__prev"), libExports.memberExpression(rescuedId, libExports.identifier("item")))
+    ]),
+    libExports.expressionStatement(
+      libExports.assignmentExpression("=", libExports.memberExpression(rescuedId, libExports.identifier("item")), rawOnRescueId)
+    )
+  ];
+  if (options.needsItemProxy) {
+    body.push(
+      libExports.expressionStatement(
+        libExports.assignmentExpression(
+          "=",
+          libExports.memberExpression(libExports.memberExpression(rescuedId, libExports.identifier("obs")), libExports.identifier("current")),
+          itemId
+        )
+      ),
+      libExports.expressionStatement(
+        libExports.callExpression(
+          libExports.memberExpression(libExports.memberExpression(rescuedId, libExports.identifier("obs")), libExports.identifier("_fire")),
+          []
+        )
+      )
+    );
+  }
+  if (options.patchRowExpr) {
+    body.push(
+      libExports.expressionStatement(
+        libExports.callExpression(libExports.identifier(options.prName), [
+          libExports.memberExpression(rescuedId, libExports.identifier("element")),
+          itemId,
+          libExports.identifier("__prev"),
+          idxId
+        ])
+      )
+    );
+  }
+  return body;
+}
+function buildPatchEntryArrow(options, eId, newItemId, newIdxId) {
+  const patchEntryStmts = [];
+  const prevId = libExports.identifier("__prev");
+  const rawNewId = libExports.identifier("__raw");
+  patchEntryStmts.push(
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(prevId, libExports.memberExpression(eId, libExports.identifier("item")))]),
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(rawNewId, buildUnwrap(newItemId))]),
+    libExports.expressionStatement(libExports.assignmentExpression("=", libExports.memberExpression(eId, libExports.identifier("item")), rawNewId))
+  );
+  if (options.needsItemProxy) {
+    patchEntryStmts.push(
+      libExports.expressionStatement(
+        libExports.assignmentExpression(
+          "=",
+          libExports.memberExpression(libExports.memberExpression(eId, libExports.identifier("obs")), libExports.identifier("current")),
+          newItemId
+        )
+      ),
+      libExports.expressionStatement(
+        libExports.callExpression(libExports.memberExpression(libExports.memberExpression(eId, libExports.identifier("obs")), libExports.identifier("_fire")), [])
+      )
+    );
+  }
+  if (options.patchRowExpr) {
+    patchEntryStmts.push(
+      libExports.expressionStatement(
+        libExports.callExpression(libExports.identifier(options.prName), [
+          libExports.memberExpression(eId, libExports.identifier("element")),
+          newItemId,
+          prevId,
+          newIdxId
+        ])
+      )
+    );
+  }
+  return libExports.arrowFunctionExpression([eId, newItemId, newIdxId], libExports.blockStatement(patchEntryStmts));
+}
+function buildUnwrap(expr) {
+  return libExports.logicalExpression(
+    "||",
+    libExports.logicalExpression(
+      "&&",
+      libExports.logicalExpression(
+        "&&",
+        libExports.cloneNode(expr, true),
+        libExports.binaryExpression("===", libExports.unaryExpression("typeof", libExports.cloneNode(expr, true)), libExports.stringLiteral("object"))
+      ),
+      libExports.memberExpression(libExports.cloneNode(expr, true), libExports.identifier("GEA_PROXY_RAW"), true)
+    ),
+    libExports.cloneNode(expr, true)
+  );
+}
+function keyExprWith(options, subject, idxSubject) {
+  const keyExpr = options.substitutedKeyExpr ? libExports.cloneNode(options.substitutedKeyExpr, true) : options.keyItemName ? libExports.logicalExpression(
+    "??",
+    libExports.logicalExpression(
+      "??",
+      libExports.optionalMemberExpression(libExports.identifier(options.keyItemName), libExports.identifier("id"), false, true),
+      libExports.identifier(options.keyItemName)
+    ),
+    libExports.identifier(options.keyIdxName)
+  ) : libExports.identifier(options.keyIdxName);
+  const m = /* @__PURE__ */ new Map();
+  if (options.keyItemName) m.set(options.keyItemName, subject);
+  if (options.keyIdxName) m.set(options.keyIdxName, idxSubject);
+  return m.size === 0 ? keyExpr : substituteBindings(keyExpr, m);
+}
+
+function buildKeyedListParams(cb) {
+  const rawItemParam = cb?.params?.[0] ?? libExports.identifier("item");
+  const idxParam = cb?.params?.[1] ?? libExports.identifier("idx");
+  let itemParam = rawItemParam;
+  const destructuredBindings = [];
+  if (libExports.isObjectPattern(rawItemParam)) {
+    const itemId = libExports.identifier("item");
+    for (const prop of rawItemParam.properties) {
+      if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
+      const local = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
+      destructuredBindings.push({
+        name: local,
+        expr: libExports.memberExpression(itemId, libExports.identifier(prop.key.name))
+      });
+    }
+    itemParam = itemId;
+  }
+  const explicitKeyExpr = extractKeyFromJsxRoot(cb?.body);
+  const keyItemName = libExports.isIdentifier(itemParam) ? itemParam.name : null;
+  const keyIdxName = libExports.isIdentifier(idxParam) ? idxParam.name : "idx";
+  let substitutedKeyExpr = null;
+  let keyFn;
+  if (explicitKeyExpr) {
+    let keyExpr = explicitKeyExpr;
+    if (destructuredBindings.length > 0) {
+      const m = /* @__PURE__ */ new Map();
+      for (const b of destructuredBindings) m.set(b.name, b.expr);
+      keyExpr = substituteBindings(keyExpr, m);
+    }
+    substitutedKeyExpr = keyExpr;
+    keyFn = libExports.arrowFunctionExpression([itemParam, idxParam], keyExpr);
+  } else if (keyItemName) {
+    keyFn = libExports.arrowFunctionExpression(
+      [itemParam, idxParam],
+      libExports.logicalExpression(
+        "??",
+        libExports.logicalExpression(
+          "??",
+          libExports.optionalMemberExpression(libExports.identifier(keyItemName), libExports.identifier("id"), false, true),
+          libExports.identifier(keyItemName)
+        ),
+        libExports.identifier(keyIdxName)
+      )
+    );
+  } else {
+    keyFn = libExports.arrowFunctionExpression([itemParam, idxParam], libExports.identifier(keyIdxName));
+  }
+  return {
+    itemParam,
+    idxParam,
+    destructuredBindings,
+    keyFn,
+    explicitKeyExpr,
+    keyItemName,
+    keyIdxName,
+    substitutedKeyExpr
+  };
+}
+function installDestructuredItemBindings(ctx, bindings) {
+  const saved = [];
+  for (const b of bindings) {
+    saved.push({ name: b.name, prev: ctx.bindings.get(b.name) });
+    ctx.bindings.set(b.name, b.expr);
+  }
+  return saved;
+}
+function restoreBindings(ctx, saved) {
+  for (const s of saved) {
+    if (s.prev === void 0) ctx.bindings.delete(s.name);
+    else ctx.bindings.set(s.name, s.prev);
+  }
+}
+
+function emitKeyedListSlot(slot, stmts, ctx) {
+  ctx.importsNeeded.add("keyedList");
+  const anchorId = libExports.identifier("anchor" + slot.index);
+  const sourcePathOrGetter = expressionToPathOrGetter(slot.expr, ctx, { allowForeignRoot: true });
+  const cb = slot.payload.mapCallback;
+  const { itemParam, idxParam, destructuredBindings, keyFn, keyItemName, keyIdxName, substitutedKeyExpr } = buildKeyedListParams(cb);
+  const savedBindings = installDestructuredItemBindings(ctx, destructuredBindings);
+  const { createItem, patchRowExpr, relMatches, rowEventTypes, prevRowHandlers } = buildKeyedListCreateItem({
+    cbBody: cb?.body,
+    itemParam,
+    idxParam,
+    ctx,
+    stmts,
+    substitutedKeyExpr
+  });
+  restoreBindings(ctx, savedBindings);
+  const listRoot = resolveListRoot(slot.expr, sourcePathOrGetter, ctx);
+  const listId = "L" + ctx.listCounter++;
+  if (relMatches.length > 0) {
+    ctx.importsNeeded.add("relationalClass");
+    for (const m of relMatches) emitRelationalClassSetup(m, stmts);
+  }
+  emitListScopedEventInstalls(anchorId, rowEventTypes, stmts, ctx);
+  const needsItemProxy = !(patchRowExpr && libExports.isIdentifier(itemParam) && !createItemBodyReferencesItemInReactiveGetter(createItem, itemParam.name));
+  const needsRowDisposer = !(patchRowExpr && libExports.isIdentifier(itemParam) && !createItemBodyReferencesRowDisposer(createItem));
+  if (needsItemProxy) {
+    ctx.importsNeeded.add("createItemObservable");
+    ctx.importsNeeded.add("createItemProxy");
+  }
+  const ciName = "__ki_" + listId;
+  const prName = "__kp_" + listId;
+  const rqName = "__rq_" + listId;
+  ctx.templateDecls.push(
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(libExports.identifier(rqName), libExports.newExpression(libExports.identifier("Map"), []))
+    ])
+  );
+  stmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier(ciName), createItem)]));
+  if (patchRowExpr)
+    stmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier(prName), patchRowExpr)]));
+  const { createEntryArrow, patchEntryArrow } = buildKeyedListEntryArrows({
+    ciName,
+    prName,
+    rqName,
+    needsItemProxy,
+    needsRowDisposer,
+    patchRowExpr,
+    substitutedKeyExpr,
+    keyItemName,
+    keyIdxName,
+    importsNeeded: ctx.importsNeeded
+  });
+  const cfg = buildKeyedListConfig({
+    anchorId,
+    listRoot,
+    pendingName: rqName,
+    path: sourcePathOrGetter.value,
+    keyFn,
+    createEntryArrow,
+    patchEntryArrow,
+    relMatches,
+    itemParam
+  });
+  stmts.push(libExports.expressionStatement(libExports.callExpression(libExports.identifier("keyedList"), [cfg])));
+  ctx._rowEventHandlers = prevRowHandlers;
+}
+function resolveListRoot(sourceExpr, sourcePathOrGetter, ctx) {
+  if (sourcePathOrGetter.kind !== "path") return ctx.reactiveRoot;
+  if (sourcePathOrGetter.root) return sourcePathOrGetter.root;
+  const info = tryExtractPathAndRoot(sourceExpr);
+  return info && !libExports.isThisExpression(info.root) ? info.root : ctx.reactiveRoot;
+}
+function emitListScopedEventInstalls(anchorId, rowEventTypes, stmts, ctx) {
+  if (rowEventTypes.size === 0) return;
+  ctx.importsNeeded.add("delegateEvent");
+  for (const evType of rowEventTypes) {
+    stmts.push(
+      libExports.expressionStatement(
+        libExports.callExpression(libExports.identifier("delegateEvent"), [
+          libExports.memberExpression(anchorId, libExports.identifier("parentNode")),
+          libExports.stringLiteral(evType),
+          libExports.arrayExpression([]),
+          libExports.identifier("d")
+        ])
+      )
+    );
+  }
+}
+
+function emitMountSlot(slot, stmts, ctx) {
+  ctx.importsNeeded.add("mount");
+  const anchorId = libExports.identifier("anchor" + slot.index);
+  const tag = slot.payload.tag;
+  const attrs = slot.payload.attrs;
+  const children = slot.payload.children;
+  const propsObj = buildPropsObject(attrs, ctx);
+  if (children && children.length > 0) {
+    const meaningful = children.filter((c) => !(libExports.isJSXText(c) && /^\s*$/.test(c.value)));
+    if (meaningful.length > 0) {
+      const hasChildrenAttr = attrs.some(
+        (a) => libExports.isJSXAttribute(a) && libExports.isJSXIdentifier(a.name, { name: "children" })
+      );
+      if (!hasChildrenAttr) {
+        const childrenThunk = buildChildrenThunk(meaningful, ctx);
+        if (childrenThunk) {
+          propsObj.properties.push(libExports.objectProperty(libExports.identifier("children"), childrenThunk));
+        }
+      }
+    }
+  }
+  stmts.push(
+    libExports.expressionStatement(
+      libExports.callExpression(libExports.identifier("mount"), [
+        libExports.identifier(tag),
+        libExports.memberExpression(anchorId, libExports.identifier("parentNode")),
+        propsObj,
+        libExports.identifier("d"),
+        anchorId,
+        libExports.thisExpression()
+      ])
+    )
+  );
+}
+function buildChildrenThunk(children, ctx) {
+  if (children.length === 0) return null;
+  if (children.length === 1) {
+    const c = children[0];
+    if (libExports.isJSXText(c)) {
+      return libExports.arrowFunctionExpression([], libExports.stringLiteral(c.value));
+    }
+    if (libExports.isJSXExpressionContainer(c)) {
+      if (libExports.isJSXEmptyExpression(c.expression)) return null;
+      const substituted = substituteBindings(c.expression, ctx.bindings);
+      if (libExports.isCallExpression(substituted) && libExports.isMemberExpression(substituted.callee) && !substituted.callee.computed && libExports.isIdentifier(substituted.callee.property, { name: "map" }) && substituted.arguments.length >= 1 && (libExports.isArrowFunctionExpression(substituted.arguments[0]) || libExports.isFunctionExpression(substituted.arguments[0]))) {
+        const arrow = substituted.arguments[0];
+        const body = arrow.body;
+        const returned = libExports.isBlockStatement(body) ? body.body.find((s) => libExports.isReturnStatement(s))?.argument : body;
+        if (returned && (libExports.isJSXElement(returned) || libExports.isJSXFragment(returned))) {
+          const branchFn = buildMapBranchFn(substituted, ctx);
+          return libExports.arrowFunctionExpression([], branchFn.body);
+        }
+      }
+      return libExports.arrowFunctionExpression([], lowerJsxInExpression(substituted, ctx));
+    }
+    if (libExports.isJSXElement(c) || libExports.isJSXFragment(c)) {
+      const block2 = compileJsxToBlock(c, ctx);
+      return libExports.arrowFunctionExpression([], block2);
+    }
+    return null;
+  }
+  const frag = libExports.jsxFragment(libExports.jsxOpeningFragment(), libExports.jsxClosingFragment(), children);
+  const block = compileJsxToBlock(frag, ctx);
+  return libExports.arrowFunctionExpression([], block);
+}
+function memoizedThunk(block) {
+  const inner = libExports.arrowFunctionExpression([], block);
+  const memoFn = libExports.arrowFunctionExpression(
+    [],
+    libExports.logicalExpression(
+      "??",
+      libExports.identifier("__c"),
+      libExports.assignmentExpression("=", libExports.identifier("__c"), libExports.callExpression(inner, []))
+    )
+  );
+  const outer = libExports.arrowFunctionExpression(
+    [],
+    libExports.blockStatement([
+      libExports.variableDeclaration("let", [libExports.variableDeclarator(libExports.identifier("__c"))]),
+      libExports.returnStatement(memoFn)
+    ])
+  );
+  return libExports.callExpression(outer, []);
+}
+function buildPropsObject(attrs, ctx) {
+  const properties = [];
+  for (const attr of attrs) {
+    if (!libExports.isJSXAttribute(attr)) continue;
+    let name;
+    if (libExports.isJSXIdentifier(attr.name)) name = attr.name.name;
+    else if (libExports.isJSXNamespacedName(attr.name)) name = `${attr.name.namespace.name}:${attr.name.name.name}`;
+    else continue;
+    if (name === "key") continue;
+    let value;
+    let wrapMemo = false;
+    if (!attr.value) value = libExports.booleanLiteral(true);
+    else if (libExports.isStringLiteral(attr.value)) value = libExports.stringLiteral(attr.value.value);
+    else if (libExports.isJSXExpressionContainer(attr.value)) {
+      const sub = substituteBindings(attr.value.expression, ctx.bindings);
+      wrapMemo = containsJsx(sub);
+      value = lowerJsxInExpression(sub, ctx);
+    } else continue;
+    const thunk = wrapMemo ? memoizedThunk(libExports.blockStatement([libExports.returnStatement(value)])) : libExports.arrowFunctionExpression([], value);
+    const isValidIdent = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
+    const keyNode = isValidIdent ? libExports.identifier(name) : libExports.stringLiteral(name);
+    properties.push(libExports.objectProperty(
+      keyNode,
+      thunk,
+      /* computed */
+      false
+    ));
+  }
+  return libExports.objectExpression(properties);
+}
+
+function eventHandlerNeedsCurrentTarget(expr) {
+  if (!libExports.isArrowFunctionExpression(expr) && !libExports.isFunctionExpression(expr)) return true;
+  if (referencesCurrentTarget(expr)) return true;
+  const firstParam = expr.params[0];
+  if (!firstParam) return false;
+  if (libExports.isIdentifier(firstParam)) return eventParamEscapes(expr.body, firstParam.name);
+  if (libExports.isObjectPattern(firstParam)) return patternMayReadCurrentTarget(firstParam);
+  return true;
+}
+function referencesCurrentTarget(node) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isIdentifier(node, { name: "currentTarget" })) return true;
+  if (libExports.isStringLiteral(node, { value: "currentTarget" })) return true;
+  return someChild(node, referencesCurrentTarget);
+}
+function eventParamEscapes(node, name, parent, key) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isIdentifier(node, { name })) {
+    if (parent && (libExports.isMemberExpression(parent) || libExports.isOptionalMemberExpression(parent)) && key === "object" && !isCurrentTargetProperty(parent)) {
+      return false;
+    }
+    return true;
+  }
+  if (isFunctionNode(node) && node !== parent) {
+    for (const param of node.params ?? []) {
+      if (libExports.isIdentifier(param, { name })) return false;
+    }
+  }
+  return someChild(node, (child, childKey) => eventParamEscapes(child, name, node, childKey));
+}
+function patternMayReadCurrentTarget(node) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isRestElement(node)) return true;
+  if (libExports.isObjectProperty(node)) {
+    if (isCurrentTargetKey(node.key)) return true;
+    return patternMayReadCurrentTarget(node.value);
+  }
+  if (libExports.isObjectPattern(node) || libExports.isArrayPattern(node)) {
+    return someChild(node, patternMayReadCurrentTarget);
+  }
+  return false;
+}
+function isCurrentTargetProperty(node) {
+  if (!node) return false;
+  return isCurrentTargetKey(node.property);
+}
+function isCurrentTargetKey(node) {
+  return libExports.isIdentifier(node, { name: "currentTarget" }) || libExports.isStringLiteral(node, { value: "currentTarget" });
+}
+function isFunctionNode(node) {
+  return libExports.isArrowFunctionExpression(node) || libExports.isFunctionExpression(node) || libExports.isFunctionDeclaration(node);
+}
+function someChild(node, visit) {
+  for (const key of Object.keys(node)) {
+    if (isMetadataKey(key)) continue;
+    const value = node[key];
+    if (Array.isArray(value)) {
+      for (const child of value) if (visit(child, key)) return true;
+    } else if (value && typeof value === "object" && typeof value.type === "string") {
+      if (visit(value, key)) return true;
+    }
+  }
+  return false;
+}
+function isMetadataKey(key) {
+  return key === "loc" || key === "start" || key === "end" || key === "range" || key === "type" || key === "leadingComments" || key === "trailingComments" || key === "innerComments" || key === "extra";
+}
+
+const EVENT_NAMES = /* @__PURE__ */ new Set([
+  "click",
+  "dblclick",
+  "mousedown",
+  "mouseup",
+  "mouseover",
+  "mouseout",
+  "mousemove",
+  "mouseenter",
+  "mouseleave",
+  "contextmenu",
+  "keydown",
+  "keyup",
+  "keypress",
+  "focus",
+  "blur",
+  "input",
+  "change",
+  "submit",
+  "scroll",
+  "touchstart",
+  "touchmove",
+  "touchend",
+  "tap",
+  "longTap",
+  "swipeRight",
+  "swipeUp",
+  "swipeLeft",
+  "swipeDown",
+  "drag",
+  "dragstart",
+  "dragend",
+  "dragover",
+  "dragleave",
+  "drop",
+  "pointerdown",
+  "pointerup",
+  "pointermove",
+  "pointerenter",
+  "pointerleave",
+  "pointerover",
+  "pointerout",
+  "pointercancel",
+  "resize",
+  "reset",
+  "wheel",
+  "animationstart",
+  "animationend",
+  "animationiteration",
+  "transitionstart",
+  "transitionend",
+  "transitionrun",
+  "transitioncancel"
+]);
+function toGeaEventType(attrName) {
+  if (attrName.startsWith("on") && attrName.length > 2) return attrName.slice(2).toLowerCase();
+  return attrName;
+}
+
+function escapeAttr(s) {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+function classifyAttrKind(name) {
+  if (EVENT_NAMES.has(name)) return "event";
+  if (name.startsWith("on") && name.length > 2) return "event";
+  if (name === "class" || name === "className") return "class";
+  if (name === "style") return "style";
+  if (name === "value") return "value";
+  if (name === "visible") return "bool";
+  if (name === "ref") return "ref";
+  if (name === "dangerouslySetInnerHTML") return "html";
+  if (BOOL_ATTRS.has(name)) return "bool";
+  return "attr";
+}
+const BOOL_ATTRS = /* @__PURE__ */ new Set([
+  "disabled",
+  "checked",
+  "readonly",
+  "readOnly",
+  "hidden",
+  "required",
+  "autofocus",
+  "multiple",
+  "selected",
+  "open",
+  "indeterminate",
+  "contenteditable",
+  "contentEditable"
+]);
+const VOID_TAGS = /* @__PURE__ */ new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr"
+]);
+function normalizeEventAttrName(name) {
+  return toGeaEventType(name);
+}
+
+function isJsxOrNullish(n) {
+  if (libExports.isJSXElement(n) || libExports.isJSXFragment(n)) return true;
+  if (libExports.isNullLiteral(n)) return true;
+  if (libExports.isIdentifier(n, { name: "undefined" })) return true;
+  return false;
+}
+function isMapWithJsxBody(n) {
+  if (!libExports.isCallExpression(n) && !libExports.isOptionalCallExpression(n)) return false;
+  const callee = n.callee;
+  if (!libExports.isMemberExpression(callee) && !libExports.isOptionalMemberExpression(callee)) return false;
+  if (callee.computed) return false;
+  if (!libExports.isIdentifier(callee.property, { name: "map" })) return false;
+  const arg = n.arguments[0];
+  if (!arg) return false;
+  if (!libExports.isArrowFunctionExpression(arg) && !libExports.isFunctionExpression(arg)) return false;
+  const body = arg.body;
+  if (libExports.isJSXElement(body) || libExports.isJSXFragment(body)) return true;
+  if (libExports.isBlockStatement(body)) {
+    const ret = body.body.find((s) => libExports.isReturnStatement(s));
+    if (ret && ret.argument && (libExports.isJSXElement(ret.argument) || libExports.isJSXFragment(ret.argument))) return true;
+  }
+  return false;
+}
+function findTemplateMethod(classDecl) {
+  for (const member of classDecl.body.body) {
+    if (libExports.isClassMethod(member) && libExports.isIdentifier(member.key, { name: "template" }) && !member.computed && !member.static) {
+      return member;
+    }
+  }
+  return null;
+}
+function extractTemplateJsx(templateMethod) {
+  for (const stmt of templateMethod.body.body) {
+    if (libExports.isReturnStatement(stmt) && stmt.argument) {
+      if (libExports.isJSXElement(stmt.argument) || libExports.isJSXFragment(stmt.argument)) {
+        return stmt.argument;
+      }
+    }
+  }
+  return null;
+}
+
+function walkJsxToTemplate(root, options = {}) {
+  const slots = [];
+  let nextSlot = 0;
+  function emitNode(node, walk, walkKinds) {
+    if (libExports.isJSXText(node)) {
+      const v = node.value;
+      if (v.trim() === "" && /\n/.test(v)) return "";
+      return v;
+    }
+    if (libExports.isJSXExpressionContainer(node)) {
+      const inner = node.expression;
+      if (libExports.isJSXEmptyExpression(inner)) return "";
+      if (libExports.isConditionalExpression(inner) && (isJsxOrNullish(inner.consequent) || isJsxOrNullish(inner.alternate))) {
+        const slot2 = {
+          index: nextSlot++,
+          walk: walk.slice(),
+          walkKinds: walkKinds.slice(),
+          kind: "conditional",
+          expr: inner.test,
+          payload: {
+            mkTrue: inner.consequent,
+            mkFalse: inner.alternate
+          }
+        };
+        slots.push(slot2);
+        return `<!--${slot2.index}-->`;
+      }
+      if (libExports.isLogicalExpression(inner) && inner.operator === "&&" && (isJsxOrNullish(inner.right) || isMapWithJsxBody(inner.right))) {
+        const slot2 = {
+          index: nextSlot++,
+          walk: walk.slice(),
+          walkKinds: walkKinds.slice(),
+          kind: "conditional",
+          expr: inner.left,
+          payload: {
+            mkTrue: inner.right,
+            mkFalse: null
+          }
+        };
+        slots.push(slot2);
+        return `<!--${slot2.index}-->`;
+      }
+      if (libExports.isCallExpression(inner) && libExports.isMemberExpression(inner.callee) && libExports.isIdentifier(inner.callee.property, { name: "map" })) {
+        const slot2 = {
+          index: nextSlot++,
+          walk: walk.slice(),
+          walkKinds: walkKinds.slice(),
+          kind: "keyed-list",
+          expr: inner.callee.object,
+          // the source array expression
+          payload: { mapCallback: inner.arguments[0] }
+        };
+        slots.push(slot2);
+        return `<!--${slot2.index}-->`;
+      }
+      const slot = {
+        index: nextSlot++,
+        walk: walk.slice(),
+        walkKinds: walkKinds.slice(),
+        kind: "text",
+        expr: inner
+      };
+      slots.push(slot);
+      return `<!--${slot.index}-->`;
+    }
+    if (libExports.isJSXElement(node)) {
+      return emitElement(node, walk, walkKinds);
+    }
+    if (libExports.isJSXFragment(node)) {
+      const children = node.children;
+      let out = "";
+      let childIdx = 0;
+      let elemIdx = 0;
+      for (const c of children) {
+        if (libExports.isJSXText(c) && c.value.trim() === "") continue;
+        const k = computeChildKind(c, elemIdx, childIdx);
+        out += emitNode(c, walk.concat(childIdx), walkKinds.concat(k));
+        if ("elem" in k) elemIdx++;
+        childIdx++;
+      }
+      return out;
+    }
+    return "";
+  }
+  function computeChildKind(c, elemIdx, childIdx) {
+    if (libExports.isJSXElement(c)) {
+      const n = c.openingElement?.name;
+      if (libExports.isJSXIdentifier(n)) {
+        const first = n.name.charAt(0);
+        if (first >= "a" && first <= "z") return { elem: elemIdx };
+      }
+    }
+    return { child: childIdx };
+  }
+  function isWhitespaceOnlyJsxText(n) {
+    return libExports.isJSXText(n) && n.value.trim() === "" && /\n/.test(n.value);
+  }
+  function emitElement(el, walk, walkKinds) {
+    const opening = el.openingElement;
+    const name = opening.name;
+    if (!libExports.isJSXIdentifier(name)) {
+      throw new Error(`generator: non-identifier JSX tags not yet supported: ${JSON.stringify(name)}`);
+    }
+    const tagName = name.name;
+    if (tagName[0] === tagName[0].toUpperCase()) {
+      const slot = {
+        index: nextSlot++,
+        walk: walk.slice(),
+        walkKinds: walkKinds.slice(),
+        kind: "mount",
+        payload: { tag: tagName, attrs: opening.attributes, selfClose: opening.selfClosing, children: el.children },
+        expr: null
+      };
+      slots.push(slot);
+      return `<!--${slot.index}-->`;
+    }
+    let html2 = "<" + tagName;
+    for (const attr of opening.attributes) {
+      if (libExports.isJSXAttribute(attr)) {
+        const attrName = libExports.isJSXIdentifier(attr.name) ? attr.name.name : "";
+        if (!attr.value) {
+          html2 += " " + attrName;
+        } else if (libExports.isStringLiteral(attr.value)) {
+          html2 += " " + attrName + '="' + escapeAttr(attr.value.value) + '"';
+        } else if (libExports.isJSXExpressionContainer(attr.value)) {
+          const kind = classifyAttrKind(attrName);
+          const slotIndex = nextSlot++;
+          if (kind === "event" && options.emitEventDataAttr) {
+            const evType = normalizeEventAttrName(attrName);
+            html2 += " data-gea-" + evType + '="' + slotIndex + '"';
+          }
+          slots.push({
+            index: slotIndex,
+            walk: walk.slice(),
+            walkKinds: walkKinds.slice(),
+            kind,
+            payload: { attrName },
+            expr: attr.value.expression
+          });
+        }
+      }
+    }
+    if (opening.selfClosing) {
+      if (VOID_TAGS.has(tagName)) {
+        html2 += "/>";
+        return html2;
+      }
+      html2 += "></" + tagName + ">";
+      return html2;
+    }
+    html2 += ">";
+    const children = el.children;
+    const kept = [];
+    for (const c of children) {
+      if (isWhitespaceOnlyJsxText(c)) continue;
+      if (libExports.isJSXExpressionContainer(c) && libExports.isJSXEmptyExpression(c.expression)) continue;
+      kept.push(c);
+    }
+    if (kept.length === 1 && isPlainTextSlotExpression(kept[0])) {
+      const inner = kept[0].expression;
+      const slot = {
+        index: nextSlot++,
+        walk: walk.concat(0),
+        // For directText, the single text child is a CharacterData node
+        // (non-element), so the final step is `{child: 0}` — the emitter
+        // translates this to `.firstChild` on the parent element for fast
+        // access. Matches v3's `f.firstChild.data = String(i)` pattern.
+        walkKinds: walkKinds.concat([{ child: 0 }]),
+        kind: "text",
+        expr: inner,
+        directText: true
+      };
+      slots.push(slot);
+      html2 += "0";
+      html2 += "</" + tagName + ">";
+      return html2;
+    }
+    let childIdx = 0;
+    let elemIdx = 0;
+    for (const c of kept) {
+      const k = computeChildKind(c, elemIdx, childIdx);
+      html2 += emitNode(c, walk.concat(childIdx), walkKinds.concat(k));
+      if ("elem" in k) elemIdx++;
+      childIdx++;
+    }
+    html2 += "</" + tagName + ">";
+    return html2;
+  }
+  function isPlainTextSlotExpression(node) {
+    if (!libExports.isJSXExpressionContainer(node)) return false;
+    const inner = node.expression;
+    if (libExports.isJSXEmptyExpression(inner)) return false;
+    if (libExports.isConditionalExpression(inner) && (isJsxOrNullish(inner.consequent) || isJsxOrNullish(inner.alternate)))
+      return false;
+    if (libExports.isLogicalExpression(inner) && inner.operator === "&&" && (isJsxOrNullish(inner.right) || isMapWithJsxBody(inner.right)))
+      return false;
+    if (libExports.isCallExpression(inner) && libExports.isMemberExpression(inner.callee) && libExports.isIdentifier(inner.callee.property, { name: "map" }))
+      return false;
+    return true;
+  }
+  const html = emitNode(root, [], []);
+  return { html, slots };
+}
+
+function emitSlot(slot, stmts, ctx) {
+  slot.expr = substituteBindings(slot.expr, ctx.bindings);
+  if (slot.kind === "text") {
+    const markerId = libExports.identifier("marker" + slot.index);
+    const textId = libExports.identifier("t" + slot.index);
+    const pathOrGetter = expressionToPathOrGetter(slot.expr, ctx);
+    if (slot.directText) {
+      stmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(textId, markerId)]));
+    } else {
+      stmts.push(
+        libExports.variableDeclaration("const", [
+          libExports.variableDeclarator(
+            textId,
+            libExports.callExpression(libExports.memberExpression(libExports.identifier("document"), libExports.identifier("createTextNode")), [
+              libExports.stringLiteral("")
+            ])
+          )
+        ]),
+        libExports.expressionStatement(libExports.callExpression(libExports.memberExpression(markerId, libExports.identifier("replaceWith")), [textId]))
+      );
+    }
+    ctx.importsNeeded.add("reactiveText");
+    stmts.push(
+      libExports.expressionStatement(
+        libExports.callExpression(libExports.identifier("reactiveText"), [
+          textId,
+          libExports.identifier("d"),
+          ctx.reactiveRoot,
+          pathOrGetter.value
+        ])
+      )
+    );
+    return;
+  }
+  if (slot.kind === "event") {
+    const attrName = slot.payload.attrName;
+    const eventType = normalizeEventAttrName(attrName);
+    const fnId = libExports.identifier("h" + slot.index);
+    let handlerExpr = slot.expr;
+    const needsCurrentTarget = eventHandlerNeedsCurrentTarget(handlerExpr);
+    if (libExports.isMemberExpression(handlerExpr) && libExports.isThisExpression(handlerExpr.object) && !handlerExpr.computed) {
+      const ev = libExports.identifier("e");
+      handlerExpr = libExports.arrowFunctionExpression([ev], libExports.callExpression(handlerExpr, [ev]));
+    }
+    const reconcileExpr = ctx._inputValueExprByEventSlot?.get(slot.index);
+    if (reconcileExpr) {
+      const ev = libExports.identifier("e");
+      const valueId = libExports.identifier("__v");
+      const stringId = libExports.identifier("__s");
+      handlerExpr = libExports.arrowFunctionExpression(
+        [ev],
+        libExports.blockStatement([
+          libExports.expressionStatement(libExports.callExpression(handlerExpr, [ev])),
+          libExports.variableDeclaration("const", [
+            libExports.variableDeclarator(valueId, substituteBindings(reconcileExpr, ctx.bindings))
+          ]),
+          libExports.ifStatement(
+            libExports.binaryExpression("!==", valueId, libExports.identifier("undefined")),
+            libExports.blockStatement([
+              libExports.variableDeclaration("const", [
+                libExports.variableDeclarator(
+                  stringId,
+                  libExports.conditionalExpression(
+                    libExports.binaryExpression("==", valueId, libExports.nullLiteral()),
+                    libExports.stringLiteral(""),
+                    libExports.callExpression(libExports.identifier("String"), [valueId])
+                  )
+                )
+              ]),
+              libExports.ifStatement(
+                libExports.binaryExpression(
+                  "!==",
+                  libExports.memberExpression(libExports.identifier("evt" + slot.index), libExports.identifier("value")),
+                  stringId
+                ),
+                libExports.blockStatement([
+                  libExports.expressionStatement(
+                    libExports.assignmentExpression(
+                      "=",
+                      libExports.memberExpression(libExports.identifier("evt" + slot.index), libExports.identifier("value")),
+                      stringId
+                    )
+                  )
+                ])
+              )
+            ])
+          )
+        ])
+      );
+    }
+    stmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(fnId, handlerExpr)]));
+    if (!ctx._pendingEvents) ctx._pendingEvents = [];
+    ctx._pendingEvents.push({ eventType, slotIndex: slot.index, needsCurrentTarget });
+    return;
+  }
+  if (slot.kind === "html") {
+    const elId = libExports.identifier("el" + slot.index);
+    const pathOrGetter = expressionToPathOrGetter(slot.expr, ctx);
+    ctx.importsNeeded.add("reactiveHtml");
+    stmts.push(
+      libExports.expressionStatement(
+        libExports.callExpression(libExports.identifier("reactiveHtml"), [elId, libExports.identifier("d"), ctx.reactiveRoot, pathOrGetter.value])
+      )
+    );
+    return;
+  }
+  if (slot.kind === "attr" || slot.kind === "bool" || slot.kind === "class" || slot.kind === "style" || slot.kind === "value") {
+    const elId = libExports.identifier("el" + slot.index);
+    const pathOrGetter = expressionToPathOrGetter(slot.expr, ctx);
+    const attrName = slot.payload?.attrName ?? "";
+    if (slot.kind === "attr") {
+      ctx.importsNeeded.add("reactiveAttr");
+      stmts.push(
+        libExports.expressionStatement(
+          libExports.callExpression(libExports.identifier("reactiveAttr"), [
+            elId,
+            libExports.identifier("d"),
+            ctx.reactiveRoot,
+            libExports.stringLiteral(attrName),
+            pathOrGetter.value
+          ])
+        )
+      );
+    } else if (slot.kind === "bool") {
+      ctx.importsNeeded.add("reactiveBool");
+      const isVisible = attrName === "visible";
+      const target = isVisible ? "display" : attrName;
+      const mode = isVisible ? "visible" : "attr";
+      stmts.push(
+        libExports.expressionStatement(
+          libExports.callExpression(libExports.identifier("reactiveBool"), [
+            elId,
+            libExports.identifier("d"),
+            ctx.reactiveRoot,
+            libExports.stringLiteral(target),
+            pathOrGetter.value,
+            libExports.stringLiteral(mode)
+          ])
+        )
+      );
+    } else if (slot.kind === "class") {
+      ctx.importsNeeded.add("reactiveClass");
+      stmts.push(
+        libExports.expressionStatement(
+          libExports.callExpression(libExports.identifier("reactiveClass"), [
+            elId,
+            libExports.identifier("d"),
+            ctx.reactiveRoot,
+            pathOrGetter.value
+          ])
+        )
+      );
+    } else if (slot.kind === "style") {
+      ctx.importsNeeded.add("reactiveStyle");
+      stmts.push(
+        libExports.expressionStatement(
+          libExports.callExpression(libExports.identifier("reactiveStyle"), [
+            elId,
+            libExports.identifier("d"),
+            ctx.reactiveRoot,
+            pathOrGetter.value
+          ])
+        )
+      );
+    } else if (slot.kind === "value") {
+      ctx.importsNeeded.add("reactiveValue");
+      stmts.push(
+        libExports.expressionStatement(
+          libExports.callExpression(libExports.identifier("reactiveValue"), [
+            elId,
+            libExports.identifier("d"),
+            ctx.reactiveRoot,
+            pathOrGetter.value
+          ])
+        )
+      );
+    }
+    return;
+  }
+  if (slot.kind === "ref") {
+    const elId = libExports.identifier("el" + slot.index);
+    const target = substituteBindings(slot.expr, ctx.bindings);
+    if (libExports.isMemberExpression(target) || libExports.isIdentifier(target)) {
+      stmts.push(libExports.expressionStatement(libExports.assignmentExpression("=", target, elId)));
+    }
+    return;
+  }
+  if (slot.kind === "mount") {
+    emitMountSlot(slot, stmts, ctx);
+    return;
+  }
+  if (slot.kind === "conditional") {
+    emitConditionalSlot(slot, stmts, ctx);
+    return;
+  }
+  if (slot.kind === "keyed-list") {
+    emitKeyedListSlot(slot, stmts, ctx);
+    return;
+  }
+  throw new Error(`emit: unsupported slot kind '${slot.kind}'`);
+}
+
+function compileJsxToBlock(jsxRoot, ctx) {
+  const spec = walkJsxToTemplate(jsxRoot, { emitEventDataAttr: false });
+  const isFragment = libExports.isJSXFragment(jsxRoot);
+  if (isFragment) {
+    spec.html = '<span style="display:contents">' + spec.html + "</span>";
+  } else if (!spec.html.startsWith("<") || spec.html.startsWith("<!--")) {
+    spec.html = '<span style="display:contents">' + spec.html + "</span>";
+    for (const slot of spec.slots) slot.walk = [0, ...slot.walk];
+  }
+  const tplName = "_tpl" + ctx.tplCounter++;
+  ctx.templateDecls.push(...emitTemplateDecl(spec.html, tplName));
+  const stmts = [];
+  stmts.push(
+    libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier("root"), emitTemplateCloneExpression(tplName))])
+  );
+  for (const slot of spec.slots) emitWalkCapture(slot, stmts, false);
+  const savedPending = ctx._pendingEvents;
+  const savedInputValueExprByEventSlot = ctx._inputValueExprByEventSlot;
+  ctx._pendingEvents = [];
+  ctx._inputValueExprByEventSlot = findInputValueReconciliations(spec);
+  for (const slot of spec.slots) emitSlot(slot, stmts, ctx);
+  const events = ctx._pendingEvents;
+  ctx._pendingEvents = savedPending;
+  ctx._inputValueExprByEventSlot = savedInputValueExprByEventSlot;
+  if (events.length > 0) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const e of events) {
+      const arr = groups.get(e.eventType);
+      if (arr) arr.push(e);
+      else groups.set(e.eventType, [e]);
+    }
+    ctx.importsNeeded.add("delegateEvent");
+    for (const [eventType, eventSlots] of groups) {
+      if (ctx._inKeyedListRow) {
+        for (const event of eventSlots) {
+          const k = (event.needsCurrentTarget ? "__onct_" : "__on_") + eventType;
+          stmts.push(
+            libExports.expressionStatement(
+              libExports.assignmentExpression(
+                "=",
+                libExports.memberExpression(libExports.identifier("evt" + event.slotIndex), libExports.identifier(k)),
+                libExports.identifier("h" + event.slotIndex)
+              )
+            )
+          );
+        }
+        ctx._rowEventTypes.add(eventType);
+      } else {
+        const pairs = eventSlots.map((event) => {
+          const pair = [libExports.identifier("evt" + event.slotIndex), libExports.identifier("h" + event.slotIndex)];
+          if (!event.needsCurrentTarget) pair.push(libExports.booleanLiteral(false));
+          return libExports.arrayExpression(pair);
+        });
+        stmts.push(
+          libExports.expressionStatement(
+            libExports.callExpression(libExports.identifier("delegateEvent"), [
+              libExports.identifier("root"),
+              libExports.stringLiteral(eventType),
+              libExports.arrayExpression(pairs),
+              libExports.identifier("d")
+            ])
+          )
+        );
+      }
+    }
+  }
+  stmts.push(libExports.returnStatement(libExports.identifier("root")));
+  return libExports.blockStatement(stmts);
+}
+function findInputValueReconciliations(spec) {
+  const valueExprByWalk = /* @__PURE__ */ new Map();
+  for (const slot of spec.slots) {
+    if (slot.kind === "value") valueExprByWalk.set(JSON.stringify(slot.walk), slot.expr);
+  }
+  const out = /* @__PURE__ */ new Map();
+  if (valueExprByWalk.size === 0) return out;
+  for (const slot of spec.slots) {
+    if (slot.kind !== "event") continue;
+    if (normalizeEventAttrName(slot.payload.attrName) !== "input") continue;
+    const valueExpr = valueExprByWalk.get(JSON.stringify(slot.walk));
+    if (valueExpr) out.set(slot.index, valueExpr);
+  }
+  return out;
+}
+function emitWalkCapture(slot, stmts, skipEventWalks = false) {
+  if (skipEventWalks && slot.kind === "event") return;
+  let name;
+  if (slot.kind === "text") name = "marker" + slot.index;
+  else if (slot.kind === "event") name = "evt" + slot.index;
+  else if (slot.kind === "attr" || slot.kind === "bool" || slot.kind === "class" || slot.kind === "style" || slot.kind === "value" || slot.kind === "ref" || slot.kind === "html")
+    name = "el" + slot.index;
+  else if (slot.kind === "mount" || slot.kind === "conditional" || slot.kind === "keyed-list")
+    name = "anchor" + slot.index;
+  else return;
+  stmts.push(
+    libExports.variableDeclaration("const", [
+      libExports.variableDeclarator(libExports.identifier(name), emitWalkExpr(libExports.identifier("root"), slot.walk, slot.walkKinds))
+    ])
+  );
+}
+
+function extendsComponent(classDecl) {
+  const sc = classDecl.superClass;
+  if (!sc) return false;
+  if (libExports.isIdentifier(sc, { name: "Component" })) return true;
+  const templateMethod = findTemplateMethod(classDecl);
+  if (!templateMethod) return false;
+  const jsx = extractTemplateJsx(templateMethod);
+  return jsx != null;
+}
+function bodyContainsJsx(node) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isJSXElement(node) || libExports.isJSXFragment(node)) return true;
+  for (const k of Object.keys(node)) {
+    if (k === "loc" || k === "start" || k === "end" || k === "type") continue;
+    const v = node[k];
+    if (Array.isArray(v)) {
+      for (const x of v) if (bodyContainsJsx(x)) return true;
+    } else if (v && typeof v === "object") {
+      if (bodyContainsJsx(v)) return true;
+    }
+  }
+  return false;
+}
+function isFunctionComponent(fn) {
+  if (!fn.id || !libExports.isIdentifier(fn.id)) return false;
+  const name = fn.id.name;
+  if (!name || name[0] !== name[0].toUpperCase()) return false;
+  if (!fn.body || !libExports.isBlockStatement(fn.body)) return false;
+  for (const stmt of fn.body.body) {
+    if (libExports.isReturnStatement(stmt) && stmt.argument) {
+      if (libExports.isJSXElement(stmt.argument) || libExports.isJSXFragment(stmt.argument)) return true;
+    }
+  }
+  return false;
+}
+function rewriteFnComponent(fnDecl, parentCtx) {
+  const body = fnDecl.body.body;
+  let returnIdx = -1;
+  for (let i = 0; i < body.length; i++) {
+    if (libExports.isReturnStatement(body[i])) {
+      returnIdx = i;
+      break;
+    }
+  }
+  if (returnIdx < 0) return;
+  const ret = body[returnIdx];
+  if (!ret.argument || !(libExports.isJSXElement(ret.argument) || libExports.isJSXFragment(ret.argument))) return;
+  const jsxRoot = ret.argument;
+  const fnCtx = createEmitContext(libExports.identifier("props"));
+  fnCtx.tplCounter = parentCtx.tplCounter;
+  fnCtx.listCounter = parentCtx.listCounter;
+  if (fnDecl.params.length >= 1 && libExports.isObjectPattern(fnDecl.params[0])) {
+    const objPat = fnDecl.params[0];
+    for (const prop of objPat.properties) {
+      if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
+      const local = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
+      fnCtx.bindings.set(local, libExports.memberExpression(libExports.identifier("props"), libExports.identifier(prop.key.name)));
+    }
+    fnDecl.params[0] = libExports.identifier("props");
+  } else if (fnDecl.params.length === 0) {
+    fnDecl.params.push(libExports.identifier("props"));
+  } else if (!libExports.isIdentifier(fnDecl.params[0], { name: "props" })) {
+    fnDecl.params[0] = libExports.identifier("props");
+  }
+  const precedingRaw = [];
+  for (let i = 0; i < returnIdx; i++) {
+    const s = body[i];
+    if (libExports.isVariableDeclaration(s)) {
+      const allFromProps = s.declarations.every(
+        (d) => libExports.isObjectPattern(d.id) && libExports.isIdentifier(d.init, { name: "props" })
+      );
+      if (allFromProps) continue;
+    }
+    precedingRaw.push(s);
+  }
+  collectBindings(precedingRaw, fnCtx.bindings);
+  const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx);
+  parentCtx.tplCounter = fnCtx.tplCounter;
+  parentCtx.listCounter = fnCtx.listCounter;
+  parentCtx.templateDecls.push(...fnCtx.templateDecls);
+  for (const imp of fnCtx.importsNeeded) parentCtx.importsNeeded.add(imp);
+  const precedingStmts = precedingRaw.map((s) => substituteBindings(s, fnCtx.bindings));
+  if (fnDecl.params.length < 2) fnDecl.params.push(libExports.identifier("d"));
+  else fnDecl.params[1] = libExports.identifier("d");
+  const newBody = precedingStmts.concat(jsxBlock.body);
+  fnDecl.body.body = newBody;
+}
+
+const COMPILER_RUNTIME_ID = "virtual:gea-compiler-runtime";
+
+function injectTemplateDecls(ast, firstClassIdx, decls) {
+  if (decls.length === 0) return;
+  const body = ast.program.body;
+  const insertAt = firstClassIdx >= 0 ? firstClassIdx : body.length;
+  body.splice(insertAt, 0, ...decls);
+}
+function ensureNamedImports(ast, source, required) {
+  let coreImport = null;
+  for (const n of ast.program.body) {
+    if (libExports.isImportDeclaration(n) && n.source.value === source) {
+      coreImport = n;
+      break;
+    }
+  }
+  const alreadyImported = /* @__PURE__ */ new Set();
+  if (coreImport) {
+    for (const spec of coreImport.specifiers) {
+      if (libExports.isImportSpecifier(spec) && libExports.isIdentifier(spec.imported)) {
+        alreadyImported.add(spec.imported.name);
+      }
+    }
+  }
+  const toAdd = [];
+  for (const name of required) {
+    if (!alreadyImported.has(name)) {
+      toAdd.push(libExports.importSpecifier(libExports.identifier(name), libExports.identifier(name)));
+    }
+  }
+  if (coreImport) {
+    coreImport.specifiers.push(...toAdd);
+  } else if (toAdd.length > 0) {
+    const decl = libExports.importDeclaration(toAdd, libExports.stringLiteral(source));
+    ast.program.body.unshift(decl);
+  }
+}
+function ensureCoreImports(ast, helpers) {
+  const runtimeHelpers = new Set(helpers);
+  runtimeHelpers.add("GEA_CREATE_TEMPLATE");
+  ensureNamedImports(ast, COMPILER_RUNTIME_ID, runtimeHelpers);
+}
+
+function extractPrecedingStatements(templateMethod) {
+  const out = [];
+  for (const stmt of templateMethod.body.body) {
+    if (libExports.isReturnStatement(stmt)) break;
+    out.push(stmt);
+  }
+  return out;
+}
+function foldEarlyReturnGuards(templateMethod) {
+  const body = templateMethod.body.body;
+  let finalIdx = -1;
+  for (let i = body.length - 1; i >= 0; i--) {
+    const s = body[i];
+    if (libExports.isReturnStatement(s) && s.argument && (libExports.isJSXElement(s.argument) || libExports.isJSXFragment(s.argument))) {
+      finalIdx = i;
+      break;
+    }
+  }
+  if (finalIdx < 0) return;
+  let anyGuardIdx = -1;
+  for (let i = finalIdx - 1; i >= 0; i--) {
+    const s = body[i];
+    if (libExports.isIfStatement(s) && !s.alternate && s.consequent && (libExports.isReturnStatement(s.consequent) && s.consequent.argument && (libExports.isJSXElement(s.consequent.argument) || libExports.isJSXFragment(s.consequent.argument)) || libExports.isBlockStatement(s.consequent) && s.consequent.body.length === 1 && libExports.isReturnStatement(s.consequent.body[0]) && s.consequent.body[0].argument && (libExports.isJSXElement(s.consequent.body[0].argument) || libExports.isJSXFragment(s.consequent.body[0].argument)))) {
+      anyGuardIdx = i;
+      break;
+    }
+  }
+  let scanIdx = finalIdx - 1;
+  const hoistedStmts = [];
+  if (anyGuardIdx >= 0) {
+    while (scanIdx > anyGuardIdx) {
+      const s = body[scanIdx];
+      if (libExports.isVariableDeclaration(s) || libExports.isExpressionStatement(s)) {
+        hoistedStmts.unshift(s);
+        scanIdx--;
+        continue;
+      }
+      break;
+    }
+  }
+  let mainExpr = body[finalIdx].argument;
+  if (hoistedStmts.length > 0) {
+    const block = libExports.blockStatement([...hoistedStmts, libExports.returnStatement(mainExpr)]);
+    const arrow = libExports.arrowFunctionExpression([], block);
+    arrow.__geaHoistedIIFE = true;
+    mainExpr = libExports.callExpression(arrow, []);
+  }
+  let result = mainExpr;
+  let firstGuardIdx = finalIdx;
+  for (let i = scanIdx; i >= 0; i--) {
+    const s = body[i];
+    if (libExports.isIfStatement(s) && !s.alternate && s.consequent && (libExports.isReturnStatement(s.consequent) && s.consequent.argument && (libExports.isJSXElement(s.consequent.argument) || libExports.isJSXFragment(s.consequent.argument)) || libExports.isBlockStatement(s.consequent) && s.consequent.body.length === 1 && libExports.isReturnStatement(s.consequent.body[0]) && s.consequent.body[0].argument && (libExports.isJSXElement(s.consequent.body[0].argument) || libExports.isJSXFragment(s.consequent.body[0].argument)))) {
+      const ret = libExports.isReturnStatement(s.consequent) ? s.consequent : s.consequent.body[0];
+      result = libExports.conditionalExpression(s.test, ret.argument, result);
+      firstGuardIdx = i;
+      continue;
+    }
+    break;
+  }
+  if (firstGuardIdx === finalIdx && hoistedStmts.length === 0) return;
+  const frag = libExports.jsxFragment(libExports.jsxOpeningFragment(), libExports.jsxClosingFragment(), [libExports.jsxExpressionContainer(result)]);
+  body.splice(firstGuardIdx, finalIdx - firstGuardIdx + 1, libExports.returnStatement(frag));
+}
+
+function transformFile(source, _filename) {
+  if (!source.includes("<") || !source.includes(">")) {
+    return { code: source, changed: false, rewritten: [], importsNeeded: [] };
+  }
+  let ast;
+  try {
+    ast = libExports$1.parse(source, {
+      sourceType: "module",
+      plugins: ["typescript", "jsx", "classProperties", "classPrivateProperties", "classPrivateMethods"],
+      errorRecovery: false
+    });
+  } catch {
+    return { code: source, changed: false, rewritten: [], importsNeeded: [] };
+  }
+  const ctx = createEmitContext();
+  const rewritten = [];
+  let firstClassIdx = -1;
+  for (let i = 0; i < ast.program.body.length; i++) {
+    const node = ast.program.body[i];
+    let classDecl = null;
+    let fnDecl = null;
+    if (libExports.isClassDeclaration(node)) classDecl = node;
+    else if (libExports.isFunctionDeclaration(node)) fnDecl = node;
+    else if (libExports.isExportDefaultDeclaration(node)) {
+      if (libExports.isClassDeclaration(node.declaration)) classDecl = node.declaration;
+      else if (libExports.isFunctionDeclaration(node.declaration)) fnDecl = node.declaration;
+    } else if (libExports.isExportNamedDeclaration(node)) {
+      if (libExports.isClassDeclaration(node.declaration)) classDecl = node.declaration;
+      else if (libExports.isFunctionDeclaration(node.declaration)) fnDecl = node.declaration;
+    }
+    if (classDecl) {
+      if (firstClassIdx < 0) firstClassIdx = i;
+      ctx.classGetters.clear();
+      for (const m of classDecl.body.body) {
+        if (libExports.isClassMethod(m) && m.kind === "get" && libExports.isIdentifier(m.key) && !m.computed && !m.static) {
+          ctx.classGetters.add(m.key.name);
+        }
+      }
+      const templateMethod = findTemplateMethod(classDecl);
+      if (templateMethod) foldEarlyReturnGuards(templateMethod);
+      const methodsWithJsx = [];
+      for (const m of classDecl.body.body) {
+        if (!libExports.isClassMethod(m) || m.computed || m.static) continue;
+        if (m === templateMethod) continue;
+        if (bodyContainsJsx(m.body)) methodsWithJsx.push(m);
+      }
+      if (!templateMethod && methodsWithJsx.length === 0) continue;
+      if (templateMethod && !extendsComponent(classDecl)) continue;
+      const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null;
+      if (templateMethod && !jsx) continue;
+      for (const m of methodsWithJsx) {
+        m.body.body = m.body.body.map((s) => lowerJsxInStatement(s, ctx));
+      }
+      if (!templateMethod) {
+        rewritten.push(classDecl.id && classDecl.id.name || "<anonymous>");
+        continue;
+      }
+      const paramBindings = [];
+      if (templateMethod.params.length >= 1 && libExports.isObjectPattern(templateMethod.params[0])) {
+        for (const prop of templateMethod.params[0].properties) {
+          if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
+          const local = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
+          ctx.bindings.set(
+            local,
+            libExports.memberExpression(
+              libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")),
+              libExports.identifier(prop.key.name)
+            )
+          );
+          paramBindings.push(local);
+        }
+      }
+      let plainPropsParamName = null;
+      if (templateMethod.params.length >= 1 && libExports.isIdentifier(templateMethod.params[0])) {
+        plainPropsParamName = templateMethod.params[0].name;
+        ctx.bindings.set(plainPropsParamName, libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")));
+      }
+      const preceding = extractPrecedingStatements(templateMethod);
+      const method = buildCreateTemplateMethod(jsx, ctx, preceding);
+      if (plainPropsParamName) ctx.bindings.delete(plainPropsParamName);
+      for (const k of paramBindings) ctx.bindings.delete(k);
+      const bodyItems = classDecl.body.body;
+      const templateIdx = bodyItems.indexOf(templateMethod);
+      if (templateIdx >= 0) bodyItems[templateIdx] = method;
+      rewritten.push(classDecl.id && classDecl.id.name || "<anonymous>");
+      continue;
+    }
+    if (fnDecl && isFunctionComponent(fnDecl)) {
+      if (firstClassIdx < 0) firstClassIdx = i;
+      rewriteFnComponent(fnDecl, ctx);
+      rewritten.push(fnDecl.id && fnDecl.id.name || "<anonymous>");
+    }
+  }
+  if (rewritten.length === 0) {
+    return { code: source, changed: false, rewritten: [], importsNeeded: [] };
+  }
+  injectTemplateDecls(ast, firstClassIdx, ctx.templateDecls);
+  ensureCoreImports(ast, ctx.importsNeeded);
+  const out = generate$1(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } });
+  return {
+    code: out.code,
+    map: out.map,
+    changed: true,
+    rewritten,
+    importsNeeded: Array.from(ctx.importsNeeded)
+  };
+}
+
+function convertFunctionalToClass(ast, info, imports) {
+  const name = info.name;
+  let params = [libExports.identifier("props")];
+  let templateBody = [];
+  let removeVarDeclPath = null;
+  let exportPath = null;
+  traverse$1(ast, {
+    ExportDefaultDeclaration(path) {
+      exportPath = path;
+      const decl = path.node.declaration;
+      const extractFunction = (fn) => {
+        if (fn.params.length > 0) {
+          params = fn.params.map((p) => libExports.cloneNode(p));
+        }
+        if (libExports.isBlockStatement(fn.body)) {
+          const returnIdx = fn.body.body.findIndex((s) => libExports.isReturnStatement(s) && s.argument);
+          if (returnIdx >= 0) {
+            templateBody = fn.body.body.slice(0, returnIdx + 1).map((s) => libExports.cloneNode(s));
+          }
+        } else {
+          templateBody = [libExports.returnStatement(libExports.cloneNode(fn.body))];
+        }
+      };
+      if (libExports.isFunctionDeclaration(decl)) {
+        extractFunction(decl);
+      } else if (libExports.isArrowFunctionExpression(decl)) {
+        extractFunction(decl);
+      } else if (libExports.isIdentifier(decl)) {
+        const binding = path.scope.getBinding(decl.name);
+        const init = binding?.path?.isVariableDeclarator() ? binding.path.node.init : null;
+        if (libExports.isArrowFunctionExpression(init) || libExports.isFunctionExpression(init)) {
+          extractFunction(init);
+          const varDeclPath = binding.path.findParent(
+            (p) => libExports.isVariableDeclaration(p.node)
+          );
+          if (varDeclPath) removeVarDeclPath = varDeclPath;
+        }
+      }
+      path.stop();
+    }
+  });
+  if (templateBody.length === 0 || !exportPath) return;
+  const firstParam = params[0];
+  const firstStmt = templateBody[0];
+  if (params.length === 1 && libExports.isIdentifier(firstParam) && libExports.isVariableDeclaration(firstStmt) && firstStmt.declarations.length === 1) {
+    const decl = firstStmt.declarations[0];
+    if (decl && libExports.isObjectPattern(decl.id) && decl.init && libExports.isIdentifier(decl.init, { name: firstParam.name })) {
+      params = [libExports.cloneNode(decl.id)];
+      templateBody = templateBody.slice(1);
+    }
+  }
+  ensureComponentImport(ast, imports);
+  const templateMethod = libExports.classMethod("method", libExports.identifier("template"), params, libExports.blockStatement(templateBody));
+  const classDecl = libExports.classDeclaration(libExports.identifier(name), libExports.identifier("Component"), libExports.classBody([templateMethod]));
+  if (removeVarDeclPath) {
+    removeVarDeclPath.remove();
+  }
+  const program = ast.program;
+  const idx = program.body.indexOf(exportPath.node);
+  if (idx >= 0) {
+    program.body[idx] = libExports.exportDefaultDeclaration(classDecl);
+  }
+}
+function ensureComponentImport(ast, imports) {
+  if (imports.get("Component")) return;
+  const source = "@geajs/core";
+  for (const node of ast.program.body) {
+    if (libExports.isImportDeclaration(node) && node.source.value === source) {
+      node.specifiers.push(libExports.importSpecifier(libExports.identifier("Component"), libExports.identifier("Component")));
+      imports.set("Component", source);
+      return;
+    }
+  }
+  ast.program.body.unshift(
+    libExports.importDeclaration(
+      [libExports.importSpecifier(libExports.identifier("Component"), libExports.identifier("Component"))],
+      libExports.stringLiteral(source)
+    )
+  );
+  imports.set("Component", source);
+}
+
+function isComponentTag(tagName) {
+  return tagName.length > 0 && tagName[0] >= "A" && tagName[0] <= "Z";
 }
 
 // src/index.ts
@@ -44563,33 +48030,7 @@ function parseSource(source) {
     allowSuperOutsideMethod: true
   });
 }
-function parseWithHelpfulError(source) {
-  try {
-    return parseSource(source);
-  } catch (err) {
-    throw new Error(
-      `eszter: failed to parse template.
-Reconstructed source:
-${source}
-
-Parser error: ${err.message}`
-    );
-  }
-}
 function parseFragmentWithHelpfulError(kind, source) {
-  try {
-    return parseSource(source);
-  } catch (err) {
-    throw new Error(
-      `eszter: failed to parse ${kind} template.
-Reconstructed source:
-${source}
-
-Parser error: ${err.message}`
-    );
-  }
-}
-function parseWrappedExpressionWithHelpfulError(kind, source) {
   try {
     return parseSource(source);
   } catch (err) {
@@ -44607,35 +48048,6 @@ function substituteFile(file, replacements) {
 }
 function quoteStringLiteral(value) {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t").replace(/\u0008/g, "\\b").replace(/\f/g, "\\f").replace(/\v/g, "\\v").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029")}'`;
-}
-function wrapStatements(source, context) {
-  const labels = Array.from(/* @__PURE__ */ new Set([...context.breakLabels ?? [], ...context.continueLabels ?? []]));
-  let wrapped = `while(true){
-${source}
-}`;
-  for (let i = labels.length - 1; i >= 0; i--) {
-    wrapped = `${labels[i]}: while(true){
-${wrapped}
-}`;
-  }
-  return { wrapped, labelCount: labels.length };
-}
-function extractWrappedStatements(file, labelCount) {
-  let node = file.program.body[0];
-  for (let i = 0; i < labelCount; i++) {
-    const labeled = node;
-    const labeledLoop = labeled.body;
-    node = labeledLoop.body.body[0];
-  }
-  const whileStmt = node;
-  return whileStmt.body.body;
-}
-function buildAST(strings, holes, context = {}) {
-  const { source, replacements } = buildSource(strings, holes);
-  const { wrapped, labelCount } = wrapStatements(source, context);
-  const file = parseWithHelpfulError(wrapped);
-  const substituted = substituteFile(file, replacements);
-  return extractWrappedStatements(substituted, labelCount);
 }
 function extractSingleClassMethod(file) {
   const classDecl = file.program.body[0];
@@ -44705,16 +48117,6 @@ function extractSingleSpecificPattern(file, kind) {
     throw new Error(`eszter: template did not produce a ${kind}.`);
   }
   return pattern;
-}
-function extractWrappedExpression(file, kind) {
-  const stmt = file.program.body[0];
-  if (!libExports.isExpressionStatement(stmt)) {
-    throw new Error(`eszter: wrapped ${kind} template did not produce an ExpressionStatement.`);
-  }
-  if (stmt.expression.type !== kind) {
-    throw new Error(`eszter: template did not produce a ${kind}.`);
-  }
-  return stmt.expression;
 }
 var FRAGMENT_SPECS = {
   ImportDeclaration: {
@@ -44859,58 +48261,8 @@ function buildFragmentAST(kind, strings, holes) {
   const substituted = substituteFile(file, replacements);
   return FRAGMENT_SPECS[kind].extract(substituted);
 }
-function buildWrappedExpressionAST(kind, strings, holes) {
-  const { source, replacements } = buildSource(strings, holes);
-  const file = parseWrappedExpressionWithHelpfulError(kind, `(
-${source}
-)`);
-  const substituted = substituteFile(file, replacements);
-  return extractWrappedExpression(substituted, kind);
-}
 function id(name) {
   return libExports.identifier(name);
-}
-function str(value) {
-  return libExports.stringLiteral(value);
-}
-function num(value) {
-  return libExports.numericLiteral(value);
-}
-function cloneNode4(node) {
-  return libExports.cloneNode(node, true);
-}
-function cloneStatements(statements) {
-  return statements.map((statement) => cloneNode4(statement));
-}
-function cloneDirectives(block) {
-  return block.directives.map((directive) => cloneNode4(directive));
-}
-function createBlockWithStatements(block, statements) {
-  const next = libExports.blockStatement(cloneStatements(statements));
-  next.directives = cloneDirectives(block);
-  return next;
-}
-function getBlockBody(node) {
-  if (libExports.isArrowFunctionExpression(node) && !libExports.isBlockStatement(node.body)) {
-    throw new Error(`eszter: body helpers require a block-bodied function or method.`);
-  }
-  return node.body;
-}
-function updateBody(node, next) {
-  const copy = cloneNode4(node);
-  const block = getBlockBody(copy);
-  const current = cloneStatements(block.body);
-  const statements = typeof next === "function" ? next(current) : next;
-  const nextBlock = createBlockWithStatements(block, statements);
-  if (libExports.isArrowFunctionExpression(copy)) {
-    copy.body = nextBlock;
-    return copy;
-  }
-  copy.body = nextBlock;
-  return copy;
-}
-function appendToBody(node, ...statements) {
-  return updateBody(node, (body) => [...body, ...cloneStatements(statements.flat())]);
 }
 
 // src/index.ts
@@ -44931,59 +48283,12 @@ function normalizeTemplateInput(input, holes) {
   Object.defineProperty(strings, "raw", { value: raw });
   return strings;
 }
-function js(stringsOrTemplate, ...holes) {
-  const stmts = buildAST(normalizeTemplateInput(stringsOrTemplate, holes), holes);
-  if (stmts.length !== 1) {
-    throw new Error(
-      `eszter: js\`...\` must contain exactly one statement, got ${stmts.length}. Use jsAll\`...\` for multiple statements.`
-    );
-  }
-  return stmts[0];
-}
-function jsAll(stringsOrTemplate, ...holes) {
-  return buildAST(normalizeTemplateInput(stringsOrTemplate, holes), holes);
-}
-var jsBlockBody = jsAll;
 function jsAs(kind) {
   return ((stringsOrTemplate, ...holes) => {
     return buildFragmentAST(kind, normalizeTemplateInput(stringsOrTemplate, holes), holes);
   });
 }
-var jsMethod = jsAs("ClassMethod");
 var jsImport = jsAs("ImportDeclaration");
-var jsClassProp = jsAs("ClassProperty");
-var jsPrivateProp = jsAs("ClassPrivateProperty");
-function jsExpr(stringsOrTemplate, ...holes) {
-  const stmts = buildAST(normalizeTemplateInput(stringsOrTemplate, holes), holes);
-  if (stmts.length !== 1) {
-    throw new Error(
-      `eszter: jsExpr\`...\` must be a single expression, got ${stmts.length} statements. Use jsAll\`...\` for multiple statements.`
-    );
-  }
-  const stmt = stmts[0];
-  if (!libExports.isExpressionStatement(stmt)) {
-    throw new Error(
-      `eszter: jsExpr\`...\` must be an expression statement, got ${stmt.type}. Use js\`...\` for full statements.`
-    );
-  }
-  return stmt.expression;
-}
-function jsObjectExpr(stringsOrTemplate, ...holes) {
-  return buildWrappedExpressionAST("ObjectExpression", normalizeTemplateInput(stringsOrTemplate, holes), holes);
-}
-function tpl(stringsOrTemplate, ...holes) {
-  const strings = normalizeTemplateInput(stringsOrTemplate, holes);
-  const quasis = [];
-  const expressions = [];
-  for (let i = 0; i < strings.length; i++) {
-    const tail = i === strings.length - 1;
-    quasis.push(libExports.templateElement({ raw: strings.raw[i], cooked: strings[i] }, tail));
-    if (!tail) {
-      expressions.push(coerceHole(holes[i]));
-    }
-  }
-  return libExports.templateLiteral(quasis, expressions);
-}
 
 function ensureImport(ast, source, specifier, isDefault = false) {
   const program = ast.program;
@@ -44993,6 +48298,9 @@ function ensureImport(ast, source, specifier, isDefault = false) {
       (node) => libExports.isImportDeclaration(node) && node.source.value === source && node.specifiers.some((s) => libExports.isImportDefaultSpecifier(s))
     );
     if (alreadyHasDefault) return false;
+  }
+  const declaration = program.body.find((node) => libExports.isImportDeclaration(node) && node.source.value === source);
+  if (!declaration) {
     const insertIndex = Math.max(
       0,
       program.body.reduce((idx, node, i) => libExports.isImportDeclaration(node) ? i + 1 : idx, 0)
@@ -45004,29 +48312,12 @@ function ensureImport(ast, source, specifier, isDefault = false) {
     );
     return true;
   }
-  const declaration = program.body.find((node) => libExports.isImportDeclaration(node) && node.source.value === source);
-  if (!declaration) {
-    const insertIndex = Math.max(
-      0,
-      program.body.reduce((idx, node, i) => libExports.isImportDeclaration(node) ? i + 1 : idx, 0)
-    );
-    program.body.splice(insertIndex, 0, jsImport`import { ${id(specifier)} } from ${source};`);
-    return true;
-  }
   const exists = declaration.specifiers.some(
-    (s) => libExports.isImportSpecifier(s) && libExports.isIdentifier(s.local) && s.local.name === specifier
+    (s) => isDefault ? libExports.isImportDefaultSpecifier(s) : libExports.isImportSpecifier(s) && libExports.isIdentifier(s.local) && s.local.name === specifier
   );
-  if (!exists) {
-    declaration.specifiers.push(buildSpecifier());
-    return true;
-  }
-  return false;
-}
-function buildListItemsSymbol(arrayPropName) {
-  return libExports.callExpression(libExports.identifier("geaListItemsSymbol"), [libExports.stringLiteral(arrayPropName)]);
-}
-function buildThisListItems(arrayPropName) {
-  return libExports.memberExpression(libExports.thisExpression(), buildListItemsSymbol(arrayPropName), true);
+  if (exists) return false;
+  declaration.specifiers.push(buildSpecifier());
+  return true;
 }
 const GEA_COMPILER_SYMBOL_IMPORTS = [
   "GEA_RENDERED",
@@ -45065,6 +48356,9 @@ const GEA_COMPILER_SYMBOL_IMPORTS = [
   "GEA_MAP_CONFIG_COUNT",
   "GEA_CLONE_ITEM",
   "GEA_CLONE_TEMPLATE",
+  "GEA_COMPILED",
+  "GEA_EVENTS_CACHE",
+  "GEA_LIFECYCLE_CALLED",
   "GEA_ON_PROP_CHANGE",
   "GEA_SETUP_LOCAL_STATE_OBSERVERS",
   "GEA_SETUP_REFS",
@@ -45087,8 +48381,14 @@ function ensureGeaCompilerSymbolImports(ast) {
     collectReferencedSymbols(node, symbolSet, used);
   }
   for (const name of used) {
+    if (hasImportedLocal(ast, name)) continue;
     ensureImport(ast, "@geajs/core", name);
   }
+}
+function hasImportedLocal(ast, name) {
+  return ast.program.body.some(
+    (node) => libExports.isImportDeclaration(node) && node.specifiers.some((s) => libExports.isIdentifier(s.local) && s.local.name === name)
+  );
 }
 function collectReferencedSymbols(node, symbols, out) {
   if (node == null || typeof node !== "object") return;
@@ -45097,10603 +48397,12 @@ function collectReferencedSymbols(node, symbols, out) {
     return;
   }
   if (node.type === "ImportDeclaration") return;
-  if (node.type === "Identifier" && symbols.has(node.name)) {
-    out.add(node.name);
-  }
+  if (node.type === "Identifier" && symbols.has(node.name)) out.add(node.name);
   for (const key of Object.keys(node)) {
     if (key === "type" || key === "start" || key === "end" || key === "loc" || key === "leadingComments" || key === "trailingComments" || key === "innerComments")
       continue;
     collectReferencedSymbols(node[key], symbols, out);
   }
-}
-function buildMemberChain(base, path) {
-  return buildMemberChainFromParts(base, path ? path.split(".") : []);
-}
-function buildMemberChainFromParts(base, parts) {
-  if (parts.length === 0) return base;
-  return parts.reduce((acc, prop) => {
-    const isIndex = /^\d+$/.test(prop);
-    return libExports.memberExpression(acc, isIndex ? libExports.numericLiteral(Number(prop)) : id(prop), isIndex);
-  }, base);
-}
-function buildOptionalMemberChain(base, path) {
-  return buildOptionalMemberChainFromParts(base, path ? path.split(".") : []);
-}
-function buildOptionalMemberChainFromParts(base, parts) {
-  if (parts.length === 0) return base;
-  return parts.reduce((acc, prop) => {
-    const isIndex = /^\d+$/.test(prop);
-    return libExports.optionalMemberExpression(acc, isIndex ? libExports.numericLiteral(Number(prop)) : id(prop), isIndex, true);
-  }, base);
-}
-function sanitizeObserveName(value) {
-  return value.replace(/[^a-zA-Z0-9_$]/g, "_");
-}
-function normalizePathParts(path) {
-  return Array.isArray(path) ? path : path ? path.split(".") : [];
-}
-function pathPartsToString(parts) {
-  return normalizePathParts(parts).join(".");
-}
-function buildObserveKey(parts, storeVar) {
-  return JSON.stringify({
-    storeVar: storeVar || null,
-    parts: normalizePathParts(parts)
-  });
-}
-function parseObserveKey(key) {
-  const parsed = JSON.parse(key);
-  return {
-    parts: parsed.parts,
-    ...parsed.storeVar ? { storeVar: parsed.storeVar } : {}
-  };
-}
-function getObserveMethodName(parts, storeVar) {
-  const owner = sanitizeObserveName(storeVar || "local");
-  const normalized = normalizePathParts(parts);
-  const observePath = sanitizeObserveName(normalized.length > 0 ? normalized.join("__") : "root");
-  return `__observe_${owner}_${observePath}`;
-}
-function resolvePath(expr, stateRefs, context = {}) {
-  if (libExports.isIdentifier(expr)) {
-    if (context.inMap && context.mapItemVar === expr.name) {
-      return { parts: null };
-    }
-    if (stateRefs.has(expr.name)) {
-      const ref = stateRefs.get(expr.name);
-      if (ref.kind === "derived") return { parts: null };
-      if (ref.kind === "local-destructured" && ref.propName) {
-        return { parts: [ref.propName] };
-      }
-      if (ref.kind === "store-alias" && ref.storeVar && ref.propName) {
-        return {
-          parts: [ref.propName],
-          isImportedState: true,
-          storeVar: ref.storeVar
-        };
-      }
-      if (ref.kind === "imported-destructured" && ref.storeVar && ref.propName) {
-        return {
-          parts: [ref.propName],
-          isImportedState: true,
-          storeVar: ref.storeVar
-        };
-      }
-      return {
-        parts: [],
-        isImportedState: ref.kind === "imported",
-        storeVar: ref.kind === "imported" ? expr.name : void 0
-      };
-    }
-    return { parts: null };
-  }
-  if (libExports.isThisExpression(expr)) return { parts: [] };
-  if (libExports.isCallExpression(expr) && libExports.isMemberExpression(expr.callee)) {
-    return resolvePath(expr.callee.object, stateRefs, context);
-  }
-  if (libExports.isMemberExpression(expr)) {
-    const objectResult = resolvePath(
-      expr.object,
-      stateRefs,
-      context
-    );
-    if (!objectResult || !objectResult.parts) {
-      if (context.inMap && libExports.isIdentifier(expr.object) && expr.object.name === context.mapItemVar) {
-        if (libExports.isIdentifier(expr.property)) {
-          return { parts: [expr.property.name] };
-        }
-      }
-      return { parts: null };
-    }
-    if (objectResult.isImportedState && objectResult.storeVar && objectResult.parts.length === 0 && libExports.isIdentifier(expr.property)) {
-      const ref = stateRefs.get(objectResult.storeVar);
-      const propName = expr.property.name;
-      if (ref?.reactiveFields) {
-        if (ref.reactiveFields.has(propName) || ref.getterDeps?.has(propName)) {
-          return {
-            parts: [propName],
-            isImportedState: true,
-            storeVar: objectResult.storeVar
-          };
-        }
-        return null;
-      }
-      return {
-        parts: [propName],
-        isImportedState: true,
-        storeVar: objectResult.storeVar
-      };
-    }
-    if (libExports.isIdentifier(expr.property)) {
-      return {
-        parts: [...objectResult.parts, expr.property.name],
-        isImportedState: objectResult.isImportedState,
-        storeVar: objectResult.storeVar
-      };
-    } else if (libExports.isNumericLiteral(expr.property)) {
-      return {
-        parts: [...objectResult.parts, String(expr.property.value)],
-        isImportedState: objectResult.isImportedState,
-        storeVar: objectResult.storeVar
-      };
-    }
-  }
-  return { parts: null };
-}
-
-function getJSXTagName(name) {
-  if (libExports.isJSXIdentifier(name)) return name.name;
-  if (libExports.isJSXMemberExpression(name))
-    return `${getJSXTagName(name.object)}.${name.property.name}`;
-  if (libExports.isJSXNamespacedName(name))
-    return `${name.namespace.name}:${name.name.name}`;
-  return "";
-}
-function isUpperCase(char) {
-  return char >= "A" && char <= "Z";
-}
-function isComponentTag(tagName) {
-  return tagName.length > 0 && isUpperCase(tagName[0]);
-}
-function isAlwaysStringExpression(expr) {
-  if (libExports.isStringLiteral(expr)) return true;
-  if (libExports.isTemplateLiteral(expr)) return true;
-  if (libExports.isConditionalExpression(expr)) {
-    return isAlwaysStringExpression(expr.consequent) && isAlwaysStringExpression(expr.alternate);
-  }
-  if (libExports.isLogicalExpression(expr) && expr.operator === "??") {
-    return isAlwaysStringExpression(expr.right);
-  }
-  return false;
-}
-function isWhitespaceFree(expr) {
-  if (libExports.isStringLiteral(expr)) return expr.value === expr.value.trim();
-  if (libExports.isConditionalExpression(expr)) {
-    return isWhitespaceFree(expr.consequent) && isWhitespaceFree(expr.alternate);
-  }
-  return false;
-}
-function buildTrimmedClassValueExpression(expr) {
-  if (isAlwaysStringExpression(expr) && isWhitespaceFree(expr)) return expr;
-  if (isAlwaysStringExpression(expr)) {
-    return libExports.callExpression(
-      libExports.memberExpression(libExports.cloneNode(expr, true), libExports.identifier("trim")),
-      []
-    );
-  }
-  const forCompare = libExports.cloneNode(expr, true);
-  const forString = libExports.cloneNode(expr, true);
-  const coerced = libExports.conditionalExpression(
-    libExports.binaryExpression("!=", forCompare, libExports.nullLiteral()),
-    libExports.callExpression(libExports.identifier("String"), [forString]),
-    libExports.stringLiteral("")
-  );
-  return libExports.callExpression(
-    libExports.memberExpression(
-      libExports.parenthesizedExpression(coerced),
-      libExports.identifier("trim")
-    ),
-    []
-  );
-}
-function buildTrimmedClassJoinedExpression(expr) {
-  return libExports.callExpression(
-    libExports.memberExpression(libExports.cloneNode(expr, true), libExports.identifier("trim")),
-    []
-  );
-}
-function generateSelector(selectorPath) {
-  if (selectorPath.length === 0) return ":scope";
-  return `:scope > ${selectorPath.join(" > ")}`;
-}
-function getDirectChildElements(children) {
-  const directChildren = [];
-  const pushChildren = (nodes) => {
-    nodes.forEach((child) => {
-      if (libExports.isJSXElement(child)) {
-        directChildren.push(child);
-      } else if (libExports.isJSXFragment(child)) {
-        pushChildren(child.children);
-      } else if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-        if (libExports.isJSXElement(child.expression)) {
-          directChildren.push(child.expression);
-        } else if (libExports.isJSXFragment(child.expression)) {
-          pushChildren(child.expression.children);
-        }
-      }
-    });
-  };
-  pushChildren(
-    children
-  );
-  const perTagCounts = /* @__PURE__ */ new Map();
-  return directChildren.map((node) => {
-    const tagName = getJSXTagName(node.openingElement.name) || "div";
-    const tagCount = (perTagCounts.get(tagName) || 0) + 1;
-    perTagCounts.set(tagName, tagCount);
-    return {
-      node,
-      selectorSegment: `${tagName}:nth-of-type(${tagCount})`
-    };
-  });
-}
-
-function getTemplateParamBinding(param) {
-  if (param == null) return void 0;
-  let node = param;
-  if (libExports.isTSParameterProperty(param)) node = param.parameter;
-  if (libExports.isAssignmentPattern(node)) node = node.left;
-  if (libExports.isIdentifier(node) || libExports.isObjectPattern(node)) return node;
-  return void 0;
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-function normalizeJSXText(raw) {
-  const lines = raw.split(/\r\n|\n|\r/);
-  let lastNonEmptyLine = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (/[^ \t]/.test(lines[i])) lastNonEmptyLine = i;
-  }
-  let str = "";
-  for (let i = 0; i < lines.length; i++) {
-    const isFirstLine = i === 0;
-    const isLastLine = i === lines.length - 1;
-    const isLastNonEmptyLine = i === lastNonEmptyLine;
-    let trimmed = lines[i].replace(/\t/g, " ");
-    if (!isFirstLine) trimmed = trimmed.replace(/^[ ]+/, "");
-    if (!isLastLine) trimmed = trimmed.replace(/[ ]+$/, "");
-    if (trimmed) {
-      if (!isLastNonEmptyLine) trimmed += " ";
-      str += trimmed;
-    }
-  }
-  return str;
-}
-function toHtmlAttrName(jsxName, isComponent = false) {
-  if (isComponent) return `data-prop-${camelToKebab(jsxName)}`;
-  if (jsxName === "className") return "class";
-  if (jsxName === "htmlFor") return "for";
-  return jsxName;
-}
-function camelToKebab(name) {
-  return name.replace(/([A-Z])/g, "-$1").toLowerCase();
-}
-function pascalToKebab(name) {
-  return name.replace(/([A-Z])/g, "-$1").toLowerCase().replace(/^-/, "");
-}
-
-const VOID_ELEMENTS = /* @__PURE__ */ new Set([
-  "area",
-  "base",
-  "br",
-  "col",
-  "embed",
-  "hr",
-  "img",
-  "input",
-  "link",
-  "meta",
-  "param",
-  "source",
-  "track",
-  "wbr"
-]);
-const EVENT_TYPES = /* @__PURE__ */ new Set([
-  "click",
-  "dblclick",
-  "change",
-  "input",
-  "keydown",
-  "keyup",
-  "keypress",
-  "blur",
-  "focus",
-  "mousedown",
-  "mouseup",
-  "mouseover",
-  "mouseout",
-  "mousemove",
-  "mouseenter",
-  "mouseleave",
-  "contextmenu",
-  "submit",
-  "scroll",
-  "resize",
-  "reset",
-  "wheel",
-  "touchstart",
-  "touchmove",
-  "touchend",
-  "tap",
-  "longTap",
-  "swipeRight",
-  "swipeUp",
-  "swipeLeft",
-  "swipeDown",
-  "dragstart",
-  "dragend",
-  "dragover",
-  "dragleave",
-  "drop",
-  "pointerdown",
-  "pointerup",
-  "pointermove",
-  "pointerenter",
-  "pointerleave",
-  "pointerover",
-  "pointerout",
-  "pointercancel",
-  "animationstart",
-  "animationend",
-  "animationiteration",
-  "transitionstart",
-  "transitionend",
-  "transitionrun",
-  "transitioncancel"
-]);
-const BOOLEAN_HTML_ATTRS = /* @__PURE__ */ new Set([
-  "disabled",
-  "hidden",
-  "readonly",
-  "required",
-  "checked",
-  "selected",
-  "multiple",
-  "autofocus",
-  "autoplay",
-  "controls",
-  "loop",
-  "muted",
-  "open",
-  "novalidate",
-  "formnovalidate",
-  "defer",
-  "async"
-]);
-
-function existsSync(filePath) {
-              const resolver = globalThis.__geaResolveFile;
-              if (!resolver) return false
-              return resolver(filePath) !== null
-            }
-            function readFileSync(filePath, encoding) {
-              const resolver = globalThis.__geaResolveFile;
-              if (!resolver) throw new Error('No file resolver available')
-              const content = resolver(filePath);
-              if (content === null) throw new Error('File not found: ' + filePath)
-              return content
-            }
-
-function resolve(...parts) {
-              return parts.filter(Boolean).join('/')
-                .replace(/\/\.\//g, '/')
-                .replace(/\/+/g, '/')
-            }
-            function dirname(p) {
-              const parts = p.split('/');
-              parts.pop();
-              return parts.join('/') || '/'
-            }
-
-const EVENT_NAMES = /* @__PURE__ */ new Set([
-  "click",
-  "dblclick",
-  "mousedown",
-  "mouseup",
-  "mouseover",
-  "mouseout",
-  "mousemove",
-  "mouseenter",
-  "mouseleave",
-  "contextmenu",
-  "keydown",
-  "keyup",
-  "keypress",
-  "focus",
-  "blur",
-  "input",
-  "change",
-  "submit",
-  "scroll",
-  "touchstart",
-  "touchmove",
-  "touchend",
-  "tap",
-  "longTap",
-  "swipeRight",
-  "swipeUp",
-  "swipeLeft",
-  "swipeDown",
-  "drag",
-  "dragstart",
-  "dragend",
-  "dragover",
-  "dragleave",
-  "drop",
-  "pointerdown",
-  "pointerup",
-  "pointermove",
-  "pointerenter",
-  "pointerleave",
-  "pointerover",
-  "pointerout",
-  "pointercancel",
-  "resize",
-  "reset",
-  "wheel",
-  "animationstart",
-  "animationend",
-  "animationiteration",
-  "transitionstart",
-  "transitionend",
-  "transitionrun",
-  "transitioncancel"
-]);
-function toGeaEventType(attrName) {
-  if (attrName.startsWith("on") && attrName.length > 2) {
-    return attrName.slice(2).toLowerCase();
-  }
-  return attrName;
-}
-function getPropContext(params) {
-  const context = { destructuredPropNames: /* @__PURE__ */ new Set() };
-  const firstParam = params?.[0];
-  if (!firstParam || libExports.isRestElement(firstParam)) return context;
-  const binding = getTemplateParamBinding(firstParam);
-  if (!binding) return context;
-  if (libExports.isIdentifier(binding)) {
-    context.propsParamName = binding.name;
-    return context;
-  }
-  context.propsParamName = "props";
-  binding.properties.forEach((prop) => {
-    if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.key)) {
-      context.destructuredPropNames.add(prop.key.name);
-    }
-  });
-  return context;
-}
-function getRootClassSelector(node) {
-  for (const attr of node.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    if (attr.name.name !== "class" && attr.name.name !== "className") continue;
-    let firstClass = "";
-    if (libExports.isStringLiteral(attr.value)) {
-      firstClass = attr.value.value.trim().split(/\s+/)[0] || "";
-    } else if (libExports.isJSXExpressionContainer(attr.value) && !libExports.isJSXEmptyExpression(attr.value.expression)) {
-      const expr = attr.value.expression;
-      if (libExports.isStringLiteral(expr)) {
-        firstClass = expr.value.trim().split(/\s+/)[0] || "";
-      } else if (libExports.isTemplateLiteral(expr)) {
-        firstClass = expr.quasis[0]?.value.raw.trim().split(/\s+/)[0] || "";
-      }
-    }
-    if (firstClass) return `.${firstClass}`;
-  }
-  return null;
-}
-function resolvePropCallbackName(expr, context) {
-  if (libExports.isIdentifier(expr) && context.destructuredPropNames.has(expr.name)) return expr.name;
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && libExports.isIdentifier(expr.object) && expr.object.name === (context.propsParamName || "props")) return expr.property.name;
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && libExports.isMemberExpression(expr.object) && libExports.isIdentifier(expr.object.property) && expr.object.property.name === "props" && (libExports.isThisExpression(expr.object.object) || libExports.isIdentifier(expr.object.object) && expr.object.object.name === (context.propsParamName || "props"))) {
-    return expr.property.name;
-  }
-  return null;
-}
-function extractSingleCallExpression(expr) {
-  if (libExports.isCallExpression(expr)) return expr;
-  if (libExports.isArrowFunctionExpression(expr) || libExports.isFunctionExpression(expr)) {
-    if (libExports.isCallExpression(expr.body)) return expr.body;
-    if (!libExports.isBlockStatement(expr.body) || expr.body.body.length !== 1) return null;
-    const stmt = expr.body.body[0];
-    if (libExports.isExpressionStatement(stmt) && libExports.isCallExpression(stmt.expression))
-      return stmt.expression;
-    if (libExports.isReturnStatement(stmt) && stmt.argument && libExports.isCallExpression(stmt.argument))
-      return stmt.argument;
-  }
-  return null;
-}
-function getHoistableRootEvent(attrName, expr, elementPath, context, selector) {
-  if (elementPath.length !== 0 || !selector) return null;
-  const skip = /* @__PURE__ */ new Set(["class", "className", "style", "id"]);
-  if (attrName.startsWith("data-") || skip.has(attrName)) return null;
-  const eventType = toGeaEventType(attrName);
-  const directProp = resolvePropCallbackName(expr, context);
-  if (directProp) return { eventType, propName: directProp, selector };
-  const callExpr = extractSingleCallExpression(expr);
-  if (!callExpr) return null;
-  const propName = resolvePropCallbackName(
-    callExpr.callee,
-    context
-  );
-  if (!propName) return null;
-  return { eventType, propName, selector };
-}
-function resolveImportPath$1(importer, source) {
-  const base = resolve(dirname(importer), source);
-  const exts = ["", ".js", ".jsx", ".ts", ".tsx"];
-  const candidates = [...exts.map((e) => base + e), ...exts.slice(1).map((e) => resolve(base, `index${e}`))];
-  return candidates.find((c) => existsSync(c)) ?? null;
-}
-function findJSXReturn(stmts) {
-  for (const s of stmts) {
-    if (libExports.isReturnStatement(s) && s.argument && libExports.isJSXElement(s.argument)) return s.argument;
-  }
-  return null;
-}
-function jsxFromFunctionBody(fn) {
-  if ("body" in fn && libExports.isJSXElement(fn.body)) return fn.body;
-  if ("body" in fn && libExports.isBlockStatement(fn.body)) return findJSXReturn(fn.body.body);
-  return null;
-}
-function jsxFromTemplateMethod(classBody) {
-  const m = classBody.body.find(
-    (member) => libExports.isClassMethod(member) && libExports.isIdentifier(member.key) && member.key.name === "template"
-  );
-  if (!m || !libExports.isBlockStatement(m.body)) return null;
-  const jsx = findJSXReturn(m.body.body);
-  return jsx ? { jsx, context: getPropContext(m.params) } : null;
-}
-function getReturnedRootJSX(ast, componentClassName) {
-  for (const stmt of ast.program.body) {
-    if (libExports.isExportDefaultDeclaration(stmt)) {
-      const decl = stmt.declaration;
-      if (libExports.isFunctionDeclaration(decl) && decl.body) {
-        const jsx = findJSXReturn(decl.body.body);
-        if (jsx) return { jsx, context: getPropContext(decl.params) };
-      }
-      if (libExports.isIdentifier(decl)) {
-        for (const bodyStmt of ast.program.body) {
-          if (!libExports.isVariableDeclaration(bodyStmt)) continue;
-          for (const dec of bodyStmt.declarations) {
-            if (!libExports.isIdentifier(dec.id, { name: decl.name }) || !dec.init) continue;
-            if (!libExports.isArrowFunctionExpression(dec.init) && !libExports.isFunctionExpression(dec.init)) continue;
-            const jsx = jsxFromFunctionBody(dec.init);
-            if (jsx) return { jsx, context: getPropContext(dec.init.params) };
-          }
-        }
-      }
-      if (componentClassName && libExports.isClassDeclaration(decl) && libExports.isIdentifier(decl.id, { name: componentClassName })) {
-        return jsxFromTemplateMethod(decl.body);
-      }
-    }
-    if (!componentClassName || !libExports.isClassDeclaration(stmt) || !libExports.isIdentifier(stmt.id, { name: componentClassName }))
-      continue;
-    const result = jsxFromTemplateMethod(stmt.body);
-    if (result) return result;
-  }
-  return null;
-}
-const hoistableRootEventCache = /* @__PURE__ */ new Map();
-function getHoistableRootEventsForImport(importer, source) {
-  const resolved = resolveImportPath$1(importer, source);
-  if (!resolved) return [];
-  const cached = hoistableRootEventCache.get(resolved);
-  if (cached) return cached;
-  let result;
-  try {
-    const code = readFileSync(resolved, "utf8");
-    const parsed = parseSource$1(code);
-    if (!parsed) return [];
-    const root = getReturnedRootJSX(parsed.ast, parsed.componentClassName);
-    if (!root) return [];
-    const selector = getRootClassSelector(root.jsx);
-    if (!selector) return [];
-    result = root.jsx.openingElement.attributes.flatMap((attr) => {
-      if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) return [];
-      if (!attr.value || !libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) {
-        return [];
-      }
-      const meta = getHoistableRootEvent(
-        attr.name.name,
-        attr.value.expression,
-        [],
-        root.context,
-        selector
-      );
-      return meta ? [meta] : [];
-    });
-  } catch (err) {
-    console.warn(
-      `[gea] Failed to analyze root events for ${resolved}:`,
-      err instanceof Error ? err.message : err
-    );
-    result = [];
-  }
-  hoistableRootEventCache.set(resolved, result);
-  return result;
-}
-function clearCaches$1() {
-  hoistableRootEventCache.clear();
-}
-
-function isEventAttribute(name) {
-  return EVENT_NAMES.has(name) || EVENT_NAMES.has(toGeaEventType(name));
-}
-function classifyAttribute(name) {
-  if (name === "key") return "key";
-  if (name === "ref") return "ref";
-  if (name === "id") return "id";
-  if (name === "dangerouslySetInnerHTML") return "dangerouslySetInnerHTML";
-  if (isEventAttribute(name)) return "event";
-  if (name === "class" || name === "className") return "class";
-  if (name === "style") return "style";
-  if (name === "value") return "value";
-  if (name === "checked") return "checked";
-  return "generic";
-}
-function isMapCall$1(expr) {
-  return libExports.isCallExpression(expr) && libExports.isMemberExpression(expr.callee) && libExports.isIdentifier(expr.callee.property) && expr.callee.property.name === "map";
-}
-
-function resolvePropRef(expr, propsParamName, destructuredPropNames) {
-  if (libExports.isIdentifier(expr) && destructuredPropNames?.has(expr.name)) return expr.name;
-  if (!libExports.isMemberExpression(expr) || !libExports.isIdentifier(expr.property)) return null;
-  const name = expr.property.name;
-  if (libExports.isMemberExpression(expr.object) && libExports.isIdentifier(expr.object.property) && expr.object.property.name === "props") {
-    if (libExports.isThisExpression(expr.object.object)) return name;
-    if (libExports.isIdentifier(expr.object.object) && expr.object.object.name === propsParamName) return name;
-  }
-  return libExports.isIdentifier(expr.object) && expr.object.name === (propsParamName || "props") ? name : null;
-}
-function resolveExpr(expr, stateRefs) {
-  if (libExports.isMemberExpression(expr) && libExports.isCallExpression(expr.object) && libExports.isMemberExpression(expr.object.callee))
-    return resolvePath(expr.object.callee.object, stateRefs);
-  if (libExports.isMemberExpression(expr) || libExports.isIdentifier(expr)) return resolvePath(expr, stateRefs);
-  if (libExports.isCallExpression(expr)) {
-    if (libExports.isMemberExpression(expr.callee)) {
-      const r = resolvePath(expr.callee.object, stateRefs);
-      if (r?.parts?.length) return r;
-    }
-    for (const arg of expr.arguments) {
-      if (libExports.isExpression(arg) && (libExports.isMemberExpression(arg) || libExports.isIdentifier(arg))) {
-        const r = resolvePath(arg, stateRefs);
-        if (r?.parts?.length) return r;
-      }
-    }
-  }
-  if (libExports.isTemplateLiteral(expr)) {
-    for (const inner of expr.expressions)
-      if (libExports.isExpression(inner)) {
-        const r = resolveExpr(inner, stateRefs);
-        if (r?.parts?.length) return r;
-      }
-  }
-  return null;
-}
-function applyImportedState(binding, result, stateProps) {
-  if (result.isImportedState && result.parts) {
-    binding.isImportedState = true;
-    binding.storeVar = result.storeVar;
-    stateProps.set(buildObserveKey(result.parts, result.storeVar), [...result.parts]);
-  }
-}
-function collectTextExprArrayDeps(textExpressions, stateRefs, includeDirectPaths = false) {
-  const deps = /* @__PURE__ */ new Set();
-  for (const te of textExpressions) {
-    if (includeDirectPaths && te.pathParts.length > 0) deps.add(te.pathParts[0]);
-    if (te.expression && libExports.isCallExpression(te.expression) && libExports.isMemberExpression(te.expression.callee)) {
-      const r = resolvePath(te.expression.callee.object, stateRefs);
-      if (r?.parts?.length) deps.add(r.parts[0]);
-    }
-  }
-  return deps;
-}
-function isComputedArrayProp(pathParts, textExpressions, stateRefs) {
-  return pathParts.length > 0 && collectTextExprArrayDeps(textExpressions, stateRefs).has(pathParts[0]);
-}
-function addArrayTextBindings(selector, tagName, elementPath, bindings, stateProps, stateRefs, textTemplate, textExpressions, result) {
-  const deps = collectTextExprArrayDeps(textExpressions, stateRefs, true);
-  deps.forEach((arrayPath) => {
-    const existing = bindings.find((b) => pathPartsToString(b.pathParts) === arrayPath);
-    if (!existing) {
-      const isArr = result.parts?.[0] === arrayPath;
-      if (isArr) stateProps.set(buildObserveKey([arrayPath], result.storeVar), [arrayPath]);
-      bindings.push({
-        pathParts: [arrayPath],
-        type: "text",
-        selector,
-        elementPath: [...elementPath],
-        textTemplate,
-        textExpressions,
-        ...isArr ? { isImportedState: true, storeVar: result.storeVar } : {}
-      });
-    } else if (existing.type === "text" && !existing.textTemplate) {
-      existing.textTemplate = textTemplate;
-      existing.textExpressions = textExpressions;
-    }
-  });
-}
-function unwrapJSX(expr) {
-  if (libExports.isJSXElement(expr) || libExports.isJSXFragment(expr)) return expr;
-  if (libExports.isParenthesizedExpression(expr) && libExports.isJSXElement(expr.expression)) return expr.expression;
-  if (libExports.isConditionalExpression(expr)) return unwrapJSX(expr.consequent) || unwrapJSX(expr.alternate);
-  return void 0;
-}
-const META_KEYS = /* @__PURE__ */ new Set(["type", "start", "end", "loc", "leadingComments", "trailingComments", "innerComments"]);
-function rewriteIdentifiers(root, lookup, makeReplacement) {
-  const walk = (node) => {
-    if (!node || typeof node !== "object") return;
-    for (const key of Object.keys(node)) {
-      if (META_KEYS.has(key)) continue;
-      const child = node[key];
-      const process = (c, idx) => {
-        if (!c || typeof c !== "object" || !c.type) return;
-        if (libExports.isIdentifier(c) && lookup.has(c.name)) {
-          if (libExports.isMemberExpression(node) && key === "property" && !node.computed) return;
-          if (libExports.isObjectProperty(node) && key === "key") return;
-          const replacement = makeReplacement(c.name);
-          if (idx !== void 0) child[idx] = replacement;
-          else node[key] = replacement;
-        } else {
-          walk(c);
-        }
-      };
-      if (Array.isArray(child)) child.forEach((c, i) => process(c, i));
-      else process(child);
-    }
-  };
-  walk(root);
-}
-function normalizeDestructuredMapCallback(arrowFn) {
-  const param = arrowFn.params[0];
-  if (!param || libExports.isIdentifier(param) || libExports.isRestElement(param)) return;
-  if (!libExports.isObjectPattern(param) && !libExports.isArrayPattern(param)) return;
-  const itemName = "__item";
-  if (libExports.isArrayPattern(param)) {
-    const indexMap = /* @__PURE__ */ new Map();
-    param.elements.forEach((el, i) => {
-      if (libExports.isIdentifier(el)) indexMap.set(el.name, i);
-    });
-    if (indexMap.size === 0) return;
-    rewriteIdentifiers(
-      arrowFn.body,
-      indexMap,
-      (name) => libExports.memberExpression(libExports.identifier(itemName), libExports.numericLiteral(indexMap.get(name)), true)
-    );
-    arrowFn.params[0] = libExports.identifier(itemName);
-    return;
-  }
-  const nameMap = /* @__PURE__ */ new Map();
-  for (const prop of param.properties) {
-    if (!libExports.isObjectProperty(prop)) continue;
-    const keyName = libExports.isIdentifier(prop.key) ? prop.key.name : libExports.isStringLiteral(prop.key) ? prop.key.value : null;
-    const valueName = libExports.isIdentifier(prop.value) ? prop.value.name : null;
-    if (keyName && valueName) nameMap.set(valueName, keyName);
-  }
-  if (nameMap.size === 0) return;
-  rewriteIdentifiers(
-    arrowFn.body,
-    nameMap,
-    (name) => libExports.memberExpression(libExports.identifier(itemName), libExports.identifier(nameMap.get(name)))
-  );
-  arrowFn.params[0] = libExports.identifier(itemName);
-}
-function extractItemTemplate(arrowFn) {
-  const { body } = arrowFn;
-  const expr = libExports.isJSXElement(body) || libExports.isJSXFragment(body) || libExports.isConditionalExpression(body) ? body : libExports.isParenthesizedExpression(body) ? body.expression : libExports.isBlockStatement(body) ? body.body.find((s) => libExports.isReturnStatement(s))?.argument : void 0;
-  return expr ? unwrapJSX(expr) : void 0;
-}
-function extractCallbackBodyStatements(arrowFn) {
-  if (!libExports.isBlockStatement(arrowFn.body)) return [];
-  const stmts = [];
-  for (const s of arrowFn.body.body) {
-    if (libExports.isReturnStatement(s) && s.argument) {
-      if (libExports.isJSXElement(s.argument) || libExports.isJSXFragment(s.argument) || libExports.isParenthesizedExpression(s.argument)) break;
-      stmts.push(libExports.returnStatement(libExports.stringLiteral("")));
-    } else {
-      const c = libExports.cloneNode(s, true);
-      rewriteEarlyReturns(c);
-      stmts.push(c);
-    }
-  }
-  return stmts;
-}
-const isNullish = (arg) => !arg || libExports.isNullLiteral(arg) || libExports.isIdentifier(arg) && arg.name === "undefined";
-function rewriteEarlyReturns(node) {
-  if (!libExports.isIfStatement(node)) return;
-  for (const branch of [node.consequent, node.alternate]) {
-    if (!branch) continue;
-    if (libExports.isReturnStatement(branch) && isNullish(branch.argument)) {
-      if (branch === node.consequent) node.consequent = libExports.returnStatement(libExports.stringLiteral(""));
-      else node.alternate = libExports.returnStatement(libExports.stringLiteral(""));
-    } else if (libExports.isBlockStatement(branch)) branch.body.forEach(rewriteEarlyReturns);
-    else if (libExports.isIfStatement(branch)) rewriteEarlyReturns(branch);
-  }
-}
-const ITEM_IS_KEY = "__self__";
-function getItemMemberPath$1(expr, itemVar) {
-  const parts = [];
-  let current = expr;
-  while (libExports.isMemberExpression(current) && !current.computed && libExports.isIdentifier(current.property)) {
-    parts.unshift(current.property.name);
-    current = current.object;
-  }
-  if (!libExports.isIdentifier(current) || current.name !== itemVar || parts.length === 0) return void 0;
-  return parts.join(".");
-}
-function detectItemIdProperty(template, itemVar) {
-  if (!template || !libExports.isJSXElement(template)) return void 0;
-  for (const attr of template.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name) || attr.name.name !== "key") continue;
-    if (!libExports.isJSXExpressionContainer(attr.value)) continue;
-    const keyExpr = attr.value.expression;
-    const memberPath = getItemMemberPath$1(keyExpr, itemVar);
-    if (memberPath) return memberPath;
-    if (libExports.isIdentifier(keyExpr) && keyExpr.name === itemVar) return ITEM_IS_KEY;
-  }
-  return void 0;
-}
-function hasJSXAttr(template, name) {
-  if (!template || !libExports.isJSXElement(template)) return false;
-  return template.openingElement.attributes.some(
-    (attr) => libExports.isJSXAttribute(attr) && libExports.isJSXIdentifier(attr.name) && attr.name.name === name
-  );
-}
-function extractKeyExpression(template) {
-  if (!template || !libExports.isJSXElement(template)) return void 0;
-  for (const attr of template.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name) || attr.name.name !== "key") continue;
-    if (!libExports.isJSXExpressionContainer(attr.value)) continue;
-    const keyExpr = attr.value.expression;
-    if (libExports.isJSXEmptyExpression(keyExpr)) continue;
-    return keyExpr;
-  }
-  return void 0;
-}
-function hasExplicitItemKey(template) {
-  return hasJSXAttr(template, "key");
-}
-function hasRootUserIdAttribute(template) {
-  return hasJSXAttr(template, "id");
-}
-function detectContainerSelector(node, tagName) {
-  for (const attr of node.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    if (attr.name.name === "class" && libExports.isStringLiteral(attr.value)) return `.${attr.value.value.split(" ")[0]}`;
-    if (attr.name.name === "id" && libExports.isStringLiteral(attr.value)) return `#${attr.value.value}`;
-  }
-  return tagName;
-}
-
-const DOM_EVENT_RE = /^(click|input|change|submit|focus|blur|keydown|keyup|keypress|mousedown|mouseup|mouseover|mouseout|mouseenter|mouseleave|touchstart|touchend|touchmove|pointerdown|pointerup|pointermove|scroll|resize|drag|dragstart|dragend|dragover|drop|reset)$/;
-function buildComponentPropsExpression(jsxElement, imports, componentInstances, eventHandlers, stateRefs, templateSetupContext, transformExpression, transformFragment) {
-  const props = [];
-  const dependencies = /* @__PURE__ */ new Map();
-  jsxElement.openingElement.attributes.forEach((attr) => {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name) || attr.name.name === "key") return;
-    const propName = attr.name.name;
-    let propValue = null;
-    if (attr.value === null) propValue = libExports.booleanLiteral(true);
-    else if (libExports.isStringLiteral(attr.value)) propValue = libExports.stringLiteral(attr.value.value);
-    else if (libExports.isJSXExpressionContainer(attr.value) && !libExports.isJSXEmptyExpression(attr.value.expression)) {
-      const expr = attr.value.expression;
-      propValue = transformExpression(expr);
-      if (propValue && (/^on[A-Z]/.test(propName) || DOM_EVENT_RE.test(propName)) && libExports.isMemberExpression(propValue)) {
-        const argsId = libExports.identifier("args");
-        propValue = libExports.arrowFunctionExpression(
-          [libExports.restElement(argsId)],
-          libExports.callExpression(libExports.cloneNode(propValue, true), [libExports.spreadElement(argsId)])
-        );
-      }
-    }
-    if (propValue) {
-      const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(propName) ? libExports.identifier(propName) : libExports.stringLiteral(propName);
-      props.push(libExports.objectProperty(key, propValue));
-    }
-  });
-  const meaningfulChildren = jsxElement.children.filter((c) => !(libExports.isJSXText(c) && c.value.trim() === ""));
-  if (meaningfulChildren.length > 0) {
-    const frag = libExports.jsxFragment(libExports.jsxOpeningFragment(), libExports.jsxClosingFragment(), meaningfulChildren);
-    props.push(libExports.objectProperty(libExports.identifier("children"), transformFragment(frag)));
-  }
-  const expression = libExports.objectExpression(props);
-  const setupStatements = collectTemplateSetupStatements(expression, templateSetupContext);
-  collectExpressionDependenciesInto(expression, stateRefs, dependencies, setupStatements);
-  return { expression, dependencies: Array.from(dependencies.values()), setupStatements };
-}
-function collectExpressionDependencies(expr, stateRefs, setupStatements = []) {
-  const dependencies = /* @__PURE__ */ new Map();
-  collectExpressionDependenciesInto(expr, stateRefs, dependencies, setupStatements);
-  return Array.from(dependencies.values());
-}
-function collectExpressionDependenciesInto(expr, stateRefs, dependencies, setupStatements = []) {
-  if (!stateRefs) return;
-  const add = (parts, storeVar) => {
-    const key = buildObserveKey(parts, storeVar);
-    if (!dependencies.has(key)) dependencies.set(key, { observeKey: key, pathParts: parts, storeVar });
-  };
-  const addGetterDeps = (ref, prop, storeVar) => {
-    const paths = ref?.getterDeps?.get(prop);
-    if (!paths?.length) return false;
-    for (const dep of paths) add(dep, storeVar);
-    return true;
-  };
-  const referencedNames = collectReferencedIdentifiers(expr);
-  for (const statement of setupStatements) {
-    if (!libExports.isVariableDeclaration(statement)) continue;
-    for (const declaration of statement.declarations) {
-      if (!libExports.isObjectPattern(declaration.id) || !declaration.init) continue;
-      const resolved = resolvePath(declaration.init, stateRefs);
-      if (!resolved?.parts) continue;
-      for (const property of declaration.id.properties) {
-        if (!libExports.isObjectProperty(property)) continue;
-        const keyName = libExports.isIdentifier(property.key) ? property.key.name : libExports.isStringLiteral(property.key) ? property.key.value : null;
-        if (!keyName) continue;
-        if (!collectPatternIdentifiers(property.value).some((n) => referencedNames.has(n))) continue;
-        if (resolved.isImportedState && resolved.parts.length === 0 && libExports.isIdentifier(declaration.init)) {
-          const storeRef = stateRefs.get(declaration.init.name);
-          if (!addGetterDeps(storeRef, keyName, resolved.storeVar)) {
-            add(storeRef?.reactiveFields?.has(keyName) ? [keyName] : [], resolved.storeVar);
-          }
-        } else {
-          add([...resolved.parts, keyName], resolved.isImportedState ? resolved.storeVar : void 0);
-        }
-      }
-    }
-  }
-  const program = libExports.program([
-    ...setupStatements.map((s) => libExports.cloneNode(s, true)),
-    libExports.expressionStatement(libExports.cloneNode(expr, true))
-  ]);
-  traverse$1(program, {
-    noScope: true,
-    MemberExpression(path) {
-      const parent = path.parentPath;
-      if (parent && libExports.isMemberExpression(parent.node) && parent.node.object === path.node) return;
-      const resolved = resolvePath(path.node, stateRefs);
-      if (!resolved?.parts?.length) return;
-      const isMethodCall = parent && libExports.isCallExpression(parent.node) && parent.node.callee === path.node;
-      if (isMethodCall && resolved.isImportedState && resolved.storeVar) {
-        const ref = stateRefs?.get(resolved.storeVar);
-        if (ref && !ref.reactiveFields) {
-          add([], resolved.storeVar);
-          return;
-        }
-        const methodStripped = resolved.parts.slice(0, -1);
-        const propName = methodStripped.length === 1 ? methodStripped[0] : void 0;
-        if (propName && addGetterDeps(ref, propName, resolved.storeVar)) return;
-        add(methodStripped.length > 0 ? methodStripped : [], resolved.storeVar);
-        return;
-      }
-      const parts = resolved.parts.length >= 2 && resolved.parts[resolved.parts.length - 1] === "length" ? resolved.parts.slice(0, -1) : resolved.parts;
-      if (resolved.isImportedState && resolved.storeVar && parts.length >= 1) {
-        if (addGetterDeps(stateRefs?.get(resolved.storeVar), parts[0], resolved.storeVar)) return;
-      }
-      add(parts, resolved.isImportedState ? resolved.storeVar : void 0);
-    }
-  });
-}
-function collectTemplateSetupStatements(expr, templateSetupContext) {
-  if (!templateSetupContext) return [];
-  const bindingMap = /* @__PURE__ */ new Map();
-  const fp = templateSetupContext.params[0];
-  const pb = fp && !libExports.isRestElement(fp) ? getTemplateParamBinding(fp) : void 0;
-  if (pb) {
-    const stmt = libExports.variableDeclaration("const", [
-      libExports.variableDeclarator(libExports.cloneNode(pb, true), libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")))
-    ]);
-    for (const name of collectPatternIdentifiers(pb)) bindingMap.set(name, { statement: stmt, index: -1 });
-  }
-  templateSetupContext.statements.forEach((s, i) => {
-    for (const name of collectStatementBindingNames(s)) bindingMap.set(name, { statement: s, index: i });
-  });
-  const included = /* @__PURE__ */ new Set();
-  const visiting = /* @__PURE__ */ new Set();
-  const ordered = [];
-  const includedParamNames = /* @__PURE__ */ new Set();
-  const includeName = (name) => {
-    const binding = bindingMap.get(name);
-    if (!binding || visiting.has(name)) return;
-    visiting.add(name);
-    collectReferencedIdentifiers(binding.statement).forEach(includeName);
-    visiting.delete(name);
-    if (binding.index === -1) includedParamNames.add(name);
-    if (!included.has(binding.index)) {
-      included.add(binding.index);
-      ordered.push({ index: binding.index, statement: libExports.cloneNode(binding.statement, true) });
-    }
-  };
-  collectReferencedIdentifiers(expr).forEach(includeName);
-  ordered.sort((a, b) => a.index - b.index);
-  const barrier = templateSetupContext.earlyReturnBarrierIndex;
-  if (barrier !== void 0 && ordered.length > 0) {
-    const stmtIndices = ordered.filter((e) => e.index >= 0).map((e) => e.index);
-    if (stmtIndices.length > 0 && (Math.max(...stmtIndices) > barrier || Math.min(...stmtIndices) <= barrier)) {
-      const have = new Set(ordered.map((e) => e.index));
-      for (let bi = 0; bi <= barrier; bi++) {
-        if (!have.has(bi))
-          ordered.push({ index: bi, statement: libExports.cloneNode(templateSetupContext.statements[bi], true) });
-      }
-      ordered.sort((a, b) => a.index - b.index);
-    }
-  }
-  for (const { index, statement } of ordered) {
-    if (index !== -1 || !libExports.isVariableDeclaration(statement)) continue;
-    const decl = statement.declarations[0];
-    if (!libExports.isObjectPattern(decl.id)) continue;
-    decl.id.properties = decl.id.properties.filter((p) => {
-      if (!libExports.isObjectProperty(p)) return true;
-      const k = libExports.isIdentifier(p.key) ? p.key.name : libExports.isStringLiteral(p.key) ? p.key.value : null;
-      return !k || includedParamNames.has(k);
-    });
-  }
-  return ordered.map((e) => e.statement);
-}
-function collectStatementBindingNames(statement) {
-  if (libExports.isVariableDeclaration(statement))
-    return statement.declarations.flatMap((d) => collectPatternIdentifiers(d.id));
-  if ((libExports.isFunctionDeclaration(statement) || libExports.isClassDeclaration(statement)) && statement.id)
-    return [statement.id.name];
-  return [];
-}
-function collectPatternIdentifiers(pattern) {
-  if (libExports.isIdentifier(pattern)) return [pattern.name];
-  if (libExports.isRestElement(pattern)) return collectPatternIdentifiers(pattern.argument);
-  if (libExports.isAssignmentPattern(pattern)) return collectPatternIdentifiers(pattern.left);
-  if (libExports.isObjectPattern(pattern))
-    return pattern.properties.flatMap((p) => collectPatternIdentifiers(libExports.isRestElement(p) ? p.argument : p.value));
-  if (libExports.isArrayPattern(pattern))
-    return pattern.elements.flatMap((el) => el ? collectPatternIdentifiers(el) : []);
-  return [];
-}
-function collectReferencedIdentifiers(node) {
-  const names = /* @__PURE__ */ new Set();
-  const cloned = libExports.cloneNode(node, true);
-  const prog = libExports.program([libExports.isStatement(cloned) ? cloned : libExports.expressionStatement(cloned)]);
-  traverse$1(prog, {
-    noScope: true,
-    Identifier(path) {
-      if (path.isReferencedIdentifier()) names.add(path.node.name);
-    }
-  });
-  return names;
-}
-
-function pascalToKebabCase(tagName) {
-  const normalized = tagName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/[\s_]+/g, "-").toLowerCase();
-  return normalized.includes("-") ? normalized : `gea-${normalized}`;
-}
-function tryStaticClassObjectToString(expr) {
-  const parts = [];
-  for (const prop of expr.properties) {
-    if (!libExports.isObjectProperty(prop) || prop.computed) return null;
-    const key = libExports.isIdentifier(prop.key) ? prop.key.name : libExports.isStringLiteral(prop.key) ? prop.key.value : null;
-    if (!key) return null;
-    if (libExports.isBooleanLiteral(prop.value)) {
-      if (prop.value.value) parts.push(key);
-    } else {
-      return null;
-    }
-  }
-  return parts.join(" ");
-}
-function buildClassObjectExpression(expr) {
-  return jsExpr`Object.entries(${expr}).filter(([__k, __v]) => __v).map(([__k]) => __k).join(' ')`;
-}
-function tryStaticStyleObjectToCSS(expr) {
-  const parts = [];
-  for (const prop of expr.properties) {
-    if (!libExports.isObjectProperty(prop) || prop.computed) return null;
-    const key = libExports.isIdentifier(prop.key) ? prop.key.name : libExports.isStringLiteral(prop.key) ? prop.key.value : null;
-    if (!key) return null;
-    const value = libExports.isStringLiteral(prop.value) ? prop.value.value : libExports.isNumericLiteral(prop.value) ? prop.value.value === 0 ? "0" : `${prop.value.value}px` : null;
-    if (value === null) return null;
-    parts.push(`${camelToKebab(key)}: ${value}`);
-  }
-  return parts.join("; ");
-}
-function buildStyleObjectExpression(expr) {
-  return jsExpr`Object.entries(${expr}).map(([__k, __v]) => ${libExports.templateLiteral(
-    [
-      libExports.templateElement({ raw: "", cooked: "" }, false),
-      libExports.templateElement({ raw: ": ", cooked: ": " }, false),
-      libExports.templateElement({ raw: "", cooked: "" }, true)
-    ],
-    [jsExpr`__k.replace(/[A-Z]/g, '-$&')`, jsExpr`typeof __v === 'number' && __v !== 0 ? __v + 'px' : __v`]
-  )})`;
-}
-function unwrapExpression(expr) {
-  let e = expr;
-  while (libExports.isParenthesizedExpression(e)) {
-    e = e.expression;
-  }
-  return e;
-}
-function extractHtmlTemplatesFromRawConditional(rawExpr, ctx, slotId) {
-  const childCtx = { ...ctx, elementPathPrefix: "__cs_" + slotId };
-  const top = unwrapExpression(rawExpr);
-  if (libExports.isLogicalExpression(top) && top.operator === "&&") {
-    return extractHtmlTemplatesFromRawConditional(top.right, ctx, slotId);
-  }
-  if (libExports.isConditionalExpression(top)) {
-    const truthyHtmlExpr = transformJSXExpression(top.consequent, childCtx);
-    const alt = unwrapExpression(top.alternate);
-    if (libExports.isConditionalExpression(alt)) {
-      return {
-        truthyHtmlExpr,
-        falsyHtmlExpr: transformJSXExpression(top.alternate, childCtx)
-      };
-    }
-    return {
-      truthyHtmlExpr,
-      falsyHtmlExpr: transformJSXExpression(top.alternate, childCtx)
-    };
-  }
-  return null;
-}
-function extractHtmlTemplatesFromConditional(expr) {
-  const normalizeHtmlExpression = (value) => {
-    if (libExports.isCallExpression(value) && libExports.isMemberExpression(value.callee) && libExports.isIdentifier(value.callee.property) && value.callee.property.name === "map") {
-      return jsExpr`${value}.join('')`;
-    }
-    return value;
-  };
-  if (libExports.isTemplateLiteral(expr) || libExports.isStringLiteral(expr) || libExports.isBinaryExpression(expr) || libExports.isCallExpression(expr) || libExports.isIdentifier(expr) || libExports.isMemberExpression(expr)) {
-    return { truthyHtmlExpr: normalizeHtmlExpression(expr) };
-  }
-  if (libExports.isLogicalExpression(expr) && expr.operator === "&&") {
-    return extractHtmlTemplatesFromConditional(expr.right);
-  }
-  if (libExports.isConditionalExpression(expr)) {
-    const truthy = extractHtmlTemplatesFromConditional(expr.consequent).truthyHtmlExpr;
-    const alternate = expr.alternate;
-    const falsy = libExports.isConditionalExpression(alternate) ? alternate : extractHtmlTemplatesFromConditional(alternate).truthyHtmlExpr;
-    return { truthyHtmlExpr: truthy, falsyHtmlExpr: falsy };
-  }
-  if (libExports.isParenthesizedExpression(expr)) {
-    return extractHtmlTemplatesFromConditional(expr.expression);
-  }
-  return {};
-}
-function extractChildInstanceRef(expr) {
-  if (!libExports.isLogicalExpression(expr) || expr.operator !== "&&") return null;
-  const right = expr.right;
-  let memberExpr = null;
-  if (libExports.isTemplateLiteral(right) && right.expressions.length === 1) {
-    const inner = right.expressions[0];
-    if (libExports.isMemberExpression(inner)) memberExpr = inner;
-  } else if (libExports.isMemberExpression(right)) {
-    memberExpr = right;
-  }
-  if (!memberExpr || !libExports.isThisExpression(memberExpr.object) || !libExports.isIdentifier(memberExpr.property) || !memberExpr.property.name.startsWith("_"))
-    return null;
-  const instanceVar = memberExpr.property.name;
-  return { instanceVar, guardExpr: expr.left };
-}
-function expressionContainsJSX(expr) {
-  let found = false;
-  const check = (node) => {
-    if (found) return;
-    if (libExports.isJSXElement(node) || libExports.isJSXFragment(node)) {
-      found = true;
-      return;
-    }
-    for (const key of libExports.VISITOR_KEYS[node.type] || []) {
-      const child = node[key];
-      if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === "object" && "type" in c) check(c);
-          if (found) return;
-        }
-      } else if (child && typeof child === "object" && "type" in child) {
-        check(child);
-      }
-      if (found) return;
-    }
-  };
-  check(expr);
-  return found;
-}
-function callsJSXReturningProperty(expr, classBody) {
-  if (!classBody || !libExports.isCallExpression(expr)) return false;
-  let propName;
-  if (libExports.isMemberExpression(expr.callee) && libExports.isIdentifier(expr.callee.property) && !expr.callee.computed) {
-    propName = expr.callee.property.name;
-  }
-  if (!propName) return false;
-  for (const member of classBody.body) {
-    if (!libExports.isClassProperty(member) || !member.value) continue;
-    const scanValue = (node) => {
-      if (libExports.isObjectExpression(node)) {
-        for (const prop of node.properties) {
-          if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.key) && prop.key.name === propName && (libExports.isArrowFunctionExpression(prop.value) || libExports.isFunctionExpression(prop.value))) {
-            return expressionContainsJSX(prop.value);
-          }
-        }
-      }
-      if (libExports.isArrayExpression(node)) {
-        return node.elements.some((el) => el && scanValue(el));
-      }
-      return false;
-    };
-    if (scanValue(member.value)) return true;
-  }
-  return false;
-}
-function isChildrenPropAccess(expr) {
-  if (libExports.isIdentifier(expr) && expr.name === "children") return true;
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && expr.property.name === "children" && libExports.isIdentifier(expr.object) && expr.object.name === "props")
-    return true;
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property) && expr.property.name === "children" && libExports.isMemberExpression(expr.object) && libExports.isThisExpression(expr.object.object) && libExports.isIdentifier(expr.object.property) && expr.object.property.name === "props")
-    return true;
-  return false;
-}
-function expressionMayBeFalsy(expr) {
-  if (libExports.isLogicalExpression(expr) && expr.operator === "&&") return true;
-  if (libExports.isConditionalExpression(expr)) return true;
-  if (libExports.isBooleanLiteral(expr) && !expr.value) return true;
-  if (libExports.isOptionalMemberExpression(expr)) return true;
-  if (libExports.isOptionalCallExpression(expr)) return true;
-  return false;
-}
-function canBeBoolean(expr) {
-  if (libExports.isNumericLiteral(expr) || libExports.isStringLiteral(expr) || libExports.isTemplateLiteral(expr)) return false;
-  if (libExports.isConditionalExpression(expr)) return canBeBoolean(expr.consequent) || canBeBoolean(expr.alternate);
-  return true;
-}
-function isAlwaysTruthy(expr) {
-  if (libExports.isStringLiteral(expr) || libExports.isNumericLiteral(expr) || libExports.isTemplateLiteral(expr)) return true;
-  if (libExports.isObjectExpression(expr) || libExports.isArrayExpression(expr)) return true;
-  if (libExports.isConditionalExpression(expr)) return isAlwaysTruthy(expr.consequent) && isAlwaysTruthy(expr.alternate);
-  return false;
-}
-function buildAttrSkipCondition(expr, rawExpr) {
-  if (libExports.isBooleanLiteral(rawExpr)) {
-    return rawExpr.value ? libExports.booleanLiteral(false) : libExports.booleanLiteral(true);
-  }
-  if (libExports.isNumericLiteral(rawExpr) || libExports.isStringLiteral(rawExpr)) {
-    return libExports.booleanLiteral(false);
-  }
-  if (isAlwaysTruthy(rawExpr)) {
-    return libExports.booleanLiteral(false);
-  }
-  const needsFalseCheck = canBeBoolean(rawExpr);
-  const nullCheck = libExports.binaryExpression("==", libExports.cloneNode(expr, true), libExports.nullLiteral());
-  if (!needsFalseCheck) return nullCheck;
-  return libExports.logicalExpression(
-    "||",
-    nullCheck,
-    libExports.binaryExpression("===", libExports.parenthesizedExpression(libExports.cloneNode(expr, true)), libExports.booleanLiteral(false))
-  );
-}
-const URL_ATTRS$2 = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "data", "cite", "poster", "background"]);
-function wrapWithSanitizeAttr(attrName, expr) {
-  if (!URL_ATTRS$2.has(attrName)) return expr;
-  return jsExpr`geaSanitizeAttr(${attrName}, String(${expr}))`;
-}
-function getStaticStringValue(expr) {
-  if (libExports.isStringLiteral(expr)) return expr.value;
-  if (libExports.isTemplateLiteral(expr) && expr.expressions.length === 0) {
-    return expr.quasis.map((q) => q.value.cooked ?? q.value.raw).join("");
-  }
-  return null;
-}
-function transformJSXToTemplate(el, ctx, elementPath = []) {
-  const parts = jsxToTemplateParts(el, ctx, elementPath);
-  return partsToTemplateLiteral(parts);
-}
-function transformJSXFragmentToTemplate(frag, ctx, elementPath = []) {
-  const parts = [];
-  if (ctx.isRoot) {
-    parts.push({ type: "string", value: '<div id="' });
-    parts.push({ type: "expression", value: jsExpr`this.id` });
-    parts.push({ type: "string", value: '">' });
-  }
-  processChildren(frag.children, parts, ctx, elementPath);
-  if (ctx.isRoot) {
-    appendString(parts, "</div>");
-  }
-  return partsToTemplateLiteral(parts);
-}
-function collectMapJSXNodes(node, out) {
-  const visit = (n) => {
-    if (libExports.isJSXElement(n)) {
-      out.add(n);
-      n.children.forEach((c) => !libExports.isJSXText(c) && !libExports.isJSXEmptyExpression(c) && visit(c));
-    } else if (libExports.isJSXFragment(n)) {
-      out.add(n);
-      n.children.forEach((c) => !libExports.isJSXText(c) && !libExports.isJSXEmptyExpression(c) && visit(c));
-    } else if (libExports.isLogicalExpression(n)) {
-      visit(n.left);
-      visit(n.right);
-    } else if (libExports.isConditionalExpression(n)) {
-      visit(n.test);
-      visit(n.consequent);
-      visit(n.alternate);
-    } else if (libExports.isParenthesizedExpression(n)) {
-      visit(n.expression);
-    } else if (libExports.isArrowFunctionExpression(n) || libExports.isFunctionExpression(n)) {
-      if (libExports.isBlockStatement(n.body)) {
-        n.body.body.forEach((s) => libExports.isReturnStatement(s) && s.argument && visit(s.argument));
-      } else {
-        visit(n.body);
-      }
-    } else if (libExports.isCallExpression(n) && libExports.isMemberExpression(n.callee) && libExports.isIdentifier(n.callee.property) && n.callee.property.name === "map" && n.arguments[0] && libExports.isArrowFunctionExpression(n.arguments[0])) {
-      const fn = n.arguments[0];
-      if (libExports.isBlockStatement(fn.body)) {
-        fn.body.body.forEach((s) => libExports.isReturnStatement(s) && s.argument && visit(s.argument));
-      } else {
-        visit(fn.body);
-      }
-    }
-  };
-  if (libExports.isCallExpression(node) && libExports.isMemberExpression(node.callee) && libExports.isIdentifier(node.callee.property) && node.callee.property.name === "map" && node.arguments[0] && libExports.isArrowFunctionExpression(node.arguments[0])) {
-    visit(node.arguments[0]);
-  } else if (libExports.isLogicalExpression(node)) {
-    collectMapJSXNodes(node.left, out);
-    collectMapJSXNodes(node.right, out);
-  } else if (libExports.isConditionalExpression(node)) {
-    collectMapJSXNodes(node.test, out);
-    collectMapJSXNodes(node.consequent, out);
-    collectMapJSXNodes(node.alternate, out);
-  }
-}
-function replaceJSXInExpression(node, mapJSXNodes, ctx) {
-  if (libExports.isJSXElement(node)) {
-    const h = mapJSXNodes.has(node) ? void 0 : ctx.eventHandlers;
-    return transformJSXToTemplate(node, {
-      ...ctx,
-      isRoot: false,
-      eventHandlers: h,
-      inMapCallback: mapJSXNodes.has(node) ? ctx.inMapCallback : void 0
-    });
-  }
-  if (libExports.isJSXFragment(node)) {
-    const h = mapJSXNodes.has(node) ? void 0 : ctx.eventHandlers;
-    return transformJSXFragmentToTemplate(node, {
-      ...ctx,
-      isRoot: false,
-      eventHandlers: h,
-      inMapCallback: mapJSXNodes.has(node) ? ctx.inMapCallback : void 0
-    });
-  }
-  if (libExports.isParenthesizedExpression(node)) {
-    return libExports.parenthesizedExpression(replaceJSXInExpression(node.expression, mapJSXNodes, ctx));
-  }
-  if (libExports.isLogicalExpression(node)) {
-    const left = replaceJSXInExpression(node.left, mapJSXNodes, ctx);
-    const right = replaceJSXInExpression(node.right, mapJSXNodes, { ...ctx, lazyChildComponents: true });
-    return libExports.logicalExpression(node.operator, left, right);
-  }
-  if (libExports.isConditionalExpression(node)) {
-    const test = replaceJSXInExpression(node.test, mapJSXNodes, ctx);
-    const consequent = replaceJSXInExpression(node.consequent, mapJSXNodes, { ...ctx, lazyChildComponents: true });
-    const alternate = replaceJSXInExpression(node.alternate, mapJSXNodes, { ...ctx, lazyChildComponents: true });
-    return libExports.conditionalExpression(test, consequent, alternate);
-  }
-  if (libExports.isCallExpression(node) && libExports.isMemberExpression(node.callee) && libExports.isIdentifier(node.callee.property) && node.callee.property.name === "map" && node.arguments[0] && libExports.isArrowFunctionExpression(node.arguments[0])) {
-    const fn = node.arguments[0];
-    normalizeDestructuredMapCallback(fn);
-    const handlerPropsInMap = [];
-    const mapItemVariable = libExports.isIdentifier(fn.params[0]) ? fn.params[0].name : "item";
-    const mapItemIdProperty = detectItemIdProperty(extractItemTemplate(fn), mapItemVariable) || "id";
-    const mapCtx = {
-      ...ctx,
-      inMapCallback: true,
-      handlerPropsInMap,
-      mapItemIdProperty,
-      mapItemVariable,
-      conditionalSlots: void 0,
-      conditionalSlotCursor: void 0,
-      conditionalSlotNodeMap: void 0
-    };
-    let body;
-    let newBody;
-    if (libExports.isBlockStatement(fn.body)) {
-      const jsxReturnIdx = fn.body.body.findIndex(
-        (s) => libExports.isReturnStatement(s) && s.argument && (libExports.isJSXElement(s.argument) || libExports.isJSXFragment(s.argument) || libExports.isParenthesizedExpression(s.argument))
-      );
-      if (jsxReturnIdx >= 0) {
-        const retStmt = fn.body.body[jsxReturnIdx];
-        body = replaceJSXInExpression(retStmt.argument, mapJSXNodes, mapCtx);
-        const preceding = fn.body.body.slice(0, jsxReturnIdx).map((s) => libExports.cloneNode(s, true));
-        newBody = libExports.blockStatement([...preceding, libExports.returnStatement(body)]);
-      } else if (fn.body.body[0] && libExports.isReturnStatement(fn.body.body[0]) && fn.body.body[0].argument) {
-        body = replaceJSXInExpression(fn.body.body[0].argument, mapJSXNodes, mapCtx);
-        newBody = libExports.blockStatement([libExports.returnStatement(body)]);
-      } else {
-        body = fn.body.body[0]?.argument;
-        newBody = libExports.blockStatement([libExports.returnStatement(body)]);
-      }
-    } else {
-      body = replaceJSXInExpression(fn.body, mapJSXNodes, mapCtx);
-      newBody = body;
-    }
-    return libExports.callExpression(libExports.cloneNode(node.callee), [
-      libExports.arrowFunctionExpression(fn.params, newBody, fn.async),
-      ...node.arguments.slice(1).map((a) => libExports.cloneNode(a))
-    ]);
-  }
-  if (libExports.isCallExpression(node) && (libExports.isArrowFunctionExpression(node.callee) || libExports.isFunctionExpression(node.callee))) {
-    const callee = node.callee;
-    if (libExports.isBlockStatement(callee.body)) {
-      const replaceReturnsInStatements = (stmts) => stmts.map((stmt) => {
-        if (libExports.isReturnStatement(stmt) && stmt.argument) {
-          return libExports.returnStatement(replaceJSXInExpression(stmt.argument, mapJSXNodes, ctx));
-        }
-        if (libExports.isIfStatement(stmt)) {
-          const consequent = libExports.isBlockStatement(stmt.consequent) ? libExports.blockStatement(replaceReturnsInStatements(stmt.consequent.body)) : libExports.isReturnStatement(stmt.consequent) && stmt.consequent.argument ? libExports.returnStatement(replaceJSXInExpression(stmt.consequent.argument, mapJSXNodes, ctx)) : stmt.consequent;
-          const alternate = stmt.alternate ? libExports.isBlockStatement(stmt.alternate) ? libExports.blockStatement(replaceReturnsInStatements(stmt.alternate.body)) : libExports.isIfStatement(stmt.alternate) ? replaceReturnsInStatements([stmt.alternate])[0] : libExports.isReturnStatement(stmt.alternate) && stmt.alternate.argument ? libExports.returnStatement(replaceJSXInExpression(stmt.alternate.argument, mapJSXNodes, ctx)) : stmt.alternate : null;
-          return libExports.ifStatement(stmt.test, consequent, alternate);
-        }
-        return stmt;
-      });
-      const newBody2 = libExports.blockStatement(replaceReturnsInStatements(callee.body.body));
-      return libExports.callExpression(
-        libExports.isArrowFunctionExpression(callee) ? libExports.arrowFunctionExpression(callee.params, newBody2, callee.async) : libExports.functionExpression(callee.id, callee.params, newBody2, callee.generator, callee.async),
-        node.arguments
-      );
-    }
-    const newBody = replaceJSXInExpression(callee.body, mapJSXNodes, ctx);
-    return libExports.callExpression(libExports.arrowFunctionExpression(callee.params, newBody, callee.async), node.arguments);
-  }
-  return node;
-}
-function transformJSXExpression(expr, ctx, skipEvents = false) {
-  const effectiveCtx = skipEvents ? { ...ctx, eventHandlers: void 0 } : ctx;
-  if (libExports.isJSXElement(expr)) return transformJSXToTemplate(expr, effectiveCtx);
-  if (libExports.isJSXFragment(expr)) return transformJSXFragmentToTemplate(expr, effectiveCtx);
-  try {
-    const cloned = libExports.cloneNode(expr, true);
-    const mapJSXNodes = /* @__PURE__ */ new Set();
-    collectMapJSXNodes(cloned, mapJSXNodes);
-    return replaceJSXInExpression(cloned, mapJSXNodes, effectiveCtx);
-  } catch (err) {
-    if (err instanceof Error && err.message.startsWith("[gea]")) throw err;
-    console.warn("[gea] Failed to transform JSX expression:", err instanceof Error ? err.message : err);
-    return expr;
-  }
-}
-function collectComponentTags(node, imports, instanceTags, inMapCallback = false) {
-  const visitExpr = (expr, inMap = false) => {
-    if (libExports.isJSXElement(expr)) collectComponentTags(expr, imports, instanceTags, inMap);
-    else if (libExports.isJSXFragment(expr)) collectComponentTags(expr, imports, instanceTags, inMap);
-    else if (libExports.isLogicalExpression(expr)) {
-      visitExpr(expr.left, inMap);
-      visitExpr(expr.right, inMap);
-    } else if (libExports.isConditionalExpression(expr)) {
-      visitExpr(expr.consequent, inMap);
-      visitExpr(expr.alternate, inMap);
-    } else if (libExports.isCallExpression(expr)) {
-      expr.arguments.forEach((arg) => {
-        if (!libExports.isArrowFunctionExpression(arg) && !libExports.isFunctionExpression(arg)) return;
-        const body = arg.body;
-        if (libExports.isJSXElement(body)) collectComponentTags(body, imports, instanceTags, true);
-        else if (libExports.isJSXFragment(body)) collectComponentTags(body, imports, instanceTags, true);
-        else if (libExports.isBlockStatement(body)) {
-          const ret = body.body.find((s) => libExports.isReturnStatement(s) && s.argument != null);
-          if (ret?.argument) visitExpr(ret.argument, true);
-        } else if (libExports.isExpression(body)) visitExpr(body, true);
-      });
-    }
-  };
-  if (libExports.isJSXElement(node)) {
-    const tag = getJSXTagName(node.openingElement.name);
-    if (tag && isComponentTag(tag) && imports.has(tag)) {
-      if (!inMapCallback) instanceTags.push(tag);
-    }
-    node.children.forEach((c) => {
-      if (libExports.isJSXElement(c)) collectComponentTags(c, imports, instanceTags, inMapCallback);
-      else if (libExports.isJSXFragment(c)) collectComponentTags(c, imports, instanceTags, inMapCallback);
-      else if (libExports.isJSXExpressionContainer(c) && !libExports.isJSXEmptyExpression(c.expression)) {
-        const expr = c.expression;
-        if (libExports.isJSXElement(expr)) collectComponentTags(expr, imports, instanceTags, inMapCallback);
-        else if (libExports.isJSXFragment(expr)) collectComponentTags(expr, imports, instanceTags, inMapCallback);
-        else visitExpr(expr, inMapCallback);
-      }
-    });
-  } else {
-    node.children.forEach((c) => {
-      if (libExports.isJSXElement(c)) collectComponentTags(c, imports, instanceTags, inMapCallback);
-      else if (libExports.isJSXFragment(c)) collectComponentTags(c, imports, instanceTags, inMapCallback);
-      else if (libExports.isJSXExpressionContainer(c) && !libExports.isJSXEmptyExpression(c.expression)) {
-        const expr = c.expression;
-        if (libExports.isJSXElement(expr)) collectComponentTags(expr, imports, instanceTags, inMapCallback);
-        else if (libExports.isJSXFragment(expr)) collectComponentTags(expr, imports, instanceTags, inMapCallback);
-        else visitExpr(expr, inMapCallback);
-      }
-    });
-  }
-}
-function jsxToTemplateParts(node, ctx, elementPath = []) {
-  const parts = [];
-  processElement(node, parts, ctx, elementPath);
-  return parts;
-}
-function processElement(node, parts, ctx, elementPath = []) {
-  const tagName = getJSXTagName(node.openingElement.name);
-  const isComp = tagName && isComponentTag(tagName) && ctx.imports.has(tagName);
-  if (tagName && isComponentTag(tagName) && !ctx.imports.has(tagName) && !ctx.inChildrenProp) {
-    const err = new Error(
-      `[gea] Component '${tagName}' is used as a JSX tag but is not imported. Dynamic component tags are not supported; import the component statically.`
-    );
-    err.__geaCompileError = true;
-    throw err;
-  }
-  if (isComp && ctx.componentInstances && !ctx.inMapCallback) {
-    if (ctx.eventHandlers && ctx.sourceFile) {
-      const importSource = ctx.imports.get(tagName);
-      if (importSource) {
-        const delegatedEvents = getHoistableRootEventsForImport(ctx.sourceFile, importSource);
-        delegatedEvents.forEach((meta) => {
-          if (!EVENT_TYPES.has(meta.eventType)) return;
-          ctx.eventHandlers.push({
-            eventType: meta.eventType,
-            selector: meta.selector,
-            delegatedPropName: meta.propName,
-            usesTargetComponent: true
-          });
-        });
-      }
-    }
-    const instances = ctx.componentInstances.get(tagName);
-    const cursor = ctx.componentInstanceCursors?.get(tagName) || 0;
-    const instance = instances?.[cursor];
-    if (instance) {
-      ctx.componentInstanceCursors?.set(tagName, cursor + 1);
-      if (ctx.lazyChildComponents) instance.lazy = true;
-      const rawChildPrefix = elementPath.length > 0 ? elementPath.join(" > ") : void 0;
-      const childPathPrefix = ctx.elementPathPrefix && rawChildPrefix ? ctx.elementPathPrefix + " > " + rawChildPrefix : rawChildPrefix ?? ctx.elementPathPrefix;
-      const childPropCtx = { ...ctx, inChildrenProp: true, elementPathPrefix: childPathPrefix };
-      const props = buildComponentPropsExpression(
-        node,
-        ctx.imports,
-        ctx.componentInstances,
-        ctx.eventHandlers,
-        ctx.stateRefs,
-        ctx.templateSetupContext,
-        (e) => transformJSXExpression(e, childPropCtx),
-        (f) => transformJSXFragmentToTemplate(f, childPropCtx)
-      );
-      instance.propsExpression = props.expression;
-      instance.dependencies = props.dependencies;
-      instance.setupStatements = props.setupStatements;
-      pushString(parts, "");
-      parts.push({
-        type: "expression",
-        value: jsExpr`this.${id(instance.instanceVar)}`
-      });
-      return;
-    }
-  }
-  if (isComp) {
-    const rawChildPrefix2 = elementPath.length > 0 ? elementPath.join(" > ") : void 0;
-    const childPathPrefix2 = ctx.elementPathPrefix && rawChildPrefix2 ? ctx.elementPathPrefix + " > " + rawChildPrefix2 : rawChildPrefix2 ?? ctx.elementPathPrefix;
-    const childPropCtx = { ...ctx, inChildrenProp: true, elementPathPrefix: childPathPrefix2 };
-    const props = buildComponentPropsExpression(
-      node,
-      ctx.imports,
-      ctx.componentInstances,
-      ctx.eventHandlers,
-      ctx.stateRefs,
-      ctx.templateSetupContext,
-      (e) => transformJSXExpression(e, childPropCtx),
-      (f) => transformJSXFragmentToTemplate(f, childPropCtx)
-    );
-    pushString(parts, "");
-    parts.push({
-      type: "expression",
-      value: jsExpr`new ${id(tagName)}(${props.expression})`
-    });
-    return;
-  }
-  const effectiveTag = isComp ? pascalToKebabCase(tagName) : tagName;
-  const propContext = getPropContext(ctx.templateSetupContext?.params);
-  const rootClassSelector = elementPath.length === 0 ? getRootClassSelector(node) : null;
-  const explicitIdAttr = node.openingElement.attributes.find(
-    (attr) => libExports.isJSXAttribute(attr) && libExports.isJSXIdentifier(attr.name) && attr.name.name === "id"
-  );
-  let html = `<${effectiveTag}`;
-  let hasBindingId = false;
-  let userIdExprForEvents;
-  let hasDynamicUserId = false;
-  if (ctx.isRoot) {
-    const rootPathKey = "";
-    const rootUserIdExpr = ctx.elementPathToUserIdExpr?.get(rootPathKey);
-    if (rootUserIdExpr) {
-      if (libExports.isStringLiteral(rootUserIdExpr)) {
-        html += ` id="${rootUserIdExpr.value}"`;
-        userIdExprForEvents = rootUserIdExpr;
-      } else {
-        parts.push({ type: "string", value: html + ' id="' });
-        parts.push({ type: "expression", value: libExports.cloneNode(rootUserIdExpr, true) });
-        html = '"';
-        hasDynamicUserId = true;
-      }
-      parts.push({ type: "string", value: html + ' data-gcc="' });
-      parts.push({ type: "expression", value: jsExpr`this.id` });
-      html = '"';
-    } else {
-      parts.push({ type: "string", value: html + ' id="' });
-      parts.push({ type: "expression", value: jsExpr`this.id` });
-      html = '"';
-    }
-    hasBindingId = true;
-  } else {
-    const rawPathKey = elementPath.join(" > ");
-    const pathKey = ctx.elementPathPrefix ? ctx.elementPathPrefix + " > " + rawPathKey : rawPathKey;
-    const bindingId = ctx.elementPathToBindingId?.get(pathKey) ?? (ctx.elementPathPrefix ? void 0 : ctx.elementPathToBindingId?.get(rawPathKey));
-    if (bindingId !== void 0 && bindingId !== "") {
-      const userIdExpr = ctx.elementPathToUserIdExpr?.get(pathKey) ?? (ctx.elementPathPrefix ? void 0 : ctx.elementPathToUserIdExpr?.get(rawPathKey));
-      if (userIdExpr) {
-        if (libExports.isStringLiteral(userIdExpr)) {
-          html += ` id="${userIdExpr.value}"`;
-          userIdExprForEvents = userIdExpr;
-        } else {
-          parts.push({ type: "string", value: html + ' id="' });
-          parts.push({ type: "expression", value: libExports.cloneNode(userIdExpr, true) });
-          html = '"';
-        }
-      } else {
-        parts.push({ type: "string", value: html + ' id="' });
-        parts.push({
-          type: "expression",
-          value: jsExpr`this.id + ${"-" + bindingId}`
-        });
-        html = '"';
-      }
-      hasBindingId = true;
-    }
-  }
-  if (ctx.inMapCallback && elementPath.length === 0 && ctx.mapItemVariable) {
-    const itemVar = ctx.mapItemVariable;
-    const itemIdProp = ctx.mapItemIdProperty;
-    const itemIdExpr = itemIdProp && itemIdProp !== ITEM_IS_KEY ? libExports.logicalExpression("??", buildOptionalMemberChain(id(itemVar), itemIdProp), id(itemVar)) : jsExpr`String(${id(itemVar)})`;
-    {
-      parts.push({ type: "string", value: html + ' data-gid="' });
-      parts.push({ type: "expression", value: itemIdExpr });
-      html = '"';
-    }
-  }
-  let generatedEventSuffix;
-  let generatedEventToken;
-  let dangerouslySetInnerHTMLExpr;
-  node.openingElement.attributes.forEach((attr) => {
-    if (libExports.isJSXSpreadAttribute(attr)) {
-      const err = new Error(
-        `[gea] Spread attributes (<${effectiveTag} {...expr} />) are not supported. Destructure props and pass them individually.`
-      );
-      err.__geaCompileError = true;
-      throw err;
-    }
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) return;
-    const attrName = attr.name.name;
-    if (attrName === "key") return;
-    if (attrName === "id" && hasBindingId) return;
-    if (attrName === "dangerouslySetInnerHTML") {
-      const dsiValue = attr.value;
-      if (libExports.isJSXExpressionContainer(dsiValue) && !libExports.isJSXEmptyExpression(dsiValue.expression)) {
-        dangerouslySetInnerHTMLExpr = dsiValue.expression;
-      }
-      return;
-    }
-    if (attrName === "ref") {
-      const attrValue2 = attr.value;
-      if (libExports.isJSXExpressionContainer(attrValue2) && !libExports.isJSXEmptyExpression(attrValue2.expression) && ctx.refBindings && ctx.refCounter) {
-        const refId = `ref${ctx.refCounter.value++}`;
-        ctx.refBindings.push({ refId, targetExpr: attrValue2.expression });
-        html += ` data-gea-ref="${refId}"`;
-      }
-      return;
-    }
-    const attrValue = attr.value;
-    const propAttrName = toHtmlAttrName(attrName, !!isComp);
-    const eventType = toGeaEventType(attrName);
-    if (libExports.isJSXExpressionContainer(attrValue) && !libExports.isJSXEmptyExpression(attrValue.expression)) {
-      if (!isComp && ctx.isRoot && EVENT_TYPES.has(eventType)) {
-        const hoistedRootEvent = getHoistableRootEvent(
-          attrName,
-          attrValue.expression,
-          elementPath,
-          propContext,
-          rootClassSelector
-        );
-        if (hoistedRootEvent) {
-          if (ctx.eventHandlers) {
-            ctx.eventHandlers.push({
-              eventType: hoistedRootEvent.eventType,
-              selector: hoistedRootEvent.selector,
-              delegatedPropName: hoistedRootEvent.propName,
-              usesTargetComponent: false
-            });
-          }
-          return;
-        }
-      }
-      if (!isComp && EVENT_TYPES.has(eventType) && ctx.inMapCallback && !ctx.eventHandlers) {
-        return;
-      }
-      if (!isComp && EVENT_TYPES.has(eventType) && ctx.eventHandlers) {
-        let selectorExpression;
-        let selector;
-        if (!ctx.inMapCallback && ctx.isRoot && !hasDynamicUserId) {
-          selectorExpression = userIdExprForEvents ? buildUserIdSelectorExpression(userIdExprForEvents) : buildEventSelectorExpression();
-        } else {
-          const rawPathKey2 = elementPath.join(" > ");
-          const pathKey2 = ctx.elementPathPrefix ? ctx.elementPathPrefix + " > " + rawPathKey2 : rawPathKey2;
-          const bindingId = ctx.elementPathToBindingId?.get(pathKey2) ?? (ctx.elementPathPrefix ? void 0 : ctx.elementPathToBindingId?.get(rawPathKey2));
-          if (!ctx.inMapCallback && bindingId !== void 0 && !hasDynamicUserId) {
-            selectorExpression = userIdExprForEvents ? buildUserIdSelectorExpression(userIdExprForEvents) : buildEventSelectorExpression(bindingId);
-          } else if (!ctx.inMapCallback && !ctx.inChildrenProp && !explicitIdAttr) {
-            if (!generatedEventSuffix) {
-              generatedEventSuffix = `ev${ctx.eventIdCounter?.value ?? 0}`;
-              if (ctx.eventIdCounter) ctx.eventIdCounter.value += 1;
-              parts.push({ type: "string", value: html + ' id="' });
-              parts.push({
-                type: "expression",
-                value: libExports.binaryExpression(
-                  "+",
-                  libExports.memberExpression(libExports.thisExpression(), libExports.identifier("id")),
-                  libExports.stringLiteral(`-${generatedEventSuffix}`)
-                )
-              });
-              html = '"';
-            }
-            selectorExpression = buildEventSelectorExpression(generatedEventSuffix);
-          } else if (explicitIdAttr) {
-            const idExpr = getExplicitIdValueExpression(explicitIdAttr);
-            if (!idExpr) {
-              const err = new Error(
-                `[gea] Event delegation requires id="..." or id={expr} when an id attribute is present on this element.`
-              );
-              err.__geaCompileError = true;
-              throw err;
-            }
-            selectorExpression = buildUserIdSelectorExpression(idExpr);
-          } else {
-            if (!generatedEventToken) {
-              generatedEventToken = `ev${ctx.eventIdCounter?.value ?? 0}`;
-              if (ctx.eventIdCounter) ctx.eventIdCounter.value += 1;
-              html += ` data-ge="${generatedEventToken}"`;
-            }
-            selector = `[data-ge="${generatedEventToken}"]`;
-          }
-        }
-        if (selectorExpression || selector) {
-          ctx.eventHandlers.push({
-            eventType,
-            handlerExpression: attrValue.expression,
-            selectorExpression,
-            selector
-          });
-          return;
-        }
-      }
-      if (attrName === "checked") {
-        parts.push({ type: "string", value: html });
-        const expr = transformJSXExpression(attrValue.expression, ctx);
-        parts.push({
-          type: "expression",
-          value: libExports.conditionalExpression(expr, libExports.stringLiteral(` ${propAttrName}`), libExports.stringLiteral(""))
-        });
-        html = "";
-      } else {
-        const rawExpr = attrValue.expression;
-        const isFunctionProp = libExports.isArrowFunctionExpression(rawExpr) || libExports.isFunctionExpression(rawExpr);
-        if (isComp && ctx.inMapCallback && isFunctionProp && ctx.handlerPropsInMap != null) {
-          ctx.handlerPropsInMap.push({
-            propName: attrName,
-            handlerExpression: rawExpr,
-            itemIdProperty: ctx.mapItemIdProperty || "id"
-          });
-          const itemIdProp = ctx.mapItemIdProperty || "id";
-          const hasItemId = node.openingElement.attributes.some(
-            (a) => libExports.isJSXAttribute(a) && libExports.isJSXIdentifier(a.name) && a.name.name === "itemId"
-          );
-          if (!hasItemId) {
-            const itemVar = ctx.mapItemVariable || "item";
-            const propItemIdExpr = itemIdProp !== ITEM_IS_KEY ? libExports.logicalExpression("??", buildOptionalMemberChain(id(itemVar), itemIdProp), id(itemVar)) : jsExpr`String(${id(itemVar)})`;
-            parts.push({ type: "string", value: html });
-            parts.push({
-              type: "expression",
-              value: libExports.templateLiteral(
-                [
-                  libExports.templateElement({ raw: ` data-prop-item-id="`, cooked: ` data-prop-item-id="` }, false),
-                  libExports.templateElement({ raw: '"', cooked: '"' }, true)
-                ],
-                [propItemIdExpr]
-              )
-            });
-            html = "";
-          }
-          return;
-        }
-        if (isComp && ctx.inMapCallback && isFunctionProp) {
-          const propName = attrName;
-          const err = new Error(
-            `[gea] Cannot pass function as prop "${propName}" to a component inside .map(). Functions cannot be serialized to HTML attributes. Use event delegation instead: pass a scalar like itemId and handle the click on the parent container.`
-          );
-          err.__geaCompileError = true;
-          throw err;
-        }
-        if (propAttrName === "class" && libExports.isObjectExpression(rawExpr)) {
-          const staticClass = tryStaticClassObjectToString(rawExpr);
-          if (staticClass !== null) {
-            if (staticClass) {
-              html += ` class="${staticClass}"`;
-            }
-            return;
-          }
-          parts.push({ type: "string", value: html });
-          const classExpr = buildTrimmedClassJoinedExpression(buildClassObjectExpression(rawExpr));
-          parts.push({ type: "string", value: ` class="` });
-          parts.push({ type: "expression", value: classExpr });
-          html = '"';
-          return;
-        }
-        if (propAttrName === "style" && libExports.isObjectExpression(rawExpr)) {
-          const staticCSS = tryStaticStyleObjectToCSS(rawExpr);
-          if (staticCSS) {
-            html += ` style="${staticCSS}"`;
-            return;
-          }
-          parts.push({ type: "string", value: html });
-          const styleExpr = jsExpr`${buildStyleObjectExpression(rawExpr)}.join('; ')`;
-          const skipCondition2 = buildAttrSkipCondition(styleExpr, rawExpr);
-          if (libExports.isBooleanLiteral(skipCondition2) && !skipCondition2.value) {
-            parts.push({ type: "string", value: ` style="` });
-            parts.push({ type: "expression", value: styleExpr });
-            html = '"';
-          } else {
-            parts.push({
-              type: "expression",
-              value: libExports.conditionalExpression(
-                skipCondition2,
-                libExports.stringLiteral(""),
-                libExports.templateLiteral(
-                  [
-                    libExports.templateElement({ raw: ' style="', cooked: ' style="' }, false),
-                    libExports.templateElement({ raw: '"', cooked: '"' }, true)
-                  ],
-                  [styleExpr]
-                )
-              )
-            });
-            html = "";
-          }
-          return;
-        }
-        parts.push({ type: "string", value: html });
-        const expr = transformJSXExpression(rawExpr, ctx);
-        const skipCondition = buildAttrSkipCondition(expr, rawExpr);
-        const sanitizedExpr = wrapWithSanitizeAttr(propAttrName, expr);
-        const templateExpr = propAttrName === "class" ? buildTrimmedClassValueExpression(expr) : sanitizedExpr;
-        if (libExports.isBooleanLiteral(skipCondition) && !skipCondition.value) {
-          parts.push({ type: "string", value: ` ${propAttrName}="` });
-          parts.push({ type: "expression", value: templateExpr });
-          html = '"';
-        } else {
-          parts.push({
-            type: "expression",
-            value: libExports.conditionalExpression(
-              skipCondition,
-              libExports.stringLiteral(""),
-              libExports.templateLiteral(
-                [
-                  libExports.templateElement({ raw: ` ${propAttrName}="`, cooked: ` ${propAttrName}="` }, false),
-                  libExports.templateElement({ raw: '"', cooked: '"' }, true)
-                ],
-                [templateExpr]
-              )
-            )
-          });
-          html = "";
-        }
-      }
-    } else if (libExports.isStringLiteral(attrValue)) {
-      html += ` ${propAttrName}="${attrValue.value}"`;
-    } else if (attrValue === null) {
-      html += ` ${propAttrName}`;
-    }
-  });
-  if (dangerouslySetInnerHTMLExpr) {
-    html += ">";
-    parts.push({ type: "string", value: html });
-    parts.push({ type: "expression", value: dangerouslySetInnerHTMLExpr });
-    appendString(parts, `</${effectiveTag}>`);
-  } else if (node.openingElement.selfClosing) {
-    if (isComp) {
-      parts.push({ type: "string", value: html + `></${effectiveTag}>` });
-    } else if (VOID_ELEMENTS.has(effectiveTag)) {
-      parts.push({ type: "string", value: html + " />" });
-    } else {
-      parts.push({ type: "string", value: html + `></${effectiveTag}>` });
-    }
-  } else {
-    html += ">";
-    parts.push({ type: "string", value: html });
-    processChildren(node.children, parts, ctx, elementPath);
-    appendString(parts, `</${effectiveTag}>`);
-  }
-}
-function processChildren(children, parts, ctx, elementPath, dcCursor, directChildren) {
-  const cursor = dcCursor ?? { index: 0 };
-  const dc = directChildren ?? getDirectChildElements(children);
-  const childCtx = { ...ctx, isRoot: false };
-  children.forEach((child) => {
-    if (libExports.isJSXText(child)) {
-      const normalized = normalizeJSXText(child.value);
-      if (normalized) appendString(parts, normalized);
-    } else if (libExports.isJSXElement(child)) {
-      const seg = dc[cursor.index]?.selectorSegment;
-      cursor.index++;
-      processElement(child, parts, childCtx, seg ? [...elementPath, seg] : elementPath);
-    } else if (libExports.isJSXFragment(child)) {
-      processChildren(child.children, parts, childCtx, elementPath, cursor, dc);
-    } else if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-      const rawExpr = child.expression;
-      const staticStr = getStaticStringValue(rawExpr);
-      if (staticStr !== null) {
-        appendString(parts, escapeHtml(staticStr));
-        return;
-      }
-      const slot = ctx.conditionalSlotNodeMap?.get(rawExpr);
-      if (slot) {
-        appendString(parts, `<!--`);
-        parts.push({
-          type: "expression",
-          value: jsExpr`this.id + ${"-" + slot.slotId}`
-        });
-        appendString(parts, `-->`);
-        pushString(parts, "");
-        const slotCtx = { ...ctx, elementPathPrefix: "__cs_" + slot.slotId };
-        const eventIdBefore = ctx.eventIdCounter?.value ?? 0;
-        let condExpr = transformJSXExpression(rawExpr, slotCtx);
-        const extractCtx = {
-          ...ctx,
-          isRoot: false,
-          eventHandlers: ctx.eventHandlers ? [] : void 0,
-          eventIdCounter: ctx.eventIdCounter ? { value: eventIdBefore } : void 0
-        };
-        const extracted = extractHtmlTemplatesFromRawConditional(rawExpr, extractCtx, slot.slotId) ?? extractHtmlTemplatesFromConditional(condExpr);
-        slot.truthyHtmlExpr = extracted.truthyHtmlExpr;
-        slot.falsyHtmlExpr = extracted.falsyHtmlExpr;
-        if (expressionMayBeFalsy(rawExpr)) {
-          condExpr = libExports.logicalExpression("||", condExpr, libExports.stringLiteral(""));
-        }
-        parts.push({ type: "expression", value: condExpr });
-        appendString(parts, `<!--`);
-        parts.push({
-          type: "expression",
-          value: jsExpr`this.id + ${"-" + slot.slotId + "-end"}`
-        });
-        appendString(parts, `-->`);
-      } else {
-        if (!ctx.inChildrenProp && (libExports.isArrowFunctionExpression(rawExpr) || libExports.isFunctionExpression(rawExpr))) {
-          const err = new Error(
-            `[gea] Function-as-child ({(ctx) => ...}) is not supported. Pass callback functions via named props instead (e.g., renderItem={...}).`
-          );
-          err.__geaCompileError = true;
-          throw err;
-        }
-        pushString(parts, "");
-        let expr = transformJSXExpression(rawExpr, ctx);
-        const stateSlots = ctx.stateChildSlots;
-        const stateCounter = ctx.stateChildSlotCounter;
-        const childCallInfo = stateSlots && stateCounter && expressionMayBeFalsy(rawExpr) ? extractChildInstanceRef(expr) : null;
-        if (childCallInfo && stateSlots && stateCounter) {
-          const markerId = `sc${stateCounter.value}`;
-          stateCounter.value++;
-          const setupStatements = collectTemplateSetupStatements(childCallInfo.guardExpr, ctx.templateSetupContext);
-          stateSlots.push({
-            markerId,
-            childInstanceVar: childCallInfo.instanceVar,
-            guardExpr: childCallInfo.guardExpr,
-            dependencies: collectExpressionDependencies(childCallInfo.guardExpr, ctx.stateRefs, setupStatements)
-          });
-          appendString(parts, `<template id="`);
-          parts.push({
-            type: "expression",
-            value: jsExpr`this.id + ${"-" + markerId}`
-          });
-          appendString(parts, `"></template>`);
-          pushString(parts, "");
-        }
-        if (expressionMayBeFalsy(rawExpr)) {
-          expr = libExports.logicalExpression("||", expr, libExports.stringLiteral(""));
-        }
-        const skipEscape = childCallInfo || isChildrenPropAccess(rawExpr) || expressionContainsJSX(rawExpr) || ctx.inMapCallback || callsJSXReturningProperty(rawExpr, ctx.classBody);
-        const safeExpr = skipEscape ? expr : jsExpr`geaEscapeHtml(String(${expr}))`;
-        parts.push({ type: "expression", value: safeExpr });
-      }
-    }
-  });
-}
-function pushString(parts, value) {
-  parts.push({ type: "string", value });
-}
-function appendString(parts, value) {
-  if (parts.length > 0 && parts[parts.length - 1].type === "string") {
-    parts[parts.length - 1].value += value;
-  } else {
-    parts.push({ type: "string", value });
-  }
-}
-function buildUserIdSelectorExpression(userIdExpr) {
-  if (libExports.isStringLiteral(userIdExpr)) {
-    return libExports.stringLiteral(`#${userIdExpr.value}`);
-  }
-  return libExports.templateLiteral(
-    [libExports.templateElement({ raw: "#", cooked: "#" }, false), libExports.templateElement({ raw: "", cooked: "" }, true)],
-    [libExports.cloneNode(userIdExpr, true)]
-  );
-}
-function getExplicitIdValueExpression(attr) {
-  if (!attr || !libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name) || attr.name.name !== "id") return void 0;
-  const v = attr.value;
-  if (libExports.isStringLiteral(v)) return libExports.stringLiteral(v.value);
-  if (libExports.isJSXExpressionContainer(v) && !libExports.isJSXEmptyExpression(v.expression)) return v.expression;
-  return void 0;
-}
-function buildEventSelectorExpression(suffix) {
-  return libExports.templateLiteral(
-    [
-      libExports.templateElement({ raw: "#", cooked: "#" }, false),
-      libExports.templateElement({ raw: suffix ? `-${suffix}` : "", cooked: suffix ? `-${suffix}` : "" }, true)
-    ],
-    [jsExpr`this.id`]
-  );
-}
-function partsToTemplateLiteral(parts) {
-  const strings = [];
-  const expressions = [];
-  let current = "";
-  parts.forEach((p) => {
-    if (p.type === "string") {
-      current += p.value;
-    } else {
-      strings.push(libExports.templateElement({ raw: current, cooked: current }, false));
-      current = "";
-      expressions.push(p.value);
-    }
-  });
-  strings.push(libExports.templateElement({ raw: current, cooked: current }, true));
-  return libExports.templateLiteral(strings, expressions);
-}
-
-function stripLength(parts) {
-  const p = [...parts];
-  if (p.length >= 2 && p[p.length - 1] === "length") p.pop();
-  return p;
-}
-function getThisCallName(expr) {
-  if (!expr || !libExports.isCallExpression(expr) || !libExports.isMemberExpression(expr.callee) || !libExports.isThisExpression(expr.callee.object) || !libExports.isIdentifier(expr.callee.property))
-    return null;
-  return expr.callee.property.name;
-}
-function findClassMethod$1(classBody, name) {
-  if (!classBody) return void 0;
-  const m = classBody.body.find(
-    (node) => libExports.isClassMethod(node) && libExports.isIdentifier(node.key) && node.key.name === name
-  );
-  return m && libExports.isBlockStatement(m.body) ? m : void 0;
-}
-function resolveHelperCallExpression(expr, classBody) {
-  const name = getThisCallName(expr);
-  if (!name) return expr;
-  const method = findClassMethod$1(classBody, name);
-  if (!method) return expr;
-  const returnStmt = method.body.body.find((stmt) => libExports.isReturnStatement(stmt) && !!stmt.argument);
-  return returnStmt?.argument ? libExports.cloneNode(returnStmt.argument, true) : expr;
-}
-function collectHelperMethodDependencies(expr, classBody, stateRefs) {
-  const name = getThisCallName(expr);
-  const method = name ? findClassMethod$1(classBody, name) : void 0;
-  if (!method) return [];
-  const deps = /* @__PURE__ */ new Map();
-  traverse$1(libExports.program(method.body.body.map((s) => libExports.cloneNode(s, true))), {
-    noScope: true,
-    MemberExpression(path) {
-      const r = resolvePath(path.node, stateRefs);
-      if (!r?.parts?.length) return;
-      const storeVar = r.isImportedState ? r.storeVar : void 0;
-      const key = buildObserveKey(r.parts, storeVar);
-      if (!deps.has(key)) deps.set(key, { observeKey: key, pathParts: r.parts, storeVar });
-    }
-  });
-  return Array.from(deps.values());
-}
-function collectUnresolvedComputationDependencies(expr, stateRefs, setupStatements, classBody) {
-  const helperDeps = collectHelperMethodDependencies(expr, classBody, stateRefs);
-  if (helperDeps.length > 0) return helperDeps;
-  const deps = collectExpressionDependencies(expr, stateRefs, setupStatements);
-  collectImportedStoreGetterDependencies(expr, setupStatements, stateRefs).forEach((dep) => {
-    if (!deps.some((existing) => existing.observeKey === dep.observeKey)) deps.push(dep);
-  });
-  return deps;
-}
-function buildDerivedUnresolvedMapDescriptor(expr, stateRefs, classBody) {
-  const normalized = resolveHelperCallExpression(expr, classBody);
-  const stages = [];
-  const walk = (node) => {
-    if (libExports.isCallExpression(node) && libExports.isMemberExpression(node.callee) && libExports.isIdentifier(node.callee.property) && !node.callee.computed) {
-      const method = node.callee.property.name;
-      const CHAIN_METHODS = /* @__PURE__ */ new Set(["filter", "slice", "sort", "reverse"]);
-      if (CHAIN_METHODS.has(method)) {
-        const source2 = walk(node.callee.object);
-        if (!source2) return null;
-        const stage = { method };
-        if (method === "filter" && libExports.isArrowFunctionExpression(node.arguments[0])) {
-          const fn = node.arguments[0];
-          stage.itemVariable = libExports.isIdentifier(fn.params[0]) ? fn.params[0].name : "item";
-          stage.indexVariable = libExports.isIdentifier(fn.params[1]) ? fn.params[1].name : void 0;
-          const cbs = extractCallbackBodyStatements(fn);
-          if (cbs.length > 0) stage.callbackBodyStatements = cbs;
-          const predicate = libExports.isExpression(fn.body) ? fn.body : libExports.isBlockStatement(fn.body) ? fn.body.body.find((s) => libExports.isReturnStatement(s) && !!s.argument)?.argument : void 0;
-          if (predicate) stage.predicateExpr = libExports.cloneNode(predicate, true);
-        }
-        stages.push(stage);
-        return source2;
-      }
-    }
-    if (!libExports.isMemberExpression(node) && !libExports.isIdentifier(node) && !libExports.isThisExpression(node) && !libExports.isCallExpression(node))
-      return null;
-    const resolved = resolvePath(node, stateRefs);
-    if (!resolved?.parts?.length) return null;
-    return {
-      sourcePathParts: resolved.parts,
-      sourceStoreVar: resolved.isImportedState ? resolved.storeVar : void 0,
-      sourceIsImportedState: resolved.isImportedState || false
-    };
-  };
-  const source = normalized ? walk(normalized) : null;
-  if (!source || stages.length === 0) return void 0;
-  return {
-    ...source,
-    stages
-  };
-}
-function getHelperMethodObserveKey(expr) {
-  const name = getThisCallName(expr);
-  return name ? buildObserveKey([name]) : void 0;
-}
-function collectImportedStoreGetterDependencies(expr, setupStatements, stateRefs) {
-  if (!libExports.isIdentifier(expr)) return [];
-  const deps = /* @__PURE__ */ new Map();
-  const addDep = (parts, sv) => {
-    const key = buildObserveKey(parts, sv);
-    if (!deps.has(key)) deps.set(key, { observeKey: key, pathParts: parts, storeVar: sv });
-  };
-  for (const stmt of setupStatements) {
-    if (!libExports.isVariableDeclaration(stmt)) continue;
-    for (const decl of stmt.declarations) {
-      if (!libExports.isObjectPattern(decl.id) || !libExports.isIdentifier(decl.init)) continue;
-      const storeRef = stateRefs.get(decl.init.name);
-      if (!storeRef || storeRef.kind !== "imported") continue;
-      for (const prop of decl.id.properties) {
-        if (!libExports.isObjectProperty(prop)) continue;
-        const localName = libExports.isIdentifier(prop.value) ? prop.value.name : libExports.isIdentifier(prop.key) ? prop.key.name : null;
-        if (localName !== expr.name) continue;
-        const gn = libExports.isIdentifier(prop.key) ? prop.key.name : null;
-        const gsp = gn ? storeRef.getterDeps?.get(gn) : void 0;
-        if (gsp?.length) {
-          for (const p of gsp) addDep(p, decl.init.name);
-        } else addDep([], decl.init.name);
-      }
-    }
-  }
-  return Array.from(deps.values());
-}
-function isInsideRefAttribute(path) {
-  for (let c = path; c; c = c.parentPath)
-    if (libExports.isJSXAttribute(c.node) && libExports.isJSXIdentifier(c.node.name) && c.node.name.name === "ref") return true;
-  return false;
-}
-function collectAllStateAccesses(templateMethod, stateRefs, stateProps, templateSetupContext, rootExpr) {
-  const params = templateMethod.params.filter((param) => !libExports.isTSParameterProperty(param));
-  const expr = rootExpr && !libExports.isJSXEmptyExpression(rootExpr) ? libExports.cloneNode(rootExpr, true) : libExports.arrowFunctionExpression(params, templateMethod.body);
-  let setupStatements = [];
-  if (rootExpr && templateSetupContext) {
-    const collected = collectTemplateSetupStatements(rootExpr, templateSetupContext);
-    const cloneAll = (stmts) => stmts.map((s) => libExports.cloneNode(s, true));
-    setupStatements = collected.length > 0 ? cloneAll(collected) : templateSetupContext.earlyReturnBarrierIndex !== void 0 ? cloneAll(templateSetupContext.statements.slice(0, templateSetupContext.earlyReturnBarrierIndex + 1)) : [];
-  }
-  const prog = libExports.program([...setupStatements, libExports.expressionStatement(expr)]);
-  const record = (parts, storeVar) => {
-    const key = buildObserveKey(parts, storeVar);
-    if (!stateProps.has(key)) stateProps.set(key, parts);
-  };
-  traverse$1(prog, {
-    noScope: true,
-    Identifier(path) {
-      if (!stateRefs.has(path.node.name) || isInsideRefAttribute(path)) return;
-      const ref = stateRefs.get(path.node.name);
-      const pp = path.parentPath;
-      if (pp && libExports.isMemberExpression(pp.node) && pp.node.object === path.node && libExports.isIdentifier(pp.node.property) && !pp.node.computed) {
-        const gp = pp.parentPath;
-        if (!(gp && libExports.isCallExpression(gp.node) && gp.node.callee === pp.node)) return;
-      }
-      if (ref.kind === "local-destructured" && ref.propName) {
-        record([ref.propName]);
-        return;
-      }
-      if (ref.kind === "imported-destructured" && ref.propName && ref.storeVar) {
-        const sr = stateRefs.get(ref.storeVar);
-        record(sr?.getterDeps?.has(ref.propName) || sr?.reactiveFields?.has(ref.propName) ? [ref.propName] : [], ref.storeVar);
-      }
-    },
-    MemberExpression(path) {
-      if (!libExports.isIdentifier(path.node.property) || isInsideRefAttribute(path)) return;
-      const parent = path.parentPath;
-      if (parent && libExports.isCallExpression(parent.node) && parent.node.callee === path.node) return;
-      const resolved = resolvePath(path.node, stateRefs);
-      if (!resolved || resolved.parts === null) return;
-      if (resolved.parts.length === 0) {
-        if (resolved.storeVar && libExports.isVariableDeclarator(parent?.node) && libExports.isObjectPattern(parent.node.id)) {
-          for (const prop of parent.node.id.properties) {
-            if (!libExports.isObjectProperty(prop)) continue;
-            const key = libExports.isIdentifier(prop.key) ? prop.key.name : libExports.isStringLiteral(prop.key) ? prop.key.value : null;
-            if (key) record([key], resolved.storeVar);
-          }
-        }
-        return;
-      }
-      record(stripLength(resolved.parts), resolved.isImportedState ? resolved.storeVar : void 0);
-    }
-  });
-}
-function computeConditionalSlotScopedStoreKeys(conditionalSlots, stateProps, stateRefs, templateSetupContext) {
-  if (conditionalSlots.length === 0) return /* @__PURE__ */ new Set();
-  const conditionKeys = /* @__PURE__ */ new Set();
-  const branchKeys = /* @__PURE__ */ new Set();
-  for (const slot of conditionalSlots) {
-    for (const dep of slot.dependencies || []) conditionKeys.add(dep.observeKey);
-    const condDeps = collectExpressionDependencies(slot.conditionExpr, stateRefs, slot.setupStatements);
-    for (const dep of condDeps) conditionKeys.add(dep.observeKey);
-    if (!slot.originalExpr) continue;
-    const branches = libExports.isConditionalExpression(slot.originalExpr) ? [slot.originalExpr.consequent, slot.originalExpr.alternate] : libExports.isLogicalExpression(slot.originalExpr) ? [slot.originalExpr.right] : [];
-    for (const branch of branches) {
-      for (const dep of collectExpressionDependencies(branch, stateRefs, collectTemplateSetupStatements(branch, templateSetupContext)))
-        branchKeys.add(dep.observeKey);
-    }
-  }
-  return new Set([...branchKeys].filter((k) => !conditionKeys.has(k) && stateProps.has(k)));
-}
-function collectItemTemplateStoreDependencies(itemTemplate, itemVar, stateRefs, dependencies) {
-  if (!itemTemplate) return;
-  const prog = libExports.program([libExports.expressionStatement(libExports.cloneNode(itemTemplate, true))]);
-  traverse$1(prog, {
-    noScope: true,
-    MemberExpression(path) {
-      let root = path.node;
-      while (libExports.isMemberExpression(root)) root = root.object;
-      if (libExports.isIdentifier(root) && root.name === itemVar) return;
-      const parent = path.parentPath;
-      if (parent && libExports.isCallExpression(parent.node) && parent.node.callee === path.node) return;
-      const resolved = resolvePath(path.node, stateRefs);
-      if (!resolved?.parts?.length) return;
-      const parts = stripLength(resolved.parts);
-      const storeVar = resolved.isImportedState ? resolved.storeVar : void 0;
-      const observeKey = buildObserveKey(parts, storeVar);
-      if (!dependencies.some((d) => d.observeKey === observeKey))
-        dependencies.push({ observeKey, pathParts: parts, storeVar });
-    }
-  });
-}
-function detectUnresolvedRelationalClassBindings(itemTemplate, itemVar, stateRefs, dependencies) {
-  if (!itemTemplate || !libExports.isJSXElement(itemTemplate)) return [];
-  const classAttr = itemTemplate.openingElement.attributes.find(
-    (attr) => libExports.isJSXAttribute(attr) && libExports.isJSXIdentifier(attr.name) && (attr.name.name === "class" || attr.name.name === "className")
-  );
-  if (!classAttr?.value || !libExports.isJSXExpressionContainer(classAttr.value)) return [];
-  const expr = classAttr.value.expression;
-  const candidates = libExports.isTemplateLiteral(expr) ? expr.expressions : [expr];
-  const conditionals = candidates.filter((e) => libExports.isConditionalExpression(e));
-  const results = [];
-  for (const cond of conditionals) {
-    if (!libExports.isBinaryExpression(cond.test)) continue;
-    if (!["===", "==", "!==", "!="].includes(cond.test.operator)) continue;
-    const matchWhenEqual = cond.test.operator === "===" || cond.test.operator === "==";
-    let storeObserveKey;
-    let itemSideFound = false;
-    let itemProperty;
-    for (const side of [cond.test.left, cond.test.right]) {
-      if (libExports.isIdentifier(side) && side.name === itemVar) {
-        itemSideFound = true;
-        continue;
-      }
-      if (libExports.isMemberExpression(side) && libExports.isIdentifier(side.object) && side.object.name === itemVar && libExports.isIdentifier(side.property)) {
-        itemSideFound = true;
-        itemProperty = side.property.name;
-        continue;
-      }
-      if (libExports.isMemberExpression(side) || libExports.isIdentifier(side)) {
-        const r = resolvePath(side, stateRefs);
-        if (r?.parts?.length && r.isImportedState) storeObserveKey = buildObserveKey(r.parts, r.storeVar);
-      }
-    }
-    if (!storeObserveKey || !itemSideFound) continue;
-    if (!dependencies.some((d) => d.observeKey === storeObserveKey)) continue;
-    const strVal = (n) => libExports.isStringLiteral(n) ? n.value.trim() || null : null;
-    const className = strVal(cond.consequent) || strVal(cond.alternate);
-    if (!className) continue;
-    const consequentIsClass = !!strVal(cond.consequent);
-    results.push({
-      observeKey: storeObserveKey,
-      classToggleName: className,
-      matchWhenEqual: consequentIsClass ? matchWhenEqual : !matchWhenEqual,
-      ...itemProperty ? { itemProperty } : {}
-    });
-  }
-  return results;
-}
-
-function buildTextTemplateExpressionFromParts(textTemplate, textExpressions) {
-  const templateParts = textTemplate.split(/\$\{(\d+)\}/g);
-  const quasis = [];
-  const expressions = [];
-  for (let i = 0; i < templateParts.length; i++) {
-    if (i % 2 === 0) {
-      const raw = templateParts[i] || "";
-      quasis.push(libExports.templateElement({ raw, cooked: raw }, i === templateParts.length - 1));
-      continue;
-    }
-    const idx = Number.parseInt(templateParts[i] || "-1", 10);
-    const textExpr = textExpressions[idx];
-    if (textExpr?.expression) {
-      expressions.push(libExports.cloneNode(textExpr.expression, true));
-    } else {
-      expressions.push(libExports.identifier("undefined"));
-    }
-  }
-  return libExports.templateLiteral(quasis, expressions);
-}
-function analyzeAttributes(node, tagName, elementPath, bindings, propBindings, stateProps, stateRefs, propsParamName, destructuredPropNames, templateSetupContext, classBody) {
-  node.openingElement.attributes.forEach((attr) => {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) return;
-    if (!attr.value || !libExports.isJSXExpressionContainer(attr.value)) return;
-    const name = attr.name.name;
-    if (name === "ref") return;
-    if (isEventAttribute(name)) return;
-    if (name === "dangerouslySetInnerHTML") {
-      const expr2 = attr.value.expression;
-      if (templateSetupContext && !libExports.isJSXEmptyExpression(expr2)) {
-        const setupStatements = collectTemplateSetupStatements(expr2, templateSetupContext);
-        const dependencies = collectExpressionDependencies(expr2, stateRefs, setupStatements);
-        const stateDeps = dependencies.filter(
-          (d) => d.storeVar || d.pathParts.length > 0 && d.pathParts[0] !== "props"
-        );
-        if (stateDeps.length > 0) {
-          const selector = generateSelector(elementPath);
-          propBindings.push({
-            propName: "__state__",
-            selector,
-            type: "attribute",
-            attributeName: "dangerouslySetInnerHTML",
-            elementPath: [...elementPath],
-            expression: libExports.cloneNode(expr2, true),
-            setupStatements: setupStatements.length > 0 ? setupStatements : void 0
-          });
-        }
-      }
-      return;
-    }
-    const expr = attr.value.expression;
-    const propName = resolvePropRef(expr, propsParamName, destructuredPropNames);
-    if (propName) {
-      const selector = generateSelector(elementPath);
-      if (name === "class" || name === "className") {
-        propBindings.push({ propName, selector, type: "class", elementPath: [...elementPath] });
-      } else if (name === "value" || name === "checked") {
-        propBindings.push({
-          propName,
-          selector,
-          type: name,
-          attributeName: name,
-          elementPath: [...elementPath]
-        });
-      } else {
-        propBindings.push({ propName, selector, type: "attribute", attributeName: name, elementPath: [...elementPath] });
-      }
-      return;
-    }
-    const kind = classifyAttribute(name);
-    const attrType = kind === "class" ? "class" : kind === "value" || kind === "checked" ? name : "attribute";
-    const derived = buildDerivedPropBindings(
-      expr,
-      attrType,
-      attrType === "class" ? void 0 : name,
-      elementPath,
-      propsParamName,
-      destructuredPropNames,
-      templateSetupContext,
-      classBody
-    );
-    if (derived.length > 0) {
-      propBindings.push(...derived);
-    }
-    const tagNameNode = node.openingElement.name;
-    const isNativeElement = libExports.isJSXIdentifier(tagNameNode) && /^[a-z]/.test(tagNameNode.name);
-    if (isNativeElement && templateSetupContext && !libExports.isJSXEmptyExpression(expr)) {
-      const setupStatements = collectTemplateSetupStatements(expr, templateSetupContext);
-      const dependencies = collectExpressionDependencies(expr, stateRefs, setupStatements);
-      const stateDeps = dependencies.filter((d) => d.storeVar || d.pathParts.length > 0 && d.pathParts[0] !== "props");
-      if (stateDeps.length > 0) {
-        const selector = generateSelector(elementPath);
-        propBindings.push({
-          propName: "__state__",
-          selector,
-          type: attrType,
-          attributeName: attrType === "class" ? void 0 : name,
-          elementPath: [...elementPath],
-          expression: libExports.cloneNode(expr, true),
-          setupStatements: setupStatements.map((s) => libExports.cloneNode(s, true)),
-          stateOnly: true
-        });
-        return;
-      }
-    }
-    if (derived.length > 0) return;
-    if (name === "value" || name === "checked") {
-      const result = resolveExpr(expr, stateRefs);
-      if (!result?.parts?.length) return;
-      const binding = {
-        pathParts: result.parts,
-        type: name,
-        selector: generateSelector(elementPath),
-        attributeName: name,
-        elementPath: [...elementPath]
-      };
-      applyImportedState(binding, result, stateProps);
-      bindings.push(binding);
-    }
-  });
-}
-function collectTextChildren(node, stateRefs, stateProps) {
-  const textChildren = [];
-  let hasExpr = false;
-  node.children.forEach((child) => {
-    if (libExports.isJSXText(child)) {
-      textChildren.push({ type: "text", value: child.value });
-    } else if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-      const expr = child.expression;
-      const isMap = libExports.isCallExpression(expr) && libExports.isMemberExpression(expr.callee) && libExports.isIdentifier(expr.callee.property) && expr.callee.property.name === "map";
-      if (!isMap) {
-        if (libExports.isTemplateLiteral(expr)) {
-          for (let i = 0; i < expr.quasis.length; i++) {
-            const quasi = expr.quasis[i];
-            if (quasi.value.raw) {
-              textChildren.push({ type: "text", value: quasi.value.raw });
-            }
-            if (i < expr.expressions.length) {
-              const innerExpr = expr.expressions[i];
-              if (libExports.isExpression(innerExpr)) {
-                textChildren.push({ type: "expression", expression: innerExpr });
-                hasExpr = true;
-              }
-            }
-          }
-        } else {
-          textChildren.push({ type: "expression", expression: expr });
-          hasExpr = true;
-        }
-      }
-    }
-  });
-  const exprCount = textChildren.filter((c) => c.type === "expression").length;
-  const allTextIsWhitespace = textChildren.filter((c) => c.type === "text").every((c) => !c.value || c.value.trim() === "");
-  const shouldBuildTextTemplate = hasExpr && (exprCount > 1 || textChildren.some((c) => c.type === "text") && !allTextIsWhitespace);
-  let textTemplate;
-  const textExpressions = [];
-  if (shouldBuildTextTemplate) {
-    const parts = [];
-    let idx = 0;
-    textChildren.forEach((c) => {
-      if (c.type === "text" && c.value) {
-        parts.push(c.value);
-        return;
-      }
-      if (c.type !== "expression" || !c.expression) return;
-      parts.push(`\${${idx}}`);
-      const result = resolveExpr(c.expression, stateRefs);
-      textExpressions.push({
-        pathParts: result?.parts || [],
-        isImportedState: result?.isImportedState || false,
-        storeVar: result?.storeVar,
-        expression: c.expression
-      });
-      if (result?.isImportedState && result.parts) {
-        stateProps.set(buildObserveKey(result.parts, result.storeVar), [...result.parts]);
-      }
-      idx++;
-    });
-    textTemplate = parts.join("");
-  }
-  return { textTemplate, textExpressions, shouldBuildTextTemplate };
-}
-function parentHasElementChildren(node) {
-  return node.children.some((c) => libExports.isJSXElement(c));
-}
-function getDOMTextNodeIndex(children, childIndex) {
-  let domIndex = 0;
-  let inTextRun = false;
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    if (libExports.isJSXText(child)) {
-      if (child.value.trim() === "") continue;
-      if (!inTextRun) {
-        inTextRun = true;
-        domIndex++;
-      }
-    } else if (libExports.isJSXExpressionContainer(child)) {
-      if (!inTextRun) {
-        inTextRun = true;
-        domIndex++;
-      }
-      if (i === childIndex) return domIndex - 1;
-    } else if (libExports.isJSXElement(child) || libExports.isJSXFragment(child)) {
-      inTextRun = false;
-      domIndex++;
-    }
-  }
-  return 0;
-}
-function analyzeChildren(node, tagName, elementPath, bindings, propBindings, arrayMaps, stateProps, stateRefs, textTemplate, textExpressions, shouldBuildTextTemplate, walk, onUnresolvedMap, classBody, propsParamName, destructuredPropNames, templateSetupContext, rerenderPropNames, rerenderConditions, conditionalSlots, templateRoot, conditionalSlotNodeMap) {
-  getDirectChildElements(node.children).forEach((child) => {
-    walk(child.node, [...elementPath, child.selectorSegment]);
-  });
-  node.children.forEach((child, index) => {
-    if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-      const expr = child.expression;
-      if (isMapCall$1(expr)) {
-        handleArrayMap(
-          expr,
-          tagName,
-          node,
-          elementPath,
-          index,
-          arrayMaps,
-          stateProps,
-          stateRefs,
-          onUnresolvedMap,
-          classBody,
-          templateSetupContext,
-          conditionalSlots != null ? conditionalSlots.length : void 0
-        );
-      } else {
-        const nestedMapCalls = collectNestedMapCalls(expr);
-        const hasNestedMapCall = nestedMapCalls.length > 0;
-        const jsxInTextSiblingGroup = shouldBuildTextTemplate && textSiblingGroupContainsJSX(textExpressions);
-        const mixedTextNodeIndex = parentHasElementChildren(node) || jsxInTextSiblingGroup ? getDOMTextNodeIndex(node.children, index) : void 0;
-        const slotCountBefore = conditionalSlots?.length ?? 0;
-        handleTextBinding(
-          expr,
-          node,
-          tagName,
-          elementPath,
-          bindings,
-          propBindings,
-          stateProps,
-          stateRefs,
-          textTemplate,
-          textExpressions,
-          shouldBuildTextTemplate,
-          propsParamName,
-          destructuredPropNames,
-          templateSetupContext,
-          rerenderPropNames,
-          rerenderConditions,
-          conditionalSlots,
-          hasNestedMapCall,
-          classBody,
-          conditionalSlotNodeMap,
-          mixedTextNodeIndex,
-          jsxInTextSiblingGroup
-        );
-        const slotCountAfter = conditionalSlots?.length ?? 0;
-        const slotId = slotCountAfter > slotCountBefore ? conditionalSlots[slotCountAfter - 1].slotId : void 0;
-        if (slotCountAfter > slotCountBefore && conditionalSlots && conditionalSlotNodeMap && templateSetupContext) {
-          registerNestedConditionalsInBranches(
-            expr,
-            stateRefs,
-            templateSetupContext,
-            conditionalSlots,
-            conditionalSlotNodeMap);
-        }
-        nestedMapCalls.forEach(({ mapExpr, parentElement, containerPath }) => {
-          let mapNode = node;
-          let mapElementPath = elementPath;
-          let mapTagName = tagName;
-          if (parentElement) {
-            mapNode = parentElement;
-            mapTagName = getJSXTagName(parentElement.openingElement.name) || tagName;
-          }
-          if (containerPath) {
-            const prefix = slotId ? `__cs_${slotId}` : void 0;
-            mapElementPath = prefix ? [prefix, ...containerPath] : containerPath;
-          }
-          handleArrayMap(
-            mapExpr,
-            mapTagName,
-            mapNode,
-            mapElementPath,
-            index,
-            arrayMaps,
-            stateProps,
-            stateRefs,
-            onUnresolvedMap,
-            classBody,
-            templateSetupContext
-          );
-        });
-      }
-    }
-  });
-}
-function collectNestedMapCalls(expr) {
-  if (libExports.isJSXEmptyExpression(expr)) return [];
-  const maps = [];
-  const program = libExports.program([libExports.expressionStatement(libExports.cloneNode(expr, true))]);
-  traverse$1(program, {
-    noScope: true,
-    CallExpression(path) {
-      if (isMapCall$1(path.node)) {
-        let parentElement;
-        let parentPath;
-        let current = path.parentPath;
-        while (current) {
-          if (current.isJSXElement()) {
-            parentElement = current.node;
-            parentPath = current;
-            break;
-          }
-          current = current.parentPath;
-        }
-        let containerPath;
-        if (parentPath) {
-          const segments = [];
-          let cur = parentPath;
-          while (cur.parentPath) {
-            const par = cur.parentPath;
-            if (par.isJSXElement() || par.isJSXFragment()) {
-              const children = getDirectChildElements(par.node.children);
-              const match = children.find((dc) => dc.node === cur.node);
-              if (match) segments.unshift(match.selectorSegment);
-              if (par.isJSXElement()) {
-                cur = par;
-                continue;
-              }
-            }
-            break;
-          }
-          if (segments.length > 0) containerPath = segments;
-        }
-        maps.push({ mapExpr: path.node, parentElement, containerPath });
-      }
-    }
-  });
-  return maps;
-}
-function handleArrayMap(expr, tagName, node, elementPath, index, arrayMaps, stateProps, stateRefs, onUnresolvedMap, classBody, templateSetupContext, afterCondSlotIndex) {
-  const arrayExpr = expr.callee.object;
-  const normalizedArrayExpr = resolveHelperCallExpression(arrayExpr, classBody) || arrayExpr;
-  if (libExports.isArrowFunctionExpression(expr.arguments?.[0])) {
-    const tpl = extractItemTemplate(expr.arguments[0]);
-    if (tpl && !hasExplicitItemKey(tpl)) {
-      const loc = tpl.loc?.start;
-      const locStr = loc ? ` (line ${loc.line}, col ${loc.column})` : "";
-      const err = new Error(
-        `[gea] Array .map() items must have a \`key\` prop on the root element${locStr}. Add key={item.id} (or another unique identifier) to the outermost JSX element returned by the .map() callback.`
-      );
-      err.__geaCompileError = true;
-      throw err;
-    }
-  }
-  const result = resolvePath(normalizedArrayExpr, stateRefs);
-  const isDestructuredNonReactive = result?.parts?.length === 1 && result.isImportedState && libExports.isIdentifier(normalizedArrayExpr) && (() => {
-    const ref = stateRefs.get(normalizedArrayExpr.name);
-    if (!ref || ref.kind !== "imported-destructured" || !ref.storeVar || !ref.propName) return false;
-    const storeRef = stateRefs.get(ref.storeVar);
-    return !storeRef?.reactiveFields?.has(ref.propName);
-  })();
-  if (!result?.parts?.length || isDestructuredNonReactive || !libExports.isArrowFunctionExpression(expr.arguments[0])) {
-    if (libExports.isArrowFunctionExpression(expr.arguments?.[0])) {
-      const arrowFn2 = expr.arguments[0];
-      normalizeDestructuredMapCallback(arrowFn2);
-      const itemVar2 = libExports.isIdentifier(arrowFn2.params[0]) ? arrowFn2.params[0].name : "item";
-      const indexVar2 = libExports.isIdentifier(arrowFn2.params[1]) ? arrowFn2.params[1].name : void 0;
-      const itemTemplate2 = extractItemTemplate(arrowFn2);
-      const itemIdProp = detectItemIdProperty(itemTemplate2, itemVar2);
-      const computationSetupStatements = templateSetupContext ? collectTemplateSetupStatements(normalizedArrayExpr, templateSetupContext) : [];
-      const dependencies = collectUnresolvedComputationDependencies(
-        normalizedArrayExpr,
-        stateRefs,
-        computationSetupStatements,
-        classBody
-      );
-      collectItemTemplateStoreDependencies(itemTemplate2, itemVar2, stateRefs, dependencies);
-      const relationalClassBindings = detectUnresolvedRelationalClassBindings(
-        itemTemplate2,
-        itemVar2,
-        stateRefs,
-        dependencies
-      );
-      const cbBodyStmts2 = extractCallbackBodyStatements(arrowFn2);
-      onUnresolvedMap({
-        containerSelector: detectContainerSelector(node, tagName),
-        itemTemplate: itemTemplate2,
-        itemVariable: itemVar2,
-        ...indexVar2 ? { indexVariable: indexVar2 } : {},
-        itemIdProperty: itemIdProp,
-        ...!itemIdProp && hasExplicitItemKey(itemTemplate2) ? { keyExpression: libExports.cloneNode(extractKeyExpression(itemTemplate2), true) } : {},
-        rootHasUserId: hasRootUserIdAttribute(itemTemplate2),
-        computationExpr: libExports.cloneNode(normalizedArrayExpr, true),
-        computationSetupStatements: computationSetupStatements.map((stmt) => libExports.cloneNode(stmt, true)),
-        dependencies,
-        containerElementPath: [...elementPath],
-        ...cbBodyStmts2.length > 0 ? { callbackBodyStatements: cbBodyStmts2 } : {},
-        ...relationalClassBindings.length > 0 ? { relationalClassBindings } : {},
-        ...afterCondSlotIndex != null ? { afterCondSlotIndex } : {}
-      });
-    }
-    return;
-  }
-  if (result.isImportedState) {
-    stateProps.set(buildObserveKey(result.parts, result.storeVar), [...result.parts]);
-  }
-  const finalPath = result.parts;
-  const arrowFn = expr.arguments[0];
-  normalizeDestructuredMapCallback(arrowFn);
-  const itemVar = libExports.isIdentifier(arrowFn.params[0]) ? arrowFn.params[0].name : "item";
-  const indexVar = libExports.isIdentifier(arrowFn.params[1]) ? arrowFn.params[1].name : void 0;
-  const itemTemplate = extractItemTemplate(arrowFn);
-  const cbBodyStmts = extractCallbackBodyStatements(arrowFn);
-  const itemIdProperty = detectItemIdProperty(itemTemplate, itemVar);
-  const relationalIdProperty = itemIdProperty || "id";
-  const isKeyed = hasExplicitItemKey(itemTemplate);
-  const containerSelector = detectContainerSelector(node, tagName);
-  const itemBindings = [];
-  const relationalBindings = [];
-  const conditionalBindings = [];
-  const storeVar = result.isImportedState ? result.storeVar : void 0;
-  const walkBody = (body) => {
-    let target = body;
-    if (libExports.isBlockStatement(body)) {
-      const returnStmt = body.body.find((s) => libExports.isReturnStatement(s));
-      target = returnStmt?.argument;
-    }
-    if (!target) return;
-    if (libExports.isConditionalExpression(target))
-      target = libExports.isJSXElement(target.consequent) ? target.consequent : target.alternate;
-    if (libExports.isParenthesizedExpression(target)) target = target.expression;
-    if (libExports.isJSXElement(target))
-      analyzeJSXInMap(
-        target,
-        finalPath,
-        itemVar,
-        itemBindings,
-        relationalBindings,
-        conditionalBindings,
-        [],
-        result.isImportedState || false,
-        relationalIdProperty,
-        stateRefs,
-        [],
-        storeVar
-      );
-    else if (libExports.isJSXFragment(target))
-      target.children.forEach((fc) => {
-        if (libExports.isJSXElement(fc))
-          analyzeJSXInMap(
-            fc,
-            finalPath,
-            itemVar,
-            itemBindings,
-            relationalBindings,
-            conditionalBindings,
-            [],
-            result.isImportedState || false,
-            relationalIdProperty,
-            stateRefs,
-            [],
-            storeVar
-          );
-      });
-    else if (libExports.isParenthesizedExpression(target) && libExports.isJSXElement(target.expression))
-      analyzeJSXInMap(
-        target.expression,
-        finalPath,
-        itemVar,
-        itemBindings,
-        relationalBindings,
-        conditionalBindings,
-        [],
-        result.isImportedState || false,
-        relationalIdProperty,
-        stateRefs,
-        [],
-        storeVar
-      );
-  };
-  walkBody(arrowFn.body);
-  let classToggleName;
-  itemBindings.forEach((b) => {
-    if (b.type === "class" && b.classToggleName && !classToggleName) classToggleName = b.classToggleName;
-  });
-  relationalBindings.forEach((binding) => {
-    stateProps.set(buildObserveKey(binding.observePathParts, binding.storeVar), [...binding.observePathParts]);
-    if (binding.classToggleName && !classToggleName) classToggleName = binding.classToggleName;
-  });
-  conditionalBindings.forEach((binding) => {
-    stateProps.set(binding.observe.observeKey, [...binding.observe.pathParts]);
-  });
-  arrayMaps.push({
-    arrayPathParts: finalPath,
-    storeVar: result.storeVar,
-    itemVariable: itemVar,
-    ...indexVar ? { indexVariable: indexVar } : {},
-    itemBindings,
-    relationalBindings,
-    containerSelector,
-    containerElementPath: [...elementPath],
-    itemTemplate,
-    isImportedState: result.isImportedState || false,
-    isKeyed,
-    itemIdProperty: itemIdProperty || (isKeyed ? void 0 : "id"),
-    ...!itemIdProperty && isKeyed ? { keyExpression: libExports.cloneNode(extractKeyExpression(itemTemplate), true) } : {},
-    classToggleName,
-    conditionalBindings,
-    ...cbBodyStmts.length > 0 ? { callbackBodyStatements: cbBodyStmts } : {},
-    ...afterCondSlotIndex != null ? { afterCondSlotIndex } : {}
-  });
-}
-function handleTextBinding(expr, node, tagName, elementPath, bindings, propBindings, stateProps, stateRefs, textTemplate, textExpressions, shouldBuildTextTemplate, propsParamName, destructuredPropNames, templateSetupContext, rerenderPropNames, rerenderConditions, conditionalSlots, _hasNestedMapCall = false, classBody, conditionalSlotNodeMap, textNodeIndex, jsxInTextSiblingGroup = false) {
-  const propName = resolvePropRef(expr, propsParamName, destructuredPropNames);
-  if (propName) {
-    if (shouldBuildTextTemplate && textTemplate && textExpressions.length > 0 && templateSetupContext && !jsxInTextSiblingGroup) {
-      const derivedTemplateExpr = buildTextTemplateExpressionFromParts(textTemplate, textExpressions);
-      const setupStatements = collectTemplateSetupStatements(derivedTemplateExpr, templateSetupContext);
-      const dependentProps = collectDependentPropNames(
-        derivedTemplateExpr,
-        setupStatements,
-        propsParamName,
-        destructuredPropNames,
-        classBody
-      );
-      const selector3 = generateSelector(elementPath);
-      if (dependentProps.length > 0) {
-        propBindings.push(
-          ...dependentProps.map((prop) => ({
-            propName: prop,
-            selector: selector3,
-            type: "text",
-            elementPath: [...elementPath],
-            expression: libExports.cloneNode(derivedTemplateExpr, true),
-            setupStatements: setupStatements.map((statement) => libExports.cloneNode(statement, true)),
-            ...textNodeIndex !== void 0 ? { textNodeIndex } : {}
-          }))
-        );
-        return;
-      }
-    }
-    const selector2 = generateSelector(elementPath);
-    propBindings.push({
-      propName,
-      selector: selector2,
-      type: "text",
-      elementPath: [...elementPath],
-      ...textNodeIndex !== void 0 ? { textNodeIndex } : {}
-    });
-    return;
-  }
-  if (!expressionMayProduceJSX(expr)) {
-    if (shouldBuildTextTemplate && textTemplate && textExpressions.length > 0 && templateSetupContext && !jsxInTextSiblingGroup) {
-      const derivedTemplateExpr = buildTextTemplateExpressionFromParts(textTemplate, textExpressions);
-      const setupStatements = collectTemplateSetupStatements(derivedTemplateExpr, templateSetupContext);
-      const dependentProps = collectDependentPropNames(
-        derivedTemplateExpr,
-        setupStatements,
-        propsParamName,
-        destructuredPropNames,
-        classBody
-      );
-      if (dependentProps.length > 0) {
-        const selector2 = generateSelector(elementPath);
-        propBindings.push(
-          ...dependentProps.map((prop) => ({
-            propName: prop,
-            selector: selector2,
-            type: "text",
-            elementPath: [...elementPath],
-            expression: libExports.cloneNode(derivedTemplateExpr, true),
-            setupStatements: setupStatements.map((statement) => libExports.cloneNode(statement, true)),
-            ...textNodeIndex !== void 0 ? { textNodeIndex } : {}
-          }))
-        );
-        return;
-      }
-    }
-    const derived = buildDerivedPropBindings(
-      expr,
-      "text",
-      void 0,
-      elementPath,
-      propsParamName,
-      destructuredPropNames,
-      templateSetupContext,
-      classBody
-    );
-    if (derived.length > 0) {
-      if (textNodeIndex !== void 0) {
-        for (const d of derived) d.textNodeIndex = textNodeIndex;
-      }
-      propBindings.push(...derived);
-      return;
-    }
-  }
-  if (templateSetupContext && expressionMayProduceJSX(expr) && rerenderPropNames) {
-    if (libExports.isJSXEmptyExpression(expr)) return;
-    const conditionExpr = extractConditionalControlExpression(expr);
-    if (conditionExpr) {
-      const condSetupStatements = collectTemplateSetupStatements(conditionExpr, templateSetupContext);
-      const fullSetupStatements = collectTemplateSetupStatements(expr, templateSetupContext);
-      const allDeps = collectExpressionDependencies(conditionExpr, stateRefs, condSetupStatements);
-      const dependencies = allDeps;
-      const conditionDependentProps = collectDependentPropNames(
-        conditionExpr,
-        condSetupStatements,
-        propsParamName,
-        destructuredPropNames,
-        classBody
-      );
-      const allDependentProps = collectDependentPropNames(
-        expr,
-        fullSetupStatements,
-        propsParamName,
-        destructuredPropNames,
-        classBody
-      );
-      const dependentProps = [.../* @__PURE__ */ new Set([...conditionDependentProps, ...allDependentProps])];
-      dependentProps.forEach((propName2) => rerenderPropNames.add(propName2));
-      if (dependentProps.length > 0 || dependencies.length > 0) {
-        rerenderConditions?.push({
-          expression: libExports.cloneNode(conditionExpr, true),
-          setupStatements: condSetupStatements.map((s) => libExports.cloneNode(s, true))
-        });
-        if (conditionalSlots) {
-          const slotId = `c${conditionalSlots.length}`;
-          conditionalSlots.push({
-            slotId,
-            conditionExpr: libExports.cloneNode(conditionExpr, true),
-            setupStatements: condSetupStatements.map((s) => libExports.cloneNode(s, true)),
-            htmlSetupStatements: fullSetupStatements.map((s) => libExports.cloneNode(s, true)),
-            dependentPropNames: [...dependentProps],
-            dependencies: dependencies.map((dep) => ({
-              observeKey: dep.observeKey,
-              pathParts: [...dep.pathParts],
-              ...dep.storeVar ? { storeVar: dep.storeVar } : {}
-            })),
-            originalExpr: libExports.cloneNode(expr, true)
-          });
-          conditionalSlotNodeMap?.set(expr, slotId);
-        }
-      }
-    }
-  }
-  const result = resolveExpr(expr, stateRefs);
-  if (!result?.parts?.length) {
-    if (templateSetupContext && !libExports.isJSXEmptyExpression(expr) && !expressionMayProduceJSX(expr)) {
-      const exprToUse = shouldBuildTextTemplate && textTemplate && !jsxInTextSiblingGroup ? buildTextTemplateExpressionFromParts(textTemplate, textExpressions) : expr;
-      const setupStatements = collectTemplateSetupStatements(exprToUse, templateSetupContext);
-      const dependencies = collectExpressionDependencies(exprToUse, stateRefs, setupStatements);
-      const stateDeps = dependencies.filter((d) => d.storeVar || d.pathParts.length > 0 && d.pathParts[0] !== "props");
-      if (stateDeps.length > 0) {
-        const selector2 = generateSelector(elementPath);
-        const isChildrenPropBinding = !libExports.isJSXEmptyExpression(expr) && callsJSXReturningProperty(expr, classBody);
-        propBindings.push({
-          propName: "__state__",
-          selector: selector2,
-          type: "text",
-          elementPath: [...elementPath],
-          expression: libExports.cloneNode(exprToUse, true),
-          setupStatements: setupStatements.map((s) => libExports.cloneNode(s, true)),
-          stateOnly: true,
-          ...textNodeIndex !== void 0 ? { textNodeIndex } : {},
-          ...isChildrenPropBinding ? { isChildrenProp: true } : {}
-        });
-      }
-    }
-    return;
-  }
-  const selector = generateSelector(elementPath);
-  if (shouldBuildTextTemplate && textTemplate && textExpressions.length > 0 && !jsxInTextSiblingGroup) {
-    if (isComputedArrayProp(result.parts, textExpressions, stateRefs)) {
-      addArrayTextBindings(
-        selector,
-        tagName,
-        elementPath,
-        bindings,
-        stateProps,
-        stateRefs,
-        textTemplate,
-        textExpressions,
-        result
-      );
-      return;
-    }
-  }
-  const binding = {
-    pathParts: result.parts,
-    type: "text",
-    selector: generateSelector(elementPath),
-    elementPath: [...elementPath],
-    ...textNodeIndex !== void 0 ? { textNodeIndex } : {},
-    ...!libExports.isJSXEmptyExpression(expr) && callsJSXReturningProperty(expr, classBody) ? { isChildrenProp: true } : {}
-  };
-  applyImportedState(binding, result, stateProps);
-  if (shouldBuildTextTemplate && textTemplate && !jsxInTextSiblingGroup) {
-    binding.textTemplate = textTemplate;
-    binding.textExpressionIndex = textExpressions.findIndex(
-      (te) => pathPartsToString(te.pathParts) === pathPartsToString(result.parts)
-    );
-    binding.textExpressions = textExpressions;
-  }
-  bindings.push(binding);
-}
-function textSiblingGroupContainsJSX(textExpressions) {
-  return textExpressions.some((te) => te.expression && expressionMayProduceJSX(te.expression));
-}
-function expressionMayProduceJSX(expr) {
-  if (libExports.isJSXEmptyExpression(expr)) return false;
-  if (libExports.isJSXElement(expr) || libExports.isJSXFragment(expr)) return true;
-  if (libExports.isLogicalExpression(expr)) {
-    return expressionMayProduceJSX(expr.left) || expressionMayProduceJSX(expr.right);
-  }
-  if (libExports.isConditionalExpression(expr)) {
-    return expressionMayProduceJSX(expr.consequent) || expressionMayProduceJSX(expr.alternate);
-  }
-  if (libExports.isParenthesizedExpression(expr)) {
-    return expressionMayProduceJSX(expr.expression);
-  }
-  if (libExports.isCallExpression(expr)) {
-    const callee = expr.callee;
-    if (libExports.isArrowFunctionExpression(callee) || libExports.isFunctionExpression(callee)) {
-      if (libExports.isBlockStatement(callee.body)) {
-        return callee.body.body.some(
-          (s) => libExports.isReturnStatement(s) && !!s.argument && expressionMayProduceJSX(s.argument)
-        );
-      }
-      return expressionMayProduceJSX(callee.body);
-    }
-  }
-  return false;
-}
-function extractConditionalControlExpression(expr) {
-  if (libExports.isParenthesizedExpression(expr)) {
-    return extractConditionalControlExpression(expr.expression);
-  }
-  if (libExports.isLogicalExpression(expr) && expr.operator === "&&") {
-    if (expressionMayProduceJSX(expr.right)) return expr.left;
-    if (expressionMayProduceJSX(expr.left)) return expr.right;
-    return null;
-  }
-  if (libExports.isLogicalExpression(expr) && expr.operator === "||") {
-    return expr.left;
-  }
-  if (libExports.isConditionalExpression(expr)) {
-    return expr.test;
-  }
-  return null;
-}
-function registerNestedConditionalsInBranches(expr, stateRefs, templateSetupContext, conditionalSlots, conditionalSlotNodeMap, classBody) {
-  function visitChildren(children) {
-    for (const child of children) {
-      if (libExports.isJSXElement(child)) visitChildren(child.children);
-      else if (libExports.isJSXFragment(child)) visitChildren(child.children);
-      else if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-        const innerExpr = child.expression;
-        if (!expressionMayProduceJSX(innerExpr)) continue;
-        const conditionExpr = extractConditionalControlExpression(innerExpr);
-        if (!conditionExpr) continue;
-        const condSetupStatements = collectTemplateSetupStatements(conditionExpr, templateSetupContext);
-        const fullSetupStatements = collectTemplateSetupStatements(innerExpr, templateSetupContext);
-        const allDeps = collectExpressionDependencies(conditionExpr, stateRefs, condSetupStatements);
-        if (allDeps.length === 0) continue;
-        const slotId = `c${conditionalSlots.length}`;
-        conditionalSlots.push({
-          slotId,
-          conditionExpr: libExports.cloneNode(conditionExpr, true),
-          setupStatements: condSetupStatements.map((s) => libExports.cloneNode(s, true)),
-          htmlSetupStatements: fullSetupStatements.map((s) => libExports.cloneNode(s, true)),
-          dependentPropNames: [],
-          dependencies: allDeps.map((dep) => ({
-            observeKey: dep.observeKey,
-            pathParts: [...dep.pathParts],
-            ...dep.storeVar ? { storeVar: dep.storeVar } : {}
-          })),
-          originalExpr: libExports.cloneNode(innerExpr, true)
-        });
-        conditionalSlotNodeMap.set(innerExpr, slotId);
-        registerNestedConditionalsInBranches(
-          innerExpr,
-          stateRefs,
-          templateSetupContext,
-          conditionalSlots,
-          conditionalSlotNodeMap);
-      }
-    }
-  }
-  function visitBranch(node) {
-    if (libExports.isJSXElement(node)) visitChildren(node.children);
-    else if (libExports.isJSXFragment(node)) visitChildren(node.children);
-    else if (libExports.isParenthesizedExpression(node)) visitBranch(node.expression);
-  }
-  if (libExports.isConditionalExpression(expr)) {
-    visitBranch(expr.consequent);
-    visitBranch(expr.alternate);
-  } else if (libExports.isLogicalExpression(expr) && expr.operator === "&&") {
-    visitBranch(expr.right);
-  }
-}
-function buildDerivedPropBindings(expr, type, attributeName, elementPath, propsParamName, destructuredPropNames, templateSetupContext, classBody) {
-  if (libExports.isJSXEmptyExpression(expr) || !templateSetupContext) return [];
-  const setupStatements = collectTemplateSetupStatements(expr, templateSetupContext);
-  const dependentProps = collectDependentPropNames(
-    expr,
-    setupStatements,
-    propsParamName,
-    destructuredPropNames,
-    classBody
-  );
-  if (dependentProps.length === 0) return [];
-  const selector = generateSelector(elementPath);
-  return dependentProps.map((propName) => ({
-    propName,
-    selector,
-    type,
-    attributeName,
-    elementPath: [...elementPath],
-    expression: libExports.cloneNode(expr, true),
-    setupStatements: setupStatements.map((statement) => libExports.cloneNode(statement, true))
-  }));
-}
-function collectDependentPropNames(expr, setupStatements, propsParamName, destructuredPropNames, classBody) {
-  const names = /* @__PURE__ */ new Set();
-  const program = libExports.program([
-    ...setupStatements.map((statement) => libExports.cloneNode(statement, true)),
-    libExports.expressionStatement(libExports.cloneNode(expr, true))
-  ]);
-  const getterNamesToExpand = /* @__PURE__ */ new Set();
-  traverse$1(program, {
-    noScope: true,
-    Identifier(path) {
-      if (!path.isReferencedIdentifier()) return;
-      if (destructuredPropNames?.has(path.node.name)) names.add(path.node.name);
-    },
-    MemberExpression(path) {
-      const propName = resolvePropRef(path.node, propsParamName, destructuredPropNames);
-      if (propName) names.add(propName);
-      if (classBody && libExports.isThisExpression(path.node.object) && libExports.isIdentifier(path.node.property)) {
-        getterNamesToExpand.add(path.node.property.name);
-      }
-    }
-  });
-  if (classBody && getterNamesToExpand.size > 0) {
-    for (const member of classBody.body) {
-      if (!libExports.isClassMethod(member) || member.kind !== "get" || !libExports.isIdentifier(member.key) || !getterNamesToExpand.has(member.key.name))
-        continue;
-      const getterProgram = libExports.program(member.body.body.map((s) => libExports.cloneNode(s, true)));
-      traverse$1(getterProgram, {
-        noScope: true,
-        Identifier(path) {
-          if (!path.isReferencedIdentifier()) return;
-          if (destructuredPropNames?.has(path.node.name)) names.add(path.node.name);
-        },
-        MemberExpression(path) {
-          if (libExports.isThisExpression(path.node.object) && libExports.isIdentifier(path.node.property)) {
-            if (path.node.property.name === "props" && libExports.isMemberExpression(path.parentPath?.node)) {
-              const parent = path.parentPath.node;
-              if (libExports.isIdentifier(parent.property)) names.add(parent.property.name);
-            }
-          }
-          const propName = resolvePropRef(path.node, propsParamName, destructuredPropNames);
-          if (propName) names.add(propName);
-        }
-      });
-    }
-  }
-  return Array.from(names);
-}
-function getItemMemberPath(expr, itemVar) {
-  const parts = [];
-  let current = expr;
-  while (libExports.isMemberExpression(current) && !current.computed && libExports.isIdentifier(current.property)) {
-    parts.unshift(current.property.name);
-    current = current.object;
-  }
-  if (!libExports.isIdentifier(current) || current.name !== itemVar || parts.length === 0) return null;
-  return parts.join(".");
-}
-function analyzeJSXInMap(node, arrayPath, itemVar, itemBindings, relationalBindings, conditionalBindings, elementPath, isImportedState, itemIdProperty, stateRefs, childIndices = [], storeVar) {
-  const context = { inMap: true, mapItemVar: itemVar };
-  node.openingElement.attributes.forEach((attr) => {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) return;
-    const attrName = attr.name.name;
-    if (!attr.value || !libExports.isJSXExpressionContainer(attr.value)) return;
-    const expr = attr.value.expression;
-    if (libExports.isMemberExpression(expr)) {
-      analyzeItemMemberExpr(
-        expr,
-        attrName,
-        arrayPath,
-        itemVar,
-        itemBindings,
-        elementPath,
-        isImportedState,
-        itemIdProperty,
-        node,
-        stateRefs,
-        context,
-        childIndices
-      );
-    } else if (libExports.isConditionalExpression(expr)) {
-      const isClassAttr = attrName === "class" || attrName === "className";
-      analyzeItemConditional(
-        expr,
-        attrName,
-        arrayPath,
-        itemVar,
-        itemBindings,
-        relationalBindings,
-        conditionalBindings,
-        elementPath,
-        isImportedState,
-        itemIdProperty,
-        node,
-        stateRefs,
-        childIndices,
-        storeVar,
-        isClassAttr
-      );
-    } else if (libExports.isTemplateLiteral(expr)) {
-      analyzeItemTemplateLiteral(
-        expr,
-        arrayPath,
-        itemVar,
-        itemBindings,
-        relationalBindings,
-        conditionalBindings,
-        elementPath,
-        isImportedState,
-        itemIdProperty,
-        node,
-        stateRefs,
-        childIndices,
-        storeVar
-      );
-    }
-  });
-  node.children.forEach((child) => {
-    if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-      if (libExports.isMemberExpression(child.expression)) {
-        const propPathResult = resolvePath(child.expression, stateRefs, context);
-        if (propPathResult?.parts?.length === 1 && propPathResult.parts[0] !== "id") {
-          const wildcardPath = [...arrayPath, "*", propPathResult.parts[0]];
-          const binding = {
-            pathParts: wildcardPath,
-            type: "text",
-            selector: generateSelector(elementPath),
-            elementPath: [...elementPath],
-            childPath: [...childIndices],
-            ...isImportedState ? { isImportedState: true } : {}
-          };
-          itemBindings.push(binding);
-        }
-      } else if (libExports.isConditionalExpression(child.expression)) {
-        collectConditionalBindings(
-          child.expression,
-          "text",
-          void 0,
-          conditionalBindings,
-          arrayPath,
-          itemVar,
-          elementPath,
-          childIndices,
-          stateRefs,
-          storeVar
-        );
-      }
-    }
-  });
-  getDirectChildElements(node.children).forEach((child, idx) => {
-    analyzeJSXInMap(
-      child.node,
-      arrayPath,
-      itemVar,
-      itemBindings,
-      relationalBindings,
-      conditionalBindings,
-      [...elementPath, child.selectorSegment],
-      isImportedState,
-      itemIdProperty,
-      stateRefs,
-      [...childIndices, idx],
-      storeVar
-    );
-  });
-}
-function analyzeItemMemberExpr(expr, attrName, arrayPath, itemVar, itemBindings, elementPath, isImportedState, itemIdProperty, node, stateRefs, context, childIndices = []) {
-  const result = resolvePath(expr, stateRefs, context);
-  if (!result?.parts || result.parts.length !== 1 || result.parts[0] === "id") return;
-  const wildcardPath = [...arrayPath, "*", result.parts[0]];
-  const binding = {
-    pathParts: wildcardPath,
-    type: attrName === "checked" ? "checked" : attrName === "value" ? "value" : "class",
-    selector: generateSelector(elementPath),
-    attributeName: attrName,
-    elementPath: [...elementPath],
-    childPath: [...childIndices],
-    itemIdProperty,
-    ...isImportedState ? { isImportedState: true } : {}
-  };
-  itemBindings.push(binding);
-}
-function analyzeItemConditional(expr, attrName, arrayPath, itemVar, itemBindings, relationalBindings, conditionalBindings, elementPath, isImportedState, itemIdProperty, node, stateRefs, childIndices = [], storeVar, isFullClassExpr) {
-  const relationalBinding = buildRelationalClassBinding(expr, elementPath, itemVar, itemIdProperty, stateRefs);
-  if (relationalBinding) {
-    if (isFullClassExpr) relationalBinding.scopeClassIsPure = true;
-    relationalBindings.push(relationalBinding);
-    return;
-  }
-  const isClassAttribute = attrName === "class" || attrName === "className";
-  if (isClassAttribute && libExports.isMemberExpression(expr.test) && libExports.isIdentifier(expr.test.object) && expr.test.object.name === itemVar) {
-    const propName = libExports.isIdentifier(expr.test.property) ? expr.test.property.name : null;
-    if (!propName) return;
-    const detectedClassName = extractClassName(expr.consequent) || extractClassName(expr.alternate);
-    const wildcardPath = [...arrayPath, "*", propName];
-    const binding = {
-      pathParts: wildcardPath,
-      type: "class",
-      selector: generateSelector(elementPath),
-      attributeName: "class",
-      elementPath: [...elementPath],
-      childPath: [...childIndices],
-      classToggleName: detectedClassName,
-      itemIdProperty,
-      ...isImportedState ? { isImportedState: true } : {}
-    };
-    itemBindings.push(binding);
-    return;
-  }
-  if (isClassAttribute && libExports.isBinaryExpression(expr.test) && (expr.test.operator === "===" || expr.test.operator === "==")) {
-    const detectedClassName = extractClassName(expr.consequent) || extractClassName(expr.alternate);
-    if (!detectedClassName) return;
-    const binding = {
-      pathParts: [...arrayPath, "*", "class"],
-      type: "class",
-      selector: generateSelector(elementPath),
-      attributeName: "class",
-      elementPath: [...elementPath],
-      childPath: [...childIndices],
-      classToggleName: detectedClassName,
-      itemIdProperty,
-      ...isImportedState ? { isImportedState: true } : {}
-    };
-    itemBindings.push(binding);
-    return;
-  }
-  collectConditionalBindings(
-    expr,
-    attrName === "class" || attrName === "className" ? "className" : "attribute",
-    attrName,
-    conditionalBindings,
-    arrayPath,
-    itemVar,
-    elementPath,
-    childIndices,
-    stateRefs,
-    storeVar
-  );
-}
-function analyzeItemTemplateLiteral(expr, arrayPath, itemVar, itemBindings, relationalBindings, conditionalBindings, elementPath, isImportedState, itemIdProperty, node, stateRefs, childIndices = [], storeVar) {
-  expr.expressions.forEach((innerExpr) => {
-    if (!libExports.isConditionalExpression(innerExpr)) return;
-    analyzeItemConditional(
-      innerExpr,
-      "class",
-      arrayPath,
-      itemVar,
-      itemBindings,
-      relationalBindings,
-      conditionalBindings,
-      elementPath,
-      isImportedState,
-      itemIdProperty,
-      node,
-      stateRefs,
-      childIndices,
-      storeVar
-    );
-  });
-}
-function collectConditionalBindings(expr, type, attributeName, conditionalBindings, arrayPath, itemVar, elementPath, childPath, stateRefs, storeVar) {
-  const dependencies = /* @__PURE__ */ new Map();
-  const requiresRerender = conditionalExpressionRequiresRerender(expr);
-  const program = libExports.program([libExports.expressionStatement(libExports.cloneNode(expr, true))]);
-  traverse$1(program, {
-    noScope: true,
-    MemberExpression(path) {
-      const parent = path.parentPath;
-      if (parent && libExports.isMemberExpression(parent.node) && parent.node.object === path.node) return;
-      if (libExports.isIdentifier(path.node.object) && path.node.object.name === itemVar && libExports.isIdentifier(path.node.property)) {
-        const pathParts = [...arrayPath];
-        const observeKey2 = buildObserveKey(pathParts, storeVar);
-        if (!dependencies.has(observeKey2)) {
-          dependencies.set(observeKey2, {
-            observeKey: observeKey2,
-            pathParts,
-            ...storeVar ? { storeVar } : {}
-          });
-        }
-        return;
-      }
-      const resolved = resolvePath(path.node, stateRefs);
-      if (!resolved?.parts?.length) return;
-      const observeKey = buildObserveKey(resolved.parts, resolved.isImportedState ? resolved.storeVar : void 0);
-      if (!dependencies.has(observeKey)) {
-        dependencies.set(observeKey, {
-          observeKey,
-          pathParts: resolved.parts,
-          storeVar: resolved.isImportedState ? resolved.storeVar : void 0
-        });
-      }
-    }
-  });
-  dependencies.forEach((observe) => {
-    conditionalBindings.push({
-      observe,
-      type,
-      childPath: [...childPath],
-      selector: generateSelector(elementPath),
-      attributeName,
-      expression: libExports.cloneNode(expr, true),
-      requiresRerender
-    });
-  });
-}
-function conditionalExpressionRequiresRerender(expr) {
-  let needsRerender = false;
-  const program = libExports.program([libExports.expressionStatement(libExports.cloneNode(expr, true))]);
-  traverse$1(program, {
-    noScope: true,
-    JSXElement(path) {
-      needsRerender = true;
-      path.stop();
-    },
-    JSXFragment(path) {
-      needsRerender = true;
-      path.stop();
-    }
-  });
-  return needsRerender;
-}
-function buildRelationalClassBinding(expr, elementPath, itemVar, itemIdProperty, stateRefs) {
-  const predicate = resolveExternalIdentityPredicate(expr.test, itemVar, itemIdProperty, stateRefs);
-  if (!predicate) return null;
-  const consequentClass = extractClassName(expr.consequent);
-  const alternateClass = extractClassName(expr.alternate);
-  const consequentEmpty = isEmptyBranch(expr.consequent);
-  const alternateEmpty = isEmptyBranch(expr.alternate);
-  if (consequentClass && alternateEmpty) {
-    return {
-      observePathParts: predicate.observePathParts,
-      storeVar: predicate.storeVar,
-      selector: generateSelector(elementPath),
-      type: "class",
-      itemIdProperty,
-      classToggleName: consequentClass,
-      classWhenMatch: predicate.matchWhenTrue
-    };
-  }
-  if (alternateClass && consequentEmpty) {
-    return {
-      observePathParts: predicate.observePathParts,
-      storeVar: predicate.storeVar,
-      selector: generateSelector(elementPath),
-      type: "class",
-      itemIdProperty,
-      classToggleName: alternateClass,
-      classWhenMatch: !predicate.matchWhenTrue
-    };
-  }
-  return null;
-}
-function resolveExternalIdentityPredicate(test, itemVar, itemIdProperty, stateRefs) {
-  if (!libExports.isBinaryExpression(test)) return null;
-  if (!["===", "==", "!==", "!="].includes(test.operator)) return null;
-  const left = resolveSide(test.left, itemVar, itemIdProperty, stateRefs);
-  const right = resolveSide(test.right, itemVar, itemIdProperty, stateRefs);
-  if (!left || !right) return null;
-  const external = left.kind === "external" ? left : right.kind === "external" ? right : null;
-  const item = left.kind === "item-id" ? left : right.kind === "item-id" ? right : null;
-  if (!external || !item) return null;
-  return {
-    observePathParts: external.observePathParts,
-    storeVar: external.storeVar,
-    matchWhenTrue: test.operator === "===" || test.operator === "=="
-  };
-}
-function resolveSide(expr, itemVar, itemIdProperty, stateRefs) {
-  if (itemIdProperty === ITEM_IS_KEY && libExports.isIdentifier(expr) && expr.name === itemVar) {
-    return { kind: "item-id" };
-  }
-  if (getItemMemberPath(expr, itemVar) === itemIdProperty) {
-    return { kind: "item-id" };
-  }
-  if (!libExports.isMemberExpression(expr) && !libExports.isIdentifier(expr)) return null;
-  const resolved = resolvePath(expr, stateRefs);
-  if (!resolved?.parts) return null;
-  if (resolved.parts[0] === itemVar) return null;
-  return {
-    kind: "external",
-    observePathParts: resolved.parts,
-    storeVar: resolved.storeVar
-  };
-}
-function isEmptyBranch(node) {
-  return libExports.isStringLiteral(node) && node.value.trim() === "" || libExports.isTemplateLiteral(node) && node.expressions.length === 0 && node.quasis.every((q) => q.value.raw.trim() === "");
-}
-function extractClassName(node) {
-  if (libExports.isStringLiteral(node)) {
-    const cls = node.value.trim();
-    return cls ? cls.split(" ")[0] : void 0;
-  }
-  if (libExports.isTemplateLiteral(node)) {
-    const raw = node.quasis[0]?.value.raw.trim();
-    return raw ? raw.split(" ")[0] : void 0;
-  }
-  return void 0;
-}
-
-function assignBindingIds(bindings, propBindings, unresolvedMaps, arrayMaps) {
-  const pathToId = /* @__PURE__ */ new Map();
-  let counter = 0;
-  for (const b of bindings) {
-    const pathKey = b.elementPath.join(" > ");
-    if (!pathToId.has(pathKey)) {
-      pathToId.set(pathKey, pathKey ? `b${++counter}` : "");
-    }
-    b.bindingId = pathToId.get(pathKey);
-  }
-  for (const pb of propBindings) {
-    if (!pb.elementPath?.length) continue;
-    const pathKey = pb.elementPath.join(" > ");
-    if (!pathToId.has(pathKey)) {
-      pathToId.set(pathKey, `b${++counter}`);
-    }
-    pb.bindingId = pathToId.get(pathKey);
-  }
-  for (const um of unresolvedMaps) {
-    if (!um.containerElementPath?.length) continue;
-    const pathKey = um.containerElementPath.join(" > ");
-    if (!pathToId.has(pathKey)) {
-      pathToId.set(pathKey, `b${++counter}`);
-    }
-    um.containerBindingId = pathToId.get(pathKey);
-  }
-  for (const am of arrayMaps) {
-    if (!am.containerElementPath?.length) continue;
-    const pathKey = am.containerElementPath.join(" > ");
-    if (!pathToId.has(pathKey)) {
-      pathToId.set(pathKey, `b${++counter}`);
-    }
-    am.containerBindingId = pathToId.get(pathKey);
-  }
-}
-function analyzeTemplate(templateMethod, stateRefs, classBody) {
-  const bindings = [];
-  const propBindings = [];
-  const arrayMaps = [];
-  const stateProps = /* @__PURE__ */ new Map();
-  const unresolvedMaps = [];
-  const rerenderPropNames = /* @__PURE__ */ new Set();
-  const rerenderConditions = [];
-  const conditionalSlots = [];
-  let propsParamName;
-  const destructuredPropNames = /* @__PURE__ */ new Set();
-  const binding = getTemplateParamBinding(templateMethod.params[0]);
-  if (binding) {
-    if (libExports.isIdentifier(binding)) propsParamName = binding.name;
-    else {
-      propsParamName = "props";
-      for (const prop of binding.properties) {
-        if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.key) && !prop.computed)
-          destructuredPropNames.add(prop.key.name);
-      }
-    }
-  }
-  if (!templateMethod.body || !libExports.isBlockStatement(templateMethod.body))
-    return {
-      bindings,
-      propBindings,
-      arrayMaps,
-      stateProps,
-      unresolvedMaps,
-      rerenderPropNames: [],
-      rerenderConditions: [],
-      conditionalSlots: [],
-      stateChildSlots: [],
-      elementPathToBindingId: /* @__PURE__ */ new Map(),
-      elementPathToUserIdExpr: /* @__PURE__ */ new Map(),
-      conditionalSlotScopedStoreKeys: /* @__PURE__ */ new Set(),
-      conditionalSlotNodeMap: /* @__PURE__ */ new Map()
-    };
-  const bodyStmts = templateMethod.body.body;
-  const returnStmt = bodyStmts.find((s) => libExports.isReturnStatement(s) && s.argument !== null);
-  if (!returnStmt?.argument)
-    return {
-      bindings,
-      propBindings,
-      arrayMaps,
-      stateProps,
-      unresolvedMaps,
-      rerenderPropNames: [],
-      rerenderConditions: [],
-      conditionalSlots: [],
-      stateChildSlots: [],
-      elementPathToBindingId: /* @__PURE__ */ new Map(),
-      elementPathToUserIdExpr: /* @__PURE__ */ new Map(),
-      conditionalSlotScopedStoreKeys: /* @__PURE__ */ new Set(),
-      conditionalSlotNodeMap: /* @__PURE__ */ new Map()
-    };
-  const returnIndex = bodyStmts.indexOf(returnStmt);
-  let earlyReturnGuard;
-  let earlyReturnBarrierIndex;
-  const earlyReturnFromIf = (s) => {
-    if (libExports.isReturnStatement(s.consequent) && s.consequent.argument) return s.consequent;
-    if (libExports.isBlockStatement(s.consequent) && s.consequent.body.length === 1 && libExports.isReturnStatement(s.consequent.body[0]) && s.consequent.body[0].argument) {
-      return s.consequent.body[0];
-    }
-    return null;
-  };
-  for (let i = 0; i < returnIndex; i++) {
-    const s = bodyStmts[i];
-    if (!libExports.isIfStatement(s) || s.alternate) continue;
-    const earlyRet = earlyReturnFromIf(s);
-    if (!earlyRet?.argument) continue;
-    earlyReturnGuard = libExports.cloneNode(s.test, true);
-    earlyReturnBarrierIndex = i;
-    break;
-  }
-  const templateSetupContext = {
-    params: templateMethod.params.filter(
-      (param) => !libExports.isTSParameterProperty(param)
-    ),
-    statements: returnIndex >= 0 ? templateMethod.body.body.slice(0, returnIndex) : []
-  };
-  const templateRoot = libExports.isJSXElement(returnStmt.argument) ? returnStmt.argument : null;
-  const conditionalSlotNodeMap = /* @__PURE__ */ new Map();
-  const elementPathToUserIdExpr = /* @__PURE__ */ new Map();
-  const walk = (node, elementPath = []) => {
-    if (libExports.isJSXFragment(node)) {
-      getDirectChildElements(node.children).forEach((child) => {
-        walk(child.node, [...elementPath, child.selectorSegment]);
-      });
-      return;
-    }
-    const tagName = libExports.isJSXIdentifier(node.openingElement.name) ? node.openingElement.name.name : "div";
-    const isComponentTag = /^[A-Z]/.test(tagName);
-    if (!isComponentTag) {
-      const idAttr = node.openingElement.attributes.find(
-        (a) => libExports.isJSXAttribute(a) && libExports.isJSXIdentifier(a.name) && a.name.name === "id"
-      );
-      if (idAttr) {
-        const pathKey = elementPath.join(" > ");
-        if (libExports.isStringLiteral(idAttr.value)) {
-          elementPathToUserIdExpr.set(pathKey, libExports.stringLiteral(idAttr.value.value));
-        } else if (libExports.isJSXExpressionContainer(idAttr.value) && idAttr.value.expression && !libExports.isJSXEmptyExpression(idAttr.value.expression)) {
-          elementPathToUserIdExpr.set(pathKey, libExports.cloneNode(idAttr.value.expression, true));
-        }
-      }
-      analyzeAttributes(
-        node,
-        tagName,
-        elementPath,
-        bindings,
-        propBindings,
-        stateProps,
-        stateRefs,
-        propsParamName,
-        destructuredPropNames,
-        templateSetupContext,
-        classBody
-      );
-    }
-    const { textTemplate, textExpressions, shouldBuildTextTemplate } = collectTextChildren(node, stateRefs, stateProps);
-    analyzeChildren(
-      node,
-      tagName,
-      elementPath,
-      bindings,
-      propBindings,
-      arrayMaps,
-      stateProps,
-      stateRefs,
-      textTemplate,
-      textExpressions,
-      shouldBuildTextTemplate,
-      walk,
-      (info) => unresolvedMaps.push(info),
-      classBody,
-      propsParamName,
-      destructuredPropNames,
-      templateSetupContext,
-      rerenderPropNames,
-      rerenderConditions,
-      conditionalSlots,
-      templateRoot,
-      conditionalSlotNodeMap
-    );
-  };
-  if (libExports.isJSXElement(returnStmt.argument)) walk(returnStmt.argument);
-  else if (libExports.isJSXFragment(returnStmt.argument)) walk(returnStmt.argument);
-  collectAllStateAccesses(templateMethod, stateRefs, stateProps, templateSetupContext, returnStmt.argument);
-  assignBindingIds(bindings, propBindings, unresolvedMaps, arrayMaps);
-  const elementPathToBindingId = /* @__PURE__ */ new Map();
-  for (const b of bindings) {
-    if (b.bindingId !== void 0) {
-      const pathKey = b.elementPath.join(" > ");
-      elementPathToBindingId.set(pathKey, b.bindingId);
-    }
-  }
-  for (const pb of propBindings) {
-    if (pb.bindingId !== void 0 && pb.elementPath?.length) {
-      const pathKey = pb.elementPath.join(" > ");
-      elementPathToBindingId.set(pathKey, pb.bindingId);
-    }
-  }
-  for (const um of unresolvedMaps) {
-    if (um.containerBindingId !== void 0 && um.containerElementPath?.length) {
-      const pathKey = um.containerElementPath.join(" > ");
-      elementPathToBindingId.set(pathKey, um.containerBindingId);
-    }
-  }
-  for (const am of arrayMaps) {
-    if (am.containerBindingId !== void 0 && am.containerElementPath?.length) {
-      const pathKey = am.containerElementPath.join(" > ");
-      elementPathToBindingId.set(pathKey, am.containerBindingId);
-    }
-  }
-  for (const b of bindings) {
-    const pathKey = b.elementPath.join(" > ");
-    const userExpr = elementPathToUserIdExpr.get(pathKey);
-    if (userExpr) b.userIdExpr = libExports.cloneNode(userExpr, true);
-  }
-  for (const pb of propBindings) {
-    if (!pb.elementPath?.length) continue;
-    const pathKey = pb.elementPath.join(" > ");
-    const userExpr = elementPathToUserIdExpr.get(pathKey);
-    if (userExpr) pb.userIdExpr = libExports.cloneNode(userExpr, true);
-  }
-  for (const um of unresolvedMaps) {
-    if (um.containerElementPath?.length) {
-      const pathKey = um.containerElementPath.join(" > ");
-      const userExpr = elementPathToUserIdExpr.get(pathKey);
-      if (userExpr) um.containerUserIdExpr = libExports.cloneNode(userExpr, true);
-    }
-  }
-  for (const am of arrayMaps) {
-    if (am.containerElementPath?.length) {
-      const pathKey = am.containerElementPath.join(" > ");
-      const userExpr = elementPathToUserIdExpr.get(pathKey);
-      if (userExpr) am.containerUserIdExpr = libExports.cloneNode(userExpr, true);
-    }
-  }
-  for (const um of unresolvedMaps) {
-    if (!um.computationExpr) continue;
-    if (libExports.isIdentifier(um.computationExpr)) {
-      const varName = um.computationExpr.name;
-      um.mapObjectExpr = libExports.identifier(varName);
-      for (const stmt of templateMethod.body.body) {
-        if (!libExports.isVariableDeclaration(stmt)) continue;
-        for (const decl of stmt.declarations) {
-          if (libExports.isIdentifier(decl.id) && decl.id.name === varName && decl.init) {
-            um.computationExpr = libExports.cloneNode(decl.init, true);
-            break;
-          }
-        }
-      }
-    } else {
-      um.mapObjectExpr = libExports.cloneNode(um.computationExpr, true);
-    }
-    const derived = buildDerivedUnresolvedMapDescriptor(um.computationExpr, stateRefs, classBody);
-    if (derived) {
-      um.derived = derived;
-    }
-    const recomputed = collectUnresolvedComputationDependencies(
-      um.computationExpr,
-      stateRefs,
-      um.computationSetupStatements || [],
-      classBody
-    );
-    if (derived) {
-      const sourceObserveKey = buildObserveKey(derived.sourcePathParts, derived.sourceStoreVar);
-      if (!recomputed.some((dep) => dep.observeKey === sourceObserveKey)) {
-        recomputed.push({
-          observeKey: sourceObserveKey,
-          pathParts: derived.sourcePathParts,
-          storeVar: derived.sourceStoreVar
-        });
-      }
-    }
-    if (recomputed.length > 0) {
-      const merged = /* @__PURE__ */ new Map();
-      const helperMethodObserveKey = getHelperMethodObserveKey(um.computationExpr);
-      for (const dep of um.dependencies || []) {
-        if (helperMethodObserveKey && dep.observeKey === helperMethodObserveKey) continue;
-        merged.set(dep.observeKey, dep);
-      }
-      for (const dep of recomputed) merged.set(dep.observeKey, dep);
-      um.dependencies = Array.from(merged.values());
-    }
-  }
-  const conditionalSlotScopedStoreKeys = computeConditionalSlotScopedStoreKeys(
-    conditionalSlots,
-    stateProps,
-    stateRefs,
-    templateSetupContext
-  );
-  return {
-    bindings,
-    propBindings,
-    arrayMaps,
-    stateProps,
-    unresolvedMaps,
-    rerenderPropNames: Array.from(rerenderPropNames),
-    rerenderConditions,
-    conditionalSlots,
-    stateChildSlots: [],
-    elementPathToBindingId,
-    elementPathToUserIdExpr,
-    conditionalSlotScopedStoreKeys,
-    conditionalSlotNodeMap,
-    earlyReturnGuard,
-    earlyReturnBarrierIndex
-  };
-}
-
-function collectStateReferences(ast, storeImports) {
-  const stateRefs = /* @__PURE__ */ new Map();
-  for (const [localName, source] of storeImports) {
-    stateRefs.set(localName, { kind: "imported", source });
-  }
-  traverse$1(ast, {
-    VariableDeclarator(path) {
-      const init = path.node.init;
-      if (!init) return;
-      if (libExports.isObjectPattern(path.node.id) && libExports.isThisExpression(init)) {
-        for (const prop of path.node.id.properties) {
-          if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
-          const localName = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
-          if (!stateRefs.has(localName)) {
-            stateRefs.set(localName, { kind: "local-destructured", propName: prop.key.name });
-          }
-        }
-      }
-      if (libExports.isObjectPattern(path.node.id) && libExports.isIdentifier(init) && storeImports.has(init.name)) {
-        const storeVar = init.name;
-        const source = storeImports.get(storeVar);
-        for (const prop of path.node.id.properties) {
-          if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
-          const localName = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
-          if (!stateRefs.has(localName)) {
-            stateRefs.set(localName, {
-              kind: "imported-destructured",
-              source,
-              storeVar,
-              propName: prop.key.name
-            });
-          }
-        }
-      }
-      if (libExports.isIdentifier(path.node.id) && libExports.isMemberExpression(init) && !init.computed && libExports.isIdentifier(init.object) && storeImports.has(init.object.name) && libExports.isIdentifier(init.property)) {
-        const localName = path.node.id.name;
-        if (!stateRefs.has(localName)) {
-          stateRefs.set(localName, {
-            kind: "store-alias",
-            storeVar: init.object.name,
-            propName: init.property.name
-          });
-        }
-      }
-    }
-  });
-  const candidates = /* @__PURE__ */ new Map();
-  traverse$1(ast, {
-    VariableDeclarator(path) {
-      if (!path.node.init || !libExports.isIdentifier(path.node.id)) return;
-      if (stateRefs.has(path.node.id.name)) return;
-      const classMethod = path.findParent((p) => libExports.isClassMethod(p.node));
-      if (!classMethod) return;
-      candidates.set(path.node.id.name, libExports.cloneNode(path.node.init, true));
-    }
-  });
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [name, init] of candidates) {
-      if (stateRefs.has(name)) continue;
-      if (expressionReferencesAny(init, stateRefs)) {
-        stateRefs.set(name, {
-          kind: "derived",
-          initExpression: libExports.cloneNode(init, true)
-        });
-        candidates.delete(name);
-        changed = true;
-      }
-    }
-  }
-  return stateRefs;
-}
-function expressionReferencesAny(expr, stateRefs) {
-  if (libExports.isIdentifier(expr) && stateRefs.has(expr.name)) return true;
-  const visitorKeys = libExports.VISITOR_KEYS[expr.type];
-  if (!visitorKeys) return false;
-  for (const key of visitorKeys) {
-    const child = expr[key];
-    if (Array.isArray(child)) {
-      for (const item of child) {
-        if (item && typeof item === "object" && item.type && expressionReferencesAny(item, stateRefs)) {
-          return true;
-        }
-      }
-    } else if (child && typeof child === "object" && child.type) {
-      if (expressionReferencesAny(child, stateRefs)) return true;
-    }
-  }
-  return false;
-}
-
-const SKIP_BINDING$1 = {
-  VariableDeclarator: /* @__PURE__ */ new Set(["id"]),
-  AssignmentExpression: /* @__PURE__ */ new Set(["left"]),
-  ArrowFunctionExpression: /* @__PURE__ */ new Set(["params"]),
-  FunctionExpression: /* @__PURE__ */ new Set(["params", "id"]),
-  FunctionDeclaration: /* @__PURE__ */ new Set(["params", "id"]),
-  MemberExpression: /* @__PURE__ */ new Set(["property"]),
-  OptionalMemberExpression: /* @__PURE__ */ new Set(["property"]),
-  CatchClause: /* @__PURE__ */ new Set(["param"])
-};
-function deepMap(node, visit) {
-  const hit = visit(node);
-  if (hit !== void 0) return hit;
-  const keys = libExports.VISITOR_KEYS[node.type];
-  if (!keys?.length) return node;
-  const skip = SKIP_BINDING$1[node.type];
-  let changed = false;
-  const updates = {};
-  for (const key of keys) {
-    if (skip?.has(key)) continue;
-    if (libExports.isObjectProperty(node) && key === "key" && !node.computed) continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      let arrChanged = false;
-      const mapped = child.map((c) => {
-        if (c && typeof c === "object" && "type" in c) {
-          const r = deepMap(c, visit);
-          if (r !== c) arrChanged = true;
-          return r;
-        }
-        return c;
-      });
-      if (arrChanged) {
-        changed = true;
-        updates[key] = mapped;
-      }
-    } else if (child && typeof child === "object" && "type" in child) {
-      const r = deepMap(child, visit);
-      if (r !== child) {
-        changed = true;
-        updates[key] = r;
-      }
-    }
-  }
-  if (!changed) return node;
-  return { ...node, ...updates };
-}
-function extractHandlerBody(handlerExpression, propNames) {
-  if (libExports.isArrowFunctionExpression(handlerExpression)) {
-    const body = libExports.isBlockStatement(handlerExpression.body) ? handlerExpression.body.body : [libExports.expressionStatement(handlerExpression.body)];
-    return propNames?.size ? replacePropRefsInStatements(body, propNames) : body;
-  }
-  if (libExports.isFunctionExpression(handlerExpression)) {
-    const body = handlerExpression.body.body;
-    return propNames?.size ? replacePropRefsInStatements(body, propNames) : body;
-  }
-  const thisProps = jsExpr`this.props`;
-  const callee = libExports.isIdentifier(handlerExpression) ? libExports.memberExpression(thisProps, libExports.cloneNode(handlerExpression)) : handlerExpression;
-  return [js`${callee}(${id("e")});`];
-}
-function replacePropRefsInStatements(statements, propNames, wholeParamName, propDefaults) {
-  return statements.map((stmt) => replacePropRefsInNode(stmt, propNames, wholeParamName, propDefaults));
-}
-function replacePropRefsInExpression(expr, propNames, wholeParamName, propDefaults) {
-  return replacePropRefsInNode(expr, propNames, wholeParamName, propDefaults);
-}
-function isThisPropsMember(node) {
-  return libExports.isMemberExpression(node) && !node.computed && libExports.isThisExpression(node.object) && libExports.isIdentifier(node.property, { name: "props" });
-}
-function replaceThisPropsRootWithValueParam(expr, propName) {
-  return deepMap(expr, (n) => {
-    if (libExports.isMemberExpression(n) && !n.computed && isThisPropsMember(n.object) && libExports.isIdentifier(n.property, { name: propName })) return id("value");
-    return void 0;
-  });
-}
-function derivedExprGuardsValueWhenNullish(expr) {
-  if (!libExports.isConditionalExpression(expr)) return false;
-  return testBranchesOnValueNullish(expr.test);
-}
-function testBranchesOnValueNullish(test) {
-  if (libExports.isIdentifier(test, { name: "value" })) return true;
-  if (libExports.isBinaryExpression(test) && ["==", "===", "!=", "!=="].includes(test.operator)) {
-    const isValue = (e) => libExports.isIdentifier(e, { name: "value" });
-    const isNullish = (e) => libExports.isNullLiteral(e) || libExports.isIdentifier(e) && e.name === "undefined";
-    return isValue(test.left) && isNullish(test.right) || isValue(test.right) && isNullish(test.left);
-  }
-  if (libExports.isUnaryExpression(test) && test.operator === "!" && libExports.isIdentifier(test.argument, { name: "value" })) return true;
-  if (libExports.isLogicalExpression(test)) return testBranchesOnValueNullish(test.left) || testBranchesOnValueNullish(test.right);
-  return false;
-}
-function expressionAccessesValueProperties(expr, setupStmts, valueId = "value") {
-  const body = [...setupStmts ?? []];
-  if (expr) body.push(libExports.expressionStatement(expr));
-  const program = libExports.program([libExports.blockStatement(body)]);
-  let found = false;
-  traverse$1(program, {
-    noScope: true,
-    MemberExpression(path) {
-      if (found) return;
-      let obj = path.node.object;
-      while (libExports.isParenthesizedExpression(obj)) obj = obj.expression;
-      while (libExports.isTSAsExpression(obj) || libExports.isTSSatisfiesExpression(obj)) obj = obj.expression;
-      if (libExports.isIdentifier(obj, { name: valueId })) {
-        found = true;
-        path.stop();
-      }
-    }
-  });
-  return found;
-}
-function pruneDeadParamDestructuring(statements, additionalNodes) {
-  return statements.filter((stmt, i) => {
-    if (!libExports.isVariableDeclaration(stmt)) return true;
-    const decl = stmt.declarations[0];
-    if (!decl || !libExports.isObjectPattern(decl.id)) return true;
-    if (!libExports.isMemberExpression(decl.init) || !libExports.isThisExpression(decl.init.object) || !libExports.isIdentifier(decl.init.property, { name: "props" })) return true;
-    const boundNames = /* @__PURE__ */ new Set();
-    for (const prop of decl.id.properties) {
-      if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.value)) boundNames.add(prop.value.name);
-      else if (libExports.isRestElement(prop) && libExports.isIdentifier(prop.argument)) boundNames.add(prop.argument.name);
-    }
-    const refs = collectAllIdentifierNames(statements, i + 1, additionalNodes);
-    const usedNames = [...boundNames].filter((n) => refs.has(n));
-    if (usedNames.length === 0) return false;
-    decl.id.properties = decl.id.properties.filter((prop) => {
-      if (libExports.isRestElement(prop)) return true;
-      if (libExports.isObjectProperty(prop)) {
-        const key = libExports.isIdentifier(prop.key) ? prop.key.name : libExports.isStringLiteral(prop.key) ? prop.key.value : null;
-        return key ? refs.has(key) : true;
-      }
-      return true;
-    });
-    return decl.id.properties.length > 0;
-  });
-}
-function collectAllIdentifierNames(statements, fromIndex, additionalNodes) {
-  const names = /* @__PURE__ */ new Set();
-  const walk = (node) => {
-    if (!node || typeof node !== "object" || !("type" in node)) return;
-    if (libExports.isIdentifier(node)) {
-      names.add(node.name);
-      return;
-    }
-    if ((libExports.isMemberExpression(node) || libExports.isOptionalMemberExpression(node)) && !node.computed) {
-      walk(node.object);
-      return;
-    }
-    if (libExports.isVariableDeclarator(node)) {
-      walk(node.init);
-      return;
-    }
-    for (const key of libExports.VISITOR_KEYS[node.type] || []) {
-      const child = node[key];
-      if (Array.isArray(child)) {
-        for (const c of child) if (c && typeof c === "object" && "type" in c) walk(c);
-      } else if (child && typeof child === "object" && "type" in child) walk(child);
-    }
-  };
-  for (let j = fromIndex; j < statements.length; j++) walk(statements[j]);
-  if (additionalNodes) for (const node of additionalNodes) walk(node);
-  return names;
-}
-function pruneUnusedSetupDestructuring(setupStatements, bodyNodes) {
-  return setupStatements.filter((stmt, i) => {
-    if (!libExports.isVariableDeclaration(stmt)) return true;
-    const decl = stmt.declarations[0];
-    if (!decl) return true;
-    const usedNames = collectAllIdentifierNames(setupStatements, i + 1, bodyNodes);
-    if (libExports.isObjectPattern(decl.id)) {
-      decl.id.properties = decl.id.properties.filter((prop) => {
-        if (libExports.isRestElement(prop)) return true;
-        if (libExports.isObjectProperty(prop)) {
-          const valueName = libExports.isIdentifier(prop.value) ? prop.value.name : null;
-          return valueName ? usedNames.has(valueName) : true;
-        }
-        return true;
-      });
-      return decl.id.properties.length > 0;
-    }
-    if (libExports.isIdentifier(decl.id)) return usedNames.has(decl.id.name);
-    return true;
-  });
-}
-function replacePropRefsInNode(node, propNames, wholeParamName, propDefaults) {
-  return deepMap(node, (n) => {
-    if (libExports.isIdentifier(n) && wholeParamName && n.name === wholeParamName) return jsExpr`this.props`;
-    if (libExports.isIdentifier(n) && propNames.has(n.name)) {
-      const member = jsExpr`this.props.${id(n.name)}`;
-      const def = propDefaults?.get(n.name);
-      return def ? libExports.logicalExpression("??", member, libExports.cloneNode(def, true)) : member;
-    }
-    return void 0;
-  });
-}
-
-function deepMapExpr(node, visit) {
-  const hit = visit(node);
-  if (hit !== void 0) return hit;
-  const keys = libExports.VISITOR_KEYS[node.type];
-  if (!keys?.length) return node;
-  let changed = false;
-  const updates = {};
-  for (const key of keys) {
-    if (key === "left" && libExports.isAssignmentExpression(node)) continue;
-    if (key === "id" && libExports.isVariableDeclarator(node)) continue;
-    if (key === "property" && (libExports.isMemberExpression(node) || libExports.isOptionalMemberExpression(node)) && !node.computed) continue;
-    if (key === "key" && libExports.isObjectProperty(node) && !node.computed) continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      let arrChanged = false;
-      const mapped = child.map((c) => {
-        if (c && typeof c === "object" && "type" in c) {
-          const r = deepMapExpr(c, visit);
-          if (r !== c) arrChanged = true;
-          return r;
-        }
-        return c;
-      });
-      if (arrChanged) {
-        changed = true;
-        updates[key] = mapped;
-      }
-    } else if (child && typeof child === "object" && "type" in child) {
-      const r = deepMapExpr(child, visit);
-      if (r !== child) {
-        changed = true;
-        updates[key] = r;
-      }
-    }
-  }
-  if (!changed) return node;
-  return { ...node, ...updates };
-}
-function earlyReturnFalsyBindingName(guard) {
-  if (libExports.isUnaryExpression(guard) && guard.operator === "!" && libExports.isIdentifier(guard.argument))
-    return guard.argument.name;
-  if (libExports.isBinaryExpression(guard) && (guard.operator === "==" || guard.operator === "===")) {
-    const nullish = (e) => libExports.isNullLiteral(e) || libExports.isIdentifier(e) && e.name === "undefined";
-    if (libExports.isIdentifier(guard.left) && nullish(guard.right))
-      return guard.left.name;
-    if (libExports.isIdentifier(guard.right) && nullish(guard.left))
-      return guard.right.name;
-  }
-  if (libExports.isLogicalExpression(guard) && guard.operator === "||") {
-    return earlyReturnFalsyBindingName(guard.left) || earlyReturnFalsyBindingName(guard.right);
-  }
-  return null;
-}
-function optionalizeChains(expr, isRoot) {
-  return deepMapExpr(expr, (e) => {
-    if (!libExports.isMemberExpression(e) || e.computed) return void 0;
-    const obj = optionalizeChains(e.object, isRoot);
-    if (isRoot(e.object))
-      return libExports.optionalMemberExpression(
-        e.object,
-        e.property,
-        false,
-        true
-      );
-    if (libExports.isOptionalMemberExpression(obj))
-      return libExports.optionalMemberExpression(
-        obj,
-        e.property,
-        false,
-        true
-      );
-    if (obj !== e.object) return libExports.memberExpression(obj, e.property, false);
-    return void 0;
-  });
-}
-function optionalizeMemberChainsFromBindingRoot(expr, rootName) {
-  return optionalizeChains(expr, (obj) => libExports.isIdentifier(obj, { name: rootName }));
-}
-function optionalizeMemberChainsAfterComputedItemKey(expr, itemKeyName) {
-  return optionalizeChains(
-    expr,
-    (obj) => libExports.isMemberExpression(obj) && obj.computed && libExports.isIdentifier(obj.property, { name: itemKeyName })
-  );
-}
-function optionalizeInStatements(stmts, transform) {
-  const mapStmt = (s) => {
-    if (libExports.isVariableDeclaration(s))
-      return libExports.variableDeclaration(
-        s.kind,
-        s.declarations.map(
-          (d) => libExports.variableDeclarator(d.id, d.init ? transform(d.init) : null)
-        )
-      );
-    if (libExports.isExpressionStatement(s)) return js`${transform(s.expression)};`;
-    if (libExports.isReturnStatement(s)) {
-      const arg = s.argument ? transform(s.argument) : null;
-      return arg ? js`return ${arg};` : js`return;`;
-    }
-    if (libExports.isBlockStatement(s)) return libExports.blockStatement(s.body.map(mapStmt));
-    if (libExports.isIfStatement(s))
-      return libExports.ifStatement(
-        transform(s.test),
-        mapStmt(s.consequent),
-        s.alternate ? mapStmt(s.alternate) : null
-      );
-    return s;
-  };
-  return stmts.map((s) => mapStmt(libExports.cloneNode(s, true)));
-}
-function optionalizeBindingRootInStatements(stmts, rootName) {
-  return optionalizeInStatements(
-    stmts,
-    (e) => optionalizeMemberChainsFromBindingRoot(e, rootName)
-  );
-}
-function optionalizeComputedItemKeyInStatements(stmts, itemKeyName) {
-  return optionalizeInStatements(
-    stmts,
-    (e) => optionalizeMemberChainsAfterComputedItemKey(e, itemKeyName)
-  );
-}
-
-function walk(node, fn) {
-  if (!node || typeof node !== "object") return;
-  fn(node);
-  const keys = libExports.VISITOR_KEYS[node.type];
-  if (!keys) return;
-  for (const key of keys) {
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const c of child) if (c?.type) walk(c, fn);
-    } else if (child?.type) walk(child, fn);
-  }
-}
-function replaceChildren(node, fn) {
-  const keys = libExports.VISITOR_KEYS[node.type];
-  if (!keys) return;
-  for (const key of keys) {
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (let i = 0; i < child.length; i++) {
-        const c = child[i];
-        if (!c?.type) continue;
-        const r = fn(c);
-        if (r !== void 0) child[i] = r;
-        else replaceChildren(c, fn);
-      }
-    } else if (child?.type) {
-      const r = fn(child);
-      if (r !== void 0) node[key] = r;
-      else replaceChildren(child, fn);
-    }
-  }
-}
-function isValueDot(node, subProp) {
-  if ((libExports.isMemberExpression(node) || libExports.isOptionalMemberExpression(node)) && !node.computed && libExports.isIdentifier(node.object, { name: "value" }) && libExports.isIdentifier(node.property))
-    return subProp ? node.property.name === subProp : true;
-  return false;
-}
-function serializeKeyGuardForSubpath(test) {
-  if (libExports.isBinaryExpression(test) && test.operator === "===" && libExports.isIdentifier(test.left, { name: "key" }) && libExports.isStringLiteral(test.right))
-    return test.right.value;
-  if (libExports.isLogicalExpression(test) && test.operator === "||") {
-    const parts = [];
-    const collect = (node) => {
-      if (libExports.isLogicalExpression(node) && node.operator === "||") return collect(node.left) && collect(node.right);
-      if (libExports.isBinaryExpression(node) && node.operator === "===" && libExports.isIdentifier(node.left, { name: "key" }) && libExports.isStringLiteral(node.right)) {
-        parts.push(node.right.value);
-        return true;
-      }
-      return false;
-    };
-    if (collect(test) && parts.length > 0) return parts.sort().join("|");
-  }
-  return null;
-}
-function isValueNullishGuard(test) {
-  if (!libExports.isUnaryExpression(test) || test.operator !== "!") return false;
-  const arg = test.argument;
-  if (!libExports.isLogicalExpression(arg) || arg.operator !== "||") return false;
-  const { left, right } = arg;
-  return libExports.isBinaryExpression(left) && left.operator === "===" && libExports.isIdentifier(left.left, { name: "value" }) && libExports.isNullLiteral(left.right) && libExports.isBinaryExpression(right) && right.operator === "===" && libExports.isIdentifier(right.left, { name: "value" }) && libExports.isIdentifier(right.right, { name: "undefined" });
-}
-function collectValueSubpaths(node) {
-  const set = /* @__PURE__ */ new Set();
-  walk(node, (n) => {
-    if (isValueDot(n)) set.add(n.property.name);
-  });
-  return set;
-}
-function unwrapNullGuardBlock(block) {
-  if (block.body.length === 1 && libExports.isIfStatement(block.body[0]) && isValueNullishGuard(block.body[0].test) && !block.body[0].alternate) {
-    const inner = block.body[0].consequent;
-    return {
-      inner: libExports.isBlockStatement(inner) ? inner : libExports.blockStatement([inner]),
-      hadNullGuard: true
-    };
-  }
-  return { inner: block, hadNullGuard: false };
-}
-function hoistDuplicateValueSubprops(block) {
-  const counts = /* @__PURE__ */ new Map();
-  walk(block, (n) => {
-    if (isValueDot(n)) {
-      const name = n.property.name;
-      counts.set(name, (counts.get(name) || 0) + 1);
-    }
-  });
-  const dups = new Map([...counts].filter(([, c]) => c > 1).map(([name]) => [name, `__${name}`]));
-  if (dups.size === 0) return;
-  replaceChildren(block, (n) => {
-    if (isValueDot(n)) {
-      const local = dups.get(n.property.name);
-      if (local) return id(local);
-    }
-    return void 0;
-  });
-  block.body.unshift(...[...dups].map(([sub, local]) => js`const ${id(local)} = value?.${id(sub)};`));
-}
-function containsPropRefreshCall(node) {
-  let found = false;
-  walk(node, (n) => {
-    if (libExports.isMemberExpression(n) && libExports.isIdentifier(n.property)) {
-      const name = n.property.name;
-      if (name === "GEA_UPDATE_PROPS" || name === "GEA_SYNC_MAP" || name === "GEA_PATCH_COND" || name.startsWith("__refresh"))
-        found = true;
-    }
-  });
-  return found;
-}
-function chunkStatementsInOrder(stmts) {
-  const chunks = [];
-  let currentSingle = null;
-  const flushSingle = () => {
-    if (!currentSingle) return;
-    chunks.push({ kind: "single", ...currentSingle });
-    currentSingle = null;
-  };
-  for (const stmt of stmts) {
-    const paths = collectValueSubpaths(stmt);
-    if (paths.size === 0) {
-      if (currentSingle && !containsPropRefreshCall(stmt)) {
-        currentSingle.stmts.push(stmt);
-      } else {
-        flushSingle();
-        chunks.push({ kind: "always", stmts: [stmt] });
-      }
-    } else if (paths.size === 1) {
-      const k = [...paths][0];
-      if (currentSingle && currentSingle.subProp !== k) flushSingle();
-      if (!currentSingle) currentSingle = { subProp: k, stmts: [stmt] };
-      else currentSingle.stmts.push(stmt);
-    } else {
-      flushSingle();
-      chunks.push({ kind: "always", stmts: [stmt] });
-    }
-  }
-  flushSingle();
-  return chunks;
-}
-function stripPerStatementNullGuards(stmts) {
-  let guardCount = 0;
-  const result = stmts.map((stmt) => {
-    const stripped = stripNullGuard(stmt);
-    if (stripped) {
-      guardCount++;
-      return stripped;
-    }
-    return stmt;
-  });
-  return { stmts: result, allHadGuards: stmts.length > 0 && guardCount === stmts.length };
-}
-function stripNullGuard(stmt) {
-  const ifStmt = libExports.isBlockStatement(stmt) && stmt.body.length === 1 && libExports.isIfStatement(stmt.body[0]) ? stmt.body[0] : libExports.isIfStatement(stmt) ? stmt : null;
-  if (!ifStmt || ifStmt.alternate || !isValueNullishGuard(ifStmt.test)) return null;
-  const body = libExports.isBlockStatement(ifStmt.consequent) ? ifStmt.consequent.body : [ifStmt.consequent];
-  return libExports.blockStatement(body);
-}
-function countIdentifierRefs(node, name) {
-  let count = 0;
-  walk(node, (n) => {
-    if (libExports.isIdentifier(n) && n.name === name) count++;
-  });
-  return count;
-}
-function isPure(e) {
-  if (libExports.isLiteral(e) || libExports.isIdentifier(e)) return true;
-  if (libExports.isMemberExpression(e) || libExports.isOptionalMemberExpression(e))
-    return isPure(e.object) && (!e.computed || isPure(e.property));
-  if (libExports.isConditionalExpression(e))
-    return isPure(e.test) && isPure(e.consequent) && isPure(e.alternate);
-  if (libExports.isBinaryExpression(e) || libExports.isLogicalExpression(e))
-    return isPure(e.left) && isPure(e.right);
-  if (libExports.isUnaryExpression(e)) return isPure(e.argument);
-  if (libExports.isArrayExpression(e)) return e.elements.every((el) => el == null || libExports.isExpression(el) && isPure(el));
-  if (libExports.isObjectExpression(e))
-    return e.properties.every(
-      (p) => libExports.isObjectProperty(p) && !p.computed ? libExports.isExpression(p.value) && isPure(p.value) : libExports.isSpreadElement(p) ? isPure(p.argument) : false
-    );
-  if (libExports.isTemplateLiteral(e) || libExports.isSequenceExpression(e)) return e.expressions.every((x) => isPure(x));
-  return false;
-}
-function renameIdentifier(node, from, to) {
-  walk(node, (n) => {
-    if (libExports.isIdentifier(n) && n.name === from) n.name = to;
-  });
-}
-const isBoundValueDecl = (s) => libExports.isVariableDeclaration(s) && s.declarations.length === 1 && libExports.isIdentifier(s.declarations[0].id, { name: "__boundValue" });
-const inlineBoundValue = (n) => libExports.isIdentifier(n) && n.name === "__boundValue";
-function optimizeBoundValueAliases(stmts) {
-  const out = [...stmts];
-  for (; ; ) {
-    const idx = out.findIndex(isBoundValueDecl);
-    if (idx === -1) break;
-    const init = out[idx].declarations[0].init;
-    if (!init) break;
-    if (libExports.isIdentifier(init)) {
-      out.splice(idx, 1);
-      renameIdentifier(libExports.blockStatement(out), "__boundValue", init.name);
-      continue;
-    }
-    if (!libExports.isExpression(init) || !isPure(init)) break;
-    if (countIdentifierRefs(libExports.blockStatement([...out.slice(0, idx), ...out.slice(idx + 1)]), "__boundValue") !== 1)
-      break;
-    out.splice(idx, 1);
-    replaceChildren(libExports.blockStatement(out), (n) => inlineBoundValue(n) ? libExports.cloneNode(init, true) : void 0);
-  }
-  return out;
-}
-function eliminateDeadBoundValueAlias(stmt) {
-  const stmts = libExports.isBlockStatement(stmt) ? stmt.body : libExports.isIfStatement(stmt) && libExports.isBlockStatement(stmt.consequent) ? stmt.consequent.body : null;
-  if (!stmts) return stmt;
-  const declIdx = stmts.findIndex(
-    (s) => isBoundValueDecl(s) && s.declarations[0].init != null
-  );
-  if (declIdx === -1) return stmt;
-  const init = stmts[declIdx].declarations[0].init;
-  if (libExports.isIdentifier(init)) {
-    stmts.splice(declIdx, 1);
-    renameIdentifier(stmt, "__boundValue", init.name);
-    return stmt;
-  }
-  if (!isPure(init)) return stmt;
-  if (countIdentifierRefs(libExports.blockStatement([...stmts.slice(0, declIdx), ...stmts.slice(declIdx + 1)]), "__boundValue") !== 1)
-    return stmt;
-  stmts.splice(declIdx, 1);
-  replaceChildren(stmt, (n) => inlineBoundValue(n) ? libExports.cloneNode(init, true) : void 0);
-  return stmt;
-}
-function wrapSubpathCacheGuards(method, pcCounter, classBody) {
-  for (const stmt of method.body.body) {
-    if (!libExports.isIfStatement(stmt) || serializeKeyGuardForSubpath(stmt.test) === null) continue;
-    const block = libExports.isBlockStatement(stmt.consequent) ? stmt.consequent : null;
-    if (!block) continue;
-    const { inner, hadNullGuard } = unwrapNullGuardBlock(block);
-    if (hadNullGuard) {
-      hoistDuplicateValueSubprops(block);
-      continue;
-    }
-    const { stmts: stripped, allHadGuards } = stripPerStatementNullGuards(inner.body);
-    const chunks = chunkStatementsInOrder(stripped);
-    const singles = new Set(
-      chunks.filter((c) => c.kind === "single").map((c) => c.subProp)
-    );
-    const hasAlways = chunks.some((c) => c.kind === "always");
-    if (!(singles.size > 0 && (singles.size >= 2 || hasAlways))) {
-      hoistDuplicateValueSubprops(block);
-      continue;
-    }
-    const newInnerBody = [];
-    const pendingCacheFields = [];
-    for (const ch of chunks) {
-      if (ch.kind === "always") {
-        newInnerBody.push(...ch.stmts);
-        continue;
-      }
-      const { subProp, stmts } = ch;
-      const idx = pcCounter.value++;
-      const cacheId = `__pc${idx}`;
-      const local = `__${subProp}_${idx}`;
-      const cacheMember = jsExpr`this.${id(cacheId)}`;
-      if (classBody) pendingCacheFields.push(cacheId);
-      const localInit = allHadGuards ? jsExpr`value.${id(subProp)}` : jsExpr`value?.${id(subProp)}`;
-      newInnerBody.push(js`const ${id(local)} = ${localInit};`);
-      let patched = stmts.map((s) => {
-        const c = libExports.cloneNode(s, true);
-        replaceChildren(c, (n) => isValueDot(n, subProp) ? id(local) : void 0);
-        return c;
-      });
-      patched = optimizeBoundValueAliases(patched);
-      patched = patched.map(eliminateDeadBoundValueAlias);
-      const cacheTest = classBody ? jsExpr`${cacheMember} !== ${id(local)}` : jsExpr`!Object.hasOwn(this, ${cacheId}) || !Object.is(${cacheMember}, ${id(local)})`;
-      newInnerBody.push(libExports.ifStatement(cacheTest, libExports.blockStatement([js`${cacheMember} = ${id(local)};`, ...patched])));
-    }
-    if (allHadGuards) {
-      block.body = [libExports.ifStatement(jsExpr`value != null`, libExports.blockStatement(newInnerBody))];
-    } else {
-      inner.body = newInnerBody;
-    }
-    for (const cacheId of pendingCacheFields) {
-      classBody.body.push(libExports.classProperty(id(cacheId), libExports.objectExpression([])));
-    }
-  }
-}
-
-function cacheThisIdInMethod(method) {
-  let found = false;
-  const replaceIn = (node) => {
-    if (!node || typeof node !== "object") return;
-    const keys = libExports.VISITOR_KEYS[node.type];
-    if (!keys) return;
-    for (const key of keys) {
-      const child = node[key];
-      if (Array.isArray(child)) {
-        for (let i = 0; i < child.length; i++) {
-          const c = child[i];
-          if (isThisIdMember(c)) {
-            child[i] = libExports.identifier("__id");
-            found = true;
-          } else {
-            replaceIn(c);
-          }
-        }
-      } else if (child && typeof child === "object" && child.type) {
-        if (isThisIdMember(child)) {
-          node[key] = libExports.identifier("__id");
-          found = true;
-        } else {
-          replaceIn(child);
-        }
-      }
-    }
-  };
-  replaceIn(method.body);
-  if (found) {
-    method.body.body.unshift(
-      libExports.variableDeclaration("const", [
-        libExports.variableDeclarator(
-          libExports.identifier("__id"),
-          libExports.memberExpression(libExports.thisExpression(), libExports.identifier("id"))
-        )
-      ])
-    );
-  }
-  return found;
-}
-function isThisIdMember(node) {
-  return libExports.isMemberExpression(node) && libExports.isThisExpression(node.object) && libExports.isIdentifier(node.property, { name: "id" }) && !node.computed;
-}
-function wrapEventsGetterWithCache(getter) {
-  const body = getter.body.body;
-  const returnStmt = body.find(
-    (s) => libExports.isReturnStatement(s) && s.argument !== null
-  );
-  if (!returnStmt?.argument) return;
-  const cachedProp = libExports.memberExpression(
-    libExports.thisExpression(),
-    libExports.identifier("__evts")
-  );
-  const elementProp = libExports.memberExpression(
-    libExports.thisExpression(),
-    id("GEA_ELEMENT"),
-    true
-  );
-  const tmpId = libExports.identifier("__geaEvtsResult");
-  const objectExpr = returnStmt.argument;
-  const returnIndex = body.indexOf(returnStmt);
-  body.splice(
-    returnIndex,
-    1,
-    libExports.variableDeclaration("const", [libExports.variableDeclarator(tmpId, objectExpr)]),
-    libExports.ifStatement(
-      elementProp,
-      libExports.expressionStatement(
-        libExports.assignmentExpression("=", cachedProp, libExports.cloneNode(tmpId, true))
-      )
-    ),
-    libExports.returnStatement(libExports.cloneNode(tmpId, true))
-  );
-  body.unshift(
-    libExports.ifStatement(
-      libExports.logicalExpression("&&", cachedProp, elementProp),
-      libExports.returnStatement(libExports.cloneNode(cachedProp, true))
-    )
-  );
-}
-function loggingCatchClause(extra = []) {
-  return libExports.catchClause(
-    libExports.identifier("__err"),
-    libExports.blockStatement([
-      libExports.expressionStatement(
-        libExports.callExpression(
-          libExports.memberExpression(libExports.identifier("console"), libExports.identifier("error")),
-          [libExports.identifier("__err")]
-        )
-      ),
-      ...extra
-    ])
-  );
-}
-
-const PATCH_CTX = { mode: "patch", guard: true, useSanitizer: true };
-const MOUNT_CTX = { mode: "mount", guard: false, useSanitizer: false };
-
-function setTextContent(el, expr) {
-  return js`${el}.textContent = ${expr};`;
-}
-function setClassName(el, expr) {
-  return js`${el}.className = ${expr};`;
-}
-function toggleClass(el, cls, expr) {
-  return js`${el}.classList.toggle(${cls}, ${expr});`;
-}
-function setAttribute(el, name, expr, { guard = true } = {}) {
-  if (guard) {
-    return jsAll`
-      var __av = ${expr};
-      if (__av == null || __av === false) {
-        ${el}.removeAttribute(${name});
-      } else {
-        const __newAttr = String(__av);
-        if (${libExports.cloneNode(el, true)}.getAttribute(${name}) !== __newAttr)
-          ${libExports.cloneNode(el, true)}.setAttribute(${name}, __newAttr);
-      }
-    `;
-  }
-  return jsAll`
-    var __av = ${expr};
-    if (__av == null || __av === false) ${el}.removeAttribute(${name});
-    else ${libExports.cloneNode(el, true)}.setAttribute(${name}, String(__av));
-  `;
-}
-
-const textEmitter = {
-  type: "text",
-  emit(el, value, ctx, opts) {
-    if (opts?.textNodeIndex !== void 0) return emitTextNodeIndex(el, value, opts.textNodeIndex);
-    if (opts?.isChildrenProp) return emitInnerHTML(el, value, ctx);
-    if (!ctx.guard) return [setTextContent(el, value)];
-    return [
-      js`if (${libExports.cloneNode(el, true)}.textContent !== ${value}) ${setTextContent(libExports.cloneNode(el, true), libExports.cloneNode(value, true))}`
-    ];
-  }
-};
-function emitTextNodeIndex(el, value, idx) {
-  return [
-    js`{
-    let __tn = ${el}.childNodes[${idx}];
-    if (!__tn || __tn.nodeType !== 3) {
-      __tn = document.createTextNode(${libExports.cloneNode(value, true)});
-      ${libExports.cloneNode(el, true)}.insertBefore(__tn, ${libExports.cloneNode(el, true)}.childNodes[${idx}] || null);
-    } else if (__tn.nodeValue !== ${libExports.cloneNode(value, true)}) {
-      __tn.nodeValue = ${libExports.cloneNode(value, true)};
-    }
-  }`
-  ];
-}
-function emitInnerHTML(el, value, ctx) {
-  const assign = js`${el}.innerHTML = ${value};`;
-  if (!ctx.guard) return [assign];
-  return [
-    js`{
-    const __tw = document.createElement('template');
-    __tw.innerHTML = ${libExports.cloneNode(value, true)};
-    const __newEl = __tw.content.firstElementChild;
-    const __existEl = ${libExports.cloneNode(el, true)}.firstElementChild;
-    if (__newEl && __existEl && __tw.content.childNodes.length === 1) {
-      this.constructor[${id("GEA_PATCH_NODE")}](__existEl, __newEl, true);
-    } else if (${libExports.cloneNode(el, true)}.innerHTML !== ${libExports.cloneNode(value, true)}) {
-      ${libExports.cloneNode(el, true)}.innerHTML = ${libExports.cloneNode(value, true)};
-      this[${id("GEA_INSTANTIATE_CHILD_COMPONENTS")}]();
-      if (this.parentComponent) this.parentComponent[${id("GEA_MOUNT_COMPILED_CHILD_COMPONENTS")}]();
-    }
-  }`
-  ];
-}
-
-const classEmitter = {
-  type: "class",
-  emit(el, value, ctx, opts) {
-    if (opts?.classToggleName) return [toggleClass(el, opts.classToggleName, value)];
-    const classValue = opts?.isObjectClass ? jsExpr`Object.entries(${value}).filter(([__k, __v]) => __v).map(([__k]) => __k).join(' ').trim()` : opts?.canSkipClassCoercion ? value : jsExpr`(String(${value} ?? '')).trim().replace(/\\s+/g, ' ')`;
-    if (!ctx.guard) return [setClassName(el, classValue)];
-    return [
-      js`{
-      const __newClass = ${classValue};
-      if (${libExports.cloneNode(el, true)}.className !== __newClass) ${libExports.cloneNode(el, true)}.className = __newClass;
-    }`
-    ];
-  }
-};
-
-const attributeEmitter = {
-  type: "attribute",
-  emit(el, value, ctx, opts) {
-    const attrName = opts?.attributeName ?? "";
-    if (attrName === "style") return emitStyle(el, value, ctx);
-    if (attrName === "dangerouslySetInnerHTML") return emitDangerousInnerHTML(el, value, ctx);
-    if (opts?.isBooleanAttr) return emitBooleanAttr(el, value, attrName, ctx);
-    if (opts?.isUrlAttr && ctx.useSanitizer) return emitUrlAttr(el, value, attrName, ctx);
-    return setAttribute(el, attrName, value, { guard: ctx.guard });
-  }
-};
-function emitStyle(el, value, ctx) {
-  if (!ctx.guard) {
-    return [
-      js`{
-      var __av = ${value};
-      if (__av == null || __av === false) ${libExports.cloneNode(el, true)}.removeAttribute('style');
-      else ${libExports.cloneNode(el, true)}.style.cssText = typeof __av === 'object'
-        ? Object.entries(__av).map(([k, v]) => k.replace(/[A-Z]/g, '-$&') + ': ' + v).join('; ')
-        : String(__av);
-    }`
-    ];
-  }
-  return [
-    js`{
-    var __av = ${value};
-    if (__av == null || __av === undefined) {
-      ${libExports.cloneNode(el, true)}.removeAttribute('style');
-    } else {
-      const __newCss = typeof __av === 'object'
-        ? Object.entries(__av).map(([k, v]) => k.replace(/[A-Z]/g, '-$&') + ': ' + v).join('; ')
-        : String(__av);
-      if (${libExports.cloneNode(el, true)}.style.cssText !== __newCss)
-        ${libExports.cloneNode(el, true)}.style.cssText = __newCss;
-    }
-  }`
-  ];
-}
-function emitDangerousInnerHTML(el, value, ctx) {
-  if (!ctx.guard) return [js`${el}.innerHTML = String(${value});`];
-  return [
-    js`{
-    const __newHtml = String(${value});
-    if (${libExports.cloneNode(el, true)}.innerHTML !== __newHtml) ${libExports.cloneNode(el, true)}.innerHTML = __newHtml;
-  }`
-  ];
-}
-function emitBooleanAttr(el, value, attr, ctx) {
-  if (!ctx.guard) {
-    return [js`if (!${value}) ${el}.removeAttribute(${attr}); else ${libExports.cloneNode(el, true)}.setAttribute(${attr}, '');`];
-  }
-  return [
-    js`if (!${value}) {
-    ${el}.removeAttribute(${attr});
-  } else {
-    const __newAttr = '';
-    if (${libExports.cloneNode(el, true)}.getAttribute(${attr}) !== __newAttr)
-      ${libExports.cloneNode(el, true)}.setAttribute(${attr}, __newAttr);
-  }`
-  ];
-}
-function emitUrlAttr(el, value, attr, ctx) {
-  if (!ctx.guard) {
-    return [
-      js`{
-      var __av = ${value};
-      if (__av == null || __av === false) ${el}.removeAttribute(${attr});
-      else ${libExports.cloneNode(el, true)}.setAttribute(${attr}, __sanitizeAttr(${attr}, String(__av)));
-    }`
-    ];
-  }
-  return [
-    js`{
-    var __av = ${value};
-    if (__av == null || __av === undefined) {
-      ${el}.removeAttribute(${attr});
-    } else {
-      const __newAttr = __sanitizeAttr(${attr}, String(__av));
-      if (${libExports.cloneNode(el, true)}.getAttribute(${attr}) !== __newAttr)
-        ${libExports.cloneNode(el, true)}.setAttribute(${attr}, __newAttr);
-    }
-  }`
-  ];
-}
-
-const checkedEmitter = {
-  type: "checked",
-  emit(el, value, ctx, opts) {
-    const propName = opts?.attributeName ?? "checked";
-    const coerced = propName === "checked" ? js`${el}.${libExports.identifier(propName)} = !!${value};` : js`${el}.${libExports.identifier(propName)} = !!${value};`;
-    if (!ctx.guard) return [coerced];
-    return [coerced];
-  }
-};
-
-const valueEmitter = {
-  type: "value",
-  emit(el, value, ctx, opts) {
-    const propName = opts?.attributeName ?? "value";
-    return [js`${el}.${libExports.identifier(propName)} = (${value} == null) ? '' : String(${value});`];
-  }
-};
-
-const emitters = /* @__PURE__ */ new Map();
-function register(emitter) {
-  emitters.set(emitter.type, emitter);
-}
-register(textEmitter);
-register(classEmitter);
-register(attributeEmitter);
-register(checkedEmitter);
-register(valueEmitter);
-function emitPatch(type, el, value, opts) {
-  const emitter = emitters.get(type);
-  if (!emitter) return [];
-  return emitter.emit(el, value, PATCH_CTX, opts);
-}
-function emitMount(type, el, value, opts) {
-  const emitter = emitters.get(type);
-  if (!emitter) return [];
-  return emitter.emit(el, value, MOUNT_CTX, opts);
-}
-
-const URL_ATTRS$1 = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "data", "cite", "poster", "background"]);
-function thisProp(name) {
-  return libExports.memberExpression(libExports.thisExpression(), id(name));
-}
-function thisPrivate(name) {
-  return libExports.memberExpression(libExports.thisExpression(), libExports.privateName(id(name)));
-}
-function getArrayPathParts(am) {
-  return am.arrayPathParts || normalizePathParts(am.arrayPath || "");
-}
-function getArrayPath(am) {
-  return pathPartsToString(getArrayPathParts(am));
-}
-function getArrayCapName(am) {
-  const p = getArrayPath(am);
-  return p.charAt(0).toUpperCase() + p.slice(1).replace(/\./g, "");
-}
-function getArrayConfigPropName(am) {
-  return `__${getArrayPath(am).replace(/\./g, "_")}ListConfig`;
-}
-function getArrayCreateMethodName(am) {
-  return `create${getArrayCapName(am)}Item`;
-}
-function getArrayRenderMethodName(am) {
-  return `render${getArrayCapName(am)}Item`;
-}
-function getArrayPatchMethodName(am) {
-  return `patch${getArrayCapName(am)}Item`;
-}
-function getCapNameFromBinding(arrayMap) {
-  const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts(arrayMap.arrayPath || ""));
-  const arrayName = arrayPath.replace(/\./g, "");
-  return arrayName.charAt(0).toUpperCase() + arrayName.slice(1);
-}
-function isComponentRootTemplate(arrayMap) {
-  return libExports.isJSXElement(arrayMap.itemTemplate) && isComponentTag(getJSXTagName(arrayMap.itemTemplate.openingElement.name));
-}
-function buildElementNavExpr(base, childPath) {
-  let expr = base;
-  for (const idx of childPath) {
-    expr = jsExpr`${expr}.firstElementChild`;
-    for (let i = 0; i < idx; i++) {
-      expr = jsExpr`${expr}.nextElementSibling`;
-    }
-  }
-  return expr;
-}
-function childPathRefName(path) {
-  return `__ref_${path.join("_")}`;
-}
-function collectPatchEntries(arrayMap) {
-  const cloned = libExports.cloneNode(arrayMap.itemTemplate, true);
-  const tempFile = libExports.file(libExports.program([libExports.expressionStatement(cloned)]));
-  traverse$1(tempFile, {
-    Identifier(path) {
-      if (path.node.name === arrayMap.itemVariable) path.node.name = "item";
-      else if (arrayMap.indexVariable && path.node.name === arrayMap.indexVariable) path.node.name = "__idx";
-    }
-  });
-  const modified = tempFile.program.body[0].expression;
-  const entries = [];
-  const requiresRerender = templateRequiresRerender(tempFile);
-  if (libExports.isJSXElement(modified)) {
-    const rootTagName = getJSXTagName(modified.openingElement.name);
-    const rootIsComponent = isComponentTag(rootTagName);
-    walkJSXForPatch(modified, [], entries, rootIsComponent);
-  }
-  for (const ent of entries) {
-    ent.expression = optionalizeMemberChainsAfterComputedItemKey(ent.expression, "item");
-  }
-  return { entries, requiresRerender };
-}
-function templateRequiresRerender(file) {
-  let requiresRerender = false;
-  traverse$1(file, {
-    noScope: true,
-    ConditionalExpression(path) {
-      if (branchContainsJSX(path.node.consequent) || branchContainsJSX(path.node.alternate)) {
-        requiresRerender = true;
-        path.stop();
-      }
-    },
-    LogicalExpression(path) {
-      if (branchContainsJSX(path.node.left) || branchContainsJSX(path.node.right)) {
-        requiresRerender = true;
-        path.stop();
-      }
-    },
-    CallExpression(path) {
-      const callee = path.node.callee;
-      if (libExports.isMemberExpression(callee) && !callee.computed && libExports.isIdentifier(callee.object, { name: "item" })) {
-        requiresRerender = true;
-        path.stop();
-      }
-    }
-  });
-  return requiresRerender;
-}
-function branchContainsJSX(node) {
-  if (libExports.isJSXElement(node) || libExports.isJSXFragment(node)) return true;
-  for (const key of libExports.VISITOR_KEYS[node.type] || []) {
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const c of child) if (c && typeof c === "object" && "type" in c && branchContainsJSX(c)) return true;
-    } else if (child && typeof child === "object" && "type" in child) {
-      if (branchContainsJSX(child)) return true;
-    }
-  }
-  return false;
-}
-function walkJSXForPatch(node, path, entries, rootIsComponent = false) {
-  const isRootLevel = path.length === 0 && rootIsComponent;
-  for (const attr of node.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    const name = attr.name.name;
-    if (name === "key" || EVENT_NAMES.has(name)) continue;
-    if (!libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) continue;
-    if (name === "class" || name === "className") {
-      entries.push({
-        childPath: [...path],
-        type: "className",
-        expression: libExports.cloneNode(attr.value.expression, true)
-      });
-    } else if (name !== "checked") {
-      entries.push({
-        childPath: [...path],
-        type: "attribute",
-        expression: libExports.cloneNode(attr.value.expression, true),
-        attributeName: isRootLevel ? `data-prop-${camelToKebab(name)}` : name
-      });
-    }
-  }
-  let hasElementChild = false;
-  const textParts = [];
-  for (const child of node.children) {
-    if (libExports.isJSXElement(child) || libExports.isJSXFragment(child)) hasElementChild = true;
-    else if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression))
-      textParts.push({ expr: child.expression });
-    else if (libExports.isJSXText(child)) {
-      const last = textParts[textParts.length - 1];
-      if (last && "raw" in last) last.raw += child.value;
-      else textParts.push({ raw: child.value });
-    }
-  }
-  if (!hasElementChild && textParts.length > 0) {
-    const hasExpr = textParts.some((p) => "expr" in p);
-    if (hasExpr) {
-      const quasis = [];
-      const expressions = [];
-      let currentRaw = "";
-      for (const part of textParts) {
-        if ("raw" in part) {
-          currentRaw += part.raw;
-        } else {
-          quasis.push(libExports.templateElement({ raw: currentRaw, cooked: currentRaw }, false));
-          currentRaw = "";
-          expressions.push(libExports.cloneNode(part.expr, true));
-        }
-      }
-      quasis.push(libExports.templateElement({ raw: currentRaw, cooked: currentRaw }, true));
-      const templateExpr = expressions.length > 0 ? libExports.templateLiteral(quasis, expressions) : libExports.stringLiteral(quasis[0]?.value?.raw ?? "");
-      entries.push({
-        childPath: [...path],
-        type: "text",
-        expression: templateExpr
-      });
-    }
-    return;
-  }
-  let elementIndex = 0;
-  for (const child of node.children) {
-    if (libExports.isJSXElement(child)) {
-      walkJSXForPatch(child, [...path, elementIndex], entries);
-      elementIndex++;
-    }
-  }
-}
-function buildRefCacheAndApply(entries, elVar, lazyCache) {
-  const stmts = [];
-  const refMap = /* @__PURE__ */ new Map();
-  for (const entry of entries) {
-    if (entry.childPath.length === 0) continue;
-    const key = entry.childPath.join("_");
-    if (refMap.has(key)) continue;
-    const refName = childPathRefName(entry.childPath);
-    const navExpr = buildElementNavExpr(elVar, entry.childPath);
-    if (lazyCache) {
-      const refExpr = jsExpr`${elVar}.${id(refName)}`;
-      stmts.push(js`if (!${refExpr}) ${elVar}.${id(refName)} = ${navExpr};`);
-      refMap.set(key, refExpr);
-    } else {
-      stmts.push(js`${elVar}.${id(refName)} = ${navExpr};`);
-      refMap.set(key, jsExpr`${elVar}.${id(refName)}`);
-    }
-  }
-  for (const entry of entries) {
-    const navExpr = entry.childPath.length > 0 ? refMap.get(entry.childPath.join("_")) || buildElementNavExpr(elVar, entry.childPath) : elVar;
-    if (!lazyCache && entry.type === "className" && libExports.isConditionalExpression(entry.expression) && libExports.isStringLiteral(entry.expression.alternate) && entry.expression.alternate.value === "") {
-      stmts.push(
-        libExports.ifStatement(
-          libExports.cloneNode(entry.expression.test, true),
-          libExports.expressionStatement(
-            libExports.assignmentExpression(
-              "=",
-              libExports.memberExpression(navExpr, libExports.identifier("className")),
-              buildTrimmedClassValueExpression(libExports.cloneNode(entry.expression.consequent, true))
-            )
-          )
-        )
-      );
-      continue;
-    }
-    const emitType = entry.type === "className" ? "class" : entry.type;
-    stmts.push(...emitPatch(emitType, navExpr, entry.expression, { attributeName: entry.attributeName }));
-  }
-  return stmts;
-}
-function collectSetupVarNames(statements) {
-  const names = /* @__PURE__ */ new Set();
-  for (const stmt of statements) {
-    if (!libExports.isVariableDeclaration(stmt)) continue;
-    for (const decl of stmt.declarations) {
-      if (libExports.isIdentifier(decl.id)) names.add(decl.id.name);
-      else if (libExports.isObjectPattern(decl.id)) {
-        for (const prop of decl.id.properties) {
-          if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.value)) names.add(prop.value.name);
-          else if (libExports.isRestElement(prop) && libExports.isIdentifier(prop.argument)) names.add(prop.argument.name);
-        }
-      }
-    }
-  }
-  return names;
-}
-function collectFreeVars(expressions) {
-  const freeVars = /* @__PURE__ */ new Set();
-  for (const expr of expressions) {
-    traverse$1(libExports.expressionStatement(libExports.cloneNode(expr, true)), {
-      noScope: true,
-      Identifier(p) {
-        if (libExports.isMemberExpression(p.parent) && p.parent.property === p.node && !p.parent.computed) return;
-        freeVars.add(p.node.name);
-      }
-    });
-  }
-  return freeVars;
-}
-function setupForcesRerender(setupCtx, entries) {
-  if (!setupCtx || setupCtx.statements.length === 0) return false;
-  const setupVars = collectSetupVarNames(setupCtx.statements);
-  if (setupVars.size === 0) return false;
-  const freeVars = collectFreeVars(entries.map((e) => e.expression));
-  for (const name of setupVars) {
-    if (freeVars.has(name)) return true;
-  }
-  return false;
-}
-function applyPropRefs(entries, templatePropNames, wholeParamName) {
-  const propNames = templatePropNames ?? /* @__PURE__ */ new Set();
-  if (propNames.size === 0 && !wholeParamName) return entries;
-  return entries.map((e) => ({
-    ...e,
-    expression: replacePropRefsInExpression(libExports.cloneNode(e.expression, true), propNames, wholeParamName)
-  }));
-}
-function rewriteItemVarInExpression(expr, fromVar, toVar, renames) {
-  const renameMap = new Map(renames || []);
-  renameMap.set(fromVar, toVar);
-  const cloned = libExports.cloneNode(expr, true);
-  traverse$1(libExports.program([libExports.expressionStatement(cloned)]), {
-    noScope: true,
-    Identifier(path) {
-      const replacement = renameMap.get(path.node.name);
-      if (replacement) path.node.name = replacement;
-    }
-  });
-  return cloned;
-}
-function buildItemIdExpr(itemIdProperty, keyExpression, itemVariable, indexVariable) {
-  if (keyExpression) {
-    const keyRenames = indexVariable ? /* @__PURE__ */ new Map([[indexVariable, "__idx"]]) : void 0;
-    const rawExpr2 = rewriteItemVarInExpression(keyExpression, itemVariable || "item", "item", keyRenames);
-    return jsExpr`String(${rawExpr2})`;
-  }
-  const rawExpr = itemIdProperty && itemIdProperty !== ITEM_IS_KEY ? libExports.logicalExpression("??", buildOptionalMemberChain(id("item"), itemIdProperty), id("item")) : id("item");
-  return jsExpr`String(${rawExpr})`;
-}
-function buildRenderCall(renderMethodName, indexVariable, itemArg, idxArg) {
-  const args = [itemArg ?? id("item")];
-  if (indexVariable) args.push(idxArg ?? id("__idx"));
-  const call = jsExpr`this.${id(renderMethodName)}()`;
-  call.arguments = args;
-  return call;
-}
-function hoistStoreReads(entries, storeVar) {
-  if (!storeVar) return { hoists: [], patchedEntries: entries };
-  const hoistMap = /* @__PURE__ */ new Map();
-  let counter = 0;
-  function replaceStoreReads(expr) {
-    const cloned = libExports.cloneNode(expr, true);
-    const program = libExports.program([libExports.expressionStatement(cloned)]);
-    traverse$1(program, {
-      noScope: true,
-      MemberExpression(path) {
-        if (!libExports.isIdentifier(path.node.object, { name: storeVar })) return;
-        if (!libExports.isIdentifier(path.node.property)) return;
-        if (path.node.computed) return;
-        const key = `${storeVar}.${path.node.property.name}`;
-        let hoist = hoistMap.get(key);
-        if (!hoist) {
-          hoist = { varName: `__h${counter++}`, expression: libExports.cloneNode(path.node, true) };
-          hoistMap.set(key, hoist);
-        }
-        path.replaceWith(libExports.identifier(hoist.varName));
-      }
-    });
-    return program.body[0].expression;
-  }
-  const patchedEntries = entries.map((entry) => ({
-    ...entry,
-    expression: replaceStoreReads(entry.expression)
-  }));
-  return { hoists: Array.from(hoistMap.values()), patchedEntries };
-}
-function walkDummyTree(tree, parts, write, leafValue = true) {
-  let cursor = tree;
-  for (let i = 0; i < parts.length; i++) {
-    const key = parts[i];
-    if (i === parts.length - 1) {
-      if (!(key in cursor)) cursor[key] = leafValue;
-      return;
-    }
-    if (!(key in cursor) || cursor[key] === true || cursor[key] === "__fn__") cursor[key] = {};
-    cursor = cursor[key];
-  }
-}
-function ensureDummyTreePath(tree, path) {
-  const parts = normalizePathParts(path);
-  if (parts.length > 0) walkDummyTree(tree, parts);
-}
-function collectItemTemplatePropTree(template, itemVar) {
-  const tree = {};
-  const program = libExports.program([libExports.expressionStatement(libExports.cloneNode(template, true))]);
-  traverse$1(program, {
-    noScope: true,
-    CallExpression(path) {
-      const callee = path.node.callee;
-      if (!libExports.isMemberExpression(callee)) return;
-      const chain = [];
-      let node = callee;
-      while (libExports.isMemberExpression(node) && !node.computed && libExports.isIdentifier(node.property)) {
-        chain.unshift(node.property.name);
-        node = node.object;
-      }
-      if (!libExports.isIdentifier(node, { name: itemVar }) || chain.length === 0) return;
-      walkDummyTree(tree, chain, true, "__fn__");
-    },
-    MemberExpression(path) {
-      if (libExports.isCallExpression(path.parent) && path.parent.callee === path.node) return;
-      const chain = [];
-      let node = path.node;
-      while (libExports.isMemberExpression(node) && !node.computed && libExports.isIdentifier(node.property)) {
-        chain.unshift(node.property.name);
-        node = node.object;
-      }
-      if (!libExports.isIdentifier(node, { name: itemVar }) || chain.length === 0) return;
-      walkDummyTree(tree, chain);
-    }
-  });
-  return tree;
-}
-function buildDummyFromTree(tree, keyPathParts) {
-  const props = [];
-  for (const [key, value] of Object.entries(tree)) {
-    const matchesKey = keyPathParts && keyPathParts.length > 0 && keyPathParts[0] === key;
-    const val = matchesKey && keyPathParts.length === 1 ? libExports.numericLiteral(0) : matchesKey ? buildDummyFromTree(value === true || value === "__fn__" ? {} : value, keyPathParts.slice(1)) : value === "__fn__" ? libExports.arrowFunctionExpression([], libExports.stringLiteral("")) : value === true ? libExports.stringLiteral(" ") : buildDummyFromTree(value, null);
-    props.push(libExports.objectProperty(id(key), val));
-  }
-  return libExports.objectExpression(props);
-}
-function collectComponentProps(arrayMap, propNames, wholeParamName) {
-  const propsProperties = [];
-  const cloned = libExports.cloneNode(arrayMap.itemTemplate, true);
-  for (const attr of cloned.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    const name = attr.name.name;
-    if (name === "key" || EVENT_NAMES.has(name)) continue;
-    if (!libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) continue;
-    const exprClone = libExports.cloneNode(attr.value.expression, true);
-    const tempProg = libExports.file(libExports.program([libExports.expressionStatement(exprClone)]));
-    traverse$1(tempProg, {
-      Identifier(path) {
-        if (path.node.name === arrayMap.itemVariable) path.node.name = "item";
-        else if (arrayMap.indexVariable && path.node.name === arrayMap.indexVariable) path.node.name = "__idx";
-      }
-    });
-    let rewrittenExpr = tempProg.program.body[0].expression;
-    if (propNames.size > 0 || wholeParamName) {
-      rewrittenExpr = replacePropRefsInExpression(
-        libExports.cloneNode(rewrittenExpr, true),
-        propNames,
-        wholeParamName
-      );
-    }
-    propsProperties.push(libExports.objectProperty(id(name), rewrittenExpr));
-  }
-  return propsProperties;
-}
-function getPropPatcherTargetExpr(binding, rowExpr) {
-  if (binding.childPath?.length) return buildElementNavExpr(rowExpr, binding.childPath);
-  if (binding.selector === ":scope") return libExports.cloneNode(rowExpr, true);
-  throw new Error(
-    `getPropPatcherTargetExpr: childPath required when selector is not :scope (got "${binding.selector}").`
-  );
-}
-function buildPropPatcherFunction(binding, propName) {
-  const row = id("row"), value = id("value");
-  const targetExpr = getPropPatcherTargetExpr(binding, row);
-  if (binding.type === "class") {
-    return libExports.arrowFunctionExpression(
-      [row, value],
-      libExports.blockStatement(emitPatch("class", row, value, { classToggleName: binding.classToggleName || propName }))
-    );
-  }
-  const bodyStmts = jsBlockBody`const __target = ${targetExpr}; if (!__target) return;`;
-  bodyStmts.push(
-    ...emitPatch(binding.type, id("__target"), value, {
-      attributeName: binding.attributeName || (binding.type === "attribute" ? "class" : void 0),
-      isUrlAttr: binding.attributeName ? URL_ATTRS$1.has(binding.attributeName) : false
-    })
-  );
-  return libExports.arrowFunctionExpression([row, value], libExports.blockStatement(bodyStmts));
-}
-function collectItemExpressionKeys(expr) {
-  const keys = /* @__PURE__ */ new Set();
-  traverse$1(libExports.program([libExports.expressionStatement(libExports.cloneNode(expr, true))]), {
-    noScope: true,
-    MemberExpression(path) {
-      if (libExports.isIdentifier(path.node.object, { name: "item" }) && !path.node.computed && libExports.isIdentifier(path.node.property))
-        keys.add(path.node.property.name);
-    }
-  });
-  return Array.from(keys);
-}
-function buildPatchEntryPropPatcher(entry) {
-  const row = id("row");
-  const refName = childPathRefName(entry.childPath);
-  const isRoot = entry.childPath.length === 0;
-  const targetExpr = isRoot ? row : libExports.logicalExpression(
-    "||",
-    jsExpr`${row}.${id(refName)}`,
-    libExports.parenthesizedExpression(
-      libExports.assignmentExpression(
-        "=",
-        jsExpr`${libExports.cloneNode(row, true)}.${id(refName)}`,
-        buildElementNavExpr(libExports.cloneNode(row, true), entry.childPath)
-      )
-    )
-  );
-  const stmts = isRoot ? [] : jsAll`const __target = ${targetExpr}; if (!__target) return;`;
-  const emitType = entry.type === "className" ? "class" : entry.type;
-  const classExpr = libExports.cloneNode(entry.expression, true);
-  const skipCoerce = entry.type === "className" && isAlwaysStringExpression(classExpr) && isWhitespaceFree(classExpr);
-  stmts.push(
-    ...emitPatch(emitType, isRoot ? row : id("__target"), classExpr, {
-      attributeName: entry.attributeName,
-      canSkipClassCoercion: skipCoerce
-    })
-  );
-  return libExports.arrowFunctionExpression([id("row"), id("value"), id("item")], libExports.blockStatement(stmts));
-}
-function buildPropPatchersObject(arrayMap) {
-  const groups = /* @__PURE__ */ new Map();
-  if (arrayMap.itemTemplate) {
-    const patchPlan = collectPatchEntries(arrayMap);
-    if (!patchPlan.requiresRerender) {
-      patchPlan.entries.forEach((entry) => {
-        const keys = collectItemExpressionKeys(entry.expression);
-        keys.forEach((key) => {
-          const existing = groups.get(key) || [];
-          existing.push(buildPatchEntryPropPatcher(entry));
-          groups.set(key, existing);
-        });
-      });
-    }
-  }
-  arrayMap.itemBindings.forEach((binding) => {
-    if (binding.type !== "checked" && binding.type !== "value" && binding.type !== "class") return;
-    const bindingPathParts = binding.pathParts || normalizePathParts(binding.path || "");
-    const wildcardIndex = bindingPathParts.indexOf("*");
-    if (wildcardIndex === -1) return;
-    const propParts = bindingPathParts.slice(wildcardIndex + 1);
-    if (propParts.length === 0) return;
-    const key = propParts.join(".");
-    const propName = propParts[propParts.length - 1];
-    const patcher = buildPropPatcherFunction(binding, propName);
-    const existing = groups.get(key) || [];
-    existing.push(patcher);
-    groups.set(key, existing);
-  });
-  if (groups.size === 0) return null;
-  return libExports.objectExpression(
-    Array.from(groups.entries()).map(
-      ([key, patchers]) => libExports.objectProperty(libExports.stringLiteral(key), libExports.arrayExpression(patchers))
-    )
-  );
-}
-function isKnownPrimitive(node) {
-  return libExports.isStringLiteral(node) || libExports.isNumericLiteral(node) || libExports.isBooleanLiteral(node) || libExports.isNullLiteral(node) || libExports.isTemplateLiteral(node) || libExports.isIdentifier(node) && node.name === "undefined" || libExports.isUnaryExpression(node) && node.operator === "-" && libExports.isNumericLiteral(node.argument);
-}
-function wrapWithV(node) {
-  if (isKnownPrimitive(node)) return node;
-  return libExports.callExpression(id("__v"), [node]);
-}
-function unwrapComparisonOperands(node) {
-  if (libExports.isBinaryExpression(node) && ["===", "==", "!==", "!="].includes(node.operator)) {
-    return libExports.binaryExpression(
-      node.operator,
-      wrapWithV(unwrapComparisonOperands(node.left)),
-      wrapWithV(unwrapComparisonOperands(node.right))
-    );
-  }
-  if (libExports.isConditionalExpression(node)) {
-    return libExports.conditionalExpression(
-      unwrapComparisonOperands(node.test),
-      unwrapComparisonOperands(node.consequent),
-      unwrapComparisonOperands(node.alternate)
-    );
-  }
-  if (libExports.isLogicalExpression(node)) {
-    return libExports.logicalExpression(
-      node.operator,
-      unwrapComparisonOperands(node.left),
-      unwrapComparisonOperands(node.right)
-    );
-  }
-  return node;
-}
-function buildHandlerArrowFn(handlerExpr, propNames, wholeParamName) {
-  const body = libExports.isBlockStatement(handlerExpr.body) ? handlerExpr.body.body : [libExports.expressionStatement(handlerExpr.body)];
-  const bodyWithProps = replacePropRefsInStatements(body, propNames, wholeParamName);
-  return bodyWithProps.length === 1 && libExports.isExpressionStatement(bodyWithProps[0]) && !libExports.isBlockStatement(handlerExpr.body) ? libExports.arrowFunctionExpression([id("e")], bodyWithProps[0].expression) : libExports.arrowFunctionExpression([id("e")], libExports.blockStatement(bodyWithProps));
-}
-function buildItemKeyExpr(itemIdProperty, itemVar) {
-  return itemIdProperty && itemIdProperty !== ITEM_IS_KEY ? libExports.logicalExpression("??", buildOptionalMemberChain(id(itemVar), itemIdProperty), id(itemVar)) : libExports.callExpression(id("String"), [id(itemVar)]);
-}
-function buildHandlerRegistrationStatements(handlerProps, itemVariable, propNames, wholeParamName) {
-  if (handlerProps.length === 0) return [];
-  const stmts = [js`if (!this.__itemHandlers_) { this.__itemHandlers_ = {}; }`];
-  for (const hp of handlerProps) {
-    const fn = buildHandlerArrowFn(
-      libExports.cloneNode(hp.handlerExpression, true),
-      propNames,
-      wholeParamName
-    );
-    stmts.push(js`this.__itemHandlers_[${buildItemKeyExpr(hp.itemIdProperty, itemVariable)}] = ${fn};`);
-  }
-  return stmts;
-}
-function lazyInit$1(name, selector, bindingId, userIdExpr) {
-  if (userIdExpr) {
-    const idArg = libExports.isStringLiteral(userIdExpr) ? userIdExpr : libExports.cloneNode(userIdExpr, true);
-    return js`
-      if (!this.${id(name)}) {
-        this.${id(name)} = __gid(${idArg});
-      }
-    `;
-  }
-  if (bindingId) {
-    return js`
-      if (!this.${id(name)}) {
-        this.${id(name)} = __gid(this.id + '-' + ${bindingId});
-      }
-    `;
-  }
-  return js`
-    if (!this.${id(name)}) {
-      this.${id(name)} = this.$(":scope");
-    }
-  `;
-}
-function buildQueryByItemId(_containerExpr, idExpr, containerBindingId) {
-  const bind = containerBindingId ?? "list";
-  return jsExpr`__gid(this.id + ${"-" + bind + "-gk-"} + ${libExports.cloneNode(idExpr, true)})`;
-}
-function buildPathPartsEquals$1(expr, parts) {
-  let result = jsExpr`${libExports.cloneNode(expr)} && ${libExports.cloneNode(expr)}.length === ${parts.length}`;
-  for (let i = 0; i < parts.length; i++) {
-    result = libExports.logicalExpression("&&", result, jsExpr`${libExports.cloneNode(expr)}[${i}] === ${parts[i]}`);
-  }
-  return result;
-}
-function buildConditionalPatchStatement(binding, target, itemVariable) {
-  const expression = renameItemVariable(binding.expression, itemVariable);
-  if (binding.type === "text") {
-    return js`${jsExpr`${target}.textContent`} = ${expression};`;
-  }
-  if (binding.type === "className") {
-    return js`${jsExpr`${target}.className`} = ${buildTrimmedClassValueExpression(expression)};`;
-  }
-  if (binding.attributeName === "style") {
-    return libExports.blockStatement(
-      jsBlockBody`
-      const __attrValue = ${expression};
-      if (__attrValue == null || __attrValue === false) {
-        ${jsExpr`${target}.removeAttribute('style')`};
-      } else if (typeof __attrValue === 'object') {
-        ${jsExpr`${target}.style.cssText`} = Object.entries(__attrValue).map(([k, v]) => k.replace(/[A-Z]/g, '-$&') + ': ' + v).join('; ');
-      } else {
-        ${jsExpr`${target}.style.cssText`} = String(__attrValue);
-      }
-    `
-    );
-  }
-  return libExports.blockStatement(
-    jsBlockBody`
-    const __attrValue = ${expression};
-    if (__attrValue == null || __attrValue === false) {
-      ${jsExpr`${target}.removeAttribute(${binding.attributeName || "class"})`};
-    } else {
-      const __newAttr = String(__attrValue);
-      if (${jsExpr`${target}.getAttribute(${binding.attributeName || "class"})`} !== __newAttr) {
-        ${jsExpr`${target}.setAttribute(${binding.attributeName || "class"}, __newAttr)`};
-      }
-    }
-  `
-  );
-}
-function renameItemVariable(expr, itemVariable) {
-  const cloned = libExports.cloneNode(expr, true);
-  const program = libExports.program([libExports.expressionStatement(cloned)]);
-  traverse$1(program, {
-    noScope: true,
-    Identifier(path) {
-      if (path.node.name === itemVariable) path.node.name = "item";
-    }
-  });
-  return program.body[0].expression;
-}
-function buildRelationalClassStatements(rowExpr, bindings, isMatch, phase) {
-  return bindings.flatMap((binding, index) => {
-    const enabled = binding.classWhenMatch ? isMatch : !isMatch;
-    if (binding.selector === ":scope") {
-      const expr = libExports.cloneNode(rowExpr, true);
-      if (binding.scopeClassIsPure) {
-        return jsBlockBody`
-          ${expr}.className = ${enabled ? binding.classToggleName : ""};
-        `;
-      }
-      const cnVar = `__cn_${phase}_${index}`;
-      return jsBlockBody`
-        var ${id(cnVar)} = ${expr}.className;
-        if (${id(cnVar)} === '' || ${id(cnVar)} === ${binding.classToggleName}) {
-          ${expr}.className = ${enabled ? binding.classToggleName : ""};
-        } else {
-          ${expr}.classList.toggle(${binding.classToggleName}, ${enabled});
-        }
-      `;
-    }
-    const targetVar = `__target_${phase}_${index}`;
-    const targetExpr = libExports.cloneNode(rowExpr, true);
-    return jsBlockBody`
-      var ${id(targetVar)} = ${targetExpr};
-      if (${id(targetVar)}) {
-        ${jsExpr`${id(targetVar)}.classList.toggle(${binding.classToggleName}, ${enabled})`};
-      }
-    `;
-  });
-}
-function buildElsLookup(elsRef, containerRef, idExpr, rowVar, containerBindingId) {
-  const elsFallback = buildQueryByItemId(libExports.cloneNode(containerRef), libExports.cloneNode(idExpr, true), containerBindingId);
-  const ctr = id("__ctr");
-  const ch = id("__ch");
-  const i = id("__i");
-  const qsFallback = libExports.callExpression(
-    libExports.arrowFunctionExpression(
-      [],
-      libExports.blockStatement([
-        js`const ${ctr} = ${libExports.cloneNode(containerRef)};`,
-        libExports.forStatement(
-          js`let ${i} = 0;`,
-          jsExpr`${i} < ${libExports.cloneNode(ctr, true)}.children.length`,
-          libExports.updateExpression("++", libExports.cloneNode(i, true)),
-          libExports.blockStatement([
-            js`const ${ch} = ${libExports.cloneNode(ctr, true)}.children[${libExports.cloneNode(i, true)}];`,
-            libExports.ifStatement(
-              libExports.logicalExpression(
-                "||",
-                jsExpr`${ch}[${id("GEA_DOM_KEY")}] == ${libExports.cloneNode(idExpr, true)}`,
-                libExports.logicalExpression(
-                  "&&",
-                  jsExpr`${ch}[${id("GEA_DOM_KEY")}] == null`,
-                  libExports.binaryExpression(
-                    "==",
-                    libExports.optionalCallExpression(
-                      libExports.optionalMemberExpression(libExports.cloneNode(ch, true), id("getAttribute"), false, true),
-                      [libExports.stringLiteral("data-gid")],
-                      false
-                    ),
-                    libExports.cloneNode(idExpr, true)
-                  )
-                )
-              ),
-              libExports.returnStatement(libExports.cloneNode(ch, true))
-            )
-          ])
-        ),
-        libExports.returnStatement(libExports.nullLiteral())
-      ])
-    ),
-    []
-  );
-  const cached = id("__cached");
-  return [
-    js`var ${cached} = ${libExports.cloneNode(elsRef)} && ${libExports.cloneNode(elsRef)}[${libExports.cloneNode(idExpr, true)}];`,
-    libExports.variableDeclaration("var", [
-      libExports.variableDeclarator(
-        id(rowVar),
-        libExports.logicalExpression(
-          "||",
-          libExports.logicalExpression(
-            "||",
-            libExports.logicalExpression(
-              "&&",
-              jsExpr`${libExports.cloneNode(cached, true)} && ${libExports.cloneNode(cached, true)}.isConnected`,
-              libExports.cloneNode(cached, true)
-            ),
-            elsFallback
-          ),
-          qsFallback
-        )
-      )
-    ])
-  ];
-}
-function generateEnsureArrayConfigsMethod(arrayMaps) {
-  if (arrayMaps.length === 0) return null;
-  const prop = (key, val) => libExports.objectProperty(id(key), val);
-  const body = arrayMaps.map((arrayMap) => {
-    const configProp = jsExpr`this.${id(getArrayConfigPropName(arrayMap))}`;
-    const renderMethodName = getArrayRenderMethodName(arrayMap);
-    const createMethodName = getArrayCreateMethodName(arrayMap);
-    const patchMethodName = getArrayPatchMethodName(arrayMap);
-    const propPatchers = buildPropPatchersObject(arrayMap);
-    const properties = [
-      prop("arrayPathParts", libExports.arrayExpression(getArrayPathParts(arrayMap).map((p) => libExports.stringLiteral(p)))),
-      prop("render", jsExpr`this.${id(renderMethodName)}.bind(this)`),
-      prop("create", jsExpr`this.${id(createMethodName)}.bind(this)`),
-      prop("patchRow", jsExpr`this.${id(patchMethodName)} && this.${id(patchMethodName)}.bind(this)`)
-    ];
-    if (arrayMap.itemIdProperty === ITEM_IS_KEY) {
-      properties.push(prop("getKey", jsExpr`(item) => String(item)`));
-    } else if (arrayMap.itemIdProperty) {
-      properties.push(
-        prop(
-          "getKey",
-          libExports.arrowFunctionExpression(
-            [id("item")],
-            jsExpr`String(${buildOptionalMemberChain(id("item"), arrayMap.itemIdProperty)} ?? item)`
-          )
-        )
-      );
-    }
-    if (propPatchers) properties.push(prop("propPatchers", propPatchers));
-    const rootIsComponent = libExports.isJSXElement(arrayMap.itemTemplate) && isComponentTag(getJSXTagName(arrayMap.itemTemplate.openingElement.name));
-    if (rootIsComponent) properties.push(prop("hasComponentItems", libExports.booleanLiteral(true)));
-    return js`if (!${configProp}) {
-      ${configProp} = ${libExports.objectExpression(properties)};
-    }`;
-  });
-  return appendToBody(jsMethod`[${id("GEA_ENSURE_ARRAY_CONFIGS")}]() {}`, ...body);
-}
-function generateArrayRelationalObserver(path, arrayMap, bindings, methodName) {
-  const arrayPath = pathPartsToString(getArrayPathParts(arrayMap));
-  const containerName = `__${arrayPath.replace(/\./g, "_")}_container`;
-  const containerRef = thisProp(containerName);
-  const previousValue = id("__previousValue");
-  const previousRowName = `__prev_${pathPartsToString(path).replace(/\./g, "_")}_row`;
-  const previousRowProp = thisPrivate(previousRowName);
-  const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? "list"}`;
-  const elsRef = thisPrivate(rowElsProp);
-  const body = [
-    lazyInit$1(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-    js`var ${previousValue} = change[0] ? change[0].previousValue : null;`,
-    js`var __previousRow = ${previousRowProp};`,
-    libExports.ifStatement(
-      jsExpr`${previousValue} != null`,
-      libExports.blockStatement([
-        libExports.ifStatement(
-          jsExpr`!__previousRow || !__previousRow.isConnected`,
-          libExports.blockStatement(
-            buildElsLookup(elsRef, containerRef, previousValue, "__previousRow", arrayMap.containerBindingId)
-          )
-        ),
-        libExports.ifStatement(
-          id("__previousRow"),
-          libExports.blockStatement(buildRelationalClassStatements(id("__previousRow"), bindings, false, "old"))
-        )
-      ])
-    ),
-    js`var __nextRow = null;`,
-    libExports.ifStatement(
-      jsExpr`value != null`,
-      libExports.blockStatement([
-        ...buildElsLookup(elsRef, containerRef, id("value"), "__nextRow", arrayMap.containerBindingId),
-        libExports.ifStatement(
-          id("__nextRow"),
-          libExports.blockStatement(buildRelationalClassStatements(id("__nextRow"), bindings, true, "new"))
-        )
-      ])
-    ),
-    js`${previousRowProp} = __nextRow || null;`
-  ];
-  return {
-    method: appendToBody(jsMethod`${id(methodName)}(value, change) {}`, ...body),
-    privateFields: [previousRowName, rowElsProp]
-  };
-}
-function generateArrayConditionalPatchObserver(arrayMap, bindings, methodName) {
-  const arrayPath = pathPartsToString(getArrayPathParts(arrayMap));
-  const containerName = `__${arrayPath.replace(/\./g, "_")}_container`;
-  const containerRef = thisProp(containerName);
-  const proxiedArr = arrayMap.isImportedState ? buildMemberChain(jsExpr`${id(arrayMap.storeVar || "store")}[${id("GEA_STORE_ROOT")}]`, arrayPath) : buildMemberChain(libExports.thisExpression(), arrayPath);
-  const rawArrExpr = jsExpr`${libExports.cloneNode(proxiedArr, true)}.__getTarget || ${libExports.cloneNode(proxiedArr, true)}`;
-  const loopBody = [
-    ...jsAll`
-      const item = __arr[__i];
-      const row = ${containerRef}.children[__i];
-    `,
-    js`if (!row) continue;`
-  ];
-  bindings.forEach((binding, index) => {
-    const targetId = `__target_${index}`;
-    const targetExpr = binding.childPath.length ? buildElementNavExpr(libExports.identifier("row"), binding.childPath) : libExports.identifier("row");
-    loopBody.push(
-      ...jsAll`const ${id(targetId)} = ${targetExpr}; if (!${id(targetId)}) continue;`,
-      buildConditionalPatchStatement(binding, libExports.identifier(targetId), arrayMap.itemVariable)
-    );
-  });
-  return appendToBody(
-    jsMethod`${id(methodName)}(value, change) {}`,
-    libExports.blockStatement([
-      lazyInit$1(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-      js`if (!${containerRef}) return;`,
-      ...jsAll`const __arr = Array.isArray(${rawArrExpr}) ? ${rawArrExpr} : [];`,
-      libExports.forStatement(
-        js`let __i = 0;`,
-        jsExpr`__i < __arr.length`,
-        libExports.updateExpression("++", id("__i")),
-        libExports.blockStatement(loopBody)
-      )
-    ])
-  );
-}
-function generateArrayConditionalRerenderObserver(arrayMap, methodName) {
-  const arrayPath = pathPartsToString(getArrayPathParts(arrayMap));
-  const arrayPathParts = getArrayPathParts(arrayMap);
-  const containerName = `__${arrayPath.replace(/\./g, "_")}_container`;
-  const containerRef = thisProp(containerName);
-  const configRef = thisProp(getArrayConfigPropName(arrayMap));
-  const proxiedArr = arrayMap.isImportedState ? buildMemberChain(jsExpr`${id(arrayMap.storeVar || "store")}[${id("GEA_STORE_ROOT")}]`, arrayPath) : buildMemberChain(libExports.thisExpression(), arrayPath);
-  const rawArrExpr = jsExpr`${libExports.cloneNode(proxiedArr, true)}.__getTarget || ${libExports.cloneNode(proxiedArr, true)}`;
-  return appendToBody(
-    jsMethod`${id(methodName)}(value, change) {}`,
-    libExports.blockStatement([
-      lazyInit$1(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-      js`if (!${containerRef}) return;`,
-      ...jsAll`const __c0 = change[0];`,
-      (() => {
-        const skipTypes = [
-          jsExpr`__c0.type === 'append'`,
-          jsExpr`__c0.type === 'add'`,
-          jsExpr`__c0.type === 'delete'`,
-          jsExpr`__c0.type === 'reorder'`,
-          jsExpr`__c0.arrayOp === 'swap'`,
-          libExports.logicalExpression(
-            "&&",
-            jsExpr`__c0.type === 'update'`,
-            buildPathPartsEquals$1(jsExpr`__c0.pathParts`, arrayPathParts)
-          )
-        ];
-        const orChain = skipTypes.reduce((a, b) => libExports.logicalExpression("||", a, b));
-        return libExports.variableDeclaration("const", [
-          libExports.variableDeclarator(id("__skipArrayConditionalRerender"), libExports.logicalExpression("&&", id("__c0"), orChain))
-        ]);
-      })(),
-      libExports.ifStatement(
-        jsExpr`!__skipArrayConditionalRerender`,
-        libExports.blockStatement([
-          js`this[${id("GEA_ENSURE_ARRAY_CONFIGS")}]();`,
-          ...jsAll`const __arr = Array.isArray(${rawArrExpr}) ? ${rawArrExpr} : [];`,
-          js`this[${id("GEA_APPLY_LIST_CHANGES")}](${containerRef}, __arr, null, ${configRef});`
-        ])
-      )
-    ])
-  );
-}
-function generateArrayHandlers(arrayMap, methodName) {
-  const arrayPathPartsValue = getArrayPathParts(arrayMap);
-  const arrayPath = pathPartsToString(arrayPathPartsValue);
-  const paramName = arrayPathPartsValue[arrayPathPartsValue.length - 1] || "items";
-  const containerName = `__${arrayPath.replace(/\./g, "_")}_container`;
-  const containerRef = thisProp(containerName);
-  const configRef = thisProp(getArrayConfigPropName(arrayMap));
-  const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? "list"}`;
-  const elsRef = thisPrivate(rowElsProp);
-  const clearElsStmt = js`${libExports.cloneNode(elsRef)} = null;`;
-  const body = [
-    lazyInit$1(containerName, arrayMap.containerSelector, arrayMap.containerBindingId, arrayMap.containerUserIdExpr),
-    js`if (!${containerRef}) return;`,
-    libExports.ifStatement(
-      jsExpr`Array.isArray(${id(paramName)}) && ${id(paramName)}.length === 0`,
-      libExports.blockStatement([clearElsStmt, js`${containerRef}.textContent = '';`, libExports.returnStatement()])
-    ),
-    js`this[${id("GEA_ENSURE_ARRAY_CONFIGS")}]();`,
-    js`this[${id("GEA_APPLY_LIST_CHANGES")}](${containerRef}, ${id(paramName)}, change, ${configRef});`
-  ];
-  const method = appendToBody(jsMethod`${id(methodName)}(${id(paramName)}, change) {}`, ...body);
-  return { methods: [method], privateFields: [rowElsProp] };
-}
-function generatePatchItemMethod(arrayMap, templatePropNames, wholeParamName, templateSetupContext) {
-  if (!arrayMap.itemTemplate) return { method: null, privateFields: [] };
-  const methodName = `patch${getCapNameFromBinding(arrayMap)}Item`;
-  if (isComponentRootTemplate(arrayMap)) return { method: null, privateFields: [] };
-  let { entries, requiresRerender } = collectPatchEntries(arrayMap);
-  if (arrayMap.callbackBodyStatements?.length) requiresRerender = true;
-  if (!requiresRerender) requiresRerender = setupForcesRerender(templateSetupContext, entries);
-  if (requiresRerender || entries.length === 0) return { method: null, privateFields: [] };
-  entries = applyPropRefs(entries, templatePropNames, wholeParamName);
-  const { hoists, patchedEntries } = hoistStoreReads(entries, arrayMap.storeVar);
-  const elVar = id("row");
-  const body = [js`if (!${elVar}) return;`];
-  for (const hoist of hoists) body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`);
-  body.push(...buildRefCacheAndApply(patchedEntries, elVar, true));
-  const itemIdExpr = buildItemIdExpr(
-    arrayMap.itemIdProperty,
-    arrayMap.keyExpression,
-    arrayMap.itemVariable,
-    arrayMap.indexVariable
-  );
-  body.push(js`${elVar}[${id("GEA_DOM_KEY")}] = ${itemIdExpr};`);
-  const rowElsProp = `__rowEls_${arrayMap.containerBindingId ?? "list"}`;
-  const privateElsRef = thisPrivate(rowElsProp);
-  body.push(
-    js`(${libExports.cloneNode(privateElsRef, true)} || (${libExports.cloneNode(privateElsRef, true)} = {}))[${libExports.cloneNode(itemIdExpr, true)}] = ${elVar};`
-  );
-  body.push(js`${elVar}[${id("GEA_DOM_ITEM")}] = item;`);
-  const params = [id("row"), id("item"), id("__prevItem")];
-  if (arrayMap.indexVariable) params.push(id("__idx"));
-  return {
-    method: libExports.classMethod("method", id(methodName), params, libExports.blockStatement(body)),
-    privateFields: [rowElsProp]
-  };
-}
-function generateCreateItemMethod(arrayMap, templatePropNames, wholeParamName, templateSetupContext) {
-  if (!arrayMap.itemTemplate) return { method: null, needsRawStoreCache: false, privateFields: [] };
-  const capName = getCapNameFromBinding(arrayMap);
-  const methodName = `create${capName}Item`;
-  const renderMethodName = `render${capName}Item`;
-  const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts(arrayMap.arrayPath || ""));
-  const containerProp = `__${arrayPath.replace(/\./g, "_")}_container`;
-  const itemIdProperty = arrayMap.itemIdProperty;
-  const itemTemplateRootIsComponent = isComponentRootTemplate(arrayMap);
-  const propNames = templatePropNames ?? /* @__PURE__ */ new Set();
-  let { entries, requiresRerender } = collectPatchEntries(arrayMap);
-  if (arrayMap.callbackBodyStatements?.length) requiresRerender = true;
-  if (!requiresRerender) requiresRerender = setupForcesRerender(templateSetupContext, entries);
-  entries = applyPropRefs(entries, templatePropNames, wholeParamName);
-  if (requiresRerender) {
-    const createMethod = jsMethod`${id(methodName)}(item) {}`;
-    if (arrayMap.indexVariable) createMethod.params.push(id("__idx"));
-    const renderCall2 = buildRenderCall(renderMethodName, arrayMap.indexVariable);
-    const rerenderBody = [
-      js`var __tw = document.createElement('template');`,
-      js`__tw.innerHTML = ${renderCall2};`,
-      js`var el = __tw.content.firstElementChild;`
-    ];
-    if (itemTemplateRootIsComponent && libExports.isJSXElement(arrayMap.itemTemplate)) {
-      const propsProperties = collectComponentProps(arrayMap, propNames, wholeParamName);
-      if (propsProperties.length > 0) {
-        if (templateSetupContext && templateSetupContext.statements.length > 0) {
-          const setupVars = collectSetupVarNames(templateSetupContext.statements);
-          const propsFreeVars = collectFreeVars(propsProperties.map((p) => p.value));
-          let needsSetup = false;
-          for (const name of setupVars) {
-            if (propsFreeVars.has(name)) {
-              needsSetup = true;
-              break;
-            }
-          }
-          if (needsSetup) {
-            for (const stmt of templateSetupContext.statements) {
-              let clonedStmt = libExports.cloneNode(stmt, true);
-              if (propNames.size > 0 || wholeParamName) {
-                clonedStmt = replacePropRefsInExpression(
-                  clonedStmt,
-                  propNames,
-                  wholeParamName
-                );
-              }
-              rerenderBody.push(clonedStmt);
-            }
-          }
-        }
-        rerenderBody.push(js`el[${id("GEA_DOM_PROPS")}] = ${libExports.objectExpression(propsProperties)};`);
-      }
-    }
-    rerenderBody.push(js`return el;`);
-    return { method: appendToBody(createMethod, ...rerenderBody), needsRawStoreCache: false, privateFields: [] };
-  }
-  if (entries.length === 0) return { method: null, needsRawStoreCache: false, privateFields: [] };
-  const { hoists, patchedEntries } = hoistStoreReads(entries, arrayMap.storeVar);
-  const useRawStoreCache = hoists.length > 0 && !!arrayMap.storeVar;
-  if (useRawStoreCache) {
-    for (const hoist of hoists) {
-      if (libExports.isMemberExpression(hoist.expression) && libExports.isIdentifier(hoist.expression.object) && hoist.expression.object.name === arrayMap.storeVar) {
-        hoist.expression.object = id("__rs");
-      }
-    }
-  }
-  const propTree = collectItemTemplatePropTree(arrayMap.itemTemplate, arrayMap.itemVariable);
-  const containerRef = jsExpr`this.${id(containerProp)}`;
-  const dcFieldSuffix = arrayMap.containerBindingId ?? arrayPath.replace(/\./g, "_");
-  const dcPrivateName = `__dc_${dcFieldSuffix}`;
-  const privateDcField = thisPrivate(dcPrivateName);
-  const cVar = id("__c");
-  const elVar = id("el");
-  const body = [];
-  if (useRawStoreCache) {
-    const privateRsField = thisPrivate("__rs");
-    body.push(
-      js`var __rs = ${libExports.cloneNode(privateRsField, true)} || (${libExports.cloneNode(privateRsField, true)} = ${id(arrayMap.storeVar)}[${id("GEA_PROXY_RAW")}]);`
-    );
-  }
-  body.push(
-    js`var ${cVar} = ${libExports.cloneNode(privateDcField, true)} || (${libExports.cloneNode(privateDcField, true)} = ${containerRef});`
-  );
-  const isPrimitiveKey = (!itemIdProperty || itemIdProperty === ITEM_IS_KEY) && !arrayMap.keyExpression;
-  const dummyItem = isPrimitiveKey ? libExports.stringLiteral("__dummy__") : (() => {
-    if (itemIdProperty) ensureDummyTreePath(propTree, itemIdProperty);
-    return buildDummyFromTree(propTree, itemIdProperty ? normalizePathParts(itemIdProperty) : null);
-  })();
-  const hasRootClassNamePatch = patchedEntries.some((e) => e.type === "className" && e.childPath.length === 0);
-  const renderCall = buildRenderCall(renderMethodName, arrayMap.indexVariable, dummyItem, libExports.numericLiteral(0));
-  const tplInit = [
-    js`var __tw = document.createElement('template');`,
-    js`__tw.innerHTML = ${renderCall};`,
-    js`${cVar}.__geaTpl = __tw.content.firstElementChild;`,
-    libExports.expressionStatement(
-      libExports.optionalCallExpression(
-        libExports.optionalMemberExpression(jsExpr`${cVar}.__geaTpl`, id("removeAttribute"), false, true),
-        [libExports.stringLiteral("data-gid")],
-        false
-      )
-    )
-  ];
-  if (hasRootClassNamePatch) {
-    tplInit.push(js`if (${cVar}.__geaTpl && ${cVar}.__geaTpl.className) ${cVar}.__geaTpl.className = '';`);
-  }
-  body.push(
-    js`if (!${cVar}.__geaTpl) ${libExports.blockStatement([libExports.tryStatement(libExports.blockStatement(tplInit), loggingCatchClause())])}`
-  );
-  const tplCloneExpr = jsExpr`${cVar}.__geaTpl.cloneNode(${true})`;
-  const fallbackRenderCall = buildRenderCall(renderMethodName, arrayMap.indexVariable);
-  body.push(
-    libExports.ifStatement(
-      jsExpr`${cVar}.__geaTpl`,
-      libExports.blockStatement([js`var ${elVar} = ${tplCloneExpr};`]),
-      libExports.blockStatement([
-        ...jsAll`
-          var __fw = document.createElement('template');
-          __fw.innerHTML = ${fallbackRenderCall};
-          var ${elVar} = __fw.content.firstElementChild;
-        `
-      ])
-    )
-  );
-  for (const hoist of hoists) body.push(js`var ${id(hoist.varName)} = ${hoist.expression};`);
-  body.push(...buildRefCacheAndApply(patchedEntries, elVar, false));
-  const patchItemIdExpr = buildItemIdExpr(
-    itemIdProperty,
-    arrayMap.keyExpression,
-    arrayMap.itemVariable,
-    arrayMap.indexVariable
-  );
-  body.push(js`${elVar}[${id("GEA_DOM_KEY")}] = ${patchItemIdExpr};`);
-  body.push(js`${elVar}[${id("GEA_DOM_ITEM")}] = item;`);
-  if (itemTemplateRootIsComponent && libExports.isJSXElement(arrayMap.itemTemplate)) {
-    const propsProperties = collectComponentProps(arrayMap, propNames, wholeParamName);
-    if (propsProperties.length > 0)
-      body.push(js`${elVar}[${id("GEA_DOM_PROPS")}] = ${libExports.objectExpression(propsProperties)};`);
-  }
-  body.push(js`return ${elVar};`);
-  const createParams = [id("item")];
-  if (arrayMap.indexVariable) createParams.push(id("__idx"));
-  return {
-    method: libExports.classMethod("method", id(methodName), createParams, libExports.blockStatement(body)),
-    needsRawStoreCache: useRawStoreCache,
-    privateFields: [dcPrivateName]
-  };
-}
-function generateRenderItemMethod(arrayMap, imports, eventHandlers, eventIdCounter, classBody, templateSetupContext) {
-  const renderEventHandlers = [];
-  if (!arrayMap.itemTemplate)
-    return {
-      method: null,
-      handlers: renderEventHandlers,
-      handlerPropsInMap: [],
-      needsUnwrapHelper: false,
-      needsRawStoreCache: false
-    };
-  const arrayPath = pathPartsToString(arrayMap.arrayPathParts || normalizePathParts(arrayMap.arrayPath || ""));
-  const modified = libExports.cloneNode(arrayMap.itemTemplate, true);
-  const handlerPropsInMap = [];
-  const ctx = {
-    imports,
-    eventHandlers: renderEventHandlers,
-    eventIdCounter,
-    inMapCallback: true,
-    handlerPropsInMap,
-    mapItemIdProperty: arrayMap.itemIdProperty || "id",
-    mapItemVariable: arrayMap.itemVariable,
-    mapContainerBindingId: arrayMap.containerBindingId
-  };
-  if (libExports.isJSXFragment(modified)) {
-    const err = new Error(
-      `[gea] Fragments as .map() item roots are not supported. Wrap the fragment children in a single root element (e.g., <div>...</div>).`
-    );
-    err.__geaCompileError = true;
-    throw err;
-  }
-  const wrapped = transformJSXToTemplate(modified, ctx);
-  const methodName = `render${arrayPath.charAt(0).toUpperCase() + arrayPath.slice(1).replace(/\./g, "")}Item`;
-  const propNames = /* @__PURE__ */ new Set();
-  let wholeParam;
-  if (classBody) {
-    const templateMethod = classBody.body.find(
-      (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "template"
-    );
-    const rootBinding = templateMethod ? getTemplateParamBinding(templateMethod.params[0]) : void 0;
-    if (rootBinding && libExports.isObjectPattern(rootBinding)) {
-      rootBinding.properties.forEach((p) => {
-        if (libExports.isObjectProperty(p) && libExports.isIdentifier(p.key)) propNames.add(p.key.name);
-      });
-    }
-    if (rootBinding && libExports.isIdentifier(rootBinding)) {
-      wholeParam = rootBinding.name;
-    }
-  }
-  const itemKey = arrayMap.itemVariable;
-  wrapped.expressions = wrapped.expressions.map(
-    (expr) => optionalizeMemberChainsAfterComputedItemKey(
-      replacePropRefsInExpression(unwrapComparisonOperands(expr), propNames, wholeParam),
-      itemKey
-    )
-  );
-  let needsRawStoreCache = false;
-  if (arrayMap.storeVar) {
-    wrapped.expressions = wrapped.expressions.map((expr) => {
-      const program = libExports.program([libExports.expressionStatement(libExports.cloneNode(expr, true))]);
-      traverse$1(program, {
-        noScope: true,
-        MemberExpression(path) {
-          if (!libExports.isIdentifier(path.node.object, { name: arrayMap.storeVar })) return;
-          if (!libExports.isIdentifier(path.node.property)) return;
-          if (path.node.computed) return;
-          needsRawStoreCache = true;
-          path.node.object = id("__rs");
-        }
-      });
-      return program.body[0].expression;
-    });
-  }
-  const handlerRegStmts = buildHandlerRegistrationStatements(
-    handlerPropsInMap,
-    arrayMap.itemVariable,
-    propNames,
-    wholeParam
-  );
-  const callbackBodyStmts = arrayMap.callbackBodyStatements || [];
-  const setupScope = callbackBodyStmts.length > 0 ? libExports.blockStatement([
-    ...callbackBodyStmts.map((s) => libExports.cloneNode(s, true)),
-    libExports.expressionStatement(wrapped)
-  ]) : wrapped;
-  const setupStmts = collectTemplateSetupStatements(setupScope, templateSetupContext);
-  const rewrittenSetup = optionalizeComputedItemKeyInStatements(
-    setupStmts.map((stmt) => replacePropRefsInStatements([libExports.cloneNode(stmt, true)], propNames, wholeParam)).flat(),
-    itemKey
-  );
-  const rewrittenCallbackBody = optionalizeComputedItemKeyInStatements(
-    callbackBodyStmts.map((stmt) => replacePropRefsInStatements([libExports.cloneNode(stmt, true)], propNames, wholeParam)).flat(),
-    itemKey
-  );
-  const baseMethod = jsMethod`${id(methodName)}(${id(arrayMap.itemVariable)}) {}`;
-  if (arrayMap.indexVariable) {
-    baseMethod.params.push(id(arrayMap.indexVariable));
-  }
-  const returnStmt = libExports.returnStatement(wrapped);
-  function containsVCall(node) {
-    if (libExports.isCallExpression(node) && libExports.isIdentifier(node.callee) && node.callee.name === "__v") return true;
-    for (const key of libExports.VISITOR_KEYS[node.type] || []) {
-      const child = node[key];
-      if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === "object" && "type" in c && containsVCall(c)) return true;
-        }
-      } else if (child && typeof child === "object" && "type" in child) {
-        if (containsVCall(child)) return true;
-      }
-    }
-    return false;
-  }
-  const needsUnwrapHelper = [...rewrittenCallbackBody, returnStmt].some((stmt) => containsVCall(stmt));
-  const privateRsField = libExports.memberExpression(libExports.thisExpression(), libExports.privateName(id("__rs")));
-  const rawStoreCacheStmts = needsRawStoreCache && arrayMap.storeVar ? [
-    js`const __rs = ${libExports.cloneNode(privateRsField)} || (${libExports.cloneNode(privateRsField)} = ${id(arrayMap.storeVar)}[${id("GEA_PROXY_RAW")}]);`
-  ] : [];
-  const method = appendToBody(
-    baseMethod,
-    ...rawStoreCacheStmts,
-    ...rewrittenSetup,
-    ...rewrittenCallbackBody,
-    ...handlerRegStmts,
-    returnStmt
-  );
-  if (handlerPropsInMap.length > 0 && classBody) {
-    const handleItemHandler = jsMethod`[${id("GEA_HANDLE_ITEM_HANDLER")}](itemId, e) {
-    const fn = this.__itemHandlers_?.[itemId];
-    if (fn) fn(e);
-  }`;
-    if (!classBody.body.some(
-      (m) => libExports.isClassMethod(m) && m.computed && libExports.isIdentifier(m.key) && m.key.name === "GEA_HANDLE_ITEM_HANDLER"
-    )) {
-      classBody.body.unshift(handleItemHandler);
-    }
-  }
-  renderEventHandlers.forEach((h) => {
-    h.mapContext = {
-      arrayPathParts: arrayMap.arrayPathParts || normalizePathParts(arrayMap.arrayPath || ""),
-      itemIdProperty: arrayMap.itemIdProperty || "id",
-      ...arrayMap.keyExpression ? { keyExpression: libExports.cloneNode(arrayMap.keyExpression, true) } : {},
-      itemVariable: arrayMap.itemVariable,
-      indexVariable: arrayMap.indexVariable,
-      isImportedState: arrayMap.isImportedState || false,
-      storeVar: arrayMap.storeVar,
-      containerBindingId: arrayMap.containerBindingId ?? "list"
-    };
-  });
-  if (eventHandlers) renderEventHandlers.forEach((h) => eventHandlers.push(h));
-  return { method, handlers: renderEventHandlers, handlerPropsInMap, needsUnwrapHelper, needsRawStoreCache };
-}
-function buildPopulateItemHandlersMethod(arrayPropName, handlerProps, propNames, wholeParamName) {
-  if (handlerProps.length === 0) return null;
-  const loopBody = handlerProps.map((hp) => {
-    const fn = buildHandlerArrowFn(
-      libExports.cloneNode(hp.handlerExpression, true),
-      propNames,
-      wholeParamName
-    );
-    return js`this.__itemHandlers_[${buildItemKeyExpr(hp.itemIdProperty, "item")}] = ${fn};`;
-  });
-  return appendToBody(
-    jsMethod`${id(`__populateItemHandlersFor_${arrayPropName}`)}(arr) {}`,
-    js`if (!this.__itemHandlers_) { this.__itemHandlers_ = {}; }`,
-    js`if (!arr) { return; }`,
-    libExports.forOfStatement(
-      libExports.variableDeclaration("const", [libExports.variableDeclarator(id("item"), null)]),
-      id("arr"),
-      libExports.blockStatement(loopBody)
-    )
-  );
-}
-function buildValueUnwrapHelper() {
-  return js`
-    const __v = (v) =>
-      v != null && typeof v === 'object'
-        ? v.valueOf()
-        : v;
-  `;
-}
-function isUnresolvedMapWithComponentChild(um, imports) {
-  const template = um.itemTemplate;
-  if (!template) return null;
-  const root = libExports.isJSXElement(template) ? template : libExports.isJSXFragment(template) ? null : null;
-  if (!root || !libExports.isJSXElement(root)) return null;
-  const tagName = getJSXTagName(root.openingElement.name);
-  if (!tagName || !isComponentTag(tagName) || !imports.has(tagName)) return null;
-  return { componentTag: tagName };
-}
-function getSlotSyncArrayCapName(arrayPropName) {
-  return arrayPropName.charAt(0).toUpperCase() + arrayPropName.slice(1);
-}
-function getComponentArrayRefreshMethodName(arrayPropName) {
-  return `__refresh${getSlotSyncArrayCapName(arrayPropName)}Items`;
-}
-function generateComponentArrayResult(um, arrayPropName, imports, propNames, _classBody, storeArrayAccess, wholeParamName, templateSetupContext) {
-  const comp = isUnresolvedMapWithComponentChild(um, imports);
-  if (!comp) return null;
-  const itemTemplate = um.itemTemplate;
-  if (!itemTemplate || !libExports.isJSXElement(itemTemplate)) return null;
-  const mapJsxCtx = {
-    imports,
-    componentInstances: /* @__PURE__ */ new Map(),
-    componentInstanceCursors: /* @__PURE__ */ new Map(),
-    inMapCallback: true,
-    isRoot: false
-  };
-  const transformExpr = (expr) => {
-    const replaced = replacePropRefsInExpression(expr, propNames, wholeParamName);
-    return transformJSXExpression(replaced, mapJsxCtx);
-  };
-  const transformFrag = (frag) => transformJSXFragmentToTemplate(frag, mapJsxCtx);
-  const propsResult = buildComponentPropsExpression(
-    itemTemplate,
-    imports,
-    /* @__PURE__ */ new Map(),
-    void 0,
-    void 0,
-    templateSetupContext,
-    transformExpr,
-    transformFrag
-  );
-  const propsExpr = propsResult.expression;
-  const itemVar = um.itemVariable;
-  const indexVar = um.indexVariable;
-  const needsRename = itemVar !== "opt";
-  const needsIndexRename = indexVar && indexVar !== "__k";
-  let finalPropsExpr = propsExpr;
-  if (needsRename || needsIndexRename) {
-    const cloned = libExports.cloneNode(propsExpr, true);
-    traverse$1(cloned, {
-      noScope: true,
-      Identifier(path) {
-        if (needsRename && path.node.name === itemVar) {
-          const parentNode = path.parentPath?.node;
-          if (parentNode && libExports.isObjectProperty(parentNode) && parentNode.key === path.node && !parentNode.computed) {
-            return;
-          }
-          path.node.name = "opt";
-          return;
-        }
-        if (needsIndexRename && path.node.name === indexVar) {
-          const parentNode = path.parentPath?.node;
-          if (parentNode && libExports.isObjectProperty(parentNode) && parentNode.key === path.node && !parentNode.computed) {
-            return;
-          }
-          path.node.name = "__k";
-        }
-      },
-      MemberExpression(path) {
-        if (needsRename && libExports.isIdentifier(path.node.object) && path.node.object.name === itemVar) {
-          path.node.object = id("opt");
-        }
-      }
-    });
-    finalPropsExpr = cloned;
-  }
-  let arrAccessExpr;
-  let arrSetupStatements = [];
-  if (storeArrayAccess) {
-    arrAccessExpr = jsExpr`${id(storeArrayAccess.storeVar)}.${id(storeArrayAccess.propName)}`;
-  } else if (um.computationExpr) {
-    arrSetupStatements = um.computationSetupStatements ? replacePropRefsInStatements(
-      um.computationSetupStatements.map((stmt) => libExports.cloneNode(stmt, true)),
-      propNames,
-      wholeParamName
-    ) : [];
-    arrAccessExpr = replacePropRefsInExpression(libExports.cloneNode(um.computationExpr, true), propNames, wholeParamName);
-  } else {
-    arrAccessExpr = jsExpr`this.props.${id(arrayPropName)}`;
-  }
-  arrSetupStatements = pruneUnusedSetupDestructuring(arrSetupStatements, [arrAccessExpr, finalPropsExpr]);
-  const itemPropsMethodName = `__itemProps_${arrayPropName}`;
-  const itemPropsCallArgs = [id("opt")];
-  if (indexVar) itemPropsCallArgs.push(id("__k"));
-  const itemPropsCall = libExports.callExpression(jsExpr`this.${id(itemPropsMethodName)}`, itemPropsCallArgs);
-  const itemPropsSetup = collectTemplateSetupStatements(finalPropsExpr, templateSetupContext);
-  const storeVarNames = /* @__PURE__ */ new Set();
-  if (storeArrayAccess) storeVarNames.add(storeArrayAccess.storeVar);
-  for (const stmt of [...itemPropsSetup, ...arrSetupStatements]) {
-    if (!libExports.isVariableDeclaration(stmt)) continue;
-    for (const decl of stmt.declarations) {
-      if (libExports.isIdentifier(decl.init) && imports.has(decl.init.name)) {
-        storeVarNames.add(decl.init.name);
-      }
-    }
-  }
-  const rewriteStoreDestructuring = (stmts) => {
-    if (storeVarNames.size === 0) return;
-    for (const stmt of stmts) {
-      if (!libExports.isVariableDeclaration(stmt)) continue;
-      for (const decl of stmt.declarations) {
-        if (libExports.isIdentifier(decl.init) && storeVarNames.has(decl.init.name)) {
-          decl.init = jsExpr`${id(decl.init.name)}[${id("GEA_PROXY_RAW")}]`;
-        }
-      }
-    }
-  };
-  rewriteStoreDestructuring(itemPropsSetup);
-  rewriteStoreDestructuring(arrSetupStatements);
-  const itemPropsMethod = jsMethod`${id(itemPropsMethodName)}(opt) {}`;
-  if (indexVar) itemPropsMethod.params.push(id("__k"));
-  itemPropsMethod.body.body.push(...itemPropsSetup, libExports.returnStatement(finalPropsExpr));
-  const itemIdProp = um.itemIdProperty;
-  const keyExpr = itemIdProp && itemIdProp !== ITEM_IS_KEY ? jsExpr`String(${jsExpr`opt.${id(itemIdProp)}`})` : itemIdProp === ITEM_IS_KEY ? jsExpr`String(opt)` : libExports.binaryExpression("+", libExports.stringLiteral("__idx_"), id("__k"));
-  const mapParams = [id("opt")];
-  if (indexVar || !itemIdProp) mapParams.push(id("__k"));
-  const childCall = jsExpr`this[${id("GEA_CHILD")}](${id(comp.componentTag)}, ${libExports.cloneNode(itemPropsCall, true)}, ${libExports.cloneNode(keyExpr, true)})`;
-  const mapCallback = libExports.arrowFunctionExpression(mapParams, childCall);
-  const nullishCoalesce = libExports.logicalExpression("??", libExports.cloneNode(arrAccessExpr, true), libExports.arrayExpression([]));
-  const parenthesized = libExports.parenthesizedExpression ? libExports.parenthesizedExpression(nullishCoalesce) : nullishCoalesce;
-  const mapCallExpr = jsExpr`${parenthesized}.map(${mapCallback})`;
-  const constructorInit = libExports.expressionStatement(
-    libExports.assignmentExpression("=", buildThisListItems(arrayPropName), mapCallExpr)
-  );
-  return {
-    itemPropsMethod,
-    constructorInit,
-    componentTag: comp.componentTag,
-    containerBindingId: um.containerBindingId,
-    containerUserIdExpr: um.containerUserIdExpr,
-    itemIdProperty: itemIdProp,
-    arrAccessExpr,
-    arrSetupStatements
-  };
-}
-
-function buildEventIdExpr(suffix) {
-  if (!suffix) return jsExpr`this.id`;
-  return jsExpr`this.id + ${"-" + suffix}`;
-}
-function jsxToStaticHtml(node, refCounter, elementPath = [], _isRoot = true) {
-  const tagName = getJSXTagName(node.openingElement.name);
-  if (tagName && isComponentTag(tagName)) return null;
-  const effectiveTag = tagName;
-  let html = `<${effectiveTag}`;
-  for (const attr of node.openingElement.attributes) {
-    if (libExports.isJSXSpreadAttribute(attr)) return null;
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    const attrName = attr.name.name;
-    if (attrName === "key") continue;
-    if (attrName === "id") {
-      const idVal = attr.value;
-      if (libExports.isStringLiteral(idVal)) {
-        html += ` id="${escapeHtml(idVal.value)}"`;
-      }
-      continue;
-    }
-    if (attrName === "ref") {
-      const attrValue2 = attr.value;
-      if (libExports.isJSXExpressionContainer(attrValue2) && !libExports.isJSXEmptyExpression(attrValue2.expression)) {
-        const refId = `ref${refCounter.value++}`;
-        html += ` data-gea-ref="${refId}"`;
-      }
-      continue;
-    }
-    const attrValue = attr.value;
-    const propAttrName = toHtmlAttrName(attrName, false);
-    const eventType = toGeaEventType(attrName);
-    if (libExports.isJSXExpressionContainer(attrValue) && !libExports.isJSXEmptyExpression(attrValue.expression)) {
-      if (EVENT_TYPES.has(eventType)) continue;
-      if (attrName === "checked") continue;
-      if (attrName === "class" || attrName === "className") continue;
-      if (propAttrName === "style") continue;
-      return null;
-    }
-    if (libExports.isStringLiteral(attrValue)) {
-      html += ` ${propAttrName}="${escapeHtml(attrValue.value)}"`;
-    } else if (attrValue === null) {
-      html += ` ${propAttrName}`;
-    }
-  }
-  if (node.openingElement.selfClosing) {
-    return VOID_ELEMENTS.has(effectiveTag) ? html + " />" : html + `></${effectiveTag}>`;
-  }
-  html += ">";
-  const childHtml = processStaticChildren(node.children, refCounter, elementPath);
-  if (childHtml === null) return null;
-  return html + childHtml + `</${effectiveTag}>`;
-}
-function processStaticChildren(children, refCounter, parentPath, dcCursor, directChildren) {
-  const cursor = dcCursor ?? { index: 0 };
-  const dc = directChildren ?? getDirectChildElements(children);
-  let out = "";
-  for (const child of children) {
-    if (libExports.isJSXText(child)) {
-      const normalized = normalizeJSXText(child.value);
-      if (normalized) out += escapeHtml(normalized);
-    } else if (libExports.isJSXElement(child)) {
-      const seg = dc[cursor.index]?.selectorSegment;
-      cursor.index++;
-      const nextPath = seg ? [...parentPath, seg] : parentPath;
-      const inner = jsxToStaticHtml(child, refCounter, nextPath, false);
-      if (inner === null) return null;
-      out += inner;
-    } else if (libExports.isJSXFragment(child)) {
-      const inner = processStaticChildren(child.children, refCounter, parentPath, cursor, dc);
-      if (inner === null) return null;
-      out += inner;
-    } else if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-      return null;
-    }
-  }
-  return out;
-}
-function collectClonePatchEntries(node, path, entries, rootIsComponent = false) {
-  const isRootLevel = path.length === 0 && rootIsComponent;
-  for (const attr of node.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    const name = attr.name.name;
-    if (name === "key" || name === "id" || name === "ref" || EVENT_NAMES.has(name) || EVENT_NAMES.has(toGeaEventType(name)))
-      continue;
-    if (!libExports.isJSXExpressionContainer(attr.value) || libExports.isJSXEmptyExpression(attr.value.expression)) continue;
-    if (name === "class" || name === "className") {
-      entries.push({
-        childPath: [...path],
-        type: "className",
-        expression: libExports.cloneNode(attr.value.expression, true)
-      });
-    } else if (name === "checked") {
-      entries.push({
-        childPath: [...path],
-        type: "checked",
-        expression: libExports.cloneNode(attr.value.expression, true)
-      });
-    } else {
-      entries.push({
-        childPath: [...path],
-        type: "attribute",
-        expression: libExports.cloneNode(attr.value.expression, true),
-        attributeName: isRootLevel ? `data-prop-${camelToKebab(name)}` : name
-      });
-    }
-  }
-  let hasElementChild = false;
-  const textParts = [];
-  for (const child of node.children) {
-    if (libExports.isJSXElement(child) || libExports.isJSXFragment(child)) {
-      hasElementChild = true;
-    } else if (libExports.isJSXExpressionContainer(child) && !libExports.isJSXEmptyExpression(child.expression)) {
-      textParts.push({ expr: child.expression });
-    } else if (libExports.isJSXText(child)) {
-      const raw = child.value;
-      if (textParts.length > 0 && "raw" in textParts[textParts.length - 1]) {
-        textParts[textParts.length - 1].raw += raw;
-      } else {
-        textParts.push({ raw });
-      }
-    }
-  }
-  if (!hasElementChild && textParts.length > 0) {
-    const hasExpr = textParts.some((p) => "expr" in p);
-    if (hasExpr) {
-      const quasis = [];
-      const expressions = [];
-      let currentRaw = "";
-      for (const part of textParts) {
-        if ("raw" in part) {
-          currentRaw += part.raw;
-        } else {
-          quasis.push(libExports.templateElement({ raw: currentRaw, cooked: currentRaw }, false));
-          currentRaw = "";
-          expressions.push(libExports.cloneNode(part.expr, true));
-        }
-      }
-      quasis.push(libExports.templateElement({ raw: currentRaw, cooked: currentRaw }, true));
-      const templateExpr = expressions.length > 0 ? libExports.templateLiteral(quasis, expressions) : libExports.stringLiteral(quasis[0]?.value?.raw ?? "");
-      entries.push({
-        childPath: [...path],
-        type: "text",
-        expression: templateExpr
-      });
-    }
-    return;
-  }
-  const flattened = getDirectChildElements(node.children);
-  flattened.forEach((dc, idx) => {
-    const tag = getJSXTagName(dc.node.openingElement.name);
-    const isCompChild = Boolean(tag && isComponentTag(tag));
-    collectClonePatchEntries(dc.node, [...path, idx], entries, isCompChild);
-  });
-}
-function rewritePropsForClone(expr, propContext) {
-  const paramName = propContext.propsParamName;
-  if (!paramName) return expr;
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.object) && expr.object.name === paramName) {
-    return libExports.memberExpression(jsExpr`this.props`, expr.property, expr.computed);
-  }
-  if (libExports.isIdentifier(expr) && expr.name === paramName) {
-    return jsExpr`this.props`;
-  }
-  return expr;
-}
-function buildSelectorExprForId(idExpr, fallbackSuffix) {
-  if (!idExpr) {
-    return void 0;
-  }
-  if (libExports.isStringLiteral(idExpr)) {
-    return libExports.stringLiteral(`#${idExpr.value}`);
-  }
-  return tpl`#${libExports.cloneNode(idExpr, true)}`;
-}
-function collectIdentityPatchesForElement(node, elementPath, childPath, ctx, patches) {
-  const tagName = getJSXTagName(node.openingElement.name);
-  if (tagName && isComponentTag(tagName)) return;
-  const propContext = getPropContext(ctx.templateParams);
-  const rootClassSelector = elementPath.length === 0 ? getRootClassSelector(node) : null;
-  const explicitIdAttr = node.openingElement.attributes.find(
-    (attr) => libExports.isJSXAttribute(attr) && libExports.isJSXIdentifier(attr.name) && attr.name.name === "id"
-  );
-  const resolveUserIdExpr = () => {
-    const rawPathKey = elementPath.join(" > ");
-    const pathKey = ctx.elementPathPrefix ? ctx.elementPathPrefix + " > " + rawPathKey : rawPathKey;
-    return ctx.elementPathToUserIdExpr?.get(pathKey) ?? (ctx.elementPathPrefix ? void 0 : ctx.elementPathToUserIdExpr?.get(rawPathKey));
-  };
-  const resolveBindingId = () => {
-    const rawPathKey = elementPath.join(" > ");
-    const pathKey = ctx.elementPathPrefix ? ctx.elementPathPrefix + " > " + rawPathKey : rawPathKey;
-    return ctx.elementPathToBindingId.get(pathKey) ?? (ctx.elementPathPrefix ? void 0 : ctx.elementPathToBindingId.get(rawPathKey));
-  };
-  let hasBindingId = false;
-  if (ctx.isRoot) {
-    const userIdExpr = resolveUserIdExpr();
-    if (userIdExpr) {
-      if (!libExports.isStringLiteral(userIdExpr)) {
-        patches.push({
-          kind: "id",
-          childPath: [...childPath],
-          expr: rewritePropsForClone(libExports.cloneNode(userIdExpr, true), propContext)
-        });
-      }
-      patches.push({ kind: "attr", childPath: [...childPath], expr: jsExpr`this.id`, attrName: "data-gcc" });
-    } else {
-      patches.push({ kind: "id", childPath: [...childPath], expr: buildEventIdExpr() });
-    }
-    hasBindingId = true;
-  } else {
-    const bindingId = resolveBindingId();
-    if (bindingId !== void 0 && bindingId !== "") {
-      const userIdExpr = resolveUserIdExpr();
-      if (userIdExpr) {
-        if (!libExports.isStringLiteral(userIdExpr)) {
-          patches.push({
-            kind: "id",
-            childPath: [...childPath],
-            expr: rewritePropsForClone(libExports.cloneNode(userIdExpr, true), propContext)
-          });
-        }
-      } else {
-        patches.push({ kind: "id", childPath: [...childPath], expr: buildEventIdExpr(bindingId) });
-      }
-      hasBindingId = true;
-    }
-  }
-  let generatedEventSuffix;
-  let generatedEventToken;
-  for (const attr of node.openingElement.attributes) {
-    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
-    const attrName = attr.name.name;
-    if (attrName === "key" || attrName === "id" && hasBindingId || attrName === "ref") continue;
-    const attrValue = attr.value;
-    const eventType = toGeaEventType(attrName);
-    if (!libExports.isJSXExpressionContainer(attrValue) || libExports.isJSXEmptyExpression(attrValue.expression)) continue;
-    if (!EVENT_TYPES.has(eventType)) continue;
-    if (ctx.isRoot) {
-      const hoistedRootEvent = getHoistableRootEvent(
-        attrName,
-        attrValue.expression,
-        elementPath,
-        propContext,
-        rootClassSelector
-      );
-      if (hoistedRootEvent) continue;
-    }
-    let selectorExpression;
-    let selector;
-    if (ctx.isRoot) {
-      const userIdExpr = resolveUserIdExpr();
-      selectorExpression = userIdExpr ? buildSelectorExprForId(userIdExpr) : tpl`#${jsExpr`this.id`}`;
-    } else {
-      const bindingId = resolveBindingId();
-      if (bindingId !== void 0 && bindingId !== "") {
-        const userIdExpr = resolveUserIdExpr();
-        selectorExpression = userIdExpr ? buildSelectorExprForId(userIdExpr) : tpl`#${jsExpr`this.id`}${"-" + bindingId}`;
-      } else if (!explicitIdAttr) {
-        if (!generatedEventSuffix) {
-          generatedEventSuffix = `ev${ctx.eventIdCounter.value ?? 0}`;
-          ctx.eventIdCounter.value += 1;
-          patches.push({
-            kind: "id",
-            childPath: [...childPath],
-            expr: buildEventIdExpr(generatedEventSuffix)
-          });
-        }
-        selectorExpression = tpl`#${jsExpr`this.id`}${"-" + generatedEventSuffix}`;
-      } else if (explicitIdAttr && libExports.isJSXAttribute(explicitIdAttr)) {
-        const idVal = explicitIdAttr.value;
-        let userExpr;
-        if (libExports.isStringLiteral(idVal)) {
-          userExpr = libExports.stringLiteral(idVal.value);
-        } else if (libExports.isJSXExpressionContainer(idVal) && !libExports.isJSXEmptyExpression(idVal.expression)) {
-          userExpr = idVal.expression;
-        }
-        if (!userExpr) {
-          const err = new Error(
-            `[gea] Event delegation requires id="..." or id={expr} when an id attribute is present on this element.`
-          );
-          err.__geaCompileError = true;
-          throw err;
-        }
-        if (!libExports.isStringLiteral(userExpr)) {
-          patches.push({
-            kind: "id",
-            childPath: [...childPath],
-            expr: rewritePropsForClone(libExports.cloneNode(userExpr, true), propContext)
-          });
-        }
-        if (libExports.isStringLiteral(userExpr)) {
-          selectorExpression = libExports.stringLiteral(`#${userExpr.value}`);
-        } else {
-          selectorExpression = tpl`#${replacePropRefsInExpression(
-            libExports.cloneNode(userExpr, true),
-            propContext.destructuredPropNames,
-            propContext.propsParamName
-          )}`;
-        }
-      } else {
-        if (!generatedEventToken) {
-          generatedEventToken = `ev${ctx.eventIdCounter.value ?? 0}`;
-          ctx.eventIdCounter.value += 1;
-          patches.push({
-            kind: "dataGeaEvent",
-            childPath: [...childPath],
-            token: generatedEventToken
-          });
-        }
-        selector = `[data-ge="${generatedEventToken}"]`;
-      }
-    }
-    if (selectorExpression || selector) {
-      continue;
-    }
-  }
-  const flattened = getDirectChildElements(node.children);
-  flattened.forEach((dc, idx) => {
-    const nextPath = [...elementPath, dc.selectorSegment];
-    const tag = getJSXTagName(dc.node.openingElement.name);
-    if (tag && isComponentTag(tag)) return;
-    collectIdentityPatchesForElement(dc.node, nextPath, [...childPath, idx], { ...ctx, isRoot: false }, patches);
-  });
-}
-function generateCloneMembers(root, analysis, templateParams, sourceFile, imports, cloneCtx) {
-  const tagName = getJSXTagName(root.openingElement.name);
-  if (tagName && isComponentTag(tagName)) return null;
-  const cloneFile = libExports.file(libExports.program([libExports.expressionStatement(libExports.cloneNode(root, true))]));
-  if (templateRequiresRerender(cloneFile)) return null;
-  const refCounter = { value: 0 };
-  const staticHtml = jsxToStaticHtml(root, refCounter);
-  if (staticHtml === null) return null;
-  const contentPatches = [];
-  collectClonePatchEntries(root, [], contentPatches, false);
-  if (contentPatches.some((p) => p.type === "attribute" && p.attributeName === "style")) {
-    return null;
-  }
-  const identityPatches = [];
-  const eventIdCounter = { value: 0 };
-  collectIdentityPatchesForElement(
-    root,
-    [],
-    [],
-    {
-      elementPathToBindingId: analysis.elementPathToBindingId,
-      elementPathToUserIdExpr: analysis.elementPathToUserIdExpr,
-      templateParams,
-      sourceFile,
-      imports,
-      eventIdCounter,
-      isRoot: true
-    },
-    identityPatches
-  );
-  const staticField = jsClassProp`static __tpl = (() => {
-    if (typeof document === 'undefined') return undefined;
-    var t = document.createElement('template');
-    t.innerHTML = ${staticHtml};
-    return t;
-  })()`;
-  const cloneMethodBody = buildCloneTemplateBody(identityPatches, contentPatches, cloneCtx);
-  const cloneMethod = jsMethod`[${id("GEA_CLONE_TEMPLATE")}]() {}`;
-  cloneMethod.body.body.push(...cloneMethodBody);
-  return [staticField, cloneMethod];
-}
-function buildCloneTemplateBody(identityPatches, contentPatches, cloneCtx) {
-  const rootVar = id("__root");
-  const stmts = [
-    js`var __tpl = this.constructor.__tpl;`,
-    js`if (!__tpl) { throw new Error('[gea] __tpl missing for clone template'); }`,
-    js`var __root = __tpl.content.firstElementChild.cloneNode(true);`
-  ];
-  const refMap = /* @__PURE__ */ new Map();
-  const allChildPaths = /* @__PURE__ */ new Set();
-  for (const p of identityPatches) allChildPaths.add(p.childPath.join("_"));
-  for (const p of contentPatches) allChildPaths.add(p.childPath.join("_"));
-  for (const key of allChildPaths) {
-    if (!key) continue;
-    const path = key.split("_").map((n) => parseInt(n, 10));
-    const refName = childPathRefName(path);
-    const navExpr = buildElementNavExpr(rootVar, path);
-    refMap.set(key, jsExpr`${rootVar}.${id(refName)}`);
-    stmts.push(js`${rootVar}.${id(refName)} = ${navExpr};`);
-  }
-  const navFor = (childPath) => childPath.length === 0 ? rootVar : refMap.get(childPath.join("_")) || buildElementNavExpr(rootVar, childPath);
-  for (const patch of identityPatches) {
-    const nav = navFor(patch.childPath);
-    if (patch.kind === "id") {
-      stmts.push(js`${nav}.id = ${patch.expr};`);
-    } else if (patch.kind === "attr") {
-      stmts.push(js`${nav}.setAttribute(${patch.attrName}, ${patch.expr});`);
-    } else {
-      stmts.push(js`${nav}.setAttribute('data-ge', ${patch.token});`);
-    }
-  }
-  for (const entry of contentPatches) {
-    const navExpr = navFor(entry.childPath);
-    const expr = transformJSXExpression(libExports.cloneNode(entry.expression, true), cloneCtx, true);
-    const emitType = entry.type === "className" ? "class" : entry.type;
-    const emitValue = entry.type === "className" ? buildTrimmedClassValueExpression(expr) : expr;
-    const mountStmts = emitMount(emitType, navExpr, emitValue, {
-      attributeName: entry.attributeName,
-      canSkipClassCoercion: entry.type === "className"
-    });
-    stmts.push(...mountStmts);
-  }
-  stmts.push(js`return ${rootVar};`);
-  return stmts;
-}
-
-const SKIP_BINDING = {
-  VariableDeclarator: /* @__PURE__ */ new Set(["id"]),
-  MemberExpression: /* @__PURE__ */ new Set(["property"]),
-  OptionalMemberExpression: /* @__PURE__ */ new Set(["property"]),
-  ArrowFunctionExpression: /* @__PURE__ */ new Set(["params"]),
-  FunctionExpression: /* @__PURE__ */ new Set(["params", "id"]),
-  FunctionDeclaration: /* @__PURE__ */ new Set(["params", "id"])
-};
-function deepMapNode(node, visit) {
-  const hit = visit(node);
-  if (hit !== void 0) return hit;
-  const keys = libExports.VISITOR_KEYS[node.type];
-  if (!keys?.length) return node;
-  const skip = SKIP_BINDING[node.type];
-  let changed = false;
-  const updates = {};
-  for (const key of keys) {
-    if (skip?.has(key)) continue;
-    if (libExports.isObjectProperty(node) && key === "key" && !node.computed) continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      let arrChanged = false;
-      const mapped = child.map((c) => {
-        if (c && typeof c === "object" && "type" in c) {
-          const r = deepMapNode(c, visit);
-          if (r !== c) arrChanged = true;
-          return r;
-        }
-        return c;
-      });
-      if (arrChanged) {
-        changed = true;
-        updates[key] = mapped;
-      }
-    } else if (child && typeof child === "object" && "type" in child) {
-      const r = deepMapNode(child, visit);
-      if (r !== child) {
-        changed = true;
-        updates[key] = r;
-      }
-    }
-  }
-  if (!changed) return node;
-  return { ...node, ...updates };
-}
-function getTemplateParamContext(classBody) {
-  const templateMethod = classBody.body.find(
-    (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "template"
-  );
-  if (!templateMethod || templateMethod.params.length === 0) {
-    return { propNames: /* @__PURE__ */ new Set() };
-  }
-  const binding = getTemplateParamBinding(templateMethod.params[0]);
-  if (libExports.isIdentifier(binding)) {
-    return { propNames: /* @__PURE__ */ new Set(), propsObjectName: binding.name };
-  }
-  if (libExports.isObjectPattern(binding)) {
-    return {
-      propNames: new Set(
-        binding.properties.filter((p) => libExports.isObjectProperty(p) && libExports.isIdentifier(p.key)).map((p) => p.key.name)
-      )
-    };
-  }
-  return { propNames: /* @__PURE__ */ new Set() };
-}
-function ensureMapItemHelper(classBody, ctx, helperName) {
-  if (classBody.body.some((m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === helperName)) return;
-  const itemsExpr = buildArrayItemsExpr(ctx);
-  const findPredicate = ctx.keyExpression ? libExports.arrowFunctionExpression(
-    [libExports.identifier("__candidate")],
-    libExports.binaryExpression(
-      "===",
-      libExports.callExpression(libExports.identifier("String"), [
-        rewriteItemVarInExpression(
-          libExports.cloneNode(ctx.keyExpression, true),
-          ctx.itemVariable,
-          "__candidate"
-        )
-      ]),
-      libExports.identifier("__itemId")
-    )
-  ) : ctx.itemIdProperty && ctx.itemIdProperty !== ITEM_IS_KEY ? (() => {
-    const optChain = buildOptionalMemberChain(libExports.identifier("__candidate"), ctx.itemIdProperty);
-    return jsExpr`(__candidate) => String(${optChain} ?? __candidate) === __itemId`;
-  })() : ctx.itemIdProperty === ITEM_IS_KEY ? jsExpr`(__candidate) => String(__candidate) === __itemId` : jsExpr`(_, __i) => String(__i) === __itemId`;
-  const method = jsMethod`${id(helperName)}(e) {}`;
-  if (!ctx.keyExpression && ctx.itemIdProperty && ctx.itemIdProperty !== ITEM_IS_KEY) {
-    method.body.body.push(
-      ...buildGeaItemDomWalk(),
-      ...jsBlockBody`
-        if (!__el) return null;
-        if (__el[GEA_DOM_ITEM]) return __el[GEA_DOM_ITEM];
-        const __itemId = __el[GEA_DOM_KEY] ?? (__el.getAttribute && __el.getAttribute('data-gid'));
-        if (__itemId == null) return null;
-        const __items = ${itemsExpr};
-        const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
-        const __found = __arr.find(${findPredicate});
-        return __found !== undefined ? __found : __itemId;
-      `
-    );
-  } else {
-    method.body.body.push(
-      ...buildGeaItemDomWalk(),
-      ...jsBlockBody`
-        if (!__el) return null;
-        if (__el[GEA_DOM_ITEM]) return __el[GEA_DOM_ITEM];
-        const __itemId = __el[GEA_DOM_KEY] ?? (__el.getAttribute && __el.getAttribute('data-gid'));
-        if (__itemId == null) return null;
-        const __items = ${itemsExpr};
-        const __arr = Array.isArray(__items) ? __items : Array.isArray(__items?.__getTarget) ? __items.__getTarget : [];
-        return __arr.find(${findPredicate}) || __itemId;
-      `
-    );
-  }
-  classBody.body.unshift(method);
-}
-function getLocalFunctionInSetup(name, setupStatements) {
-  for (const stmt of setupStatements) {
-    if (!libExports.isVariableDeclaration(stmt) || stmt.declarations.length !== 1) continue;
-    const decl = stmt.declarations[0];
-    if (!decl || !libExports.isIdentifier(decl.id) || decl.id.name !== name || !decl.init) continue;
-    if (libExports.isArrowFunctionExpression(decl.init) || libExports.isFunctionExpression(decl.init)) return decl.init;
-  }
-  return null;
-}
-function appendCompiledEventMethods(classBody, handlers, storeImports, knownComponentImports, templateParams, _sourceFile, _imports, _stateRefs) {
-  if (handlers.length === 0) return false;
-  const paramContext = getTemplateParamContext(classBody);
-  const mapHandlers = handlers.filter(
-    (h) => Boolean(h.mapContext)
-  );
-  const seenContexts = /* @__PURE__ */ new Set();
-  for (const h of mapHandlers) {
-    const store = h.mapContext.storeVar || "store";
-    const path = h.mapContext.arrayPathParts.join("_");
-    const keyPart = h.mapContext.keyExpression ? `expr:${generate$1(h.mapContext.keyExpression).code}` : h.mapContext.itemIdProperty;
-    const key = `${store}_${path}_${keyPart}`;
-    if (seenContexts.has(key)) continue;
-    seenContexts.add(key);
-    ensureMapItemHelper(classBody, h.mapContext, `__getMapItemFromEvent_${store}_${path}`);
-  }
-  appendEventsGetterHandlers(classBody, handlers, paramContext, templateParams);
-  return true;
-}
-function isDirectThisMethodRef(handler) {
-  return !!handler.handlerExpression && libExports.isMemberExpression(handler.handlerExpression) && libExports.isThisExpression(handler.handlerExpression.object) && libExports.isIdentifier(handler.handlerExpression.property) && !handler.delegatedPropName && !handler.mapContext;
-}
-function appendEventsGetterHandlers(classBody, handlers, paramContext, setupStatements) {
-  const getter = ensureEventsGetter(classBody);
-  const returnStmt = getter.body.body.find((s) => libExports.isReturnStatement(s));
-  const eventsObject = returnStmt?.argument && libExports.isObjectExpression(returnStmt.argument) ? returnStmt.argument : null;
-  if (!eventsObject) return;
-  handlers.forEach((handler, index) => {
-    let handlerRef;
-    if (isDirectThisMethodRef(handler)) {
-      const prop = handler.handlerExpression.property;
-      handlerRef = libExports.memberExpression(libExports.thisExpression(), libExports.cloneNode(prop));
-    } else {
-      let methodName = handler.methodName || `__event_${handler.eventType}_${index}`;
-      let uniqueIndex = 1;
-      while (findClassMethod(classBody, methodName) && handler.methodName !== methodName) {
-        methodName = `__event_${handler.eventType}_${index}_${uniqueIndex++}`;
-      }
-      handler.methodName = methodName;
-      if (!findClassMethod(classBody, methodName)) {
-        classBody.body.push(buildSelectorHandlerMethod(handler, methodName, paramContext, setupStatements));
-      }
-      handlerRef = libExports.memberExpression(libExports.thisExpression(), libExports.identifier(methodName));
-    }
-    const selectorExpr = handler.selectorExpression ? replacePropRefsInExpression(
-      libExports.cloneNode(handler.selectorExpression, true),
-      paramContext.propNames,
-      paramContext.propsObjectName
-    ) : handler.selector ? libExports.stringLiteral(handler.selector) : libExports.stringLiteral(`.__missing_selector_${index}`);
-    let eventTypeProp = eventsObject.properties.find(
-      (prop) => libExports.isObjectProperty(prop) && !prop.computed && libExports.isIdentifier(prop.key) && prop.key.name === handler.eventType && libExports.isObjectExpression(prop.value)
-    );
-    if (!eventTypeProp) {
-      eventTypeProp = libExports.objectProperty(libExports.identifier(handler.eventType), libExports.objectExpression([]));
-      eventsObject.properties.push(eventTypeProp);
-    }
-    const selectorMap = eventTypeProp.value;
-    const selectorCode = generate$1(selectorExpr).code;
-    const isDuplicate = selectorMap.properties.some(
-      (prop) => libExports.isObjectProperty(prop) && generate$1(prop.key).code === selectorCode
-    );
-    if (!isDuplicate) {
-      selectorMap.properties.push(libExports.objectProperty(selectorExpr, handlerRef, !handler.selector));
-    }
-  });
-}
-function buildSelectorHandlerMethod(handler, methodName, paramContext, setupStatements) {
-  const method = jsMethod`${id(methodName)}(e, targetComponent) {}`;
-  if (handler.delegatedPropName) {
-    const propLit = libExports.stringLiteral(handler.delegatedPropName);
-    const owner = handler.usesTargetComponent ? libExports.identifier("targetComponent") : libExports.thisExpression();
-    const callbackInit = libExports.memberExpression(libExports.memberExpression(owner, libExports.identifier("props")), propLit, true);
-    if (handler.usesTargetComponent) {
-      method.body.body.push(
-        libExports.ifStatement(
-          libExports.logicalExpression(
-            "||",
-            libExports.unaryExpression("!", libExports.identifier("targetComponent")),
-            libExports.unaryExpression("!", libExports.memberExpression(libExports.identifier("targetComponent"), libExports.identifier("props")))
-          ),
-          libExports.returnStatement()
-        )
-      );
-    }
-    method.body.body.push(
-      libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier("callback"), callbackInit)]),
-      libExports.ifStatement(
-        libExports.binaryExpression("===", libExports.unaryExpression("typeof", libExports.identifier("callback")), libExports.stringLiteral("function")),
-        libExports.expressionStatement(libExports.callExpression(libExports.identifier("callback"), [libExports.identifier("e")]))
-      )
-    );
-    return method;
-  }
-  if (handler.mapContext) {
-    method.body.body.push(...buildMapEventBody(handler, paramContext));
-  } else if (handler.handlerExpression) {
-    method.body.body.push(...buildHandlerBody(handler, paramContext, setupStatements));
-  }
-  return method;
-}
-function ensureEventsGetter(classBody) {
-  const existing = classBody.body.find(
-    (m) => libExports.isClassMethod(m) && m.kind === "get" && libExports.isIdentifier(m.key) && m.key.name === "events"
-  );
-  if (existing) return existing;
-  const getter = libExports.classMethod(
-    "get",
-    libExports.identifier("events"),
-    [],
-    libExports.blockStatement([libExports.returnStatement(libExports.objectExpression([]))])
-  );
-  classBody.body.push(getter);
-  return getter;
-}
-function replacePropsObjectRefsInNode(node, propsObjectName) {
-  return deepMapNode(node, (n) => {
-    if (libExports.isIdentifier(n) && n.name === propsObjectName) {
-      return libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props"));
-    }
-    return void 0;
-  });
-}
-function applyTemplateParamContext(statements, paramContext) {
-  let next = paramContext.propNames.size ? replacePropRefsInStatements(statements, paramContext.propNames) : statements;
-  if (paramContext.propsObjectName) {
-    next = next.map((stmt) => replacePropsObjectRefsInNode(stmt, paramContext.propsObjectName));
-  }
-  return next;
-}
-function referencesIdentifier(nodes, name) {
-  function walk(node) {
-    if (!node) return false;
-    if (libExports.isIdentifier(node) && node.name === name) return true;
-    for (const key of libExports.VISITOR_KEYS[node.type] || []) {
-      const child = node[key];
-      if (Array.isArray(child)) {
-        for (const c of child) if (c && walk(c)) return true;
-      } else if (child && typeof child === "object" && child.type) {
-        if (walk(child)) return true;
-      }
-    }
-    return false;
-  }
-  return nodes.some(walk);
-}
-function buildArrayItemsExpr(ctx, opts = {}) {
-  const [first] = ctx.arrayPathParts;
-  const unresolvedMatch = first?.match(/^__unresolved_(\d+)$/);
-  if (unresolvedMatch) {
-    const mapIdx = libExports.numericLiteral(Number(unresolvedMatch[1]));
-    return jsExpr`this[${id("GEA_MAPS")}][${mapIdx}].getItems()`;
-  }
-  const base = ctx.isImportedState ? opts.raw ? libExports.memberExpression(libExports.identifier(ctx.storeVar || "store"), id("GEA_PROXY_RAW"), true) : libExports.identifier(ctx.storeVar || "store") : libExports.thisExpression();
-  if (ctx.arrayPathParts.length === 0) return base;
-  const [, ...rest] = ctx.arrayPathParts;
-  const isIndex = /^\d+$/.test(first);
-  const firstAccess = ctx.isImportedState ? libExports.memberExpression(base, isIndex ? libExports.numericLiteral(Number(first)) : libExports.identifier(first), isIndex) : libExports.optionalMemberExpression(base, isIndex ? libExports.numericLiteral(Number(first)) : libExports.identifier(first), isIndex, true);
-  return rest.length > 0 ? buildMemberChainFromParts(firstAccess, rest) : firstAccess;
-}
-function buildGeaItemDomWalk() {
-  return jsBlockBody`
-    var __el = e.target;
-    while (__el && __el[GEA_DOM_KEY] == null && (!__el.getAttribute || !__el.getAttribute('data-gid'))) __el = __el.parentElement;
-  `;
-}
-function buildMapEventBody(handler, paramContext) {
-  const ctx = handler.mapContext;
-  const itemVar = ctx.itemVariable || "item";
-  const helperName = `__getMapItemFromEvent_${ctx.storeVar || "store"}_${ctx.arrayPathParts.join("_")}`;
-  const handlerBody = applyTemplateParamContext(
-    extractHandlerBody(handler.handlerExpression, paramContext.propNames),
-    paramContext
-  );
-  const needsItem = referencesIdentifier(handlerBody, itemVar);
-  const needsIndex = !!(ctx.indexVariable && referencesIdentifier(handlerBody, ctx.indexVariable));
-  if (needsIndex && !needsItem) {
-    const rawArrayExpr = buildArrayItemsExpr(ctx, { raw: true });
-    const preamble2 = [
-      ...buildGeaItemDomWalk(),
-      ...jsBlockBody`
-        if (!__el || !__el[GEA_DOM_ITEM]) return;
-        const ${id(ctx.indexVariable)} = ${rawArrayExpr}.indexOf(__el[GEA_DOM_ITEM]);
-      `
-    ];
-    return [...preamble2, ...handlerBody];
-  }
-  const preamble = jsBlockBody`
-    const ${id(itemVar)} = this.${id(helperName)}(e);
-    if (!${id(itemVar)}) { return; }
-  `;
-  if (needsIndex) {
-    const rawArrayExpr = buildArrayItemsExpr(ctx, { raw: true });
-    preamble.push(
-      ...buildGeaItemDomWalk(),
-      ...jsBlockBody`
-        const ${id(ctx.indexVariable)} = __el ? ${rawArrayExpr}.indexOf(__el[GEA_DOM_ITEM]) : -1;
-      `
-    );
-  }
-  return [...preamble, ...handlerBody];
-}
-function prependDependentSetupStatements(node, setupStatements, paramContext) {
-  if (setupStatements.length === 0) return [];
-  const statements = collectTemplateSetupStatements(node, {
-    params: [],
-    statements: setupStatements
-  });
-  return applyTemplateParamContext(statements, paramContext);
-}
-function buildHandlerBody(handler, paramContext, setupStatements = []) {
-  const expr = handler.handlerExpression;
-  if (libExports.isIdentifier(expr)) {
-    const localFn = getLocalFunctionInSetup(expr.name, setupStatements);
-    if (localFn) {
-      const localBody = libExports.isBlockStatement(localFn.body) ? localFn.body.body : [libExports.expressionStatement(localFn.body)];
-      const dependentSetup2 = prependDependentSetupStatements(localFn.body, setupStatements, paramContext);
-      const body = applyTemplateParamContext(localBody, paramContext);
-      return [...dependentSetup2, ...body];
-    }
-  }
-  if (handler.mapContext) {
-    return buildMapEventBody(handler, paramContext);
-  }
-  const dependentSetup = prependDependentSetupStatements(expr, setupStatements, paramContext);
-  return [
-    ...dependentSetup,
-    ...applyTemplateParamContext(extractHandlerBody(expr, paramContext.propNames), paramContext)
-  ];
-}
-function findClassMethod(classBody, name) {
-  return classBody.body.find(
-    (member) => libExports.isClassMethod(member) && libExports.isIdentifier(member.key) && member.key.name === name
-  ) ?? null;
-}
-
-function childHasNoProps(child) {
-  return libExports.isObjectExpression(child.propsExpression) && child.propsExpression.properties.length === 0;
-}
-function getDirectPropMappings(child, templatePropNames) {
-  if (!child.propsExpression || !libExports.isObjectExpression(child.propsExpression)) return null;
-  const mappings = [];
-  for (const prop of child.propsExpression.properties) {
-    if (!libExports.isObjectProperty(prop)) return null;
-    const childPropName = libExports.isIdentifier(prop.key) ? prop.key.name : libExports.isStringLiteral(prop.key) ? prop.key.value : null;
-    if (!childPropName) return null;
-    const value = prop.value;
-    if (!libExports.isIdentifier(value) || !templatePropNames.has(value.name)) return null;
-    mappings.push({ parentPropName: value.name, childPropName });
-  }
-  return mappings.length > 0 ? mappings : null;
-}
-function injectChildComponents(ast, className, children, imports, storeImports, knownComponentImports, directForwardingChildren) {
-  if (children.size === 0) return;
-  const childComponents = Array.from(children.values()).flat();
-  const constructionOrder = [...childComponents].sort((a, b) => (b.dfsIndex ?? 0) - (a.dfsIndex ?? 0));
-  const instanceStatements = buildInstanceStatements(constructionOrder, directForwardingChildren);
-  const lazyChildren = constructionOrder.filter((child) => child.lazy);
-  let injected = false;
-  traverse$1(ast, {
-    ClassDeclaration(path) {
-      if (!libExports.isIdentifier(path.node.superClass)) return;
-      if (!libExports.isIdentifier(path.node.id) || path.node.id.name !== className) return;
-      const existingCtor = path.node.body.body.find(
-        (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "constructor"
-      );
-      if (existingCtor) {
-        existingCtor.body.body.push(...instanceStatements);
-        injected = true;
-      } else if (!injected) {
-        const ctor = appendToBody(jsMethod`constructor(...args) {}`, js`super(...args);`, ...instanceStatements);
-        path.node.body.body.unshift(ctor);
-        injected = true;
-      }
-      for (const child of lazyChildren) {
-        const isDirect = directForwardingChildren?.has(child.instanceVar);
-        const noProps = childHasNoProps(child);
-        const hasPropsBuilder = !isDirect && !noProps;
-        const backingField = `__lazy${child.instanceVar}`;
-        let propsArg;
-        if (hasPropsBuilder) {
-          propsArg = jsExpr`this.${id(getPropsBuilderMethodName(child))}()`;
-        } else if (child.directMappings && child.directMappings.length > 0) {
-          propsArg = libExports.objectExpression(
-            child.directMappings.map(
-              (m) => libExports.objectProperty(id(m.childPropName), jsExpr`this.props.${id(m.parentPropName)}`)
-            )
-          );
-        } else {
-          propsArg = libExports.objectExpression([]);
-        }
-        const getter = libExports.classMethod(
-          "get",
-          id(child.instanceVar),
-          [],
-          libExports.blockStatement([
-            js`if (!this.${id(backingField)}) { this.${id(backingField)} = this[${id("GEA_CHILD")}](${id(child.tagName)}, ${propsArg}); }`,
-            js`return this.${id(backingField)};`
-          ])
-        );
-        path.node.body.body.push(getter);
-      }
-      childComponents.forEach((child) => {
-        const isDirect = directForwardingChildren?.has(child.instanceVar);
-        const noProps = childHasNoProps(child);
-        const hasPropsBuilder = !isDirect && !noProps;
-        if (hasPropsBuilder) {
-          path.node.body.body.push(buildPropsBuilderMethod(child));
-        }
-      });
-    }
-  });
-}
-function injectComponentRegistrations(ast, className, children, _knownComponentImports) {
-  traverse$1(ast, {
-    ClassMethod(path) {
-      if (!libExports.isIdentifier(path.node.key) || path.node.key.name !== "template") return;
-      const ownerClass = path.findParent((p) => libExports.isClassDeclaration(p.node));
-      if (ownerClass && libExports.isIdentifier(ownerClass.node.id) && ownerClass.node.id.name !== className) return;
-      const registrations = Array.from(children.keys()).map(
-        (tagName) => libExports.expressionStatement(
-          libExports.callExpression(libExports.memberExpression(id("Component"), id("_register")), [
-            id(tagName),
-            libExports.stringLiteral(pascalToKebab(tagName))
-          ])
-        )
-      );
-      path.node.body.body.splice(0, 0, ...registrations);
-    }
-  });
-}
-function buildInstanceStatements(instances, directForwardingChildren) {
-  const stmts = [];
-  instances.forEach((child) => {
-    if (child.lazy) return;
-    let propsArg;
-    const isDirect = directForwardingChildren?.has(child.instanceVar);
-    const noProps = childHasNoProps(child);
-    const hasPropsBuilder = !isDirect && !noProps;
-    if (hasPropsBuilder) {
-      propsArg = jsExpr`this.${id(getPropsBuilderMethodName(child))}()`;
-    } else if (child.directMappings && child.directMappings.length > 0) {
-      propsArg = libExports.objectExpression(
-        child.directMappings.map(
-          (m) => libExports.objectProperty(id(m.childPropName), jsExpr`this.props.${id(m.parentPropName)}`)
-        )
-      );
-    } else {
-      propsArg = libExports.objectExpression([]);
-    }
-    stmts.push(
-      js`this.${id(child.instanceVar)} = this[${id("GEA_CHILD")}](${id(child.tagName)}, ${propsArg});`
-    );
-  });
-  return stmts;
-}
-function getPropsBuilderMethodName(child) {
-  return `__buildProps_${child.instanceVar.replace(/^_/, "")}`;
-}
-function collectBindingNames(stmt) {
-  if (libExports.isVariableDeclaration(stmt)) {
-    const names = [];
-    const collect = (node) => {
-      if (libExports.isIdentifier(node)) names.push(node.name);
-      else if (libExports.isObjectPattern(node))
-        node.properties.forEach(
-          (p) => collect(libExports.isRestElement(p) ? p.argument : p.value)
-        );
-      else if (libExports.isArrayPattern(node)) node.elements.forEach((e) => e && collect(e));
-    };
-    stmt.declarations.forEach((d) => collect(d.id));
-    return names;
-  }
-  return [];
-}
-function collectTestIdentifiers(node) {
-  const names = /* @__PURE__ */ new Set();
-  const visit = (n) => {
-    if (libExports.isIdentifier(n)) names.add(n.name);
-    for (const key of libExports.VISITOR_KEYS[n.type] || []) {
-      const child = n[key];
-      if (Array.isArray(child)) child.forEach((c) => c?.type && visit(c));
-      else if (child?.type) visit(child);
-    }
-  };
-  visit(node);
-  return names;
-}
-function buildPropsBuilderMethod(child) {
-  const propsStmtClones = (child.setupStatements || []).map((statement) => libExports.cloneNode(statement, true));
-  const returnStmt = libExports.returnStatement(libExports.cloneNode(child.propsExpression, true));
-  const propsIdentifiers = collectTestIdentifiers(returnStmt);
-  for (const stmt of propsStmtClones) {
-    for (const name of collectTestIdentifiers(stmt)) propsIdentifiers.add(name);
-  }
-  const relevantGuards = (child.earlyReturnGuards || []).filter((guard) => {
-    const testRefs = collectTestIdentifiers(guard.test);
-    return [...testRefs].some((name) => propsIdentifiers.has(name));
-  });
-  const existingBindings = new Set(propsStmtClones.flatMap(collectBindingNames));
-  const guardStmtClones = relevantGuards.length > 0 ? (child.guardSetupStatements || []).filter((s) => !collectBindingNames(s).every((n) => existingBindings.has(n))).map((s) => libExports.cloneNode(s, true)) : [];
-  const setupStmts = [...guardStmtClones, ...propsStmtClones];
-  const guardNodes = relevantGuards.map((g) => g.test);
-  const prunedSetup = pruneUnusedSetupDestructuring(setupStmts, [returnStmt, ...guardNodes]);
-  for (const guard of relevantGuards) {
-    const guardStmt = libExports.ifStatement(libExports.cloneNode(guard.test, true), libExports.returnStatement(libExports.objectExpression([])));
-    const testRefs = collectTestIdentifiers(guard.test);
-    let insertIndex = 0;
-    for (let i = 0; i < prunedSetup.length; i++) {
-      if (collectBindingNames(prunedSetup[i]).some((name) => testRefs.has(name))) {
-        insertIndex = i + 1;
-      }
-    }
-    prunedSetup.splice(insertIndex, 0, guardStmt);
-  }
-  const hasPropsDestructure = prunedSetup.some(
-    (stmt) => libExports.isVariableDeclaration(stmt) && stmt.declarations.some(
-      (d) => libExports.isObjectPattern(d.id) && libExports.isMemberExpression(d.init) && libExports.isThisExpression(d.init.object) && libExports.isIdentifier(d.init.property) && d.init.property.name === "props"
-    )
-  );
-  if (hasPropsDestructure) {
-    const tryBlock = libExports.blockStatement([...prunedSetup, returnStmt]);
-    const tryCatch = libExports.tryStatement(tryBlock, loggingCatchClause([libExports.returnStatement(libExports.objectExpression([]))]));
-    return appendToBody(jsMethod`${id(getPropsBuilderMethodName(child))}() {}`, tryCatch);
-  }
-  return appendToBody(jsMethod`${id(getPropsBuilderMethodName(child))}() {}`, ...prunedSetup, returnStmt);
-}
-
-function buildPathPartsEquals(expr, parts) {
-  return parts.reduce(
-    (acc, part, index) => libExports.logicalExpression(
-      "&&",
-      acc,
-      libExports.binaryExpression(
-        "===",
-        libExports.memberExpression(libExports.cloneNode(expr), libExports.numericLiteral(index), true),
-        libExports.stringLiteral(part)
-      )
-    ),
-    libExports.logicalExpression(
-      "&&",
-      libExports.cloneNode(expr),
-      libExports.binaryExpression(
-        "===",
-        libExports.memberExpression(libExports.cloneNode(expr), libExports.identifier("length")),
-        libExports.numericLiteral(parts.length)
-      )
-    )
-  );
-}
-function buildTextTemplateExpression(binding, stateRefs) {
-  if (!binding.textTemplate || !binding.textExpressions?.length) return null;
-  const templateParts = binding.textTemplate.split(/\$\{(\d+)\}/g);
-  const strings = [];
-  const expressions = [];
-  for (let i = 0; i < templateParts.length; i++) {
-    if (i % 2 === 0) {
-      const raw = templateParts[i];
-      strings.push(libExports.templateElement({ raw, cooked: raw }, i === templateParts.length - 1));
-    } else {
-      const idx = parseInt(templateParts[i], 10);
-      const textExpr = binding.textExpressions[idx];
-      if (textExpr) expressions.push(buildValueExpression(textExpr, stateRefs));
-    }
-  }
-  return libExports.templateLiteral(strings, expressions);
-}
-function buildValueExpression(textExpr, stateRefs) {
-  if (textExpr.expression) {
-    return rewriteStateRefs(libExports.cloneNode(textExpr.expression, true), stateRefs);
-  }
-  if (textExpr.isImportedState && textExpr.storeVar) {
-    return buildMemberChainFromParts(
-      libExports.memberExpression(libExports.identifier(textExpr.storeVar), id("GEA_STORE_ROOT"), true),
-      textExpr.pathParts
-    );
-  }
-  return buildMemberChainFromParts(libExports.thisExpression(), textExpr.pathParts);
-}
-function rewriteStateRefs(expr, stateRefs) {
-  const prog = libExports.program([libExports.expressionStatement(expr)]);
-  traverse$1(prog, {
-    noScope: true,
-    Identifier(path) {
-      if (path.parentPath && libExports.isMemberExpression(path.parentPath.node) && path.parentPath.node.property === path.node && !path.parentPath.node.computed)
-        return;
-      if (!stateRefs.has(path.node.name)) return;
-      const ref = stateRefs.get(path.node.name);
-      if (ref.kind === "derived" && ref.initExpression) {
-        const inlined = rewriteStateRefs(libExports.cloneNode(ref.initExpression, true), stateRefs);
-        path.replaceWith(inlined);
-        path.skip();
-      } else if (ref.kind === "local") {
-        path.replaceWith(libExports.thisExpression());
-      } else if ((ref.kind === "imported-destructured" || ref.kind === "store-alias") && ref.storeVar && ref.propName) {
-        path.replaceWith(
-          libExports.memberExpression(
-            libExports.memberExpression(libExports.identifier(ref.storeVar), id("GEA_STORE_ROOT"), true),
-            libExports.identifier(ref.propName)
-          )
-        );
-        path.skip();
-      } else if (ref.kind === "local-destructured" && ref.propName) {
-        path.replaceWith(libExports.memberExpression(libExports.thisExpression(), libExports.identifier(ref.propName)));
-        path.skip();
-      } else {
-        path.replaceWith(libExports.memberExpression(libExports.identifier(path.node.name), id("GEA_STORE_ROOT"), true));
-        path.skip();
-      }
-    }
-  });
-  return prog.body[0].expression;
-}
-function buildElementLookup(binding, stateRefs) {
-  if (binding.userIdExpr) {
-    let idExpr2 = libExports.cloneNode(binding.userIdExpr, true);
-    if (stateRefs && !libExports.isStringLiteral(idExpr2)) {
-      idExpr2 = rewriteStateRefs(idExpr2, stateRefs);
-    }
-    return libExports.callExpression(libExports.identifier("__gid"), [idExpr2]);
-  }
-  if (binding.bindingId === void 0) {
-    return libExports.callExpression(libExports.memberExpression(libExports.thisExpression(), libExports.identifier("$")), [
-      libExports.stringLiteral(binding.selector)
-    ]);
-  }
-  if (binding.bindingId === "") {
-    return libExports.memberExpression(libExports.thisExpression(), libExports.identifier("el"));
-  }
-  const idExpr = libExports.binaryExpression(
-    "+",
-    libExports.memberExpression(libExports.thisExpression(), libExports.identifier("id")),
-    libExports.stringLiteral("-" + binding.bindingId)
-  );
-  return libExports.callExpression(libExports.identifier("__gid"), [idExpr]);
-}
-function buildSimpleUpdate(binding, param, stateRefs) {
-  const el = buildElementLookup(binding, stateRefs);
-  const valueExpr = binding.textTemplate ? buildTextTemplateExpression(binding, stateRefs) || param : param;
-  if (binding.type === "text" && binding.textNodeIndex === void 0 && binding.bindingId && binding.bindingId !== "" && !binding.userIdExpr) {
-    const suffix = libExports.stringLiteral(binding.bindingId);
-    return js`${jsExpr`this[${id("GEA_UPDATE_TEXT")}](${suffix}, ${valueExpr})`};`;
-  }
-  const emitterOpts = {
-    attributeName: binding.attributeName,
-    classToggleName: binding.classToggleName || (binding.type === "class" ? (binding.pathParts || normalizePathParts(binding.path || "")).at(-1) || "active" : void 0),
-    textNodeIndex: binding.textNodeIndex,
-    isObjectClass: binding.isObjectClass,
-    isBooleanAttr: binding.isBooleanAttr,
-    isUrlAttr: binding.isUrlAttr,
-    isChildrenProp: binding.isChildrenProp
-  };
-  const stmts = emitPatch(binding.type, el, binding.type === "class" ? param : valueExpr, emitterOpts);
-  if (stmts.length === 0) return js`if (${el}) { ${jsExpr`${el}.textContent`} = ${valueExpr}; }`;
-  const body = stmts.length === 1 ? stmts[0] : libExports.blockStatement(stmts);
-  return libExports.ifStatement(el, body);
-}
-function buildWildcardUpdate(binding, param, stateRefs) {
-  const bindingPathParts = binding.pathParts || normalizePathParts(binding.path || "");
-  const wildcardIndex = bindingPathParts.indexOf("*");
-  const arrayPathParts = bindingPathParts.slice(0, wildcardIndex);
-  const propParts = bindingPathParts.slice(wildcardIndex + 1);
-  const arrayPath = arrayPathParts.join(".");
-  const containerName = `__${arrayPath.replace(/\./g, "_")}_container`;
-  const containerRef = libExports.memberExpression(libExports.thisExpression(), libExports.identifier(containerName));
-  const updateExpr = buildElementUpdate(binding, param, stateRefs);
-  const indexExpr = libExports.conditionalExpression(
-    libExports.logicalExpression(
-      "&&",
-      libExports.logicalExpression(
-        "&&",
-        libExports.memberExpression(libExports.identifier("change"), libExports.identifier("isArrayItemPropUpdate")),
-        buildPathPartsEquals(
-          libExports.memberExpression(libExports.identifier("change"), libExports.identifier("arrayPathParts")),
-          arrayPathParts
-        )
-      ),
-      libExports.logicalExpression(
-        "&&",
-        buildPathPartsEquals(libExports.memberExpression(libExports.identifier("change"), libExports.identifier("leafPathParts")), propParts),
-        libExports.binaryExpression(
-          "!==",
-          libExports.memberExpression(libExports.identifier("change"), libExports.identifier("arrayIndex")),
-          libExports.identifier("undefined")
-        )
-      )
-    ),
-    libExports.memberExpression(libExports.identifier("change"), libExports.identifier("arrayIndex")),
-    libExports.nullLiteral()
-  );
-  const elementExpr = jsExpr`${containerRef}.children[index]`;
-  return libExports.blockStatement(
-    jsBlockBody`
-      const index = ${indexExpr};
-      const element = index !== null ? ${elementExpr} : null;
-      if (element) { ${updateExpr}; }
-    `
-  );
-}
-function buildElementUpdate(binding, param, stateRefs) {
-  const el = libExports.identifier("element");
-  if (binding.type === "class") {
-    const cls = binding.classToggleName || (binding.pathParts || normalizePathParts(binding.path || "")).at(-1) || "active";
-    const stmts2 = emitMount("class", el, param, { classToggleName: cls });
-    return stmts2[0].expression;
-  }
-  let targetEl;
-  if (binding.childPath && binding.childPath.length > 0) {
-    targetEl = buildChildAccessExpr(el, binding.childPath);
-  } else if (binding.selector === ":scope") {
-    targetEl = libExports.cloneNode(el, true);
-  } else {
-    throw new Error(
-      `buildElementUpdate: childPath required when selector is not :scope (got "${binding.selector}"). Ensure wildcard bindings have childPath from analysis.`
-    );
-  }
-  const valueExpr = binding.textTemplate ? buildTextTemplateExpression(binding, stateRefs) || param : param;
-  const stmts = emitMount(binding.type, targetEl, valueExpr, {
-    attributeName: binding.attributeName,
-    textNodeIndex: binding.textNodeIndex,
-    isObjectClass: binding.isObjectClass,
-    isBooleanAttr: binding.isBooleanAttr,
-    isUrlAttr: binding.isUrlAttr,
-    isChildrenProp: binding.isChildrenProp
-  });
-  if (stmts.length > 0) return stmts[0].expression;
-  return libExports.assignmentExpression("=", libExports.memberExpression(targetEl, libExports.identifier("textContent")), valueExpr);
-}
-function buildChildAccessExpr(base, path) {
-  let expr = base;
-  for (const idx of path) {
-    expr = libExports.memberExpression(libExports.memberExpression(expr, libExports.identifier("children")), libExports.numericLiteral(idx), true);
-  }
-  return expr;
-}
-function generateObserveHandler(binding, stateRefs, methodName = getObserveMethodName(
-  binding.pathParts || normalizePathParts(binding.path || ""),
-  binding.storeVar
-), observePathOverride) {
-  const bindingPath = binding.pathParts || normalizePathParts(binding.path || "");
-  const observePath = observePathOverride || bindingPath;
-  const paramName = observePath[observePath.length - 1] || "value";
-  const param = libExports.identifier(paramName);
-  const changeParam = libExports.identifier("change");
-  let valueExpr = param;
-  if (observePathOverride && bindingPath.length > observePathOverride.length) {
-    const suffix = bindingPath.slice(observePathOverride.length);
-    valueExpr = suffix.reduce((expr, part) => libExports.memberExpression(expr, libExports.identifier(part)), param);
-  }
-  const isWildcard = observePath.includes("*");
-  const body = isWildcard ? buildWildcardUpdate(binding, valueExpr, stateRefs) : buildSimpleUpdate(binding, valueExpr, stateRefs);
-  const method = jsMethod`${id(methodName)}(${param}, ${changeParam}) {}`;
-  method.body.body.push(...Array.isArray(body) ? body : [body]);
-  return method;
-}
-function mergeObserveHandlers(bindings, stateRefs) {
-  const byPath = /* @__PURE__ */ new Map();
-  bindings.forEach((binding) => {
-    const pathParts = binding.pathParts || normalizePathParts(binding.path || "");
-    let observeParts = pathParts;
-    if (observeParts.length >= 2 && observeParts[observeParts.length - 1] === "length") {
-      observeParts = observeParts.slice(0, -1);
-    }
-    const observeKey = buildObserveKey(observeParts, binding.storeVar);
-    const methodName = getObserveMethodName(observeParts, binding.storeVar);
-    const observePathOverride = observeParts !== pathParts ? observeParts : void 0;
-    const handler = generateObserveHandler(binding, stateRefs, methodName, observePathOverride);
-    if (!byPath.has(observeKey)) {
-      byPath.set(observeKey, handler);
-    } else {
-      const existing = byPath.get(observeKey);
-      if (libExports.isBlockStatement(existing.body) && libExports.isBlockStatement(handler.body)) {
-        existing.body.body.push(...handler.body.body);
-      }
-    }
-  });
-  return byPath;
-}
-
-function getTemplatePropNames(classBody) {
-  const names = /* @__PURE__ */ new Set();
-  const templateMethod = classBody.body.find(
-    (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "template"
-  );
-  const binding = templateMethod ? getTemplateParamBinding(templateMethod.params[0]) : void 0;
-  if (binding && libExports.isObjectPattern(binding)) {
-    binding.properties.forEach((p) => {
-      if (libExports.isObjectProperty(p) && libExports.isIdentifier(p.key)) names.add(p.key.name);
-    });
-  }
-  return names;
-}
-function getTemplateParamIdentifier(classBody) {
-  const templateMethod = classBody.body.find(
-    (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "template"
-  );
-  const binding = templateMethod ? getTemplateParamBinding(templateMethod.params[0]) : void 0;
-  return libExports.isIdentifier(binding) ? binding.name : void 0;
-}
-function getTemplatePropVarName(templateMethod, propName) {
-  const pattern = getTemplateParamBinding(templateMethod.params[0]);
-  if (!pattern || !libExports.isObjectPattern(pattern)) return propName;
-  for (const p of pattern.properties) {
-    if (!libExports.isObjectProperty(p)) continue;
-    const key = libExports.isIdentifier(p.key) ? p.key.name : libExports.isStringLiteral(p.key) ? p.key.value : null;
-    if (key !== propName) continue;
-    const value = p.value;
-    if (libExports.isIdentifier(value)) return value.name;
-    return propName;
-  }
-  return propName;
-}
-
-function serializeAstNode(node) {
-  return node ? JSON.stringify(node) : "";
-}
-function classMethodUsesParam(method, index) {
-  const param = method.params[index];
-  if (!libExports.isIdentifier(param) || !libExports.isBlockStatement(method.body)) return true;
-  let used = false;
-  const program = libExports.program(method.body.body.map((stmt) => libExports.cloneNode(stmt, true)));
-  traverse$1(program, {
-    noScope: true,
-    Identifier(path) {
-      if (!path.isReferencedIdentifier()) return;
-      if (path.node.name !== param.name) return;
-      used = true;
-      path.stop();
-    }
-  });
-  return used;
-}
-function lazyInit(name, value) {
-  return js`if (!this.${id(name)}) { this.${id(name)} = ${value}; }`;
-}
-function generateCreatedHooks(stores, hasArrayConfigs, observeListConfigs = []) {
-  const body = [];
-  if (hasArrayConfigs) {
-    body.push(js`this[${id("GEA_ENSURE_ARRAY_CONFIGS")}]();`);
-  }
-  const observeListPathKeys = /* @__PURE__ */ new Set();
-  for (const config of observeListConfigs) {
-    observeListPathKeys.add(`${config.storeVar}:${JSON.stringify(config.pathParts)}`);
-  }
-  for (const store of stores) {
-    const byPath = /* @__PURE__ */ new Map();
-    for (const handler of store.observeHandlers) {
-      const pathKey = JSON.stringify(handler.pathParts);
-      const listKey = `${store.storeVar}:${pathKey}`;
-      if (observeListPathKeys.has(listKey)) continue;
-      if (!byPath.has(pathKey)) byPath.set(pathKey, []);
-      byPath.get(pathKey).push(handler);
-    }
-    const storeVarExpr = id(store.storeVar);
-    for (const [pathKey, handlers] of byPath) {
-      const pathParts = JSON.parse(pathKey);
-      const pathArray = libExports.arrayExpression(pathParts.map((part) => libExports.stringLiteral(part)));
-      if (handlers.length === 1 && !handlers[0].isVia) {
-        body.push(js`this[${id("GEA_OBSERVE")}](${storeVarExpr}, ${pathArray}, this.${id(handlers[0].methodName)});`);
-      } else {
-        const vParam = id("__v");
-        const cParam = id("__c");
-        const callStmts = [];
-        const seenCallKeys = /* @__PURE__ */ new Set();
-        for (let hi = 0; hi < handlers.length; hi++) {
-          const h = handlers[hi];
-          const callKey = [
-            h.methodName,
-            h.isVia ? "via" : "direct",
-            h.passValue === false ? "novalue" : "value",
-            serializeAstNode(h.dynamicKeyExpr),
-            h.passValue === false ? "" : serializeAstNode(h.rereadExpr)
-          ].join("|");
-          if (seenCallKeys.has(callKey)) continue;
-          seenCallKeys.add(callKey);
-          if (h.isVia && h.rereadExpr) {
-            const argExpr = h.passValue === false ? id("undefined") : libExports.cloneNode(h.rereadExpr, true);
-            const callStmt = js`this.${id(h.methodName)}(${argExpr}, null);`;
-            if (h.dynamicKeyExpr) {
-              const keyId = id(`__geaKey${hi}`);
-              const changeId = id(`__geaChange${hi}`);
-              const partsId = id(`__geaParts${hi}`);
-              const prevRootId = id(`__geaPrevRoot${hi}`);
-              const prefixChecks = h.pathParts.map(
-                (part, idx) => jsExpr`${partsId}[${idx}] === ${part}`
-              );
-              const prevEntryExpr = jsExpr`${prevRootId} == null ? undefined : ${prevRootId}[${keyId}]`;
-              const nextEntryExpr = jsExpr`${vParam} == null ? undefined : ${vParam}[${keyId}]`;
-              const sameRootAffectsKey = jsExpr`${partsId}.length === ${h.pathParts.length} && ${prevEntryExpr} !== ${nextEntryExpr}`;
-              const matchingNestedKey = jsExpr`${partsId}[${h.pathParts.length}] === ${keyId}`;
-              const sameRootOrMatchingKey = jsExpr`(${sameRootAffectsKey}) || ${matchingNestedKey}`;
-              const relevantChangeExpr = prefixChecks.concat([sameRootOrMatchingKey]).reduce((left, right) => libExports.logicalExpression("&&", left, right));
-              const someCall = jsExpr`${cParam}.some((${changeId}) => {
-                const ${partsId} = ${changeId}.pathParts;
-                const ${prevRootId} = ${changeId}.previousValue;
-                return Array.isArray(${partsId}) && ${relevantChangeExpr};
-              })`;
-              callStmts.push(
-                js`{ const ${keyId} = ${libExports.cloneNode(h.dynamicKeyExpr, true)}; if (Array.isArray(${cParam}) && ${someCall}) { ${callStmt} } }`
-              );
-            } else {
-              callStmts.push(callStmt);
-            }
-          } else {
-            callStmts.push(js`this.${id(h.methodName)}(${vParam}, ${cParam});`);
-          }
-        }
-        body.push(
-          js`this[${id("GEA_OBSERVE")}](${storeVarExpr}, ${pathArray}, ${jsExpr`(${vParam}, ${cParam}) => { ${libExports.blockStatement(callStmts)} }`});`
-        );
-      }
-    }
-    for (const config of observeListConfigs.filter((c) => c.storeVar === store.storeVar)) {
-      const pathArray = libExports.arrayExpression(config.pathParts.map((part) => libExports.stringLiteral(part)));
-      const itemPropsMethodName = `__itemProps_${config.arrayPropName}`;
-      const containerExpr = config.containerUserIdExpr ? jsExpr`__gid(${libExports.cloneNode(config.containerUserIdExpr, true)})` : config.containerBindingId ? jsExpr`this[${id("GEA_EL")}](${config.containerBindingId})` : jsExpr`this.$(":scope")`;
-      const containerArrow = jsExpr`() => ${containerExpr}`;
-      const propsArrow = jsExpr`(opt, __k) => this.${id(itemPropsMethodName)}(opt, __k)`;
-      let keyArrow;
-      if (config.itemIdProperty && config.itemIdProperty !== ITEM_IS_KEY) {
-        keyArrow = jsExpr`(opt) => ${libExports.logicalExpression(
-          "??",
-          buildOptionalMemberChain(id("opt"), config.itemIdProperty),
-          id("opt")
-        )}`;
-      } else if (config.itemIdProperty === ITEM_IS_KEY) {
-        keyArrow = jsExpr`(opt) => opt`;
-      } else {
-        keyArrow = jsExpr`(opt, __k) => '__idx_' + __k`;
-      }
-      const listItemsSym = buildListItemsSymbol(config.arrayPropName);
-      const thisItems = buildThisListItems(config.arrayPropName);
-      const configObj = jsObjectExpr`{
-        items: ${thisItems},
-        itemsKey: ${listItemsSym},
-        container: ${containerArrow},
-        Ctor: ${id(config.componentTag)},
-        props: ${propsArrow},
-        key: ${keyArrow}
-      }`;
-      if (config.afterCondSlotIndex != null) {
-        configObj.properties.push(
-          libExports.objectProperty(id("afterCondSlotIndex"), libExports.numericLiteral(config.afterCondSlotIndex))
-        );
-      }
-      const samePathHandlers = [];
-      const pathKey = JSON.stringify(config.pathParts);
-      for (const handler of store.observeHandlers) {
-        if (JSON.stringify(handler.pathParts) === pathKey) {
-          samePathHandlers.push(handler);
-        }
-      }
-      if (samePathHandlers.length > 0) {
-        const onchangeStmts = samePathHandlers.map((h) => {
-          if (h.isVia && h.rereadExpr) {
-            return js`this.${id(h.methodName)}(${libExports.cloneNode(h.rereadExpr, true)}, null);`;
-          }
-          return js`this.${id(h.methodName)}(${jsExpr`${id(config.storeVar)}.${id(config.pathParts[0])}`}, null);`;
-        });
-        configObj.properties.push(
-          libExports.objectProperty(id("onchange"), jsExpr`() => { ${libExports.blockStatement(onchangeStmts)} }`)
-        );
-      }
-      body.push(js`this[${id("GEA_OBSERVE_LIST")}](${storeVarExpr}, ${pathArray}, ${configObj});`);
-    }
-  }
-  const method = jsMethod`${id("createdHooks")}() {}`;
-  method.body.body.push(...body);
-  return method;
-}
-function generateLocalStateObserverSetup(observeHandlers, hasArrayConfigs) {
-  const body = [];
-  if (hasArrayConfigs) {
-    body.push(js`this[${id("GEA_ENSURE_ARRAY_CONFIGS")}]();`);
-  }
-  body.push(js`if (!this[${id("GEA_STORE_ROOT")}]) { return; }`);
-  for (const observeHandler of observeHandlers) {
-    const pathArray = libExports.arrayExpression(observeHandler.pathParts.map((part) => libExports.stringLiteral(part)));
-    body.push(js`this[${id("GEA_OBSERVE")}](this, ${pathArray}, this.${id(observeHandler.methodName)});`);
-  }
-  const method = jsMethod`[${id("GEA_SETUP_LOCAL_STATE_OBSERVERS")}]() {}`;
-  method.body.body.push(...body);
-  return method;
-}
-function emitObserver(config) {
-  const {
-    pathParts,
-    storeVar,
-    methodName = getObserveMethodName(pathParts, storeVar),
-    guard = "rendered",
-    dedup = null,
-    body
-  } = config;
-  const method = jsMethod`${id(methodName)}(value, change) {}`;
-  if (dedup && storeVar) {
-    const prevSymbol = libExports.callExpression(id("geaPrevGuardSymbol"), [libExports.stringLiteral(methodName)]);
-    const prevSymbol2 = libExports.callExpression(id("geaPrevGuardSymbol"), [libExports.stringLiteral(methodName)]);
-    const prevSymbol3 = libExports.callExpression(id("geaPrevGuardSymbol"), [libExports.stringLiteral(methodName)]);
-    const prevSymbol4 = libExports.callExpression(id("geaPrevGuardSymbol"), [libExports.stringLiteral(methodName)]);
-    const prevSymbol5 = libExports.callExpression(id("geaPrevGuardSymbol"), [libExports.stringLiteral(methodName)]);
-    const thisPrev = libExports.memberExpression(libExports.thisExpression(), prevSymbol, true);
-    const thisPrev2 = libExports.memberExpression(libExports.thisExpression(), prevSymbol2, true);
-    const thisPrev3 = libExports.memberExpression(libExports.thisExpression(), prevSymbol3, true);
-    const thisPrev4 = libExports.memberExpression(libExports.thisExpression(), prevSymbol4, true);
-    const thisPrev_check = libExports.memberExpression(libExports.thisExpression(), prevSymbol5, true);
-    if (dedup === "truthiness") {
-      method.body.body.push(
-        libExports.ifStatement(
-          libExports.logicalExpression(
-            "&&",
-            libExports.binaryExpression("!==", thisPrev_check, id("undefined")),
-            libExports.binaryExpression("===", libExports.unaryExpression("!", id("value")), libExports.unaryExpression("!", thisPrev))
-          ),
-          libExports.returnStatement()
-        ),
-        libExports.expressionStatement(libExports.assignmentExpression("=", thisPrev2, id("value")))
-      );
-    } else {
-      method.body.body.push(
-        libExports.ifStatement(libExports.binaryExpression("===", id("value"), thisPrev3), libExports.returnStatement()),
-        libExports.expressionStatement(libExports.assignmentExpression("=", thisPrev4, id("value")))
-      );
-    }
-  }
-  if (guard === "rendered") {
-    method.body.body.push(js`if (this[${id("GEA_RENDERED")}]) { ${libExports.blockStatement(body)} }`);
-  } else {
-    method.body.body.push(...body);
-  }
-  return method;
-}
-function generateStoreInlinePatchObserver(pathParts, storeVar, patchStatements) {
-  return emitObserver({ pathParts, storeVar, body: patchStatements });
-}
-function generateRerenderObserver(pathParts, storeVar, truthinessOnly) {
-  return emitObserver({
-    pathParts,
-    storeVar,
-    dedup: storeVar ? truthinessOnly ? "truthiness" : "value" : null,
-    body: [js`this[${id("GEA_REQUEST_RENDER")}]();`]
-  });
-}
-function generateConditionalSlotObserveMethod(pathParts, storeVar, slotIndices, _emitEarlyReturn = true) {
-  const condPatchedKey = (i) => libExports.callExpression(id("geaCondPatchedSymbol"), [libExports.numericLiteral(i)]);
-  const body = [];
-  for (const slotIndex of slotIndices) {
-    const keyExpr = condPatchedKey(slotIndex);
-    const keyExpr2 = condPatchedKey(slotIndex);
-    const keyExpr3 = condPatchedKey(slotIndex);
-    const guardExpr = condPatchedKey(slotIndex);
-    const thisCondPatched = libExports.memberExpression(libExports.thisExpression(), keyExpr, true);
-    const thisCondPatched2 = libExports.memberExpression(libExports.thisExpression(), keyExpr2, true);
-    const thisCondPatched3 = libExports.memberExpression(libExports.thisExpression(), keyExpr3, true);
-    const thisGuard = libExports.memberExpression(libExports.thisExpression(), guardExpr, true);
-    body.push(
-      libExports.ifStatement(
-        libExports.unaryExpression("!", thisGuard),
-        libExports.blockStatement([
-          libExports.expressionStatement(
-            libExports.assignmentExpression(
-              "=",
-              thisCondPatched,
-              jsExpr`this[${id("GEA_PATCH_COND")}](${slotIndex})`
-            )
-          ),
-          libExports.ifStatement(
-            thisCondPatched2,
-            libExports.blockStatement([
-              libExports.expressionStatement(
-                libExports.callExpression(id("queueMicrotask"), [
-                  libExports.arrowFunctionExpression([], libExports.assignmentExpression("=", thisCondPatched3, libExports.booleanLiteral(false)))
-                ])
-              )
-            ])
-          )
-        ])
-      )
-    );
-  }
-  return emitObserver({ pathParts, storeVar, body });
-}
-function generateStateChildSwapObserver(pathParts, storeVar) {
-  return emitObserver({ pathParts, storeVar, body: [js`this[${id("GEA_SWAP_STATE_CHILDREN")}]();`] });
-}
-function generateUnresolvedRelationalObserver(arrayMap, unresolvedMap, relBinding, methodName, templatePropNames, wholeParamName) {
-  const arrayPathString = pathPartsToString(arrayMap.arrayPathParts);
-  const containerName = `__${arrayPathString.replace(/\./g, "_")}_container`;
-  const containerRef = jsExpr`this.${id(containerName)}`;
-  const containerLookup = arrayMap.containerUserIdExpr ? jsExpr`__gid(${libExports.cloneNode(arrayMap.containerUserIdExpr, true)})` : arrayMap.containerBindingId !== void 0 ? jsExpr`__gid(this.id + ${"-" + arrayMap.containerBindingId})` : jsExpr`this.$(":scope")`;
-  const setupStatements = replacePropRefsInStatements(
-    (unresolvedMap.computationSetupStatements || []).map((s) => libExports.cloneNode(s, true)),
-    templatePropNames,
-    wholeParamName
-  );
-  const arrExpr = unresolvedMap.computationExpr ? replacePropRefsInExpression(
-    libExports.cloneNode(unresolvedMap.computationExpr, true),
-    templatePropNames,
-    wholeParamName
-  ) : jsExpr`[]`;
-  const itemComparison = relBinding.itemProperty ? libExports.optionalMemberExpression(jsExpr`__arr[__i]`, id(relBinding.itemProperty), false, true) : jsExpr`__arr[__i]`;
-  const commonPreamble = [
-    js`if (!this[${id("GEA_RENDERED")}]) return;`,
-    lazyInit(containerName, containerLookup),
-    ...jsBlockBody`if (!${containerRef}) return;`,
-    ...setupStatements,
-    js`var __arr = Array.isArray(${arrExpr}) ? ${libExports.cloneNode(arrExpr, true)} : [];`
-  ];
-  if (relBinding.matchWhenEqual) {
-    const cacheFieldName = methodName.replace("__observe_", "__prel_");
-    const cacheRef = libExports.memberExpression(libExports.thisExpression(), libExports.privateName(id(cacheFieldName)));
-    const method2 = jsMethod`${id(methodName)}(value, change) {}`;
-    return {
-      method: appendToBody(
-        method2,
-        ...commonPreamble,
-        libExports.ifStatement(
-          libExports.cloneNode(cacheRef, true),
-          libExports.blockStatement([
-            js`${libExports.cloneNode(cacheRef, true)}.classList.remove(${relBinding.classToggleName});`,
-            js`${libExports.cloneNode(cacheRef, true)} = null;`
-          ])
-        ),
-        ...jsBlockBody`
-          var __items = ${containerRef}.querySelectorAll('[data-gid]');
-          for (var __i = 0; __i < __items.length && __i < __arr.length; __i++) {
-            if (${itemComparison} === value) {
-              __items[__i].classList.add(${relBinding.classToggleName});
-              ${cacheRef} = __items[__i];
-              break;
-            }
-          }
-        `
-      ),
-      privateFields: [cacheFieldName]
-    };
-  }
-  const method = jsMethod`${id(methodName)}(value, change) {}`;
-  return {
-    method: appendToBody(
-      method,
-      ...commonPreamble,
-      ...jsBlockBody`
-        var __items = ${containerRef}.querySelectorAll('[data-gid]');
-        for (var __i = 0; __i < __items.length && __i < __arr.length; __i++) {
-          var __child = __items[__i];
-          if (${itemComparison} === value) {
-            __child.classList.${id("remove")}(${relBinding.classToggleName});
-          } else {
-            __child.classList.${id("add")}(${relBinding.classToggleName});
-          }
-        }
-      `
-    ),
-    privateFields: []
-  };
-}
-
-function serializeKeyGuard(test) {
-  if (libExports.isBinaryExpression(test) && test.operator === "===" && libExports.isIdentifier(test.left, { name: "key" }) && libExports.isStringLiteral(test.right)) {
-    return test.right.value;
-  }
-  if (libExports.isLogicalExpression(test) && test.operator === "||") {
-    const parts = [];
-    const collect = (node) => {
-      if (libExports.isLogicalExpression(node) && node.operator === "||") {
-        return collect(node.left) && collect(node.right);
-      }
-      if (libExports.isBinaryExpression(node) && node.operator === "===" && libExports.isIdentifier(node.left, { name: "key" }) && libExports.isStringLiteral(node.right)) {
-        parts.push(node.right.value);
-        return true;
-      }
-      return false;
-    };
-    if (collect(test) && parts.length > 0) return parts.sort().join("|");
-  }
-  return null;
-}
-function mergeKeyGuards(stmts) {
-  const groups = /* @__PURE__ */ new Map();
-  const order = [];
-  const nonGuarded = [];
-  for (let i = 0; i < stmts.length; i++) {
-    const stmt = stmts[i];
-    if (libExports.isIfStatement(stmt) && !stmt.alternate) {
-      const key = serializeKeyGuard(stmt.test);
-      if (key != null) {
-        if (!groups.has(key)) {
-          groups.set(key, { test: stmt.test, body: [] });
-          order.push(key);
-        }
-        const g = groups.get(key);
-        if (libExports.isBlockStatement(stmt.consequent)) {
-          g.body.push(...stmt.consequent.body);
-        } else {
-          g.body.push(stmt.consequent);
-        }
-        continue;
-      }
-    }
-    nonGuarded.push({ idx: i, stmt });
-  }
-  const result = [];
-  let orderIdx = 0;
-  const emittedGroups = /* @__PURE__ */ new Set();
-  for (let i = 0; i < stmts.length; i++) {
-    const ng = nonGuarded.find((n) => n.idx === i);
-    if (ng) {
-      result.push(ng.stmt);
-      continue;
-    }
-    if (orderIdx < order.length) {
-      const key = order[orderIdx];
-      if (!emittedGroups.has(key)) {
-        const g = groups.get(key);
-        emittedGroups.add(key);
-        result.push(libExports.ifStatement(g.test, g.body.length === 1 ? g.body[0] : libExports.blockStatement(g.body)));
-      }
-      const stmt = stmts[i];
-      if (libExports.isIfStatement(stmt) && !stmt.alternate) {
-        const sk = serializeKeyGuard(stmt.test);
-        if (sk === key && emittedGroups.has(key)) {
-          continue;
-        }
-        if (sk != null && sk !== key) {
-          orderIdx++;
-          if (!emittedGroups.has(sk)) {
-            const g2 = groups.get(sk);
-            emittedGroups.add(sk);
-            result.push(libExports.ifStatement(g2.test, g2.body.length === 1 ? g2.body[0] : libExports.blockStatement(g2.body)));
-          }
-          continue;
-        }
-      }
-    }
-  }
-  for (; orderIdx < order.length; orderIdx++) {
-    const key = order[orderIdx];
-    if (!emittedGroups.has(key)) {
-      const g = groups.get(key);
-      emittedGroups.add(key);
-      result.push(libExports.ifStatement(g.test, g.body.length === 1 ? g.body[0] : libExports.blockStatement(g.body)));
-    }
-  }
-  return result;
-}
-function ensureOnPropChangeMethod(classBody, inlinePatchBodies, compiledChildren, arrayRefreshDeps, conditionalSlots = [], unresolvedMapPropRefreshDeps = []) {
-  const existing = classBody.body.find(
-    (member) => libExports.isClassMethod(member) && member.computed && libExports.isIdentifier(member.key) && member.key.name === "GEA_ON_PROP_CHANGE"
-  );
-  if (existing) return;
-  const directForwardCalls = [];
-  const nonDirectChildren = [];
-  for (const child of compiledChildren) {
-    if (childHasNoProps(child)) continue;
-    if (child.directMappings && child.directMappings.length > 0) {
-      const allSameName = child.directMappings.every((m) => m.parentPropName === m.childPropName);
-      const guard = child.directMappings.reduce((acc, m) => {
-        const test = libExports.binaryExpression("===", id("key"), libExports.stringLiteral(m.parentPropName));
-        return acc ? libExports.logicalExpression("||", acc, test) : test;
-      }, void 0);
-      if (allSameName) {
-        directForwardCalls.push(
-          libExports.ifStatement(
-            guard,
-            js`this.${id(child.instanceVar)}[${id("GEA_UPDATE_PROPS")}]({[key]: value});`
-          )
-        );
-      } else {
-        for (const m of child.directMappings) {
-          directForwardCalls.push(
-            libExports.ifStatement(
-              libExports.binaryExpression("===", id("key"), libExports.stringLiteral(m.parentPropName)),
-              js`this.${id(child.instanceVar)}[${id("GEA_UPDATE_PROPS")}]({${id(m.childPropName)}: value});`
-            )
-          );
-        }
-      }
-    } else {
-      nonDirectChildren.push(child);
-    }
-  }
-  const childRefreshEntries = nonDirectChildren.filter((child) => child.dependencies.some((dep) => !dep.storeVar && dep.pathParts[0] === "props")).map((child) => {
-    const depProps = /* @__PURE__ */ new Set();
-    for (const dep of child.dependencies) {
-      if (!dep.storeVar && dep.pathParts[0] === "props" && dep.pathParts.length > 1) {
-        depProps.add(dep.pathParts[1]);
-      }
-    }
-    return { child, depProps };
-  });
-  const arrayRefreshMethodNames = arrayRefreshDeps.filter((d) => d.propNames.length > 0).map((d) => d.methodName);
-  const refreshPropDeps = /* @__PURE__ */ new Map();
-  for (const { methodName, propNames } of arrayRefreshDeps) {
-    if (propNames.length > 0) {
-      refreshPropDeps.set(methodName, new Set(propNames));
-    }
-  }
-  const childRefreshCalls = childRefreshEntries.map(({ child, depProps }) => {
-    const buildPropsName = `__buildProps_${child.instanceVar.replace(/^_/, "")}`;
-    const call = js`this.${id(child.instanceVar)}[${id("GEA_UPDATE_PROPS")}](this.${id(buildPropsName)}());`;
-    if (depProps.size > 0) {
-      const guard = Array.from(depProps).reduce((acc, prop) => {
-        const test = libExports.binaryExpression("===", id("key"), libExports.stringLiteral(prop));
-        return acc ? libExports.logicalExpression("||", acc, test) : test;
-      }, void 0);
-      return libExports.ifStatement(guard, call);
-    }
-    return call;
-  });
-  const arrayRefreshCalls = arrayRefreshMethodNames.map((name) => {
-    const deps = refreshPropDeps.get(name);
-    const call = js`this.${id(name)}();`;
-    if (deps && deps.size > 0) {
-      const guard = Array.from(deps).reduce((acc, prop) => {
-        const test = libExports.binaryExpression("===", id("key"), libExports.stringLiteral(prop));
-        return acc ? libExports.logicalExpression("||", acc, test) : test;
-      }, void 0);
-      return libExports.ifStatement(guard, call);
-    }
-    return call;
-  });
-  const refreshCalls = [...childRefreshCalls, ...arrayRefreshCalls];
-  const condPatchCalls = [];
-  if (conditionalSlots.length > 0) {
-    for (let i = 0; i < conditionalSlots.length; i++) {
-      const slot = conditionalSlots[i];
-      const call = js`this[${id("GEA_PATCH_COND")}](${libExports.numericLiteral(i)});`;
-      if (slot.dependentPropNames.length > 0) {
-        const guard = slot.dependentPropNames.reduce((acc, prop) => {
-          const test = libExports.binaryExpression("===", id("key"), libExports.stringLiteral(prop));
-          return acc ? libExports.logicalExpression("||", acc, test) : test;
-        }, void 0);
-        condPatchCalls.push(libExports.ifStatement(guard, call));
-      } else {
-        condPatchCalls.push(call);
-      }
-    }
-  }
-  const patchCalls = Array.from(inlinePatchBodies.entries()).map(
-    ([propName, bodyStmts]) => libExports.ifStatement(
-      libExports.binaryExpression("===", id("key"), libExports.stringLiteral(propName)),
-      libExports.blockStatement(bodyStmts.map((s) => libExports.cloneNode(s, true)))
-    )
-  );
-  const unresolvedMapRefreshCalls = unresolvedMapPropRefreshDeps.map((dep) => {
-    const call = js`this[${id("GEA_SYNC_MAP")}](${libExports.numericLiteral(dep.mapIdx)});`;
-    if (dep.propNames.length > 0) {
-      const guard = dep.propNames.reduce((acc, prop) => {
-        const test = libExports.binaryExpression("===", id("key"), libExports.stringLiteral(prop));
-        return acc ? libExports.logicalExpression("||", acc, test) : test;
-      }, void 0);
-      return libExports.ifStatement(guard, call);
-    }
-    return call;
-  });
-  const allKeyGuarded = [
-    ...directForwardCalls,
-    ...refreshCalls,
-    ...patchCalls,
-    ...condPatchCalls,
-    ...unresolvedMapRefreshCalls
-  ];
-  if (allKeyGuarded.length === 0) return;
-  const merged = mergeKeyGuards(allKeyGuarded);
-  classBody.body.push(appendToBody(jsMethod`[${id("GEA_ON_PROP_CHANGE")}](key, value) {}`, ...merged));
-}
-
-function getArrayPropNameFromExpr(expr) {
-  if (libExports.isIdentifier(expr)) return expr.name;
-  if (libExports.isMemberExpression(expr) && libExports.isIdentifier(expr.property)) return expr.property.name;
-  return null;
-}
-function getMapIndex(arrayPathParts) {
-  const match = pathPartsToString(arrayPathParts).match(/__unresolved_(\d+)/);
-  return match ? parseInt(match[1], 10) : 0;
-}
-function collectFreeIdentifiers(nodes) {
-  const names = /* @__PURE__ */ new Set();
-  function walk(node, parent) {
-    if (libExports.isIdentifier(node)) {
-      if (libExports.isMemberExpression(parent) && parent.property === node && !parent.computed) return;
-      if (libExports.isObjectProperty(parent) && parent.key === node) return;
-      if (libExports.isVariableDeclarator(parent) && parent.id === node) return;
-      names.add(node.name);
-      return;
-    }
-    for (const key of libExports.VISITOR_KEYS[node.type] || []) {
-      const child = node[key];
-      if (Array.isArray(child)) {
-        for (const c of child) if (c && typeof c === "object" && "type" in c) walk(c, node);
-      } else if (child && typeof child === "object" && "type" in child) {
-        walk(child, node);
-      }
-    }
-  }
-  for (const node of nodes) walk(node);
-  return names;
-}
-function pruneUnusedSetupStatements(stmts, usedExpr) {
-  let result = [...stmts];
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const usedNames = collectFreeIdentifiers([...result.map((s) => libExports.cloneNode(s, true)), libExports.cloneNode(usedExpr, true)]);
-    const nextResult = [];
-    for (const stmt of result) {
-      if (!libExports.isVariableDeclaration(stmt)) {
-        nextResult.push(stmt);
-        continue;
-      }
-      const decl = stmt.declarations[0];
-      if (!decl) {
-        nextResult.push(stmt);
-        continue;
-      }
-      const declaredNames = /* @__PURE__ */ new Set();
-      if (libExports.isIdentifier(decl.id)) {
-        declaredNames.add(decl.id.name);
-      } else if (libExports.isObjectPattern(decl.id)) {
-        for (const prop of decl.id.properties) {
-          if (libExports.isObjectProperty(prop) && libExports.isIdentifier(prop.value)) declaredNames.add(prop.value.name);
-          else if (libExports.isRestElement(prop) && libExports.isIdentifier(prop.argument)) declaredNames.add(prop.argument.name);
-        }
-      }
-      if (declaredNames.size === 0 || [...declaredNames].some((n) => usedNames.has(n))) nextResult.push(stmt);
-      else changed = true;
-    }
-    result = nextResult;
-  }
-  return result;
-}
-function findRootTemplateLiteral(node) {
-  if (libExports.isTemplateLiteral(node)) return node;
-  if (libExports.isConditionalExpression(node))
-    return findRootTemplateLiteral(node.consequent) || findRootTemplateLiteral(node.alternate);
-  if (libExports.isLogicalExpression(node)) return findRootTemplateLiteral(node.right);
-  if (libExports.isParenthesizedExpression(node)) return findRootTemplateLiteral(node.expression);
-  if (libExports.isBlockStatement(node)) {
-    const ret = node.body.find((s) => libExports.isReturnStatement(s));
-    if (ret?.argument) return findRootTemplateLiteral(ret.argument);
-  }
-  return null;
-}
-function getExpressionPathParts(expr) {
-  if (libExports.isIdentifier(expr)) return [expr.name];
-  if (libExports.isThisExpression(expr)) return ["this"];
-  if ((libExports.isMemberExpression(expr) || libExports.isOptionalMemberExpression(expr)) && !expr.computed) {
-    if (!libExports.isIdentifier(expr.property)) return null;
-    const parent = getExpressionPathParts(expr.object);
-    return parent ? [...parent, expr.property.name] : null;
-  }
-  return null;
-}
-function matchesArrayMapReference(expr, arrayMap) {
-  const exprParts = getExpressionPathParts(expr);
-  if (!exprParts) return false;
-  const pathOnly = arrayMap.arrayPathParts;
-  if (exprParts.length === pathOnly.length && exprParts.every((p, i) => p === pathOnly[i])) return true;
-  if (!arrayMap.storeVar) return false;
-  const fullPath = [arrayMap.storeVar, ...arrayMap.arrayPathParts];
-  return exprParts.length === fullPath.length && exprParts.every((p, i) => p === fullPath[i]);
-}
-function wrapTemplateForTraverse(m) {
-  return libExports.program([libExports.expressionStatement(libExports.arrowFunctionExpression(m.params, m.body))]);
-}
-function isMapCall(path) {
-  return libExports.isMemberExpression(path.node.callee) && libExports.isIdentifier(path.node.callee.property) && path.node.callee.property.name === "map";
-}
-function getJoinChainPath(path) {
-  if (path.parentPath?.isMemberExpression() && libExports.isIdentifier(path.parentPath.node.property) && path.parentPath.node.property.name === "join" && path.parentPath.parentPath?.isCallExpression()) return path.parentPath.parentPath;
-  return null;
-}
-function resolveThisMethodCall(expr, classBody) {
-  if (!expr || !classBody || !libExports.isCallExpression(expr) || !libExports.isMemberExpression(expr.callee) || !libExports.isThisExpression(expr.callee.object) || !libExports.isIdentifier(expr.callee.property)) return null;
-  const name = expr.callee.property.name;
-  const method = classBody.body.find(
-    (n) => libExports.isClassMethod(n) && libExports.isIdentifier(n.key) && n.key.name === name
-  );
-  return method && libExports.isBlockStatement(method.body) ? { helperName: name, method } : null;
-}
-function addResolvedDep(deps, pathParts, storeVar) {
-  const observeKey = buildObserveKey(pathParts, storeVar);
-  if (!deps.has(observeKey)) deps.set(observeKey, { observeKey, pathParts, storeVar });
-}
-function generateMapRegistration(arrayMap, unresolvedMap, templatePropNames, wholeParamName) {
-  const arrayPathString = pathPartsToString(arrayMap.arrayPathParts);
-  const containerName = `__${arrayPathString.replace(/\./g, "_")}_container`;
-  const arrayName = arrayPathString.replace(/\./g, "");
-  const createMethodName = `create${arrayName.charAt(0).toUpperCase() + arrayName.slice(1)}Item`;
-  const mapIdx = getMapIndex(arrayMap.arrayPathParts);
-  const containerLookup = arrayMap.containerUserIdExpr ? jsExpr`__gid(${libExports.cloneNode(arrayMap.containerUserIdExpr, true)})` : arrayMap.containerBindingId !== void 0 ? jsExpr`__gid(${jsExpr`this.id`} + ${"-" + arrayMap.containerBindingId})` : jsExpr`this.$(":scope")`;
-  let arrExpr = libExports.cloneNode(unresolvedMap.computationExpr || libExports.arrayExpression([]), true);
-  let setupStatements = unresolvedMap.computationSetupStatements?.length ? unresolvedMap.computationSetupStatements.map((s) => libExports.cloneNode(s, true)) : [];
-  if (templatePropNames && templatePropNames.size > 0 || wholeParamName) {
-    arrExpr = replacePropRefsInExpression(arrExpr, templatePropNames || /* @__PURE__ */ new Set(), wholeParamName);
-    if (setupStatements.length)
-      setupStatements = replacePropRefsInStatements(setupStatements, templatePropNames || /* @__PURE__ */ new Set(), wholeParamName);
-  }
-  const prunedSetup = pruneUnusedSetupStatements(setupStatements, arrExpr);
-  const createArrow = unresolvedMap.indexVariable ? jsExpr`(__item, __idx) => this.${id(createMethodName)}(__item, __idx)` : jsExpr`(__item) => this.${id(createMethodName)}(__item)`;
-  const registerArgs = [
-    num(mapIdx),
-    str(containerName),
-    jsExpr`() => ${containerLookup}`,
-    libExports.arrowFunctionExpression([], libExports.blockStatement([...prunedSetup, js`return ${arrExpr};`])),
-    createArrow
-  ];
-  if (unresolvedMap.keyExpression) {
-    const keyExpr = libExports.cloneNode(unresolvedMap.keyExpression, true);
-    const itemVar = unresolvedMap.itemVariable;
-    const idxVar = unresolvedMap.indexVariable;
-    traverse$1(libExports.program([libExports.expressionStatement(keyExpr)]), {
-      noScope: true,
-      Identifier(path) {
-        if (path.node.name === itemVar) path.node.name = "__k";
-        else if (idxVar && path.node.name === idxVar) path.node.name = "__ki";
-      }
-    });
-    registerArgs.push(
-      libExports.arrowFunctionExpression(
-        idxVar ? [id("__k"), id("__ki")] : [id("__k")],
-        libExports.callExpression(id("String"), [keyExpr])
-      )
-    );
-  } else if (arrayMap.itemIdProperty && arrayMap.itemIdProperty !== ITEM_IS_KEY) {
-    registerArgs.push(str(arrayMap.itemIdProperty));
-  }
-  return libExports.expressionStatement(libExports.callExpression(jsExpr`this[${id("GEA_REGISTER_MAP")}]`, registerArgs));
-}
-function collectUnresolvedDependencies(unresolvedMaps, stateRefs, classBody) {
-  const deps = /* @__PURE__ */ new Map();
-  for (const unresolvedMap of unresolvedMaps) {
-    if (!unresolvedMap.computationExpr) continue;
-    if (libExports.isIdentifier(unresolvedMap.computationExpr) && stateRefs.has(unresolvedMap.computationExpr.name)) {
-      const ref = stateRefs.get(unresolvedMap.computationExpr.name);
-      if (ref.kind === "imported-destructured" && ref.storeVar) {
-        const storeRef = stateRefs.get(ref.storeVar);
-        const getterPaths = ref.propName ? storeRef?.getterDeps?.get(ref.propName) : void 0;
-        if (getterPaths && getterPaths.length > 0) {
-          for (const pp of getterPaths) addResolvedDep(deps, pp, ref.storeVar);
-        } else if (storeRef?.reactiveFields?.has(ref.propName)) {
-          addResolvedDep(deps, [ref.propName], ref.storeVar);
-        } else {
-          addResolvedDep(deps, [], ref.storeVar);
-        }
-        continue;
-      }
-    }
-    const resolved = resolveThisMethodCall(unresolvedMap.computationExpr, classBody);
-    if (resolved) {
-      const program = libExports.program(resolved.method.body.body.map((s) => libExports.cloneNode(s, true)));
-      traverse$1(program, {
-        noScope: true,
-        MemberExpression(path) {
-          const r = resolvePath(path.node, stateRefs);
-          if (r?.parts?.length) addResolvedDep(deps, [r.parts[0]], r.isImportedState ? r.storeVar : void 0);
-        }
-      });
-      if (deps.size > 0) continue;
-    }
-    let targetExpr = unresolvedMap.computationExpr;
-    if (resolved) {
-      const ret = resolved.method.body.body.find(
-        (s) => libExports.isReturnStatement(s) && !!s.argument
-      );
-      if (ret?.argument) targetExpr = libExports.cloneNode(ret.argument, true);
-    }
-    traverse$1(libExports.program([libExports.expressionStatement(libExports.cloneNode(targetExpr, true))]), {
-      noScope: true,
-      MemberExpression(path) {
-        const node = path.parentPath && libExports.isCallExpression(path.parentPath.node) && path.parentPath.node.callee === path.node ? path.node.object : path.node;
-        if (!libExports.isMemberExpression(node) && !libExports.isIdentifier(node)) return;
-        const result = resolvePath(node, stateRefs);
-        if (result?.parts?.length)
-          addResolvedDep(deps, [result.parts[0]], result.isImportedState ? result.storeVar : void 0);
-      }
-    });
-  }
-  return Array.from(deps.values());
-}
-function replaceMapWithComponentArrayItems(templateMethod, arrayExpr, arrayPropName, opts) {
-  if (!arrayExpr || !libExports.isBlockStatement(templateMethod.body)) return false;
-  let replaced = false;
-  traverse$1(wrapTemplateForTraverse(templateMethod), {
-    noScope: true,
-    CallExpression(path) {
-      if (replaced || !isMapCall(path)) return;
-      const mapObj = path.node.callee.object;
-      const matches = libExports.isIdentifier(arrayExpr) && libExports.isIdentifier(mapObj) && mapObj.name === arrayExpr.name || libExports.isMemberExpression(arrayExpr) && libExports.isMemberExpression(mapObj) && libExports.isIdentifier(arrayExpr.property) && libExports.isIdentifier(mapObj.property) && arrayExpr.property.name === mapObj.property.name || libExports.isMemberExpression(arrayExpr) && libExports.isIdentifier(mapObj) && libExports.isIdentifier(arrayExpr.property) && mapObj.name === arrayExpr.property.name;
-      if (!matches) return;
-      const toReplace = getJoinChainPath(path) || path;
-      if (opts?.slotBranch) {
-        toReplace.replaceWith(libExports.stringLiteral(""));
-      } else {
-        const joinCall = libExports.callExpression(
-          libExports.memberExpression(buildThisListItems(arrayPropName), id("join")),
-          [libExports.stringLiteral("")]
-        );
-        toReplace.replaceWith(joinCall);
-      }
-      replaced = true;
-    }
-  });
-  return replaced;
-}
-function replaceMapWithComponentArrayItemsInConditionalSlots(slots, arrayExpr, arrayPropName) {
-  if (!arrayExpr || slots.length === 0) return;
-  for (const slot of slots) {
-    for (const key of ["truthyHtmlExpr", "falsyHtmlExpr"]) {
-      const expr = slot[key];
-      if (!expr) continue;
-      const fakeMethod = jsMethod`${id("__tmpSlotMapReplace")}(__p) { return ${libExports.cloneNode(expr, true)}; }`;
-      replaceMapWithComponentArrayItems(fakeMethod, arrayExpr, arrayPropName, { slotBranch: true });
-      const ret = fakeMethod.body.body[0];
-      if (libExports.isReturnStatement(ret) && ret.argument) slot[key] = ret.argument;
-    }
-  }
-}
-function inlineIntoConstructor(classBody, statements) {
-  let ctor = classBody.body.find(
-    (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "constructor"
-  );
-  if (!ctor) {
-    ctor = appendToBody(jsMethod`${id("constructor")}(...args) {}`, js`super(...args);`, ...statements);
-    classBody.body.unshift(ctor);
-    return;
-  }
-  ctor.body.body.push(...statements);
-}
-function ensureDisposeCalls(classBody, targets) {
-  const stmts = targets.map((arrayPropName) => {
-    const sym = buildListItemsSymbol(arrayPropName);
-    return js`this[${sym}]?.forEach?.(item => item?.dispose?.());`;
-  });
-  const existing = classBody.body.find(
-    (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "dispose"
-  );
-  if (existing) {
-    existing.body.body.unshift(...stmts);
-    return;
-  }
-  classBody.body.push(appendToBody(jsMethod`${id("dispose")}() {}`, ...stmts, js`super.dispose();`));
-}
-function injectMapItemAttrsIntoTemplate(templateMethod, mapInfos) {
-  if (mapInfos.length === 0) return;
-  const infoQueueByVar = /* @__PURE__ */ new Map();
-  for (const info of mapInfos) {
-    if (!infoQueueByVar.has(info.itemVariable)) infoQueueByVar.set(info.itemVariable, []);
-    infoQueueByVar.get(info.itemVariable).push(info);
-  }
-  traverse$1(wrapTemplateForTraverse(templateMethod), {
-    noScope: true,
-    CallExpression(path) {
-      if (!isMapCall(path)) return;
-      const fn = path.node.arguments[0];
-      if (!libExports.isArrowFunctionExpression(fn)) return;
-      const paramName = libExports.isIdentifier(fn.params[0]) ? fn.params[0].name : null;
-      if (!paramName) return;
-      const info = infoQueueByVar.get(paramName)?.shift();
-      if (!info) return;
-      const rootTL = findRootTemplateLiteral(libExports.isBlockStatement(fn.body) ? fn.body : fn.body);
-      if (!rootTL) return;
-      for (let qi = 0; qi < rootTL.quasis.length; qi++) {
-        const raw = rootTL.quasis[qi].value.raw;
-        const attrIdx = raw.indexOf(' data-gid="');
-        if (attrIdx === -1) continue;
-        const before = raw.substring(0, attrIdx);
-        const nextRaw = rootTL.quasis[qi + 1]?.value.raw;
-        if (nextRaw !== void 0 && nextRaw.startsWith('"')) {
-          const after = nextRaw.substring(1);
-          rootTL.quasis[qi] = libExports.templateElement({ raw: before + after, cooked: before + after }, rootTL.quasis[qi + 1].tail);
-          rootTL.quasis.splice(qi + 1, 1);
-          rootTL.expressions.splice(qi, 1);
-        }
-        break;
-      }
-      const first = rootTL.quasis[0].value.raw;
-      const tagMatch = first.match(/^(<[\w-]+)/);
-      if (!tagMatch) return;
-      const tagPart = tagMatch[1], remainder = first.substring(tagPart.length);
-      const tagName = tagPart.slice(1).toLowerCase();
-      const eventAttr = info.eventToken && !tagName.includes("-") ? ` data-ge="${info.eventToken}"` : "";
-      const itemIdExpr = info.keyExpression ? libExports.callExpression(id("String"), [libExports.cloneNode(info.keyExpression, true)]) : info.itemIdProperty && info.itemIdProperty !== ITEM_IS_KEY ? libExports.logicalExpression("??", buildOptionalMemberChain(id(info.itemVariable), info.itemIdProperty), id(info.itemVariable)) : jsExpr`String(${id(info.itemVariable)})`;
-      rootTL.quasis = [
-        libExports.templateElement({ raw: `${tagPart} data-gid="`, cooked: `${tagPart} data-gid="` }),
-        libExports.templateElement({ raw: `"${eventAttr}${remainder}`, cooked: `"${eventAttr}${remainder}` }, rootTL.quasis[0].tail),
-        ...rootTL.quasis.slice(1)
-      ];
-      rootTL.expressions = [itemIdExpr, ...rootTL.expressions];
-    }
-  });
-}
-function addJoinToUnresolvedMapCalls(templateMethod, _unresolvedMaps) {
-  traverse$1(wrapTemplateForTraverse(templateMethod), {
-    noScope: true,
-    CallExpression(path) {
-      if (!isMapCall(path)) return;
-      if (!path.node.arguments[0] || !libExports.isArrowFunctionExpression(path.node.arguments[0])) return;
-      const joinPath = getJoinChainPath(path);
-      if (joinPath) {
-        joinPath.replaceWith(
-          libExports.binaryExpression("+", libExports.cloneNode(joinPath.node, true), libExports.stringLiteral("<!---->"))
-        );
-        joinPath.skip();
-        return;
-      }
-      path.replaceWith(
-        libExports.binaryExpression(
-          "+",
-          libExports.callExpression(
-            libExports.memberExpression(libExports.cloneNode(path.node, true), libExports.identifier("join")),
-            [libExports.stringLiteral("")]
-          ),
-          libExports.stringLiteral("<!---->")
-        )
-      );
-    }
-  });
-}
-function replaceInlineMapWithRenderCall(classPath, arrayMap, renderMethodName) {
-  const templateMethod = classPath.node.body.body.find(
-    (n) => libExports.isClassMethod(n) && libExports.isIdentifier(n.key) && n.key.name === "template"
-  );
-  if (!templateMethod) return;
-  const arrayLastSegment = arrayMap.arrayPathParts[arrayMap.arrayPathParts.length - 1];
-  traverse$1(wrapTemplateForTraverse(templateMethod), {
-    noScope: true,
-    CallExpression(path) {
-      if (!isMapCall(path) || !path.node.arguments[0]) return;
-      const obj = path.node.callee.object;
-      if (!libExports.isMemberExpression(obj) || !libExports.isIdentifier(obj.property) || obj.property.name !== arrayLastSegment) return;
-      const arrowFn = path.node.arguments[0];
-      if (!libExports.isArrowFunctionExpression(arrowFn)) return;
-      const hasTplBody = libExports.isTemplateLiteral(arrowFn.body) || libExports.isBlockStatement(arrowFn.body) && arrowFn.body.body.length === 1 && libExports.isReturnStatement(arrowFn.body.body[0]) && arrowFn.body.body[0].argument && libExports.isTemplateLiteral(arrowFn.body.body[0].argument);
-      if (!hasTplBody) return;
-      const paramName = libExports.isIdentifier(arrowFn.params[0]) ? arrowFn.params[0].name : "__item";
-      if (!libExports.isIdentifier(arrowFn.params[0])) arrowFn.params[0] = libExports.identifier(paramName);
-      const idxParam = libExports.isIdentifier(arrowFn.params[1]) ? arrowFn.params[1].name : void 0;
-      arrowFn.body = idxParam ? jsExpr`this.${id(renderMethodName)}(${id(paramName)}, ${id(idxParam)})` : jsExpr`this.${id(renderMethodName)}(${id(paramName)})`;
-      const replacement = jsExpr`${path.node}.join('')`;
-      const joinPath = getJoinChainPath(path);
-      if (joinPath) joinPath.replaceWith(replacement);
-      else path.replaceWith(replacement);
-      path.stop();
-    }
-  });
-}
-function stripHtmlArrayMapJoinChainsInAst(rootStmt, arrayMap) {
-  let replaced = false;
-  traverse$1(libExports.program([rootStmt]), {
-    noScope: true,
-    CallExpression(path) {
-      if (!isMapCall(path)) return;
-      if (!matchesArrayMapReference(path.node.callee.object, arrayMap)) return;
-      const fn = path.node.arguments[0];
-      if (!libExports.isArrowFunctionExpression(fn) && !libExports.isFunctionExpression(fn)) return;
-      const toReplace = getJoinChainPath(path) || path;
-      toReplace.replaceWith(libExports.stringLiteral(""));
-      replaced = true;
-    }
-  });
-  return replaced;
-}
-function stripHtmlArrayMapJoinInTemplateMethod(templateMethod, arrayMap) {
-  if (!libExports.isBlockStatement(templateMethod.body)) return false;
-  return stripHtmlArrayMapJoinChainsInAst(wrapTemplateForTraverse(templateMethod).body[0], arrayMap);
-}
-function replaceMapInConditionalSlots(slots, arrayMap) {
-  let replaced = false;
-  for (const slot of slots) {
-    for (const key of ["truthyHtmlExpr", "falsyHtmlExpr"]) {
-      const expr = slot[key];
-      if (!expr) continue;
-      const wrap = libExports.expressionStatement(expr);
-      replaced = stripHtmlArrayMapJoinChainsInAst(wrap, arrayMap) || replaced;
-      slot[key] = wrap.expression;
-    }
-  }
-  return replaced;
-}
-function collectPropNamesFromItemTemplate(itemTemplate, templatePropNames) {
-  if (!itemTemplate) return [];
-  const used = /* @__PURE__ */ new Set();
-  traverse$1(itemTemplate, {
-    noScope: true,
-    Identifier(path) {
-      if (templatePropNames.has(path.node.name)) used.add(path.node.name);
-    }
-  });
-  return Array.from(used);
-}
-
-function generateConditionalPatchMethods(classBody, slots, templatePropNames, wholeParamName, earlyReturnGuard, htmlArrayMapsToStrip) {
-  const guardedRoot = earlyReturnGuard ? earlyReturnFalsyBindingName(earlyReturnGuard) : null;
-  const maybeOptStmts = (stmts) => guardedRoot ? optionalizeBindingRootInStatements(stmts, guardedRoot) : stmts;
-  const maybeOptExpr = (e) => guardedRoot ? optionalizeMemberChainsFromBindingRoot(e, guardedRoot) : e;
-  const collectDeduped = (stmts, seen, out) => {
-    for (const stmt of stmts) {
-      if (libExports.isVariableDeclaration(stmt)) {
-        const decl = stmt.declarations[0];
-        if (libExports.isIdentifier(decl.id)) {
-          if (!seen.has(decl.id.name)) {
-            seen.add(decl.id.name);
-            out.push(stmt);
-          }
-        } else if (libExports.isObjectPattern(decl.id)) {
-          const names = decl.id.properties.map((p) => libExports.isObjectProperty(p) && libExports.isIdentifier(p.value) ? p.value.name : null).filter(Boolean);
-          const unseen = names.filter((n) => !seen.has(n));
-          if (unseen.length === 0) continue;
-          const unseenSet = new Set(unseen);
-          const filteredProps = decl.id.properties.filter(
-            (p) => libExports.isObjectProperty(p) && libExports.isIdentifier(p.value) && unseenSet.has(p.value.name)
-          );
-          if (filteredProps.length === 0) continue;
-          unseen.forEach((n) => seen.add(n));
-          if (filteredProps.length === decl.id.properties.length) {
-            out.push(stmt);
-          } else if (decl.init && libExports.isMemberExpression(decl.init) && libExports.isThisExpression(decl.init.object) && libExports.isIdentifier(decl.init.property, { name: "props" })) {
-            out.push(
-              libExports.variableDeclaration(stmt.kind, [
-                libExports.variableDeclarator(
-                  libExports.objectPattern(filteredProps.map((p) => libExports.cloneNode(p, true))),
-                  libExports.cloneNode(decl.init, true)
-                )
-              ])
-            );
-          } else {
-            out.push(stmt);
-          }
-        } else {
-          out.push(stmt);
-        }
-      } else {
-        out.push(stmt);
-      }
-    }
-  };
-  const seenVarNames = /* @__PURE__ */ new Set();
-  const allSetupStatements = [];
-  for (const slot of slots) {
-    collectDeduped(slot.setupStatements, seenVarNames, allSetupStatements);
-  }
-  const seenHtmlVarNames = /* @__PURE__ */ new Set();
-  const allHtmlSetupStatements = [];
-  for (const slot of slots) {
-    collectDeduped(slot.htmlSetupStatements || slot.setupStatements, seenHtmlVarNames, allHtmlSetupStatements);
-  }
-  const rpExpr = (e) => replacePropRefsInExpression(e, templatePropNames, wholeParamName);
-  const rpStmts = (s) => replacePropRefsInStatements(s, templatePropNames, wholeParamName);
-  const rewrittenCondExprs = slots.map((s) => rpExpr(libExports.cloneNode(s.conditionExpr, true)));
-  const rewrittenCondExprsSafe = rewrittenCondExprs.map((e) => maybeOptExpr(e));
-  const initSetup = maybeOptStmts(
-    pruneDeadParamDestructuring(
-      rpStmts(allSetupStatements.map((s) => libExports.cloneNode(s, true))),
-      rewrittenCondExprs
-    )
-  );
-  const condAssignments = [];
-  for (let i = 0; i < slots.length; i++) {
-    const condSymbol = libExports.callExpression(id("geaCondValueSymbol"), [libExports.numericLiteral(i)]);
-    const thisCondField = libExports.memberExpression(libExports.thisExpression(), condSymbol, true);
-    condAssignments.push(
-      libExports.expressionStatement(
-        libExports.assignmentExpression(
-          "=",
-          thisCondField,
-          libExports.unaryExpression("!", libExports.unaryExpression("!", libExports.cloneNode(rewrittenCondExprsSafe[i], true)))
-        )
-      )
-    );
-  }
-  const registerCondCalls = [];
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
-    const rewrittenCondExpr = rpExpr(libExports.cloneNode(slot.conditionExpr, true));
-    const condSetup = maybeOptStmts(
-      pruneDeadParamDestructuring(rpStmts(allSetupStatements.map((s) => libExports.cloneNode(s, true))), [
-        rewrittenCondExpr
-      ])
-    );
-    const getCondBody = [...condSetup, libExports.returnStatement(maybeOptExpr(rewrittenCondExpr))];
-    const buildHtmlFn = (htmlExpr) => {
-      if (!htmlExpr) return libExports.nullLiteral();
-      const htmlStmt = libExports.expressionStatement(rpExpr(libExports.cloneNode(htmlExpr, true)));
-      if (htmlArrayMapsToStrip) {
-        for (const arrayMap of htmlArrayMapsToStrip) {
-          stripHtmlArrayMapJoinChainsInAst(htmlStmt, arrayMap);
-        }
-      }
-      const clonedHtmlExpr = htmlStmt.expression;
-      const htmlSetup = maybeOptStmts(
-        pruneDeadParamDestructuring(rpStmts(allHtmlSetupStatements.map((s) => libExports.cloneNode(s, true))), [
-          clonedHtmlExpr
-        ])
-      );
-      const htmlExprSafe = maybeOptExpr(clonedHtmlExpr);
-      if (htmlSetup.length > 0) {
-        return libExports.arrowFunctionExpression([], libExports.blockStatement([...htmlSetup, libExports.returnStatement(htmlExprSafe)]));
-      }
-      return libExports.arrowFunctionExpression([], htmlExprSafe);
-    };
-    registerCondCalls.push(
-      libExports.expressionStatement(
-        libExports.callExpression(jsExpr`this[${id("GEA_REGISTER_COND")}]`, [
-          libExports.numericLiteral(i),
-          libExports.stringLiteral(slot.slotId),
-          libExports.arrowFunctionExpression([], libExports.blockStatement(getCondBody)),
-          buildHtmlFn(slot.truthyHtmlExpr),
-          buildHtmlFn(slot.falsyHtmlExpr)
-        ])
-      )
-    );
-  }
-  const evalStatements = [...initSetup, ...condAssignments];
-  const initBody = evalStatements.length > 0 ? [...evalStatements, ...registerCondCalls] : registerCondCalls;
-  inlineIntoConstructor(classBody, initBody);
-}
-function generateStateChildSwapMethod(classBody, stateChildSlots) {
-  const existing = classBody.body.find(
-    (member) => libExports.isClassMethod(member) && member.computed && libExports.isIdentifier(member.key) && member.key.name === "GEA_SWAP_STATE_CHILDREN"
-  );
-  if (existing) return;
-  const templateMethod = classBody.body.find(
-    (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "template"
-  );
-  const setupStatements = [];
-  if (templateMethod?.body) {
-    const returnIndex = templateMethod.body.body.findIndex((s) => libExports.isReturnStatement(s));
-    const stmts = returnIndex >= 0 ? templateMethod.body.body.slice(0, returnIndex) : [];
-    for (const stmt of stmts) {
-      if (libExports.isExpressionStatement(stmt)) continue;
-      setupStatements.push(libExports.cloneNode(stmt, true));
-    }
-  }
-  const propsUpdateCalls = stateChildSlots.map((slot) => {
-    const buildPropsName = `__buildProps_${slot.childInstanceVar.replace(/^_/, "")}`;
-    const hasBuildProps = classBody.body.some(
-      (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === buildPropsName
-    );
-    if (!hasBuildProps) return null;
-    return js`this.${id(slot.childInstanceVar)}[${id("GEA_UPDATE_PROPS")}](this.${id(buildPropsName)}());`;
-  }).filter(Boolean);
-  const swapCalls = stateChildSlots.map((slot) => {
-    const guardClone = libExports.cloneNode(slot.guardExpr, true);
-    return libExports.expressionStatement(
-      libExports.callExpression(jsExpr`this[${id("GEA_SWAP_CHILD")}]`, [
-        libExports.stringLiteral(slot.markerId),
-        libExports.logicalExpression("&&", guardClone, jsExpr`this.${id(slot.childInstanceVar)}`)
-      ])
-    );
-  });
-  const filteredSetup = pruneUnusedSetupDestructuring(setupStatements, [...propsUpdateCalls, ...swapCalls]);
-  const method = libExports.classMethod(
-    "method",
-    id("GEA_SWAP_STATE_CHILDREN"),
-    [],
-    libExports.blockStatement([...filteredSetup, ...propsUpdateCalls, ...swapCalls]),
-    true
-    // computed key: [GEA_SWAP_STATE_CHILDREN]()
-  );
-  classBody.body.push(method);
-}
-
-function mergeObserveMethod(ctx, observeKey, method) {
-  const methodName = getMethodName(method);
-  const existing = ctx.addedMethods.get(observeKey) || (methodName ? ctx.addedMethodsByName.get(methodName) : void 0);
-  if (existing && libExports.isBlockStatement(existing.body) && libExports.isBlockStatement(method.body)) {
-    if (method.params.length > existing.params.length) {
-      existing.params = method.params.map((param) => libExports.cloneNode(param, true));
-    }
-    existing.body.body.push(
-      ...ctx.alignMethodBodyParams(method, existing.params)
-    );
-    return;
-  }
-  ctx.classPath.node.body.body.push(method);
-  ctx.addedMethods.set(observeKey, method);
-  if (methodName) ctx.addedMethodsByName.set(methodName, method);
-  ctx.applied = true;
-}
-function getMethodName(method) {
-  return libExports.isIdentifier(method.key) ? method.key.name : libExports.isStringLiteral(method.key) ? method.key.value : null;
-}
-function wireObservers(ctx, stateRefs, htmlArrayMaps, mapRegistrations, mapSyncObservers, storeComponentArrayObservers, observeListConfigs, staticArrayRefreshOnMount, initialHtmlArrayRefreshOnMount, guardStateKeys, componentGetterStoreDeps, ownClassMethodNames, hasOnPropChange, _unresolvedBindings) {
-  if (!ctx.applied) return;
-  const importedStores = /* @__PURE__ */ new Map();
-  const localObserveHandlers = /* @__PURE__ */ new Map();
-  const ensureStoreGroup = (storeVar) => {
-    if (!importedStores.has(storeVar)) {
-      importedStores.set(storeVar, {
-        captureExpression: libExports.memberExpression(id(storeVar), id("GEA_STORE_ROOT"), true),
-        observeHandlers: /* @__PURE__ */ new Map()
-      });
-    }
-    return importedStores.get(storeVar);
-  };
-  ctx.addedMethods.forEach((_method, observeKey) => {
-    const { parts, storeVar } = parseObserveKey(observeKey);
-    if (!storeVar) {
-      if (hasOnPropChange && parts[0] === "props") return;
-      if (parts.length === 1 && ownClassMethodNames.has(parts[0])) {
-        const compGetterDeps = componentGetterStoreDeps.get(parts[0]);
-        if (compGetterDeps && compGetterDeps.length > 0) {
-          const originalMethodName = getObserveMethodName(parts);
-          const originalMethod = ctx.addedMethodsByName.get(originalMethodName);
-          for (const dep of compGetterDeps) {
-            const depKey = buildObserveKey(dep.pathParts, dep.storeVar) + `__getter_${parts[0]}`;
-            ensureStoreGroup(dep.storeVar).observeHandlers.set(depKey, {
-              pathParts: dep.pathParts,
-              methodName: originalMethodName,
-              isVia: true,
-              rereadExpr: jsExpr`this.${id(parts[0])}`,
-              passValue: originalMethod ? classMethodUsesParam(originalMethod, 0) : true,
-              ...dep.dynamicKeyExpr ? { dynamicKeyExpr: dep.dynamicKeyExpr } : {}
-            });
-          }
-        }
-        return;
-      }
-      localObserveHandlers.set(observeKey, { pathParts: parts, methodName: getObserveMethodName(parts) });
-      return;
-    }
-    {
-      const storeRef = stateRefs.get(storeVar);
-      const getterDepPaths = storeRef?.getterDeps?.get(parts[0]);
-      if (getterDepPaths && getterDepPaths.length > 0) {
-        const originalMethodName = getObserveMethodName(parts, storeVar);
-        const originalMethod = ctx.addedMethodsByName.get(originalMethodName);
-        let rereadExpr = libExports.memberExpression(libExports.identifier(storeVar), libExports.identifier(parts[0]));
-        for (let i = 1; i < parts.length; i++) {
-          rereadExpr = libExports.optionalMemberExpression(rereadExpr, libExports.identifier(parts[i]), false, true);
-        }
-        for (const depPath of getterDepPaths) {
-          const depKey = buildObserveKey(depPath, storeVar) + `__getter_${parts.join("_")}`;
-          ensureStoreGroup(storeVar).observeHandlers.set(depKey, {
-            pathParts: depPath,
-            methodName: originalMethodName,
-            isVia: true,
-            rereadExpr,
-            passValue: originalMethod ? classMethodUsesParam(originalMethod, 0) : true
-          });
-        }
-        return;
-      }
-    }
-    ensureStoreGroup(storeVar).observeHandlers.set(observeKey, {
-      pathParts: parts,
-      methodName: getObserveMethodName(parts, storeVar)
-    });
-  });
-  const consolidatedMapSync = /* @__PURE__ */ new Map();
-  for (const obs of mapSyncObservers) {
-    let resolvedPaths = [obs.pathParts];
-    if (obs.pathParts.length === 1) {
-      const storeRef = stateRefs.get(obs.storeVar);
-      const getterDepPaths = storeRef?.getterDeps?.get(obs.pathParts[0]);
-      if (getterDepPaths && getterDepPaths.length > 0) {
-        resolvedPaths = getterDepPaths;
-      }
-    }
-    for (const rp of resolvedPaths) {
-      const groupKey = `${obs.storeVar}:${obs.delegateName}:${rp.join("_")}`;
-      consolidatedMapSync.set(groupKey, { ...obs, pathParts: rp });
-    }
-  }
-  for (const obs of consolidatedMapSync.values()) {
-    ensureStoreGroup(obs.storeVar).observeHandlers.set(`__mapSync_${obs.delegateName}_${obs.pathParts.join("_")}`, {
-      pathParts: obs.pathParts,
-      methodName: obs.delegateName
-    });
-  }
-  for (const obs of storeComponentArrayObservers) {
-    const existingObserveKey = buildObserveKey(obs.pathParts, obs.storeVar);
-    const existingMethod = ctx.addedMethods.get(existingObserveKey);
-    if (existingMethod && libExports.isBlockStatement(existingMethod.body)) {
-      const alreadyCalls = existingMethod.body.body.some((stmt) => {
-        if (!libExports.isExpressionStatement(stmt)) return false;
-        const expr = stmt.expression;
-        if (!libExports.isCallExpression(expr) || !libExports.isMemberExpression(expr.callee)) return false;
-        return libExports.isIdentifier(expr.callee.property) && expr.callee.property.name === obs.refreshMethodName;
-      });
-      if (alreadyCalls) continue;
-    }
-    if (obs.pathParts.length === 1) {
-      const storeRef = stateRefs.get(obs.storeVar);
-      const getterDepPaths = storeRef?.getterDeps?.get(obs.pathParts[0]);
-      if (getterDepPaths && getterDepPaths.length > 0) {
-        for (const depPath of getterDepPaths) {
-          const depKey = `__storeCompArray_${obs.refreshMethodName}_dep_${depPath.join("_")}`;
-          ensureStoreGroup(obs.storeVar).observeHandlers.set(depKey, {
-            pathParts: depPath,
-            methodName: obs.refreshMethodName
-          });
-        }
-        continue;
-      }
-    }
-    ensureStoreGroup(obs.storeVar).observeHandlers.set(`__storeCompArray_${obs.refreshMethodName}`, {
-      pathParts: obs.pathParts,
-      methodName: obs.refreshMethodName
-    });
-  }
-  if (guardStateKeys.size > 0) {
-    ctx.addedMethods.forEach((method, observeKey) => {
-      const { parts, storeVar: sv } = parseObserveKey(observeKey);
-      if (!sv) return;
-      if (parts.length >= 2) {
-        for (let prefixLen = 1; prefixLen < parts.length; prefixLen++) {
-          const prefixKey = buildObserveKey(parts.slice(0, prefixLen), sv);
-          if (guardStateKeys.has(prefixKey)) {
-            if (libExports.isBlockStatement(method.body)) {
-              method.body.body.unshift(js`if (${id(sv)}.${id(parts[prefixLen - 1])} == null) return;`);
-            }
-            break;
-          }
-        }
-      } else if (parts.length === 1) {
-        if (guardStateKeys.has(observeKey) && libExports.isBlockStatement(method.body)) {
-          const hasChildPropUpdate = method.body.body.some((stmt) => generate$1(stmt).code.includes("GEA_UPDATE_PROPS"));
-          if (hasChildPropUpdate) {
-            method.body.body.unshift(js`if (${id(sv)}.${id(parts[0])} == null) return;`);
-          }
-        } else {
-          const storeRef = stateRefs.get(sv);
-          if (storeRef?.getterDeps) {
-            for (const [getterName, depPaths] of storeRef.getterDeps) {
-              const isDepOfGetter = depPaths.some((dp) => dp.length === 1 && dp[0] === parts[0]);
-              if (!isDepOfGetter) continue;
-              const guardKey = buildObserveKey([getterName], sv);
-              if (!guardStateKeys.has(guardKey)) continue;
-              if (libExports.isBlockStatement(method.body)) {
-                method.body.body.unshift(js`if (${id(sv)}.${id(getterName)} == null) return;`);
-              }
-              break;
-            }
-          }
-        }
-      }
-    });
-  }
-  {
-    const seen = /* @__PURE__ */ new Set();
-    const methodEntries = [];
-    ctx.addedMethods.forEach((method, observeKey) => {
-      if (seen.has(method)) return;
-      seen.add(method);
-      const name = getMethodName(method);
-      if (name) methodEntries.push({ observeKey, method, name });
-    });
-    const bodyGroups = /* @__PURE__ */ new Map();
-    for (const entry of methodEntries) {
-      const { storeVar } = parseObserveKey(entry.observeKey);
-      const bodyCode = (storeVar || "") + ":" + generate$1(libExports.blockStatement(entry.method.body.body)).code;
-      if (!bodyGroups.has(bodyCode)) bodyGroups.set(bodyCode, []);
-      bodyGroups.get(bodyCode).push(entry);
-    }
-    const renameMap = /* @__PURE__ */ new Map();
-    for (const [, group] of bodyGroups) {
-      if (group.length < 2) continue;
-      const canonical = group[0];
-      for (let i = 1; i < group.length; i++) {
-        const dup = group[i];
-        renameMap.set(dup.name, canonical.name);
-        const idx = ctx.classPath.node.body.body.indexOf(dup.method);
-        if (idx !== -1) ctx.classPath.node.body.body.splice(idx, 1);
-      }
-    }
-    if (renameMap.size > 0) {
-      for (const [, config] of importedStores) {
-        for (const [key, entry] of config.observeHandlers) {
-          if (renameMap.has(entry.methodName)) {
-            config.observeHandlers.set(key, { ...entry, methodName: renameMap.get(entry.methodName) });
-          }
-        }
-      }
-      for (const [key, entry] of localObserveHandlers) {
-        if (renameMap.has(entry.methodName)) {
-          localObserveHandlers.set(key, { ...entry, methodName: renameMap.get(entry.methodName) });
-        }
-      }
-    }
-  }
-  for (const olc of observeListConfigs) {
-    ensureStoreGroup(olc.storeVar);
-  }
-  if (importedStores.size > 0 || localObserveHandlers.size > 0 || mapRegistrations.length > 0 || observeListConfigs.length > 0) {
-    const storeConfigs = Array.from(importedStores.entries()).map(([storeVar, config]) => ({
-      storeVar,
-      captureExpression: config.captureExpression,
-      observeHandlers: Array.from(config.observeHandlers.values()).map(
-        ({ pathParts, methodName, isVia, rereadExpr, dynamicKeyExpr, passValue }) => ({
-          pathParts,
-          methodName,
-          isVia,
-          rereadExpr,
-          dynamicKeyExpr,
-          passValue
-        })
-      )
-    }));
-    if (storeConfigs.length > 0 || mapRegistrations.length > 0 || observeListConfigs.length > 0) {
-      const createdHooksMethod = generateCreatedHooks(storeConfigs, htmlArrayMaps.length > 0, observeListConfigs);
-      if (mapRegistrations.length > 0) {
-        createdHooksMethod.body.body.push(...mapRegistrations);
-      }
-      const generatedCreatedHooksBody = createdHooksMethod.body.body;
-      const existingCreatedHooks = ctx.classPath.node.body.body.find(
-        (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "createdHooks"
-      );
-      if (existingCreatedHooks) {
-        existingCreatedHooks.body.body.unshift(...generatedCreatedHooksBody);
-      } else {
-        ctx.classPath.node.body.body.push(createdHooksMethod);
-      }
-    }
-    if (staticArrayRefreshOnMount.length > 0 || initialHtmlArrayRefreshOnMount.length > 0) {
-      const refreshStmts = [
-        ...[...new Set(staticArrayRefreshOnMount)].map((name) => js`this.${id(name)}();`),
-        ...initialHtmlArrayRefreshOnMount
-      ];
-      const existingHook = ctx.classPath.node.body.body.find(
-        (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "onAfterRenderHooks"
-      );
-      if (existingHook) existingHook.body.body.push(...refreshStmts);
-      else ctx.classPath.node.body.body.push(appendToBody(jsMethod`onAfterRenderHooks() {}`, ...refreshStmts));
-    }
-    if (localObserveHandlers.size > 0) {
-      ctx.classPath.node.body.body.push(
-        generateLocalStateObserverSetup(Array.from(localObserveHandlers.values()), htmlArrayMaps.length > 0)
-      );
-    }
-  }
-}
-function injectPrivateFields(ctx, classLevelPrivateFields, needsClassLevelRawStoreField) {
-  if (needsClassLevelRawStoreField) classLevelPrivateFields.add("__rs");
-  for (const fieldName of classLevelPrivateFields) {
-    const alreadyHas = ctx.classPath.node.body.body.some(
-      (n) => libExports.isClassPrivateProperty(n) && libExports.isIdentifier(n.key.id) && n.key.id.name === fieldName
-    );
-    if (!alreadyHas) {
-      ctx.classPath.node.body.body.unshift(jsPrivateProp`#${id(fieldName)}`);
-    }
-  }
-}
-function injectModuleLevelUnwrapHelper(ast, needed) {
-  if (!needed) return;
-  const alreadyHas = ast.program.body.some(
-    (stmt) => libExports.isVariableDeclaration(stmt) && stmt.declarations.some((d) => libExports.isIdentifier(d.id) && d.id.name === "__v")
-  );
-  if (!alreadyHas) {
-    ast.program.body.unshift(buildValueUnwrapHelper());
-  }
-}
-
-function processUnresolvedMaps(ctx, analysis, stateRefs, imports, sourceFile, stateProps, templateMethod, tmplSetupCtx, eventIdCounter, _templatePropNames, _templateWholeParam) {
-  const unresolvedEventHandlers = [];
-  const unresolvedBindings = [];
-  const componentArrayRefreshDeps = [];
-  const componentArrayDisposeTargets = [];
-  const storeComponentArrayObservers = [];
-  const observeListConfigs = [];
-  const staticArrayRefreshOnMount = [];
-  const initialHtmlArrayRefreshOnMount = [];
-  const mapItemAttrInfos = [];
-  let needsModuleLevelUnwrapHelper = false;
-  let needsClassLevelRawStoreField = false;
-  const classLevelPrivateFields = /* @__PURE__ */ new Set();
-  const classPath = ctx.classPath;
-  const tmplBody = templateMethod?.body.body ?? [];
-  for (let ri = tmplBody.length - 1; ri >= 0; ri--) {
-    if (libExports.isReturnStatement(tmplBody[ri])) {
-      break;
-    }
-  }
-  analysis.unresolvedMaps.forEach((um, idx) => {
-    const isComponentSlot = isUnresolvedMapWithComponentChild(um, imports);
-    const arrayPropName = um.computationExpr ? getArrayPropNameFromExpr(um.computationExpr) : null;
-    if (isComponentSlot && arrayPropName) {
-      let storeArrayAccess;
-      if (um.computationExpr && libExports.isIdentifier(um.computationExpr) && stateRefs.has(um.computationExpr.name)) {
-        const ref = stateRefs.get(um.computationExpr.name);
-        if (ref.kind === "imported-destructured" && ref.storeVar && ref.propName) {
-          const storeRef = stateRefs.get(ref.storeVar);
-          if (storeRef?.reactiveFields?.has(ref.propName)) {
-            storeArrayAccess = { storeVar: ref.storeVar, propName: ref.propName };
-          }
-        }
-      }
-      const propNames = getTemplatePropNames(classPath.node.body);
-      const arrayResult = generateComponentArrayResult(
-        um,
-        arrayPropName,
-        imports,
-        propNames,
-        classPath.node.body,
-        storeArrayAccess,
-        getTemplateParamIdentifier(classPath.node.body),
-        tmplSetupCtx
-      );
-      if (arrayResult && templateMethod) {
-        classPath.node.body.body.push(arrayResult.itemPropsMethod);
-        const importSource = imports.get(arrayResult.componentTag);
-        if (importSource) {
-          const delegatedEvents = getHoistableRootEventsForImport(sourceFile, importSource).map((meta) => ({
-            eventType: meta.eventType,
-            selector: meta.selector,
-            methodName: `__event_${arrayPropName}_${meta.propName}`,
-            delegatedPropName: meta.propName,
-            usesTargetComponent: true
-          }));
-          if (delegatedEvents.length > 0) {
-            appendCompiledEventMethods(classPath.node.body, delegatedEvents, /* @__PURE__ */ new Map(), /* @__PURE__ */ new Set(), []);
-          }
-        }
-        inlineIntoConstructor(classPath.node.body, [
-          ...arrayResult.arrSetupStatements.map((s) => libExports.cloneNode(s, true)),
-          arrayResult.constructorInit
-        ]);
-        if (storeArrayAccess) {
-          observeListConfigs.push({
-            storeVar: storeArrayAccess.storeVar,
-            pathParts: [storeArrayAccess.propName],
-            arrayPropName,
-            componentTag: arrayResult.componentTag,
-            containerBindingId: arrayResult.containerBindingId,
-            containerUserIdExpr: arrayResult.containerUserIdExpr,
-            itemIdProperty: arrayResult.itemIdProperty,
-            afterCondSlotIndex: um.afterCondSlotIndex
-          });
-        } else {
-          const computedDeps = (um.dependencies || collectUnresolvedDependencies([um], stateRefs, classPath.node.body)).filter((dep) => dep.storeVar || dep.pathParts[0] !== "props");
-          const refreshMethodName = getComponentArrayRefreshMethodName(arrayPropName);
-          const itemPropsMethodNameRef = `__itemProps_${arrayPropName}`;
-          const containerSuffix = arrayResult.containerBindingId;
-          const containerExpr = arrayResult.containerUserIdExpr ? jsExpr`__gid(${libExports.cloneNode(arrayResult.containerUserIdExpr, true)})` : containerSuffix ? jsExpr`this[${id("GEA_EL")}](${containerSuffix})` : jsExpr`this.$(":scope")`;
-          const itemIdProp = arrayResult.itemIdProperty;
-          const keyFn = itemIdProp && itemIdProp !== ITEM_IS_KEY ? jsExpr`(opt) => opt.${id(itemIdProp)}` : itemIdProp === ITEM_IS_KEY ? jsExpr`(opt) => opt` : jsExpr`(opt, __k) => ${"__idx_"} + __k`;
-          const thisItems = buildThisListItems(arrayPropName);
-          const reconcileCall = libExports.callExpression(
-            libExports.memberExpression(libExports.thisExpression(), id("GEA_RECONCILE_LIST"), true),
-            [
-              libExports.cloneNode(thisItems, true),
-              id("__arr"),
-              libExports.cloneNode(containerExpr, true),
-              id(arrayResult.componentTag),
-              jsExpr`(opt) => this.${id(itemPropsMethodNameRef)}(opt)`,
-              libExports.cloneNode(keyFn, true)
-            ]
-          );
-          const refreshMethod = appendToBody(
-            jsMethod`${id(refreshMethodName)}() {}`,
-            ...arrayResult.arrSetupStatements.map((s) => libExports.cloneNode(s, true)),
-            js`const __arr = ${libExports.cloneNode(arrayResult.arrAccessExpr, true)} ?? [];`,
-            libExports.variableDeclaration("const", [libExports.variableDeclarator(id("__new"), reconcileCall)]),
-            libExports.expressionStatement(
-              libExports.assignmentExpression(
-                "=",
-                libExports.memberExpression(libExports.cloneNode(thisItems, true), id("length")),
-                libExports.numericLiteral(0)
-              )
-            ),
-            libExports.expressionStatement(
-              libExports.callExpression(libExports.memberExpression(libExports.cloneNode(thisItems, true), id("push")), [
-                libExports.spreadElement(id("__new"))
-              ])
-            )
-          );
-          classPath.node.body.body.push(refreshMethod);
-          if (computedDeps.length > 0) {
-            computedDeps.forEach((dep) => {
-              mergeObserveMethod(
-                ctx,
-                dep.observeKey,
-                jsMethod`${id(getObserveMethodName(dep.pathParts, dep.storeVar))}(value, change) { this.${id(refreshMethodName)}(); }`
-              );
-              if (dep.storeVar) {
-                storeComponentArrayObservers.push({
-                  storeVar: dep.storeVar,
-                  refreshMethodName,
-                  pathParts: dep.pathParts
-                });
-              }
-            });
-          }
-          const itemPropsMethod = arrayResult.itemPropsMethod;
-          if (itemPropsMethod && libExports.isBlockStatement(itemPropsMethod.body)) {
-            const returnStmt = itemPropsMethod.body.body.find((s) => libExports.isReturnStatement(s));
-            if (returnStmt?.argument && libExports.isObjectExpression(returnStmt.argument)) {
-              const setupStmts = itemPropsMethod.body.body.filter((s) => !libExports.isReturnStatement(s));
-              const itemPropsDeps = collectExpressionDependencies(returnStmt.argument, stateRefs, setupStmts).filter(
-                (dep) => dep.storeVar
-              );
-              const computedDepKeys = new Set(
-                computedDeps.map((cd) => `${cd.storeVar}:${pathPartsToString(cd.pathParts)}`)
-              );
-              for (const dep of itemPropsDeps) {
-                const key = `${dep.storeVar}:${pathPartsToString(dep.pathParts)}`;
-                if (computedDepKeys.has(key)) continue;
-                computedDepKeys.add(key);
-                storeComponentArrayObservers.push({
-                  storeVar: dep.storeVar,
-                  refreshMethodName,
-                  pathParts: dep.pathParts
-                });
-              }
-            }
-          }
-          const itemTemplateProps = collectPropNamesFromItemTemplate(um.itemTemplate, propNames);
-          const allStoreManaged = computedDeps.length > 0 && computedDeps.every((dep) => dep.storeVar);
-          componentArrayRefreshDeps.push({
-            methodName: refreshMethodName,
-            propNames: allStoreManaged ? [...itemTemplateProps] : [arrayPropName, ...itemTemplateProps]
-          });
-        }
-        componentArrayDisposeTargets.push(arrayPropName);
-        const wasReplacedInTemplate = replaceMapWithComponentArrayItems(
-          templateMethod,
-          um.computationExpr,
-          arrayPropName
-        );
-        if (!wasReplacedInTemplate && !storeArrayAccess) {
-          staticArrayRefreshOnMount.push(getComponentArrayRefreshMethodName(arrayPropName));
-        }
-        ctx.applied = true;
-      }
-      return;
-    }
-    const syntheticBinding = {
-      arrayPathParts: [`__unresolved_${idx}`],
-      itemVariable: um.itemVariable,
-      ...um.indexVariable ? { indexVariable: um.indexVariable } : {},
-      itemBindings: [],
-      containerSelector: um.containerSelector,
-      containerBindingId: um.containerBindingId,
-      itemTemplate: um.itemTemplate,
-      isImportedState: false,
-      itemIdProperty: um.itemIdProperty,
-      ...um.keyExpression ? { keyExpression: um.keyExpression } : {},
-      ...um.callbackBodyStatements?.length ? { callbackBodyStatements: um.callbackBodyStatements } : {}
-    };
-    unresolvedBindings.push({ info: um, binding: syntheticBinding });
-    const prevEventLen = unresolvedEventHandlers.length;
-    const { method, handlerPropsInMap, needsUnwrapHelper, needsRawStoreCache } = generateRenderItemMethod(
-      syntheticBinding,
-      imports,
-      unresolvedEventHandlers,
-      eventIdCounter,
-      classPath.node.body,
-      tmplSetupCtx
-    );
-    if (needsUnwrapHelper) needsModuleLevelUnwrapHelper = true;
-    if (needsRawStoreCache) needsClassLevelRawStoreField = true;
-    const newHandlers = unresolvedEventHandlers.slice(prevEventLen);
-    const tokenMatch = newHandlers[0]?.selector?.match(/data-ge="([^"]+)"/);
-    mapItemAttrInfos.push({
-      itemVariable: um.itemVariable,
-      itemIdProperty: um.itemIdProperty,
-      ...um.keyExpression ? { keyExpression: um.keyExpression } : {},
-      containerBindingId: um.containerBindingId,
-      eventToken: tokenMatch ? tokenMatch[1] : void 0
-    });
-    if (method && templateMethod) {
-      classPath.node.body.body.push(method);
-      ctx.applied = true;
-    }
-    const createResult = generateCreateItemMethod(
-      syntheticBinding,
-      getTemplatePropNames(classPath.node.body),
-      getTemplateParamIdentifier(classPath.node.body),
-      tmplSetupCtx
-    );
-    if (createResult.method) classPath.node.body.body.push(createResult.method);
-    if (createResult.needsRawStoreCache) needsClassLevelRawStoreField = true;
-    for (const f of createResult.privateFields) classLevelPrivateFields.add(f);
-    const patchResult = generatePatchItemMethod(
-      syntheticBinding,
-      getTemplatePropNames(classPath.node.body),
-      getTemplateParamIdentifier(classPath.node.body),
-      tmplSetupCtx
-    );
-    if (patchResult.method) classPath.node.body.body.push(patchResult.method);
-    for (const f of patchResult.privateFields) classLevelPrivateFields.add(f);
-    if (handlerPropsInMap.length > 0 && um.computationExpr) {
-      if (arrayPropName) {
-        const propNames = getTemplatePropNames(classPath.node.body);
-        const populateMethod = buildPopulateItemHandlersMethod(
-          arrayPropName,
-          handlerPropsInMap,
-          propNames,
-          getTemplateParamIdentifier(classPath.node.body)
-        );
-        if (populateMethod && templateMethod && libExports.isBlockStatement(templateMethod.body)) {
-          const arrayVarName = getTemplatePropVarName(templateMethod, arrayPropName);
-          classPath.node.body.body.push(populateMethod);
-          ctx.applied = true;
-          templateMethod.body.body.unshift(
-            libExports.expressionStatement(
-              libExports.logicalExpression(
-                "&&",
-                libExports.identifier(arrayVarName),
-                libExports.callExpression(
-                  libExports.memberExpression(libExports.thisExpression(), libExports.identifier(`__populateItemHandlersFor_${arrayPropName}`)),
-                  [libExports.identifier(arrayVarName)]
-                )
-              )
-            )
-          );
-        }
-      }
-    }
-  });
-  if (componentArrayDisposeTargets.length > 0) {
-    ensureDisposeCalls(classPath.node.body, componentArrayDisposeTargets);
-  }
-  return {
-    unresolvedEventHandlers,
-    unresolvedBindings,
-    componentArrayRefreshDeps,
-    componentArrayDisposeTargets,
-    storeComponentArrayObservers,
-    observeListConfigs,
-    staticArrayRefreshOnMount,
-    initialHtmlArrayRefreshOnMount,
-    mapItemAttrInfos,
-    needsModuleLevelUnwrapHelper,
-    needsClassLevelRawStoreField,
-    classLevelPrivateFields
-  };
-}
-function processUnresolvedMapDeps(ctx, unresolvedBindings, stateRefs, stateProps, templatePropNames, templateWholeParam) {
-  const unresolvedMapPropRefreshDeps = [];
-  unresolvedBindings.forEach(({ info, binding }) => {
-    const deps = info.dependencies || collectUnresolvedDependencies([info], stateRefs, ctx.classPath.node.body);
-    if (!info.dependencies) info.dependencies = deps;
-    const localStateDeps = deps.filter((dep) => !dep.storeVar && dep.pathParts[0] !== "props");
-    const mapIdx = getMapIndex(binding.arrayPathParts);
-    for (const dep of localStateDeps) {
-      mergeObserveMethod(
-        ctx,
-        dep.observeKey,
-        jsMethod`${id(getObserveMethodName(dep.pathParts, dep.storeVar))}(value, change) { this[${id("GEA_SYNC_MAP")}](${mapIdx}); }`
-      );
-      if (!stateProps.has(dep.observeKey)) stateProps.set(dep.observeKey, dep.pathParts);
-    }
-    const propDeps = deps.filter((dep) => !dep.storeVar && dep.pathParts[0] === "props");
-    if (propDeps.length === 0) return;
-    const usedPropNames = /* @__PURE__ */ new Set();
-    const scanNodes = [
-      ...(info.computationSetupStatements || []).map((s) => libExports.cloneNode(s, true))
-    ];
-    if (info.computationExpr) {
-      scanNodes.push(libExports.expressionStatement(libExports.cloneNode(info.computationExpr, true)));
-    }
-    if (info.itemTemplate) {
-      scanNodes.push(libExports.expressionStatement(libExports.cloneNode(info.itemTemplate, true)));
-    }
-    if (info.callbackBodyStatements) {
-      for (const stmt of info.callbackBodyStatements) {
-        scanNodes.push(libExports.cloneNode(stmt, true));
-      }
-    }
-    if (scanNodes.length > 0) {
-      const prog = libExports.program(scanNodes);
-      traverse$1(prog, {
-        noScope: true,
-        Identifier(path) {
-          if (templatePropNames.has(path.node.name)) usedPropNames.add(path.node.name);
-        },
-        MemberExpression(path) {
-          if (templateWholeParam && libExports.isIdentifier(path.node.object, { name: templateWholeParam }) && libExports.isIdentifier(path.node.property) && !path.node.computed) {
-            usedPropNames.add(path.node.property.name);
-          }
-        }
-      });
-    }
-    unresolvedMapPropRefreshDeps.push({
-      mapIdx: getMapIndex(binding.arrayPathParts),
-      propNames: Array.from(usedPropNames)
-    });
-  });
-  return unresolvedMapPropRefreshDeps;
-}
-function processMapRegistrations(ctx, unresolvedBindings, stateRefs, classLevelPrivateFields) {
-  const classPath = ctx.classPath;
-  const mapRegistrations = [];
-  const mapSyncObservers = [];
-  let applied = ctx.applied;
-  unresolvedBindings.forEach(({ info, binding }) => {
-    const deps = info.dependencies || collectUnresolvedDependencies([info], stateRefs, classPath.node.body);
-    const mapIdx = getMapIndex(binding.arrayPathParts);
-    const delegateName = `__geaSyncMapDelegate_${mapIdx}`;
-    const hasNonRelationalDeps = deps.some(
-      (dep) => !(info.relationalClassBindings || []).find((rb) => rb.observeKey === dep.observeKey)
-    );
-    mapRegistrations.push(
-      generateMapRegistration(
-        binding,
-        info,
-        getTemplatePropNames(classPath.node.body),
-        getTemplateParamIdentifier(classPath.node.body)
-      )
-    );
-    if (hasNonRelationalDeps) applied = true;
-    let delegateEmitted = false;
-    deps.forEach((dep) => {
-      const relBinding = (info.relationalClassBindings || []).find((rb) => rb.observeKey === dep.observeKey);
-      if (relBinding) {
-        const unresolvedRelResult = generateUnresolvedRelationalObserver(
-          binding,
-          info,
-          relBinding,
-          getObserveMethodName(dep.pathParts, dep.storeVar),
-          getTemplatePropNames(classPath.node.body),
-          getTemplateParamIdentifier(classPath.node.body)
-        );
-        mergeObserveMethod(ctx, dep.observeKey, unresolvedRelResult.method);
-        for (const f of unresolvedRelResult.privateFields) classLevelPrivateFields.add(f);
-      } else if (dep.storeVar) {
-        if (!delegateEmitted) {
-          classPath.node.body.body.push(
-            appendToBody(jsMethod`${id(delegateName)}() {}`, js`this[${id("GEA_SYNC_MAP")}](${mapIdx});`)
-          );
-          delegateEmitted = true;
-        }
-        mapSyncObservers.push({
-          storeVar: dep.storeVar,
-          pathParts: dep.pathParts,
-          delegateName
-        });
-      } else {
-        mergeObserveMethod(
-          ctx,
-          dep.observeKey,
-          jsMethod`${id(getObserveMethodName(dep.pathParts))}(__v, __c) { this[${id("GEA_SYNC_MAP")}](${mapIdx}); }`
-        );
-      }
-    });
-  });
-  ctx.applied = applied;
-  return { mapRegistrations, mapSyncObservers };
-}
-function processResolvedArrayMaps(ctx, analysis, stateRefs, imports, sourceFile, stateProps, templateMethod, tmplSetupCtx, eventIdCounter, observeListConfigs, componentArrayDisposeTargets, staticArrayRefreshOnMount, initialHtmlArrayRefreshOnMount, childrenWithResolvedMap, _storeComponentArrayObservers) {
-  const classPath = ctx.classPath;
-  let needsModuleLevelUnwrapHelper = false;
-  let needsClassLevelRawStoreField = false;
-  const classLevelPrivateFields = /* @__PURE__ */ new Set();
-  const componentArrayMaps = [];
-  const componentArrayItemPropsMethods = /* @__PURE__ */ new Map();
-  const htmlArrayMaps = [];
-  for (const arrayMap of analysis.arrayMaps) {
-    const compChild = isUnresolvedMapWithComponentChild(
-      {
-        itemTemplate: arrayMap.itemTemplate,
-        itemVariable: arrayMap.itemVariable,
-        containerSelector: arrayMap.containerSelector
-      },
-      imports
-    );
-    if (compChild) {
-      componentArrayMaps.push(arrayMap);
-    } else {
-      htmlArrayMaps.push(arrayMap);
-    }
-  }
-  for (const arrayMap of componentArrayMaps) {
-    const arrayPropName = arrayMap.arrayPathParts[arrayMap.arrayPathParts.length - 1];
-    const isSinglePart = arrayMap.storeVar && arrayMap.arrayPathParts.length === 1;
-    const storeArrayAccess = isSinglePart ? { storeVar: arrayMap.storeVar, propName: arrayMap.arrayPathParts[0] } : void 0;
-    let computationExpr;
-    let computationExprSafe;
-    if (arrayMap.storeVar && !isSinglePart) {
-      let expr = libExports.identifier(arrayMap.storeVar);
-      for (const part of arrayMap.arrayPathParts) {
-        expr = libExports.memberExpression(expr, libExports.identifier(part));
-      }
-      computationExpr = expr;
-      let safeExpr = libExports.identifier(arrayMap.storeVar);
-      for (let __pi = 0; __pi < arrayMap.arrayPathParts.length; __pi++) {
-        const part = arrayMap.arrayPathParts[__pi];
-        safeExpr = libExports.optionalMemberExpression(safeExpr, libExports.identifier(part), false, __pi > 0);
-      }
-      computationExprSafe = safeExpr;
-    }
-    const um = {
-      containerSelector: arrayMap.containerSelector,
-      itemTemplate: arrayMap.itemTemplate,
-      itemVariable: arrayMap.itemVariable,
-      ...arrayMap.indexVariable ? { indexVariable: arrayMap.indexVariable } : {},
-      itemIdProperty: arrayMap.itemIdProperty,
-      containerElementPath: arrayMap.containerElementPath,
-      containerBindingId: arrayMap.containerBindingId,
-      computationExpr: computationExprSafe ?? computationExpr
-    };
-    const propNames = getTemplatePropNames(classPath.node.body);
-    const arrayResult = generateComponentArrayResult(
-      um,
-      arrayPropName,
-      imports,
-      propNames,
-      classPath.node.body,
-      storeArrayAccess,
-      getTemplateParamIdentifier(classPath.node.body),
-      tmplSetupCtx
-    );
-    if (arrayResult && templateMethod) {
-      classPath.node.body.body.push(arrayResult.itemPropsMethod);
-      componentArrayItemPropsMethods.set(arrayMap, arrayResult.itemPropsMethod);
-      const importSource = imports.get(arrayResult.componentTag);
-      if (importSource) {
-        const delegatedEvents = getHoistableRootEventsForImport(sourceFile, importSource).map((meta) => ({
-          eventType: meta.eventType,
-          selector: meta.selector,
-          methodName: `__event_${arrayPropName}_${meta.propName}`,
-          delegatedPropName: meta.propName,
-          usesTargetComponent: true
-        }));
-        if (delegatedEvents.length > 0) {
-          appendCompiledEventMethods(classPath.node.body, delegatedEvents, /* @__PURE__ */ new Map(), /* @__PURE__ */ new Set(), []);
-        }
-      }
-      inlineIntoConstructor(classPath.node.body, [
-        ...arrayResult.arrSetupStatements.map((s) => libExports.cloneNode(s, true)),
-        arrayResult.constructorInit
-      ]);
-      if (arrayMap.storeVar) {
-        observeListConfigs.push({
-          storeVar: arrayMap.storeVar,
-          pathParts: arrayMap.arrayPathParts,
-          arrayPropName,
-          componentTag: arrayResult.componentTag,
-          containerBindingId: arrayResult.containerBindingId,
-          containerUserIdExpr: arrayResult.containerUserIdExpr,
-          itemIdProperty: arrayResult.itemIdProperty,
-          afterCondSlotIndex: arrayMap.afterCondSlotIndex
-        });
-      }
-      componentArrayDisposeTargets.push(arrayPropName);
-      const mapReplaceExpr = storeArrayAccess ? jsExpr`${id(storeArrayAccess.storeVar)}.${id(storeArrayAccess.propName)}` : computationExpr;
-      const wasReplaced = replaceMapWithComponentArrayItems(templateMethod, mapReplaceExpr, arrayPropName);
-      replaceMapWithComponentArrayItemsInConditionalSlots(
-        analysis.conditionalSlots || [],
-        mapReplaceExpr,
-        arrayPropName
-      );
-      if (!wasReplaced && !arrayMap.storeVar) {
-        staticArrayRefreshOnMount.push(getComponentArrayRefreshMethodName(arrayPropName));
-      }
-      ctx.applied = true;
-    }
-  }
-  for (const arrayMap of componentArrayMaps) {
-    if (!arrayMap.storeVar) continue;
-    const storeRef = stateRefs.get(arrayMap.storeVar);
-    const getterDepPaths = storeRef?.getterDeps?.get(arrayMap.arrayPathParts[0]);
-    if (!getterDepPaths || getterDepPaths.length === 0) continue;
-    const pathKey = arrayMap.arrayPathParts.join(".");
-    for (const depPath of getterDepPaths) {
-      const depObserveKey = buildObserveKey(depPath, arrayMap.storeVar);
-      const depMethodName = getObserveMethodName(depPath, arrayMap.storeVar);
-      const refreshStmt = js`this[${id("GEA_REFRESH_LIST")}](${pathKey});`;
-      const existing = ctx.addedMethods.get(depObserveKey);
-      if (existing && libExports.isBlockStatement(existing.body)) {
-        const renderedGuardIdx = existing.body.body.findIndex(
-          (s) => libExports.isIfStatement(s) && libExports.isMemberExpression(s.test) && libExports.isIdentifier(s.test.property) && s.test.property.name === "rendered_"
-        );
-        if (renderedGuardIdx >= 0) {
-          existing.body.body.splice(renderedGuardIdx, 0, refreshStmt);
-        } else {
-          existing.body.body.push(refreshStmt);
-        }
-      } else {
-        mergeObserveMethod(
-          ctx,
-          depObserveKey,
-          jsMethod`${id(depMethodName)}(__v, __c) { this[${id("GEA_REFRESH_LIST")}](${pathKey}); }`
-        );
-      }
-    }
-  }
-  for (const arrayMap of componentArrayMaps) {
-    if (!arrayMap.storeVar) continue;
-    const itemPropsMethod = componentArrayItemPropsMethods.get(arrayMap);
-    if (!itemPropsMethod) continue;
-    const pathKey = arrayMap.arrayPathParts.join(".");
-    const storeRef = stateRefs.get(arrayMap.storeVar);
-    const getterDepPaths = storeRef?.getterDeps?.get(arrayMap.arrayPathParts[0]);
-    const getterDepKeys = new Set((getterDepPaths || []).map((dp) => buildObserveKey(dp, arrayMap.storeVar)));
-    const externalDeps = /* @__PURE__ */ new Map();
-    const clonedBody = libExports.cloneNode(itemPropsMethod.body, true);
-    traverse$1(libExports.program([libExports.expressionStatement(libExports.arrowFunctionExpression([], clonedBody))]), {
-      noScope: true,
-      Identifier(idPath) {
-        if (idPath.parentPath && libExports.isMemberExpression(idPath.parentPath.node) && idPath.parentPath.node.property === idPath.node && !idPath.parentPath.node.computed)
-          return;
-        const ref = stateRefs.get(idPath.node.name);
-        if (!ref) return;
-        if (itemPropsMethod.params.some((p) => libExports.isIdentifier(p) && p.name === idPath.node.name)) return;
-        if (ref.kind === "imported-destructured" && ref.storeVar && ref.propName) {
-          const depKey = buildObserveKey([ref.propName], ref.storeVar);
-          if (!getterDepKeys.has(depKey) && !externalDeps.has(depKey)) {
-            externalDeps.set(depKey, { parts: [ref.propName], storeVar: ref.storeVar });
-          }
-        }
-      },
-      MemberExpression(mePath) {
-        const resolved = resolvePath(mePath.node, stateRefs);
-        if (!resolved?.parts?.length || !resolved.isImportedState) return;
-        if (resolved.parts.some((p) => p === "__raw" || p === "GEA_PROXY_RAW")) return;
-        const depKey = buildObserveKey(resolved.parts, resolved.storeVar);
-        if (!getterDepKeys.has(depKey) && !externalDeps.has(depKey)) {
-          externalDeps.set(depKey, { parts: [...resolved.parts], storeVar: resolved.storeVar });
-        }
-      }
-    });
-    for (const [depKey, dep] of externalDeps) {
-      const depMethodName = getObserveMethodName(dep.parts, dep.storeVar);
-      if (!stateProps.has(depKey)) stateProps.set(depKey, dep.parts);
-      mergeObserveMethod(
-        ctx,
-        depKey,
-        jsMethod`${id(depMethodName)}(__v, __c) { this[${id("GEA_REFRESH_LIST")}](${pathKey}); }`
-      );
-    }
-  }
-  const renderEventHandlers = [];
-  htmlArrayMaps.forEach((arrayMap) => {
-    const observeKey = buildObserveKey(arrayMap.arrayPathParts, arrayMap.storeVar);
-    const arrayHandlerMethodName = getObserveMethodName(arrayMap.arrayPathParts, arrayMap.storeVar);
-    const { method, needsUnwrapHelper, needsRawStoreCache } = generateRenderItemMethod(
-      arrayMap,
-      imports,
-      renderEventHandlers,
-      eventIdCounter,
-      classPath.node.body,
-      tmplSetupCtx
-    );
-    if (needsUnwrapHelper) needsModuleLevelUnwrapHelper = true;
-    if (needsRawStoreCache) needsClassLevelRawStoreField = true;
-    if (method) {
-      classPath.node.body.body.push(method);
-      ctx.applied = true;
-      const renderMethodName = method.key.name;
-      replaceInlineMapWithRenderCall(classPath, arrayMap, renderMethodName);
-      const strippedInSlots = replaceMapInConditionalSlots(analysis.conditionalSlots || [], arrayMap);
-      const strippedInTemplate = templateMethod && (analysis.conditionalSlots || []).length > 0 ? stripHtmlArrayMapJoinInTemplateMethod(templateMethod, arrayMap) : false;
-      if (strippedInSlots || strippedInTemplate) {
-        const currentValueExpr = arrayMap.storeVar ? buildMemberChainFromParts(libExports.identifier(arrayMap.storeVar), arrayMap.arrayPathParts) : buildMemberChainFromParts(libExports.thisExpression(), arrayMap.arrayPathParts);
-        const initialArrayName = `__geaInitial_${arrayHandlerMethodName}`;
-        initialHtmlArrayRefreshOnMount.push(
-          js`const ${id(initialArrayName)} = ${currentValueExpr};`,
-          js`if ((${id(initialArrayName)}?.length || 0) > 0) this.${id(arrayHandlerMethodName)}(${id(initialArrayName)}, []);`
-        );
-      }
-    }
-    const createResult = generateCreateItemMethod(
-      arrayMap,
-      getTemplatePropNames(classPath.node.body),
-      getTemplateParamIdentifier(classPath.node.body),
-      tmplSetupCtx
-    );
-    if (createResult.method) {
-      classPath.node.body.body.push(createResult.method);
-    }
-    if (createResult.needsRawStoreCache) needsClassLevelRawStoreField = true;
-    for (const f of createResult.privateFields) classLevelPrivateFields.add(f);
-    const patchResult = generatePatchItemMethod(
-      arrayMap,
-      getTemplatePropNames(classPath.node.body),
-      getTemplateParamIdentifier(classPath.node.body),
-      tmplSetupCtx
-    );
-    if (patchResult.method) {
-      classPath.node.body.body.push(patchResult.method);
-    }
-    for (const f of patchResult.privateFields) classLevelPrivateFields.add(f);
-    const handlersResult = generateArrayHandlers(arrayMap, arrayHandlerMethodName);
-    handlersResult.methods.forEach((h) => {
-      mergeObserveMethod(ctx, observeKey, h);
-    });
-    for (const f of handlersResult.privateFields) classLevelPrivateFields.add(f);
-  });
-  if (htmlArrayMaps.length > 0) {
-    const ensureArrayConfigsMethod = generateEnsureArrayConfigsMethod(htmlArrayMaps);
-    if (ensureArrayConfigsMethod) {
-      classPath.node.body.body.push(ensureArrayConfigsMethod);
-    }
-  }
-  if (childrenWithResolvedMap.size > 0 && htmlArrayMaps.length > 0) {
-    const afterRenderCalls = [];
-    htmlArrayMaps.forEach((arrayMap) => {
-      const methodName = getObserveMethodName(arrayMap.arrayPathParts, arrayMap.storeVar);
-      const valueExpr = arrayMap.storeVar ? jsExpr`${id(arrayMap.storeVar)}.${id(arrayMap.arrayPathParts[0])}` : jsExpr`this.${id(arrayMap.arrayPathParts[0])}`;
-      afterRenderCalls.push(js`this.${id(methodName)}(${valueExpr}, []);`);
-    });
-    if (afterRenderCalls.length > 0) {
-      const afterRenderMethod = appendToBody(jsMethod`onAfterRender() { super.onAfterRender(); }`, ...afterRenderCalls);
-      classPath.node.body.body.push(afterRenderMethod);
-    }
-  }
-  return {
-    htmlArrayMaps,
-    componentArrayMaps,
-    needsModuleLevelUnwrapHelper,
-    needsClassLevelRawStoreField,
-    classLevelPrivateFields,
-    renderEventHandlers
-  };
-}
-
-const URL_ATTRS = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "data", "cite", "poster", "background"]);
-function wrapPatchWithElGuard(updateStmt) {
-  if (libExports.isIfStatement(updateStmt) && !updateStmt.alternate) {
-    return libExports.ifStatement(libExports.logicalExpression("&&", libExports.identifier("__el"), updateStmt.test), updateStmt.consequent);
-  }
-  return libExports.ifStatement(libExports.identifier("__el"), updateStmt);
-}
-function buildPropBindingPatches(analysis, stateRefs, templatePropNames, templateWholeParam, buildCachedGetElementById) {
-  let applied = false;
-  const patchStatementsByBinding = /* @__PURE__ */ new Map();
-  for (const pb of analysis.propBindings) {
-    const elExpr = pb.userIdExpr ? buildCachedGetElementById(libExports.cloneNode(pb.userIdExpr, true)) : pb.bindingId !== void 0 ? buildCachedGetElementById(
-      libExports.binaryExpression(
-        "+",
-        libExports.memberExpression(libExports.thisExpression(), libExports.identifier("id")),
-        libExports.stringLiteral("-" + pb.bindingId)
-      )
-    ) : pb.selector === ":scope" ? libExports.memberExpression(libExports.thisExpression(), id("GEA_ELEMENT"), true) : libExports.callExpression(libExports.memberExpression(libExports.thisExpression(), libExports.identifier("$")), [
-      libExports.stringLiteral(pb.selector)
-    ]);
-    const valueExpr = pb.expression && pb.setupStatements ? libExports.identifier("__boundValue") : libExports.identifier("value");
-    const originalClassExpr = pb.expression && libExports.isExpression(pb.expression) ? pb.expression : valueExpr;
-    const isObjectClass = pb.type === "class" && pb.expression && libExports.isObjectExpression(pb.expression);
-    const emitterOpts = {
-      textNodeIndex: pb.textNodeIndex,
-      isChildrenProp: pb.propName === "children" || !!pb.isChildrenProp,
-      attributeName: pb.attributeName,
-      isObjectClass: !!isObjectClass,
-      canSkipClassCoercion: !isObjectClass && pb.type === "class" && isAlwaysStringExpression(originalClassExpr) && isWhitespaceFree(originalClassExpr),
-      isBooleanAttr: pb.attributeName ? BOOLEAN_HTML_ATTRS.has(pb.attributeName) : false,
-      isUrlAttr: pb.attributeName ? URL_ATTRS.has(pb.attributeName) : false
-    };
-    const patchStmts = emitPatch(pb.type, libExports.identifier("__el"), valueExpr, emitterOpts);
-    if (!patchStmts.length) continue;
-    const updateStmt = patchStmts.length === 1 ? patchStmts[0] : libExports.blockStatement(patchStmts);
-    const useDerivedPropExpr = Boolean(pb.expression && pb.setupStatements);
-    const elDecl = libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier("__el"), elExpr)]);
-    const corePatch = [elDecl];
-    let derivedRewrittenExpr;
-    let derivedPrunedSetup = [];
-    if (useDerivedPropExpr) {
-      const rewrittenSetup = replacePropRefsInStatements(
-        pb.setupStatements,
-        templatePropNames,
-        templateWholeParam
-      );
-      let rewrittenExpr = replacePropRefsInExpression(pb.expression, templatePropNames, templateWholeParam);
-      rewrittenExpr = replaceThisPropsRootWithValueParam(rewrittenExpr, pb.propName);
-      derivedRewrittenExpr = rewrittenExpr;
-      derivedPrunedSetup = pruneDeadParamDestructuring(rewrittenSetup, [rewrittenExpr]);
-      corePatch.push(...derivedPrunedSetup);
-      corePatch.push(
-        libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier("__boundValue"), rewrittenExpr)])
-      );
-    }
-    corePatch.push(wrapPatchWithElGuard(updateStmt));
-    const nullishValue = libExports.logicalExpression(
-      "||",
-      libExports.binaryExpression("===", libExports.identifier("value"), libExports.nullLiteral()),
-      libExports.binaryExpression("===", libExports.identifier("value"), libExports.identifier("undefined"))
-    );
-    const guardsNullishInExpr = Boolean(derivedRewrittenExpr) && derivedExprGuardsValueWhenNullish(derivedRewrittenExpr);
-    const needsValueNullishGuard = useDerivedPropExpr && !guardsNullishInExpr && expressionAccessesValueProperties(derivedRewrittenExpr, derivedPrunedSetup);
-    const blockStatements = needsValueNullishGuard ? [libExports.ifStatement(libExports.unaryExpression("!", nullishValue), libExports.blockStatement(corePatch))] : corePatch;
-    patchStatementsByBinding.set(pb, blockStatements);
-    applied = true;
-  }
-  const propBindingsByProp = /* @__PURE__ */ new Map();
-  for (const pb of analysis.propBindings) {
-    if (pb.stateOnly) continue;
-    const list = propBindingsByProp.get(pb.propName) ?? [];
-    list.push(pb);
-    propBindingsByProp.set(pb.propName, list);
-  }
-  const inlinePatchBodies = /* @__PURE__ */ new Map();
-  propBindingsByProp.forEach((bindings, propName) => {
-    const statements = [];
-    for (const pb of bindings) {
-      const blockStatements = patchStatementsByBinding.get(pb);
-      if (blockStatements) {
-        if (bindings.length === 1) {
-          statements.push(...blockStatements.map((s) => libExports.cloneNode(s, true)));
-        } else {
-          statements.push(libExports.blockStatement(blockStatements.map((s) => libExports.cloneNode(s, true))));
-        }
-      }
-    }
-    if (statements.length > 0) {
-      inlinePatchBodies.set(propName, statements);
-    }
-  });
-  const storeKeyToBindings = /* @__PURE__ */ new Map();
-  for (const pb of analysis.propBindings) {
-    if (!pb.setupStatements?.length && !pb.expression) continue;
-    const nodesToScan = [
-      ...(pb.setupStatements || []).map((s) => libExports.cloneNode(s, true))
-    ];
-    if (pb.expression) {
-      nodesToScan.push(libExports.expressionStatement(libExports.cloneNode(pb.expression, true)));
-    }
-    const scanProg = libExports.program(nodesToScan);
-    const addToStoreKey = (observeKey) => {
-      let bindings = storeKeyToBindings.get(observeKey);
-      if (!bindings) {
-        bindings = /* @__PURE__ */ new Set();
-        storeKeyToBindings.set(observeKey, bindings);
-      }
-      bindings.add(pb);
-    };
-    traverse$1(scanProg, {
-      noScope: true,
-      Identifier(path) {
-        if (path.parentPath && libExports.isMemberExpression(path.parentPath.node) && path.parentPath.node.object === path.node)
-          return;
-        const ref = stateRefs.get(path.node.name);
-        if (!ref || ref.kind !== "local-destructured" || !ref.propName) return;
-        addToStoreKey(buildObserveKey([ref.propName]));
-      },
-      MemberExpression(path) {
-        const resolved = resolvePath(path.node, stateRefs);
-        if (!resolved?.parts?.length) return;
-        if (!resolved.isImportedState && !resolved.storeVar && resolved.parts[0] === "props") return;
-        const storeVar = resolved.isImportedState ? resolved.storeVar : void 0;
-        if (storeVar && resolved.parts.length === 1) {
-          const storeRef = stateRefs.get(storeVar);
-          const getterDepPaths = storeRef?.getterDeps?.get(resolved.parts[0]);
-          if (getterDepPaths && getterDepPaths.length > 0) {
-            for (const depPath of getterDepPaths) {
-              addToStoreKey(buildObserveKey(depPath, storeVar));
-            }
-            return;
-          }
-        }
-        const observeKey = buildObserveKey(resolved.parts, storeVar);
-        addToStoreKey(observeKey);
-      }
-    });
-  }
-  for (const [, bindings] of storeKeyToBindings) {
-    const hasStateOnly = [...bindings].some((b) => b.stateOnly);
-    if (!hasStateOnly) continue;
-    for (const pb of bindings) {
-      if (pb.stateOnly) continue;
-      const dup = [...bindings].some((b) => b.stateOnly && b.selector === pb.selector && b.type === pb.type);
-      if (dup) bindings.delete(pb);
-    }
-  }
-  return { patchStatementsByBinding, inlinePatchBodies, storeKeyToBindings, applied };
-}
-function expressionReferencesIdentifier(expr, name) {
-  let found = false;
-  const program = libExports.program([libExports.expressionStatement(libExports.cloneNode(expr, true))]);
-  traverse$1(program, {
-    noScope: true,
-    Identifier(path) {
-      if (!path.isReferencedIdentifier()) return;
-      if (path.node.name !== name) return;
-      found = true;
-      path.stop();
-    }
-  });
-  return found;
-}
-function collectGuardStateKeys(templateMethod, stateRefs, stateProps) {
-  const guardStateKeys = /* @__PURE__ */ new Set();
-  if (!templateMethod || !libExports.isBlockStatement(templateMethod.body)) return guardStateKeys;
-  const tmplBody = templateMethod.body.body;
-  const returnIdx = tmplBody.findIndex((s) => libExports.isReturnStatement(s));
-  if (returnIdx <= 0) return guardStateKeys;
-  for (let gi = 0; gi < returnIdx; gi++) {
-    const stmt = tmplBody[gi];
-    if (!libExports.isIfStatement(stmt) || !(libExports.isReturnStatement(stmt.consequent) || libExports.isBlockStatement(stmt.consequent) && stmt.consequent.body.some((b) => libExports.isReturnStatement(b))))
-      continue;
-    const guardAliasInits = /* @__PURE__ */ new Map();
-    for (let si = 0; si < gi; si++) {
-      const setupStmt = tmplBody[si];
-      if (!libExports.isVariableDeclaration(setupStmt)) continue;
-      for (const decl of setupStmt.declarations) {
-        if (!libExports.isIdentifier(decl.id) || !decl.init || !libExports.isExpression(decl.init)) continue;
-        guardAliasInits.set(decl.id.name, decl.init);
-      }
-    }
-    const addGuardObserveKey = (resolved) => {
-      if (!resolved?.parts?.length) return;
-      if (!resolved.isImportedState) return;
-      const observeKey = buildObserveKey(resolved.parts, resolved.storeVar);
-      guardStateKeys.add(observeKey);
-      if (!stateProps.has(observeKey)) stateProps.set(observeKey, [...resolved.parts]);
-    };
-    for (const [aliasName, init] of guardAliasInits) {
-      if (!expressionReferencesIdentifier(stmt.test, aliasName)) continue;
-      if (!(libExports.isIdentifier(init) || libExports.isMemberExpression(init) || libExports.isThisExpression(init) || libExports.isCallExpression(init)))
-        continue;
-      const resolvedAlias = resolvePath(init, stateRefs);
-      if (resolvedAlias) addGuardObserveKey(resolvedAlias);
-    }
-    const resolveGuardStateExpr = (expr, seen = /* @__PURE__ */ new Set()) => {
-      const resolved = resolvePath(expr, stateRefs);
-      if (resolved?.parts?.length && resolved.isImportedState) return resolved;
-      if (libExports.isIdentifier(expr) && !seen.has(expr.name)) {
-        const init = guardAliasInits.get(expr.name);
-        if (init && (libExports.isIdentifier(init) || libExports.isMemberExpression(init) || libExports.isThisExpression(init) || libExports.isCallExpression(init))) {
-          seen.add(expr.name);
-          return resolveGuardStateExpr(init, seen);
-        }
-      }
-      return null;
-    };
-    const guardProg = libExports.program([libExports.expressionStatement(libExports.cloneNode(stmt.test, true))]);
-    traverse$1(guardProg, {
-      noScope: true,
-      Identifier(idPath) {
-        if (libExports.isMemberExpression(idPath.parent) && idPath.parent.property === idPath.node && !idPath.parent.computed)
-          return;
-        const resolved = resolveGuardStateExpr(idPath.node);
-        if (!resolved) return;
-        addGuardObserveKey(resolved);
-      }
-    });
-  }
-  return guardStateKeys;
-}
-function canInlineDynamicObserverKey(expr) {
-  let safe = true;
-  const program = libExports.program([libExports.expressionStatement(libExports.cloneNode(expr, true))]);
-  traverse$1(program, {
-    noScope: true,
-    Identifier(path) {
-      if (!path.isReferencedIdentifier()) return;
-      safe = false;
-      path.stop();
-    }
-  });
-  return safe;
-}
-function collectComponentGetterStoreDeps(classBody, stateRefs) {
-  const componentGetterStoreDeps = /* @__PURE__ */ new Map();
-  const getterLocalRefs = /* @__PURE__ */ new Map();
-  const getterNames = /* @__PURE__ */ new Set();
-  for (const member of classBody.body) {
-    if (libExports.isClassMethod(member) && member.kind === "get" && libExports.isIdentifier(member.key))
-      getterNames.add(member.key.name);
-  }
-  for (const member of classBody.body) {
-    if (!libExports.isClassMethod(member) || member.kind !== "get" || !libExports.isIdentifier(member.key)) continue;
-    const getterName = member.key.name;
-    const depMap = /* @__PURE__ */ new Map();
-    const localRefs = /* @__PURE__ */ new Set();
-    const program = libExports.program(member.body.body.map((s) => libExports.cloneNode(s, true)));
-    traverse$1(program, {
-      noScope: true,
-      OptionalMemberExpression(mePath) {
-        const objectNode = mePath.node.object;
-        if (!libExports.isMemberExpression(objectNode)) return;
-        if (!libExports.isIdentifier(objectNode.object) || !libExports.isIdentifier(objectNode.property)) return;
-        const objName = objectNode.object.name;
-        const ref = stateRefs.get(objName);
-        if (!ref || ref.kind !== "imported") return;
-        if (!mePath.node.computed || !libExports.isExpression(mePath.node.property)) return;
-        if (!canInlineDynamicObserverKey(mePath.node.property)) return;
-        depMap.set(`${objName}.${objectNode.property.name}`, {
-          storeVar: objName,
-          pathParts: [objectNode.property.name],
-          dynamicKeyExpr: libExports.cloneNode(mePath.node.property, true)
-        });
-      },
-      MemberExpression(mePath) {
-        if (libExports.isThisExpression(mePath.node.object) && libExports.isIdentifier(mePath.node.property)) {
-          const propName = mePath.node.property.name;
-          if (getterNames.has(propName) && propName !== getterName) localRefs.add(propName);
-          return;
-        }
-        if (libExports.isMemberExpression(mePath.node.object) && libExports.isIdentifier(mePath.node.object.object) && libExports.isIdentifier(mePath.node.object.property) && mePath.node.computed && libExports.isExpression(mePath.node.property)) {
-          const objName2 = mePath.node.object.object.name;
-          const ref2 = stateRefs.get(objName2);
-          if (ref2 && ref2.kind === "imported" && canInlineDynamicObserverKey(mePath.node.property)) {
-            depMap.set(`${objName2}.${mePath.node.object.property.name}`, {
-              storeVar: objName2,
-              pathParts: [mePath.node.object.property.name],
-              dynamicKeyExpr: libExports.cloneNode(mePath.node.property, true)
-            });
-            return;
-          }
-        }
-        if (!libExports.isIdentifier(mePath.node.object)) return;
-        const objName = mePath.node.object.name;
-        const ref = stateRefs.get(objName);
-        if (!ref || ref.kind !== "imported") return;
-        if (!libExports.isIdentifier(mePath.node.property)) return;
-        if (!depMap.has(`${objName}.${mePath.node.property.name}`)) {
-          depMap.set(`${objName}.${mePath.node.property.name}`, {
-            storeVar: objName,
-            pathParts: [mePath.node.property.name]
-          });
-        }
-      }
-    });
-    const deps = Array.from(depMap.values());
-    if (deps.length > 0) componentGetterStoreDeps.set(member.key.name, deps);
-    if (localRefs.size > 0) getterLocalRefs.set(member.key.name, localRefs);
-  }
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const [getterName, refs] of getterLocalRefs) {
-      for (const refName of refs) {
-        const refDeps = componentGetterStoreDeps.get(refName);
-        if (!refDeps) continue;
-        const existing = componentGetterStoreDeps.get(getterName) || [];
-        for (const dep of refDeps) {
-          const key = `${dep.storeVar}.${dep.pathParts.join(".")}:${dep.dynamicKeyExpr ? "dyn" : "plain"}`;
-          if (!existing.some(
-            (e) => `${e.storeVar}.${e.pathParts.join(".")}:${e.dynamicKeyExpr ? "dyn" : "plain"}` === key
-          )) {
-            existing.push(dep);
-            changed = true;
-          }
-        }
-        if (!componentGetterStoreDeps.has(getterName)) componentGetterStoreDeps.set(getterName, existing);
-      }
-    }
-  }
-  return { componentGetterStoreDeps };
-}
-
-function applyStaticReactivity(ast, originalAST, className, sourceFile, imports, stateRefs, storeImports, compiledChildren = [], eventIdCounter = { value: 0 }, preTransformAnalysis) {
-  let applied = false;
-  let needsModuleLevelUnwrapHelper = false;
-  let needsClassLevelRawStoreField = false;
-  const classLevelPrivateFields = /* @__PURE__ */ new Set();
-  const astToTraverse = preTransformAnalysis?.has(className) ? ast : originalAST;
-  const getAnalysis = (clsName, origPath) => {
-    const cached = preTransformAnalysis?.get(clsName);
-    if (cached) return cached;
-    const classBody = libExports.isClassBody(origPath.parent) ? origPath.parent : void 0;
-    return analyzeTemplate(origPath.node, stateRefs, classBody);
-  };
-  traverse$1(astToTraverse, {
-    ClassMethod(origPath) {
-      if (!libExports.isIdentifier(origPath.node.key) || origPath.node.key.name !== "template") return;
-      const analysis = getAnalysis(className, origPath);
-      if (!analysis) return;
-      const hasCompiledChildStoreDeps = compiledChildren.some((child) => child.dependencies.some((dep) => dep.storeVar));
-      if (analysis.bindings.length === 0 && analysis.propBindings.length === 0 && analysis.arrayMaps.length === 0 && analysis.stateProps.size === 0 && analysis.unresolvedMaps.length === 0 && !hasCompiledChildStoreDeps && analysis.earlyReturnGuard === void 0)
-        return;
-      traverse$1(ast, {
-        ClassDeclaration(classPath) {
-          if (!libExports.isIdentifier(classPath.node.id) || classPath.node.id.name !== className) return;
-          const templateMethod = classPath.node.body.body.find(
-            (n) => libExports.isClassMethod(n) && libExports.isIdentifier(n.key) && n.key.name === "template"
-          );
-          const handlers = mergeObserveHandlers(analysis.bindings, stateRefs);
-          const handledPaths = new Set(handlers.keys());
-          const addedMethods = /* @__PURE__ */ new Map();
-          const addedMethodsByName = /* @__PURE__ */ new Map();
-          const stateProps = new Map(analysis.stateProps);
-          compiledChildren.forEach((child) => {
-            child.dependencies.forEach((dep) => {
-              if (!stateProps.has(dep.observeKey)) stateProps.set(dep.observeKey, dep.pathParts);
-            });
-          });
-          const alignMethodBodyParams = (source, targetParams) => {
-            const bodyStatements = source.body.body.map((stmt) => libExports.cloneNode(stmt, true));
-            if (source.params.length !== targetParams.length) return bodyStatements;
-            const renameMap = /* @__PURE__ */ new Map();
-            for (let i = 0; i < source.params.length; i++) {
-              const sourceParam = source.params[i];
-              const targetParam = targetParams[i];
-              if (!libExports.isIdentifier(sourceParam) || !libExports.isIdentifier(targetParam)) continue;
-              if (sourceParam.name !== targetParam.name) renameMap.set(sourceParam.name, targetParam.name);
-            }
-            if (renameMap.size === 0) return bodyStatements;
-            const tempProgram = libExports.program(bodyStatements);
-            traverse$1(tempProgram, {
-              noScope: true,
-              Identifier(path) {
-                const nextName = renameMap.get(path.node.name);
-                if (nextName) path.node.name = nextName;
-              }
-            });
-            return tempProgram.body;
-          };
-          const ctx = {
-            classPath,
-            addedMethods,
-            addedMethodsByName,
-            applied,
-            alignMethodBodyParams
-          };
-          const _merge = (observeKey, method) => {
-            mergeObserveMethod(ctx, observeKey, method);
-            applied = ctx.applied;
-          };
-          const templatePropNames = getTemplatePropNames(classPath.node.body);
-          const templateWholeParam = getTemplateParamIdentifier(classPath.node.body);
-          const elRefFieldNames = [];
-          let elRefSlotNext = 0;
-          const allocElRefField = () => {
-            const name = `__e${elRefSlotNext++}`;
-            elRefFieldNames.push(name);
-            return name;
-          };
-          const buildCachedGetElementById = (idArg) => {
-            const field = allocElRefField();
-            const read = libExports.memberExpression(libExports.thisExpression(), libExports.identifier(field));
-            const inner = libExports.callExpression(libExports.identifier("__gid"), [idArg]);
-            return libExports.logicalExpression(
-              "||",
-              read,
-              libExports.parenthesizedExpression(libExports.assignmentExpression("=", libExports.cloneNode(read, true), inner))
-            );
-          };
-          const bindingResult = buildPropBindingPatches(
-            analysis,
-            stateRefs,
-            templatePropNames,
-            templateWholeParam,
-            buildCachedGetElementById
-          );
-          const { patchStatementsByBinding, inlinePatchBodies, storeKeyToBindings } = bindingResult;
-          applied = applied || bindingResult.applied;
-          handlers.forEach((method, observeKey) => {
-            _merge(observeKey, method);
-          });
-          if (analysis.earlyReturnGuard) {
-            const guardExpr = analysis.earlyReturnGuard;
-            const localToStoreExpr = /* @__PURE__ */ new Map();
-            const setupStmts = templateMethod?.body.body.filter((s) => libExports.isVariableDeclaration(s)) || [];
-            for (const decl of setupStmts) {
-              for (const d of decl.declarations) {
-                if (libExports.isIdentifier(d.id) && libExports.isMemberExpression(d.init)) {
-                  localToStoreExpr.set(d.id.name, d.init);
-                }
-              }
-            }
-            const rerenderStoreKeys = [];
-            const addedKeys = /* @__PURE__ */ new Set();
-            const addRerenderDep = (parts, storeVarName) => {
-              const key = buildObserveKey(parts, storeVarName);
-              if (!addedKeys.has(key)) {
-                addedKeys.add(key);
-                rerenderStoreKeys.push({ observeKey: key, pathParts: parts });
-              }
-            };
-            const guardScanProg = libExports.program([libExports.expressionStatement(libExports.cloneNode(guardExpr, true))]);
-            traverse$1(guardScanProg, {
-              noScope: true,
-              MemberExpression(path) {
-                const resolved = resolvePath(path.node, stateRefs);
-                if (!resolved?.parts?.length) return;
-                if (resolved.isImportedState || resolved.storeVar) {
-                  addRerenderDep(resolved.parts, resolved.isImportedState ? resolved.storeVar : void 0);
-                }
-              },
-              Identifier(path) {
-                if (path.parentPath && libExports.isMemberExpression(path.parentPath.node) && path.parentPath.node.object === path.node)
-                  return;
-                const name = path.node.name;
-                const storeExpr = localToStoreExpr.get(name);
-                if (storeExpr) {
-                  const resolved = resolvePath(storeExpr, stateRefs);
-                  if (resolved?.parts?.length && (resolved.isImportedState || resolved.storeVar)) {
-                    addRerenderDep(
-                      resolved.parts,
-                      resolved.isImportedState ? resolved.storeVar : void 0
-                    );
-                    return;
-                  }
-                }
-                const ref = stateRefs.get(name);
-                if (!ref) return;
-                if (ref.kind === "local-destructured" && ref.propName) {
-                  addRerenderDep([ref.propName]);
-                }
-              }
-            });
-            for (const entry of rerenderStoreKeys) {
-              const propPath = entry.pathParts;
-              const parsed = JSON.parse(entry.observeKey);
-              const storeVarName = parsed.storeVar || void 0;
-              _merge(entry.observeKey, generateRerenderObserver(propPath, storeVarName, true));
-              if (!stateProps.has(entry.observeKey)) {
-                stateProps.set(entry.observeKey, entry.pathParts);
-              }
-            }
-          }
-          const tmplBody = templateMethod?.body.body ?? [];
-          let tmplReturnIdx = -1;
-          for (let ri = tmplBody.length - 1; ri >= 0; ri--) {
-            if (libExports.isReturnStatement(tmplBody[ri])) {
-              tmplReturnIdx = ri;
-              break;
-            }
-          }
-          const tmplSetupCtx = templateMethod ? {
-            params: templateMethod.params,
-            statements: tmplReturnIdx >= 0 ? tmplBody.slice(0, tmplReturnIdx) : []
-          } : void 0;
-          const unresolvedResult = processUnresolvedMaps(
-            ctx,
-            analysis,
-            stateRefs,
-            imports,
-            sourceFile,
-            stateProps,
-            templateMethod,
-            tmplSetupCtx,
-            eventIdCounter);
-          applied = ctx.applied;
-          needsModuleLevelUnwrapHelper = needsModuleLevelUnwrapHelper || unresolvedResult.needsModuleLevelUnwrapHelper;
-          needsClassLevelRawStoreField = needsClassLevelRawStoreField || unresolvedResult.needsClassLevelRawStoreField;
-          for (const f of unresolvedResult.classLevelPrivateFields) classLevelPrivateFields.add(f);
-          const {
-            unresolvedEventHandlers,
-            unresolvedBindings,
-            componentArrayRefreshDeps,
-            componentArrayDisposeTargets,
-            storeComponentArrayObservers,
-            observeListConfigs,
-            staticArrayRefreshOnMount,
-            initialHtmlArrayRefreshOnMount,
-            mapItemAttrInfos
-          } = unresolvedResult;
-          const unresolvedMapPropRefreshDeps = processUnresolvedMapDeps(
-            ctx,
-            unresolvedBindings,
-            stateRefs,
-            stateProps,
-            templatePropNames,
-            templateWholeParam
-          );
-          applied = ctx.applied;
-          ensureOnPropChangeMethod(
-            classPath.node.body,
-            inlinePatchBodies,
-            compiledChildren,
-            componentArrayRefreshDeps,
-            analysis.conditionalSlots || [],
-            unresolvedMapPropRefreshDeps
-          );
-          if (elRefFieldNames.length > 0) {
-            const hasReset = classPath.node.body.body.some(
-              (m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key) && m.key.name === "__resetEls"
-            );
-            if (!hasReset) {
-              classPath.node.body.body.push(
-                appendToBody(jsMethod`__resetEls() {}`, ...elRefFieldNames.map((name) => js`this.${id(name)} = null;`))
-              );
-              applied = true;
-            }
-          }
-          if (analysis.stateChildSlots && analysis.stateChildSlots.length > 0) {
-            generateStateChildSwapMethod(classPath.node.body, analysis.stateChildSlots);
-          }
-          const stateChildObserveKeys = new Set(
-            (analysis.stateChildSlots || []).flatMap((slot) => slot.dependencies || []).map((dep) => dep.observeKey)
-          );
-          for (const dep of (analysis.stateChildSlots || []).flatMap((slot) => slot.dependencies || [])) {
-            if (!stateProps.has(dep.observeKey)) {
-              stateProps.set(dep.observeKey, dep.pathParts);
-            }
-          }
-          const conditionalSlotObserveIndices = /* @__PURE__ */ new Map();
-          const addCondSlotIndex = (observeKey, slotIndex) => {
-            const indices = conditionalSlotObserveIndices.get(observeKey) || [];
-            if (!indices.includes(slotIndex)) indices.push(slotIndex);
-            conditionalSlotObserveIndices.set(observeKey, indices);
-          };
-          (analysis.conditionalSlots || []).forEach((slot, slotIndex) => {
-            (slot.dependencies || []).forEach((dep) => addCondSlotIndex(dep.observeKey, slotIndex));
-            const condDeps = collectExpressionDependencies(slot.conditionExpr, stateRefs, slot.setupStatements);
-            for (const dep of condDeps) {
-              if (!dep.storeVar) continue;
-              addCondSlotIndex(dep.observeKey, slotIndex);
-            }
-            for (const htmlExpr of [slot.truthyHtmlExpr, slot.falsyHtmlExpr]) {
-              if (!htmlExpr) continue;
-              const contentDeps = collectExpressionDependencies(htmlExpr, stateRefs, slot.setupStatements);
-              for (const dep of contentDeps) {
-                addCondSlotIndex(dep.observeKey, slotIndex);
-              }
-            }
-          });
-          for (const [observeKey] of conditionalSlotObserveIndices) {
-            if (!stateProps.has(observeKey)) {
-              const { parts } = parseObserveKey(observeKey);
-              stateProps.set(observeKey, parts);
-            }
-          }
-          const hasOnPropChange = classPath.node.body.body.some(
-            (member) => libExports.isClassMethod(member) && member.computed && libExports.isIdentifier(member.key) && member.key.name === "GEA_ON_PROP_CHANGE"
-          );
-          const childObserveGroups = /* @__PURE__ */ new Map();
-          compiledChildren.forEach((child) => {
-            if (childHasNoProps(child)) return;
-            child.dependencies.forEach((dep) => {
-              const group = childObserveGroups.get(dep.observeKey) || [];
-              group.push(child);
-              childObserveGroups.set(dep.observeKey, group);
-            });
-          });
-          const unresolvedMapKeys = /* @__PURE__ */ new Set();
-          unresolvedBindings.forEach(({ info }) => {
-            const deps = info.dependencies || [];
-            deps.forEach((dep) => unresolvedMapKeys.add(dep.observeKey));
-          });
-          const resolvedArrayMapDelegateKeys = /* @__PURE__ */ new Set();
-          analysis.arrayMaps.forEach((arrayMap) => {
-            if (arrayMap.storeVar) {
-              const storeRef = stateRefs.get(arrayMap.storeVar);
-              const getterDepPaths = storeRef?.getterDeps?.get(arrayMap.arrayPathParts[0]);
-              if (getterDepPaths && getterDepPaths.length > 0) {
-                for (const depPath of getterDepPaths) {
-                  resolvedArrayMapDelegateKeys.add(buildObserveKey(depPath, arrayMap.storeVar));
-                }
-              }
-              resolvedArrayMapDelegateKeys.add(buildObserveKey(arrayMap.arrayPathParts, arrayMap.storeVar));
-            }
-          });
-          const ownClassMethodNames = new Set(
-            classPath.node.body.body.filter((m) => libExports.isClassMethod(m) && libExports.isIdentifier(m.key)).map((m) => m.key.name)
-          );
-          const { componentGetterStoreDeps } = collectComponentGetterStoreDeps(classPath.node.body, stateRefs);
-          const guardStateKeys = collectGuardStateKeys(templateMethod, stateRefs, stateProps);
-          const arrayContainerBindingIds = /* @__PURE__ */ new Set();
-          for (const am of analysis.arrayMaps) {
-            if (am.containerBindingId) arrayContainerBindingIds.add(am.containerBindingId);
-          }
-          for (const um of analysis.unresolvedMaps) {
-            if (um.containerBindingId) arrayContainerBindingIds.add(um.containerBindingId);
-          }
-          for (const [observeKey, propPath] of stateProps) {
-            const { storeVar } = parseObserveKey(observeKey);
-            if (hasOnPropChange && !storeVar && propPath[0] === "props") continue;
-            if (!storeVar && propPath.length === 1 && ownClassMethodNames.has(propPath[0]) && !componentGetterStoreDeps.has(propPath[0]))
-              continue;
-            const alreadyHandled = handledPaths.has(observeKey);
-            const conditionalSlotIndices = conditionalSlotObserveIndices.get(observeKey) || [];
-            const arrayHandled = analysis.arrayMaps.some(
-              (am) => pathPartsToString(am.arrayPathParts) === pathPartsToString(propPath) && (am.storeVar || void 0) === storeVar
-            );
-            if (alreadyHandled) {
-              if (conditionalSlotIndices.length > 0) {
-                _merge(
-                  observeKey,
-                  generateConditionalSlotObserveMethod(propPath, storeVar, conditionalSlotIndices, false)
-                );
-              } else if (guardStateKeys.has(observeKey)) {
-                _merge(observeKey, generateRerenderObserver(propPath, storeVar, true));
-              }
-              continue;
-            }
-            const isNestedArrayPath = propPath.length > 1 && analysis.arrayMaps.some(
-              (am) => pathPartsToString(am.arrayPathParts) === pathPartsToString([propPath[0]]) && (am.storeVar || void 0) === storeVar
-            );
-            const relationalArrayMaps = analysis.arrayMaps.map((arrayMap) => ({
-              arrayMap,
-              bindings: (arrayMap.relationalBindings || []).filter(
-                (binding) => pathPartsToString(binding.observePathParts) === pathPartsToString(propPath) && (binding.storeVar || void 0) === storeVar
-              )
-            })).filter((entry) => entry.bindings.length > 0);
-            if (relationalArrayMaps.length > 0) {
-              relationalArrayMaps.forEach(({ arrayMap, bindings }) => {
-                const relResult = generateArrayRelationalObserver(
-                  propPath,
-                  arrayMap,
-                  bindings,
-                  getObserveMethodName(propPath, storeVar)
-                );
-                _merge(observeKey, relResult.method);
-                for (const f of relResult.privateFields) classLevelPrivateFields.add(f);
-              });
-            }
-            const fallbackArrayMaps = analysis.arrayMaps.map((arrayMap) => ({
-              arrayMap,
-              bindings: (arrayMap.conditionalBindings || []).filter(
-                (binding) => binding.observe.observeKey === observeKey && observeKey !== buildObserveKey(arrayMap.arrayPathParts, arrayMap.storeVar)
-              )
-            })).filter((entry) => entry.bindings.length > 0);
-            if (fallbackArrayMaps.length > 0) {
-              fallbackArrayMaps.forEach(({ arrayMap, bindings }) => {
-                const observer = bindings.some((binding) => binding.requiresRerender) ? generateArrayConditionalRerenderObserver(arrayMap, getObserveMethodName(propPath, storeVar)) : generateArrayConditionalPatchObserver(arrayMap, bindings, getObserveMethodName(propPath, storeVar));
-                _merge(observeKey, observer);
-              });
-              continue;
-            }
-            let hasInlinePatches = false;
-            if (!stateChildObserveKeys.has(observeKey)) {
-              const coveredBindings = storeKeyToBindings.get(observeKey);
-              if (coveredBindings) {
-                const patchStatements = [];
-                for (const pb of coveredBindings) {
-                  if (pb.type === "text" && pb.bindingId && arrayContainerBindingIds.has(pb.bindingId)) continue;
-                  const body = patchStatementsByBinding.get(pb);
-                  if (body) {
-                    if (coveredBindings.size === 1)
-                      patchStatements.push(...body.map((s) => libExports.cloneNode(s, true)));
-                    else patchStatements.push(libExports.blockStatement(body.map((s) => libExports.cloneNode(s, true))));
-                  }
-                }
-                if (patchStatements.length > 0) {
-                  _merge(observeKey, generateStoreInlinePatchObserver(propPath, storeVar, patchStatements));
-                  hasInlinePatches = true;
-                }
-              }
-            }
-            if (conditionalSlotIndices.length > 0) {
-              _merge(
-                observeKey,
-                generateConditionalSlotObserveMethod(
-                  propPath,
-                  storeVar,
-                  conditionalSlotIndices,
-                  !hasInlinePatches && !arrayHandled
-                )
-              );
-            }
-            if (hasInlinePatches) continue;
-            if (arrayHandled) continue;
-            if (isNestedArrayPath) continue;
-            if (stateChildObserveKeys.has(observeKey)) {
-              _merge(observeKey, generateStateChildSwapObserver(propPath, storeVar));
-              continue;
-            }
-            if (analysis.arrayMaps.length > 0 && !guardStateKeys.has(observeKey)) continue;
-            if (unresolvedMapKeys.has(observeKey)) continue;
-            const handledByComponentArray = storeComponentArrayObservers.some(
-              (obs) => obs.storeVar === storeVar && pathPartsToString(obs.pathParts) === pathPartsToString(propPath)
-            ) || observeListConfigs.some(
-              (olc) => olc.storeVar === storeVar && pathPartsToString(olc.pathParts) === pathPartsToString(propPath)
-            );
-            if (handledByComponentArray) continue;
-            if (!childObserveGroups.has(observeKey)) {
-              if (conditionalSlotIndices.length > 0) continue;
-              if (analysis.conditionalSlotScopedStoreKeys?.has(observeKey)) continue;
-              if (storeVar && propPath.length >= 1) {
-                const storeRef = stateRefs.get(storeVar);
-                const getterDepPaths = storeRef?.getterDeps?.get(propPath[0]);
-                if (getterDepPaths && getterDepPaths.length > 0) {
-                  const allDepsCovered = getterDepPaths.every(
-                    (depPath) => childObserveGroups.has(buildObserveKey(depPath, storeVar))
-                  );
-                  if (allDepsCovered) continue;
-                }
-              }
-              _merge(observeKey, generateRerenderObserver(propPath, storeVar, guardStateKeys.has(observeKey)));
-            } else if (guardStateKeys.has(observeKey)) {
-              _merge(observeKey, generateRerenderObserver(propPath, storeVar, true));
-            }
-          }
-          for (const guardKey of guardStateKeys) {
-            if (addedMethods.has(guardKey)) continue;
-            const { parts, storeVar } = parseObserveKey(guardKey);
-            _merge(guardKey, generateRerenderObserver(parts, storeVar, true));
-          }
-          const childrenWithResolvedMap = /* @__PURE__ */ new Set();
-          compiledChildren.forEach((child) => {
-            const childrenProp = child.propsExpression.properties.find(
-              (p) => libExports.isObjectProperty(p) && libExports.isIdentifier(p.key) && p.key.name === "children"
-            );
-            if (!childrenProp) return;
-            let hasMap = false;
-            const check = {
-              CallExpression(cePath) {
-                if (libExports.isMemberExpression(cePath.node.callee) && libExports.isIdentifier(cePath.node.callee.property) && cePath.node.callee.property.name === "map") {
-                  hasMap = true;
-                  cePath.stop();
-                }
-              }
-            };
-            const wrapper = libExports.expressionStatement(libExports.cloneNode(childrenProp.value, true));
-            traverse$1(libExports.program([wrapper]), { noScope: true, ...check });
-            if (hasMap) childrenWithResolvedMap.add(child.instanceVar);
-          });
-          if (childrenWithResolvedMap.size > 0 && analysis.arrayMaps.length > 0) {
-            compiledChildren.forEach((child) => {
-              if (!childrenWithResolvedMap.has(child.instanceVar)) return;
-              const childrenProp = child.propsExpression.properties.find(
-                (p) => libExports.isObjectProperty(p) && libExports.isIdentifier(p.key) && p.key.name === "children"
-              );
-              if (!childrenProp || !libExports.isTemplateLiteral(childrenProp.value)) return;
-              const tpl = childrenProp.value;
-              for (let i = 0; i < tpl.expressions.length; i++) {
-                const expr = tpl.expressions[i];
-                let isMapJoin = false;
-                if (libExports.isCallExpression(expr) && libExports.isMemberExpression(expr.callee) && libExports.isIdentifier(expr.callee.property, { name: "join" }) && libExports.isCallExpression(expr.callee.object) && libExports.isMemberExpression(expr.callee.object.callee) && libExports.isIdentifier(expr.callee.object.callee.property, { name: "map" })) {
-                  isMapJoin = true;
-                }
-                if (!isMapJoin && libExports.isCallExpression(expr) && libExports.isMemberExpression(expr.callee) && libExports.isIdentifier(expr.callee.property, { name: "map" })) {
-                  isMapJoin = true;
-                }
-                if (!isMapJoin && libExports.isLogicalExpression(expr) && libExports.isCallExpression(expr.left) && libExports.isMemberExpression(expr.left.callee) && libExports.isIdentifier(expr.left.callee.property, { name: "join" }) && libExports.isCallExpression(expr.left.callee.object) && libExports.isMemberExpression(expr.left.callee.object.callee) && libExports.isIdentifier(expr.left.callee.object.callee.property, { name: "map" })) {
-                  isMapJoin = true;
-                }
-                if (isMapJoin) {
-                  tpl.expressions.splice(i, 1);
-                  const leftQuasi = tpl.quasis[i];
-                  const rightQuasi = tpl.quasis[i + 1];
-                  if (leftQuasi && rightQuasi) {
-                    const merged = (leftQuasi.value.raw || "") + (rightQuasi.value.raw || "");
-                    leftQuasi.value = { raw: merged, cooked: merged };
-                    tpl.quasis.splice(i + 1, 1);
-                  }
-                  i--;
-                }
-              }
-            });
-            for (const member of classPath.node.body.body) {
-              if (!libExports.isClassMethod(member) || !libExports.isIdentifier(member.key)) continue;
-              const methodName = member.key.name;
-              const isRelevant = childrenWithResolvedMap.size > 0 && methodName.startsWith("__buildProps_");
-              if (!isRelevant) continue;
-              traverse$1(libExports.program([libExports.expressionStatement(libExports.functionExpression(null, [], member.body))]), {
-                noScope: true,
-                TemplateLiteral(tlPath) {
-                  const tl = tlPath.node;
-                  for (let i = 0; i < tl.expressions.length; i++) {
-                    const expr = tl.expressions[i];
-                    let isMap = false;
-                    if (libExports.isCallExpression(expr) && libExports.isMemberExpression(expr.callee) && libExports.isIdentifier(expr.callee.property, { name: "join" }) && expr.arguments.length === 1 && libExports.isStringLiteral(expr.arguments[0]) && expr.arguments[0].value === "" && libExports.isCallExpression(expr.callee.object) && libExports.isMemberExpression(expr.callee.object.callee) && libExports.isIdentifier(expr.callee.object.callee.property, { name: "map" })) {
-                      isMap = true;
-                    }
-                    if (!isMap && libExports.isCallExpression(expr) && libExports.isMemberExpression(expr.callee) && libExports.isIdentifier(expr.callee.property, { name: "map" })) {
-                      isMap = true;
-                    }
-                    if (!isMap && libExports.isLogicalExpression(expr) && libExports.isCallExpression(expr.left) && libExports.isMemberExpression(expr.left.callee) && libExports.isIdentifier(expr.left.callee.property, { name: "join" }) && expr.left.arguments.length === 1 && libExports.isStringLiteral(expr.left.arguments[0]) && expr.left.arguments[0].value === "" && libExports.isCallExpression(expr.left.callee.object) && libExports.isMemberExpression(expr.left.callee.object.callee) && libExports.isIdentifier(expr.left.callee.object.callee.property, { name: "map" })) {
-                      isMap = true;
-                    }
-                    if (isMap) {
-                      tl.expressions.splice(i, 1);
-                      const left = tl.quasis[i];
-                      const right = tl.quasis[i + 1];
-                      if (left && right) {
-                        const m = (left.value.raw || "") + (right.value.raw || "");
-                        left.value = { raw: m, cooked: m };
-                        tl.quasis.splice(i + 1, 1);
-                      }
-                      i--;
-                    }
-                  }
-                }
-              });
-            }
-          }
-          {
-            childObserveGroups.forEach((children, observeKey) => {
-              const { parts, storeVar } = parseObserveKey(observeKey);
-              if (hasOnPropChange && !storeVar && parts[0] === "props") return;
-              const methodName = getObserveMethodName(parts, storeVar);
-              const existing = addedMethods.get(observeKey);
-              const calls = children.filter((child) => {
-                if (resolvedArrayMapDelegateKeys.has(observeKey) && childrenWithResolvedMap.has(child.instanceVar)) {
-                  return false;
-                }
-                return true;
-              }).map((child) => {
-                const buildPropsName = `__buildProps_${child.instanceVar.replace(/^_/, "")}`;
-                const updateExpr = js`this.${id(child.instanceVar)}[${id("GEA_UPDATE_PROPS")}](this.${id(buildPropsName)}());`;
-                if (!child.lazy) return updateExpr;
-                const backingField = `__lazy${child.instanceVar}`;
-                return js`if (this.${id(backingField)}) { ${updateExpr} }`;
-              });
-              if (existing && libExports.isBlockStatement(existing.body)) {
-                existing.body.body.unshift(...calls);
-              } else {
-                const method = appendToBody(jsMethod`${id(methodName)}(value, change) {}`, ...calls);
-                classPath.node.body.body.push(method);
-                addedMethods.set(observeKey, method);
-                applied = true;
-              }
-            });
-          }
-          ctx.applied = applied;
-          const { mapRegistrations, mapSyncObservers } = processMapRegistrations(
-            ctx,
-            unresolvedBindings,
-            stateRefs,
-            classLevelPrivateFields
-          );
-          applied = ctx.applied;
-          if (mapItemAttrInfos.length > 0 && templateMethod) {
-            injectMapItemAttrsIntoTemplate(templateMethod, mapItemAttrInfos);
-          }
-          if (templateMethod && analysis.unresolvedMaps.length > 0) {
-            addJoinToUnresolvedMapCalls(templateMethod, analysis.unresolvedMaps);
-          }
-          ctx.applied = applied;
-          const resolvedResult = processResolvedArrayMaps(
-            ctx,
-            analysis,
-            stateRefs,
-            imports,
-            sourceFile,
-            stateProps,
-            templateMethod,
-            tmplSetupCtx,
-            eventIdCounter,
-            observeListConfigs,
-            componentArrayDisposeTargets,
-            staticArrayRefreshOnMount,
-            initialHtmlArrayRefreshOnMount,
-            childrenWithResolvedMap);
-          applied = ctx.applied;
-          needsModuleLevelUnwrapHelper = needsModuleLevelUnwrapHelper || resolvedResult.needsModuleLevelUnwrapHelper;
-          needsClassLevelRawStoreField = needsClassLevelRawStoreField || resolvedResult.needsClassLevelRawStoreField;
-          for (const f of resolvedResult.classLevelPrivateFields) classLevelPrivateFields.add(f);
-          const { htmlArrayMaps, renderEventHandlers } = resolvedResult;
-          if ((analysis.conditionalSlots || []).length > 0) {
-            const templatePropNames2 = getTemplatePropNames(classPath.node.body);
-            const htmlArrayMapLastSegments = analysis.arrayMaps.length > 0 ? analysis.arrayMaps : void 0;
-            generateConditionalPatchMethods(
-              classPath.node.body,
-              analysis.conditionalSlots,
-              templatePropNames2,
-              getTemplateParamIdentifier(classPath.node.body),
-              analysis.earlyReturnGuard,
-              htmlArrayMapLastSegments
-            );
-          }
-          if (renderEventHandlers.length > 0) {
-            applied = appendCompiledEventMethods(classPath.node.body, renderEventHandlers, storeImports, /* @__PURE__ */ new Set(), []) || applied;
-          }
-          if (unresolvedEventHandlers.length > 0) {
-            applied = appendCompiledEventMethods(classPath.node.body, unresolvedEventHandlers, storeImports, /* @__PURE__ */ new Set(), []) || applied;
-          }
-          ctx.applied = applied;
-          wireObservers(
-            ctx,
-            stateRefs,
-            htmlArrayMaps,
-            mapRegistrations,
-            mapSyncObservers,
-            storeComponentArrayObservers,
-            observeListConfigs,
-            staticArrayRefreshOnMount,
-            initialHtmlArrayRefreshOnMount,
-            guardStateKeys,
-            componentGetterStoreDeps,
-            ownClassMethodNames,
-            hasOnPropChange);
-          applied = ctx.applied;
-          injectPrivateFields(ctx, classLevelPrivateFields, needsClassLevelRawStoreField);
-        }
-      });
-    }
-  });
-  injectModuleLevelUnwrapHelper(ast, needsModuleLevelUnwrapHelper);
-  return applied;
 }
 
 const getterDepsCache = /* @__PURE__ */ new Map();
@@ -55701,730 +48410,6 @@ const reactiveFieldsCache = /* @__PURE__ */ new Map();
 function clearCaches() {
   getterDepsCache.clear();
   reactiveFieldsCache.clear();
-}
-function resolveImportPath(importSource, currentFile) {
-  const base = resolve(dirname(currentFile), importSource);
-  const candidates = [
-    base,
-    `${base}.ts`,
-    `${base}.tsx`,
-    `${base}.js`,
-    `${base}.jsx`,
-    resolve(base, "index.ts"),
-    resolve(base, "index.tsx"),
-    resolve(base, "index.js"),
-    resolve(base, "index.jsx")
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-function analyzeStoreGetters(sourceFile, storeImports) {
-  const result = /* @__PURE__ */ new Map();
-  for (const [storeVar, source] of storeImports) {
-    const resolvedPath = resolveImportPath(source, sourceFile);
-    if (!resolvedPath) continue;
-    const getterMap = analyzeStoreGettersForFile(resolvedPath);
-    if (getterMap.size > 0) {
-      result.set(storeVar, getterMap);
-    }
-  }
-  return result;
-}
-function analyzeStoreGettersForFile(filePath) {
-  const cached = getterDepsCache.get(filePath);
-  if (cached) return cached;
-  const ast = parseStoreFile(filePath);
-  if (!ast) return /* @__PURE__ */ new Map();
-  const result = /* @__PURE__ */ new Map();
-  traverse$1(ast, {
-    ClassDeclaration(classPath) {
-      if (!isStoreClass(classPath.node)) return;
-      for (const member of classPath.node.body.body) {
-        if (!libExports.isClassMethod(member) || member.kind !== "get" || !libExports.isIdentifier(member.key)) {
-          continue;
-        }
-        const deps = extractGetterDeps(member);
-        if (deps.length > 0) {
-          result.set(member.key.name, deps);
-        }
-      }
-    }
-  });
-  resolveTransitiveGetterDeps(result);
-  if (result.size > 0) {
-    getterDepsCache.set(filePath, result);
-  }
-  return result;
-}
-function analyzeStoreReactiveFields(sourceFile, storeImports) {
-  const result = /* @__PURE__ */ new Map();
-  for (const [storeVar, source] of storeImports) {
-    const resolvedPath = resolveImportPath(source, sourceFile);
-    if (!resolvedPath) continue;
-    const fields = analyzeStoreReactiveFieldsForFile(resolvedPath);
-    if (fields.size > 0) {
-      result.set(storeVar, fields);
-    }
-  }
-  return result;
-}
-function analyzeStoreReactiveFieldsForFile(filePath) {
-  const cached = reactiveFieldsCache.get(filePath);
-  if (cached) return cached;
-  const ast = parseStoreFile(filePath);
-  if (!ast) return /* @__PURE__ */ new Set();
-  const fields = /* @__PURE__ */ new Set();
-  traverse$1(ast, {
-    ClassDeclaration(classPath) {
-      if (!isStoreClass(classPath.node)) return;
-      for (const member of classPath.node.body.body) {
-        if (libExports.isClassProperty(member) && libExports.isIdentifier(member.key) && member.value != null) {
-          fields.add(member.key.name);
-        }
-      }
-    }
-  });
-  if (fields.size > 0) {
-    reactiveFieldsCache.set(filePath, fields);
-  }
-  return fields;
-}
-function parseStoreFile(filePath) {
-  if (!existsSync(filePath)) return null;
-  let source;
-  try {
-    source = readFileSync(filePath, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    return libExports$1.parse(source, {
-      sourceType: "module",
-      plugins: ["jsx", "typescript", "decorators-legacy", "classProperties"]
-    });
-  } catch {
-    return null;
-  }
-}
-function isStoreClass(node) {
-  return !!node.superClass && libExports.isIdentifier(node.superClass) && node.superClass.name === "Store";
-}
-function extractGetterDeps(method) {
-  if (!libExports.isBlockStatement(method.body)) return [];
-  const paths = /* @__PURE__ */ new Map();
-  const program = libExports.program(method.body.body.map((s) => libExports.cloneNode(s, true)));
-  traverse$1(program, {
-    noScope: true,
-    MemberExpression(path) {
-      if (!libExports.isThisExpression(path.node.object) || !libExports.isIdentifier(path.node.property)) return;
-      const name = path.node.property.name;
-      if (!paths.has(name)) {
-        paths.set(name, [name]);
-      }
-    },
-    VariableDeclarator(path) {
-      if (!libExports.isObjectPattern(path.node.id) || !libExports.isThisExpression(path.node.init)) return;
-      for (const prop of path.node.id.properties) {
-        if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
-        const name = prop.key.name;
-        if (!paths.has(name)) {
-          paths.set(name, [name]);
-        }
-      }
-    }
-  });
-  return Array.from(paths.values());
-}
-function resolveTransitiveGetterDeps(result) {
-  if (result.size === 0) return;
-  const MAX_ITERATIONS = 10;
-  let changed = true;
-  let iteration = 0;
-  while (changed && iteration++ < MAX_ITERATIONS) {
-    changed = false;
-    for (const [getterName, deps] of result) {
-      const expanded = [];
-      for (const dep of deps) {
-        if (dep.length === 1 && result.has(dep[0]) && dep[0] !== getterName) {
-          for (const transitiveDep of result.get(dep[0])) {
-            if (!containsPath(expanded, transitiveDep)) {
-              expanded.push(transitiveDep);
-            }
-          }
-          changed = true;
-        } else {
-          if (!containsPath(expanded, dep)) {
-            expanded.push(dep);
-          }
-        }
-      }
-      result.set(getterName, expanded);
-    }
-  }
-}
-function containsPath(list, path) {
-  return list.some((existing) => existing.length === path.length && existing.every((v, i) => v === path[i]));
-}
-
-function transformNestedReturns(stmts, mainReturn, ctx) {
-  let transformed = false;
-  for (const stmt of stmts) {
-    if (libExports.isReturnStatement(stmt) && stmt !== mainReturn && stmt.argument) {
-      if (libExports.isJSXElement(stmt.argument)) {
-        stmt.argument = transformJSXToTemplate(stmt.argument, ctx);
-        transformed = true;
-      } else if (libExports.isJSXFragment(stmt.argument)) {
-        stmt.argument = transformJSXFragmentToTemplate(stmt.argument, ctx);
-        transformed = true;
-      } else if (libExports.isExpression(stmt.argument)) {
-        stmt.argument = transformJSXExpression(stmt.argument, ctx);
-        transformed = true;
-      }
-    } else if (libExports.isIfStatement(stmt)) {
-      if (libExports.isBlockStatement(stmt.consequent)) transformed = transformNestedReturns(stmt.consequent.body, mainReturn, ctx) || transformed;
-      else if (libExports.isReturnStatement(stmt.consequent)) transformed = transformNestedReturns([stmt.consequent], mainReturn, ctx) || transformed;
-      if (stmt.alternate) {
-        if (libExports.isBlockStatement(stmt.alternate)) transformed = transformNestedReturns(stmt.alternate.body, mainReturn, ctx) || transformed;
-        else if (libExports.isIfStatement(stmt.alternate)) transformed = transformNestedReturns([stmt.alternate], mainReturn, ctx) || transformed;
-        else if (libExports.isReturnStatement(stmt.alternate)) transformed = transformNestedReturns([stmt.alternate], mainReturn, ctx) || transformed;
-      }
-    } else if (libExports.isBlockStatement(stmt)) {
-      transformed = transformNestedReturns(stmt.body, mainReturn, ctx) || transformed;
-    } else if (libExports.isSwitchStatement(stmt)) {
-      for (const c of stmt.cases) transformed = transformNestedReturns(c.consequent, mainReturn, ctx) || transformed;
-    }
-  }
-  return transformed;
-}
-function walkNode(node, visit) {
-  if (!node || typeof node !== "object") return;
-  visit(node);
-  for (const key of libExports.VISITOR_KEYS[node.type] || []) {
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const item of child) {
-        if (item && typeof item === "object" && typeof item.type === "string") walkNode(item, visit);
-      }
-    } else if (child && typeof child === "object" && typeof child.type === "string") {
-      walkNode(child, visit);
-    }
-  }
-}
-function transformComponentFile(ast, imports, storeImports, className, sourceFile, _originalAST, _compImportsUsedAsTags, knownComponentImports, ssr = false) {
-  let transformed = false;
-  const stateRefs = collectStateReferences(ast, storeImports);
-  for (const [storeVar, getterMap] of analyzeStoreGetters(sourceFile, storeImports)) {
-    const ref = stateRefs.get(storeVar);
-    if (ref && ref.kind === "imported") ref.getterDeps = getterMap;
-  }
-  for (const [storeVar, fields] of analyzeStoreReactiveFields(sourceFile, storeImports)) {
-    const ref = stateRefs.get(storeVar);
-    if (ref && ref.kind === "imported") ref.reactiveFields = fields;
-  }
-  const compiledChildren = [];
-  const eventIdCounter = { value: 0 };
-  const preTransformAnalysis = /* @__PURE__ */ new Map();
-  const compImportsUsedAsTags = /* @__PURE__ */ new Set();
-  traverse$1(ast, {
-    ClassMethod(path) {
-      if (!libExports.isIdentifier(path.node.key) || path.node.key.name !== "template") return;
-      const ownerClass = path.findParent((p) => libExports.isClassDeclaration(p.node));
-      if (ownerClass && libExports.isIdentifier(ownerClass.node.id) && ownerClass.node.id.name !== className) return;
-      const body = path.node.body.body;
-      const retStmt = body.find((s) => libExports.isReturnStatement(s) && s.argument !== null);
-      if (!retStmt?.argument) return;
-      const allComponentTags = new Set(knownComponentImports);
-      const instanceTags = [];
-      if (libExports.isJSXElement(retStmt.argument)) collectComponentTags(retStmt.argument, imports, instanceTags);
-      else if (libExports.isJSXFragment(retStmt.argument)) collectComponentTags(retStmt.argument, imports, instanceTags);
-      const componentInstances = /* @__PURE__ */ new Map();
-      const tagCounts = /* @__PURE__ */ new Map();
-      instanceTags.forEach((tag, dfsIndex) => {
-        const nextCount = (tagCounts.get(tag) || 0) + 1;
-        tagCounts.set(tag, nextCount);
-        const instanceName = nextCount === 1 ? `_${tag.charAt(0).toLowerCase() + tag.slice(1)}` : `_${tag.charAt(0).toLowerCase() + tag.slice(1)}${nextCount}`;
-        const instances = componentInstances.get(tag) || [];
-        instances.push({
-          tagName: tag,
-          instanceVar: instanceName,
-          slotId: instanceName,
-          propsExpression: libExports.objectExpression([]),
-          dependencies: [],
-          dfsIndex
-        });
-        componentInstances.set(tag, instances);
-      });
-      const allComponentInstances = /* @__PURE__ */ new Map();
-      allComponentTags.forEach((tag) => {
-        allComponentInstances.set(tag, tag.charAt(0).toLowerCase() + tag.slice(1));
-        const src = imports.get(tag);
-        if (src) compImportsUsedAsTags.add(src.startsWith("./") ? src : `./${src}`);
-      });
-      const eventHandlers = [];
-      const returnIndex = body.indexOf(retStmt);
-      const classPath = path.findParent((p) => libExports.isClassDeclaration(p.node));
-      const classBody = libExports.isClassBody(path.parent) ? path.parent : void 0;
-      const analysis = analyzeTemplate(path.node, stateRefs, classBody);
-      if (classPath?.node.id && libExports.isIdentifier(classPath.node.id)) {
-        preTransformAnalysis.set(classPath.node.id.name, analysis);
-      }
-      const conditionalSlotInfos = analysis.conditionalSlots.map(
-        (s) => ({ slotId: s.slotId })
-      );
-      const slotInfoById = new Map(conditionalSlotInfos.map((info) => [info.slotId, info]));
-      const conditionalSlotNodeMap = /* @__PURE__ */ new Map();
-      for (const [node, slotId] of analysis.conditionalSlotNodeMap) {
-        const info = slotInfoById.get(slotId);
-        if (info) conditionalSlotNodeMap.set(node, info);
-      }
-      const stateChildSlots = [];
-      const refBindings = [];
-      const ctx = {
-        imports,
-        componentInstances,
-        componentInstanceCursors: /* @__PURE__ */ new Map(),
-        eventHandlers,
-        eventIdCounter,
-        stateRefs,
-        elementPathToBindingId: analysis.elementPathToBindingId,
-        elementPathToUserIdExpr: analysis.elementPathToUserIdExpr,
-        templateSetupContext: {
-          params: path.node.params,
-          statements: returnIndex >= 0 ? body.slice(0, returnIndex) : [],
-          earlyReturnBarrierIndex: analysis.earlyReturnBarrierIndex
-        },
-        sourceFile,
-        isRoot: true,
-        conditionalSlots: conditionalSlotInfos,
-        conditionalSlotCursor: { value: 0 },
-        conditionalSlotNodeMap,
-        stateChildSlots,
-        stateChildSlotCounter: { value: 0 },
-        refBindings,
-        refCounter: { value: 0 },
-        classBody
-      };
-      let cloneRoot = null;
-      const preReturnStmts = returnIndex >= 0 ? body.slice(0, returnIndex) : [];
-      const preCloneEligible = libExports.isJSXElement(retStmt.argument) && preReturnStmts.length === 0 && componentInstances.size === 0 && analysis.conditionalSlots.length === 0 && analysis.arrayMaps.length === 0 && analysis.unresolvedMaps.length === 0 && analysis.earlyReturnGuard === void 0;
-      if (preCloneEligible && libExports.isJSXElement(retStmt.argument)) {
-        cloneRoot = libExports.cloneNode(retStmt.argument, true);
-      }
-      if (libExports.isJSXElement(retStmt.argument)) {
-        retStmt.argument = transformJSXToTemplate(retStmt.argument, ctx);
-        transformed = true;
-      } else if (libExports.isJSXFragment(retStmt.argument)) {
-        retStmt.argument = transformJSXFragmentToTemplate(retStmt.argument, ctx);
-        transformed = true;
-      } else if (libExports.isExpression(retStmt.argument)) {
-        retStmt.argument = transformJSXExpression(retStmt.argument, ctx);
-        transformed = true;
-      }
-      const earlyReturnCtx = {
-        imports,
-        stateRefs,
-        sourceFile,
-        isRoot: true,
-        eventHandlers: [],
-        eventIdCounter
-      };
-      transformed = transformNestedReturns(body, retStmt, earlyReturnCtx) || transformed;
-      if (!ssr && earlyReturnCtx.eventHandlers.length > 0) {
-        const earlyClassPath = path.findParent(
-          (p) => libExports.isClassDeclaration(p.node)
-        );
-        if (earlyClassPath) {
-          transformed = appendCompiledEventMethods(
-            earlyClassPath.node.body,
-            earlyReturnCtx.eventHandlers,
-            storeImports,
-            knownComponentImports,
-            []) || transformed;
-        }
-      }
-      for (const info of conditionalSlotInfos) {
-        const slot = analysis.conditionalSlots.find((s) => s.slotId === info.slotId);
-        if (slot) {
-          slot.truthyHtmlExpr = info.truthyHtmlExpr;
-          slot.falsyHtmlExpr = info.falsyHtmlExpr;
-        }
-      }
-      if (stateChildSlots.length > 0) {
-        analysis.stateChildSlots = stateChildSlots;
-      }
-      if (!ssr && cloneRoot && stateChildSlots.length === 0 && classPath && libExports.isClassBody(classPath.node.body)) {
-        const cloneCtxForPatches = {
-          ...ctx,
-          eventIdCounter: { value: 0 },
-          refCounter: { value: 0 },
-          eventHandlers: [],
-          refBindings: [],
-          componentInstanceCursors: new Map(ctx.componentInstanceCursors)
-        };
-        const cloneMembers = generateCloneMembers(
-          cloneRoot,
-          analysis,
-          path.node.params,
-          sourceFile,
-          imports,
-          cloneCtxForPatches
-        );
-        if (cloneMembers) {
-          classPath.node.body.body.push(...cloneMembers);
-          transformed = true;
-        }
-      }
-      if (!ssr && eventHandlers.length > 0) {
-        const classPath2 = path.findParent((p) => libExports.isClassDeclaration(p.node));
-        if (classPath2) {
-          const setupStatements = returnIndex >= 0 ? body.slice(0, returnIndex) : [];
-          transformed = appendCompiledEventMethods(
-            classPath2.node.body,
-            eventHandlers,
-            storeImports,
-            knownComponentImports,
-            setupStatements) || transformed;
-        }
-      }
-      if (refBindings.length > 0) {
-        const classPath2 = path.findParent((p) => libExports.isClassDeclaration(p.node));
-        if (classPath2) {
-          const refStatements = refBindings.flatMap((ref) => {
-            const target = ref.targetExpr;
-            const q = jsExpr`this[${id("GEA_ELEMENT")}].querySelector(${`[data-gea-ref="${ref.refId}"]`})`;
-            return [
-              libExports.expressionStatement(libExports.assignmentExpression("=", target, libExports.nullLiteral())),
-              libExports.expressionStatement(libExports.assignmentExpression("=", target, q))
-            ];
-          });
-          const existingSetup = classPath2.node.body.body.find(
-            (m) => libExports.isClassMethod(m) && m.computed && libExports.isIdentifier(m.key) && m.key.name === "GEA_SETUP_REFS"
-          );
-          if (existingSetup && libExports.isClassMethod(existingSetup)) {
-            existingSetup.body.body.push(...refStatements);
-          } else {
-            classPath2.node.body.body.push(
-              appendToBody(jsMethod`[${id("GEA_SETUP_REFS")}]() {}`, ...refStatements)
-            );
-          }
-          transformed = true;
-        }
-      }
-      if (componentInstances.size > 0) {
-        const templateParamNames = /* @__PURE__ */ new Set();
-        const binding = getTemplateParamBinding(path.node.params[0]);
-        if (binding && libExports.isObjectPattern(binding)) {
-          binding.properties.forEach((p) => {
-            if (libExports.isObjectProperty(p) && libExports.isIdentifier(p.key)) templateParamNames.add(p.key.name);
-          });
-        }
-        const directForwardingSet = /* @__PURE__ */ new Set();
-        const directMappingsMap = /* @__PURE__ */ new Map();
-        for (const children of componentInstances.values()) {
-          for (const child of children) {
-            if (child.lazy) continue;
-            const mappings = getDirectPropMappings(child, templateParamNames);
-            if (mappings) {
-              directForwardingSet.add(child.instanceVar);
-              directMappingsMap.set(child.instanceVar, mappings);
-            }
-          }
-        }
-        const preReturnStmts2 = returnIndex >= 0 ? body.slice(0, returnIndex) : [];
-        const earlyReturnGuards = preReturnStmts2.filter(
-          (s) => libExports.isIfStatement(s) && (libExports.isReturnStatement(s.consequent) || libExports.isBlockStatement(s.consequent) && s.consequent.body.some((b) => libExports.isReturnStatement(b)), true)
-        );
-        let guardSetupStatements = [];
-        if (earlyReturnGuards.length > 0) {
-          const guardIdents = /* @__PURE__ */ new Set();
-          for (const guard of earlyReturnGuards) {
-            walkNode(guard.test, (node) => {
-              if (libExports.isIdentifier(node)) guardIdents.add(node.name);
-            });
-          }
-          const declBindsGuardIdent = (pattern) => {
-            if (libExports.isIdentifier(pattern)) return guardIdents.has(pattern.name);
-            if (libExports.isObjectPattern(pattern))
-              return pattern.properties.some(
-                (p) => libExports.isRestElement(p) ? declBindsGuardIdent(p.argument) : declBindsGuardIdent(p.value)
-              );
-            if (libExports.isArrayPattern(pattern)) return pattern.elements.some((e) => e && declBindsGuardIdent(e));
-            return false;
-          };
-          guardSetupStatements = preReturnStmts2.filter((s) => {
-            if (!libExports.isVariableDeclaration(s)) return false;
-            return s.declarations.some((d) => declBindsGuardIdent(d.id));
-          });
-        }
-        const allChildren = Array.from(componentInstances.values()).flat();
-        for (const child of allChildren) {
-          const mappings = directMappingsMap.get(child.instanceVar);
-          if (mappings) child.directMappings = mappings;
-          if (earlyReturnGuards.length > 0) {
-            child.earlyReturnGuards = earlyReturnGuards;
-            child.guardSetupStatements = guardSetupStatements;
-          }
-        }
-        injectChildComponents(ast, className, componentInstances, imports, storeImports, knownComponentImports, directForwardingSet);
-        compiledChildren.push(...allChildren);
-        transformed = true;
-      }
-      if (allComponentInstances.size > 0) {
-        ensureComponentImport$1(ast, imports);
-        injectComponentRegistrations(ast, className, allComponentInstances);
-        transformed = true;
-      }
-      if (transformed) {
-        const currentReturnIndex = body.indexOf(retStmt);
-        if (currentReturnIndex > 0) {
-          const setupStmts = body.slice(0, currentReturnIndex);
-          const prunedSetup = pruneUnusedSetupDestructuring(setupStmts, [retStmt]);
-          if (prunedSetup.length < setupStmts.length) {
-            body.splice(0, currentReturnIndex, ...prunedSetup);
-          }
-        }
-      }
-    }
-  });
-  transformRemainingJSX(ast, imports);
-  addJoinToMapCallsInTemplates(ast);
-  if (!ssr) {
-    transformed = applyStaticReactivity(
-      ast,
-      ast,
-      className,
-      sourceFile,
-      imports,
-      stateRefs,
-      storeImports,
-      compiledChildren,
-      eventIdCounter,
-      preTransformAnalysis
-    ) || transformed;
-  }
-  transformRemainingJSX(ast, imports);
-  if (!ssr && transformed) {
-    traverse$1(ast, {
-      ClassDeclaration(path) {
-        if (!libExports.isIdentifier(path.node.id) || path.node.id.name !== className) return;
-        const subpathPcCounter = { value: 0 };
-        for (const member of path.node.body.body) {
-          if (!libExports.isClassMethod(member) || member.kind === "constructor") continue;
-          const name = libExports.isIdentifier(member.key) ? member.key.name : null;
-          if (!name) continue;
-          const isCompilerGenerated = name === "template" || name === "events" && member.kind === "get" || name.startsWith("__") || member.computed && name === "GEA_ON_PROP_CHANGE";
-          if (isCompilerGenerated) cacheThisIdInMethod(member);
-          if (name === "events" && member.kind === "get") wrapEventsGetterWithCache(member);
-          if (member.computed && name === "GEA_ON_PROP_CHANGE") wrapSubpathCacheGuards(member, subpathPcCounter, path.node.body);
-        }
-        path.stop();
-      }
-    });
-  }
-  return transformed;
-}
-function transformNonComponentJSX(ast, imports) {
-  if (!imports) {
-    imports = /* @__PURE__ */ new Map();
-    for (const stmt of ast.program.body) {
-      if (libExports.isImportDeclaration(stmt)) {
-        for (const spec of stmt.specifiers) {
-          if (libExports.isImportSpecifier(spec) || libExports.isImportDefaultSpecifier(spec)) {
-            imports.set(spec.local.name, stmt.source.value);
-          }
-        }
-      }
-    }
-  }
-  return transformNonComponentJSXWithImports(ast, imports);
-}
-function transformNonComponentJSXWithImports(ast, imports) {
-  let transformed = false;
-  traverse$1(ast, {
-    ClassMethod(path) {
-      if (!libExports.isIdentifier(path.node.key) || path.node.key.name !== "template") return;
-      const body = path.node.body.body;
-      const retStmt = body.find((s) => libExports.isReturnStatement(s) && s.argument !== null);
-      if (!retStmt?.argument) return;
-      const ctx = { imports, isRoot: true };
-      if (libExports.isJSXElement(retStmt.argument)) {
-        retStmt.argument = transformJSXToTemplate(retStmt.argument, ctx);
-        transformed = true;
-      } else if (libExports.isJSXFragment(retStmt.argument)) {
-        retStmt.argument = transformJSXFragmentToTemplate(retStmt.argument, ctx);
-        transformed = true;
-      } else if (libExports.isExpression(retStmt.argument)) {
-        retStmt.argument = transformJSXExpression(retStmt.argument, ctx);
-        transformed = true;
-      }
-      transformed = transformNestedReturns(body, retStmt, ctx) || transformed;
-    }
-  });
-  transformRemainingJSX(ast, imports);
-  return transformed;
-}
-function addJoinToMapCallsInTemplates(ast) {
-  const processed = /* @__PURE__ */ new WeakSet();
-  const isUnwrappedMapCall = (node) => libExports.isCallExpression(node) && !processed.has(node) && libExports.isMemberExpression(node.callee) && libExports.isIdentifier(node.callee.property) && node.callee.property.name === "map" && node.arguments.length >= 1 && libExports.isArrowFunctionExpression(node.arguments[0]);
-  for (const stmt of ast.program.body) {
-    walkNode(stmt, (node) => {
-      if (!libExports.isTemplateLiteral(node)) return;
-      for (let i = 0; i < node.expressions.length; i++) {
-        const expr = node.expressions[i];
-        if (isUnwrappedMapCall(expr)) {
-          processed.add(expr);
-          node.expressions[i] = libExports.callExpression(
-            libExports.memberExpression(expr, id("join")),
-            [libExports.stringLiteral("")]
-          );
-        }
-      }
-    });
-  }
-}
-function ensureComponentImport$1(ast, imports) {
-  if (imports.has("Component")) return;
-  let geaImportPath = null;
-  traverse$1(ast, {
-    ImportDeclaration(path) {
-      if (path.node.source.value === "@geajs/core") {
-        geaImportPath = path;
-        path.stop();
-      }
-    }
-  });
-  if (geaImportPath) {
-    geaImportPath.node.specifiers.push(
-      libExports.importSpecifier(id("Component"), id("Component"))
-    );
-  } else {
-    ast.program.body.unshift(jsImport`import { Component } from '@geajs/core'`);
-  }
-  imports.set("Component", "@geajs/core");
-}
-function transformRemainingJSX(ast, imports) {
-  traverse$1(ast, {
-    noScope: true,
-    JSXElement(path) {
-      const classMethod = path.findParent((p) => libExports.isClassMethod(p.node));
-      if (classMethod && libExports.isClassMethod(classMethod.node) && libExports.isIdentifier(classMethod.node.key) && classMethod.node.key.name === "template")
-        return;
-      try {
-        path.replaceWith(transformJSXToTemplate(path.node, { imports }));
-      } catch (err) {
-        console.warn("[gea] Failed to transform JSX element:", err instanceof Error ? err.message : err);
-      }
-    },
-    JSXFragment(path) {
-      const classMethod = path.findParent((p) => libExports.isClassMethod(p.node));
-      if (classMethod && libExports.isClassMethod(classMethod.node) && libExports.isIdentifier(classMethod.node.key) && classMethod.node.key.name === "template")
-        return;
-      try {
-        path.replaceWith(transformJSXFragmentToTemplate(path.node, { imports }));
-      } catch (err) {
-        console.warn("[gea] Failed to transform JSX fragment:", err instanceof Error ? err.message : err);
-      }
-    }
-  });
-}
-
-function convertFunctionalToClass(ast, info, imports) {
-  const name = info.name;
-  let params = [libExports.identifier("props")];
-  let templateBody = [];
-  let removeVarDeclPath = null;
-  let exportPath = null;
-  traverse$1(ast, {
-    ExportDefaultDeclaration(path) {
-      exportPath = path;
-      const decl = path.node.declaration;
-      const extractFunction = (fn) => {
-        if (fn.params.length > 0) {
-          params = fn.params.map(
-            (p) => libExports.cloneNode(p)
-          );
-        }
-        if (libExports.isBlockStatement(fn.body)) {
-          const returnIdx = fn.body.body.findIndex(
-            (s) => libExports.isReturnStatement(s) && s.argument
-          );
-          if (returnIdx >= 0) {
-            templateBody = fn.body.body.slice(0, returnIdx + 1).map((s) => libExports.cloneNode(s));
-          }
-        } else {
-          templateBody = [libExports.returnStatement(libExports.cloneNode(fn.body))];
-        }
-      };
-      if (libExports.isFunctionDeclaration(decl)) {
-        extractFunction(decl);
-      } else if (libExports.isArrowFunctionExpression(decl)) {
-        extractFunction(decl);
-      } else if (libExports.isIdentifier(decl)) {
-        const binding = path.scope.getBinding(decl.name);
-        const init = binding?.path?.isVariableDeclarator() ? binding.path.node.init : null;
-        if (libExports.isArrowFunctionExpression(init) || libExports.isFunctionExpression(init)) {
-          extractFunction(init);
-          const varDeclPath = binding.path.findParent(
-            (p) => libExports.isVariableDeclaration(p.node)
-          );
-          if (varDeclPath) removeVarDeclPath = varDeclPath;
-        }
-      }
-      path.stop();
-    }
-  });
-  if (templateBody.length === 0 || !exportPath) return;
-  const firstParam = params[0];
-  const firstStmt = templateBody[0];
-  if (params.length === 1 && libExports.isIdentifier(firstParam) && libExports.isVariableDeclaration(firstStmt) && firstStmt.declarations.length === 1) {
-    const decl = firstStmt.declarations[0];
-    if (decl && libExports.isObjectPattern(decl.id) && decl.init && libExports.isIdentifier(decl.init, { name: firstParam.name })) {
-      params = [libExports.cloneNode(decl.id)];
-      templateBody = templateBody.slice(1);
-    }
-  }
-  ensureComponentImport(ast, imports);
-  const templateMethod = libExports.classMethod(
-    "method",
-    libExports.identifier("template"),
-    params,
-    libExports.blockStatement(templateBody)
-  );
-  const classDecl = libExports.classDeclaration(
-    libExports.identifier(name),
-    libExports.identifier("Component"),
-    libExports.classBody([templateMethod])
-  );
-  if (removeVarDeclPath) {
-    removeVarDeclPath.remove();
-  }
-  const program = ast.program;
-  const idx = program.body.indexOf(exportPath.node);
-  if (idx >= 0) {
-    program.body[idx] = libExports.exportDefaultDeclaration(classDecl);
-  }
-}
-function ensureComponentImport(ast, imports) {
-  if (imports.get("Component")) return;
-  const source = "@geajs/core";
-  for (const node of ast.program.body) {
-    if (libExports.isImportDeclaration(node) && node.source.value === source) {
-      node.specifiers.push(
-        libExports.importSpecifier(libExports.identifier("Component"), libExports.identifier("Component"))
-      );
-      imports.set("Component", source);
-      return;
-    }
-  }
-  ast.program.body.unshift(
-    libExports.importDeclaration(
-      [libExports.importSpecifier(libExports.identifier("Component"), libExports.identifier("Component"))],
-      libExports.stringLiteral(source)
-    )
-  );
-  imports.set("Component", source);
 }
 
 const traverse = typeof babelTraverse.default === "function" ? babelTraverse.default : babelTraverse;
@@ -56446,7 +48431,6 @@ function compileForBrowser(files) {
   const compiledModules = {};
   const errors = [];
   clearCaches();
-  clearCaches$1();
   globalThis.__geaPlaygroundFiles = files;
   globalThis.__geaResolveFile = (filePath) => {
     const name = filePath.replace(/^\/virtual\//, "");
@@ -56470,7 +48454,6 @@ function compileForBrowser(files) {
         continue;
       }
       let { ast, imports } = parsed;
-      let { componentClassNames } = parsed;
       const { functionalComponentInfo, hasJSX } = parsed;
       if (!hasJSX) {
         const output = generate(ast);
@@ -56479,7 +48462,6 @@ function compileForBrowser(files) {
       }
       if (functionalComponentInfo) {
         convertFunctionalToClass(ast, functionalComponentInfo, imports);
-        componentClassNames = [functionalComponentInfo.name];
         const freshCode = generate(ast).code;
         const freshParsed = parseSource$1(freshCode);
         if (freshParsed) {
@@ -56491,7 +48473,6 @@ function compileForBrowser(files) {
       const storeImports = /* @__PURE__ */ new Map();
       const knownComponentImports = /* @__PURE__ */ new Set();
       const namedImportSources = /* @__PURE__ */ new Map();
-      const componentImportsUsedAsTags = /* @__PURE__ */ new Set();
       traverse(ast, {
         ImportDeclaration(path) {
           const source = path.node.source.value;
@@ -56532,27 +48513,13 @@ function compileForBrowser(files) {
         }
       });
       let transformed = false;
-      if (componentClassNames.length > 0) {
-        for (const cn of componentClassNames) {
-          if (!imports.has(cn)) imports.set(cn, virtualSourceFile);
+      const emitted = transformFile(code, virtualSourceFile);
+      if (emitted.changed) {
+        const reparsed = parseSource$1(emitted.code);
+        if (reparsed) {
+          ast.program.body = reparsed.ast.program.body;
+          transformed = true;
         }
-        const originalAST = parseSource$1(code).ast;
-        for (const cn of componentClassNames) {
-          const result = transformComponentFile(
-            ast,
-            imports,
-            storeImports,
-            cn,
-            virtualSourceFile,
-            originalAST,
-            componentImportsUsedAsTags,
-            knownComponentImports,
-            false
-          );
-          if (result) transformed = true;
-        }
-      } else if (hasJSX) {
-        transformed = transformNonComponentJSX(ast, imports);
       }
       if (transformed) {
         ensureGeaCompilerSymbolImports(ast);

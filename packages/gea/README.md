@@ -5,7 +5,39 @@
 
 # Gea
 
-A batteries-included, reactive JavaScript UI framework with compile-time JSX and proxy-based stores. No virtual DOM — the Vite plugin analyzes your JSX at build time and generates surgical DOM patches that update only what changed. ~19 kb gzipped with the built-in router, ~15 kb without. Zero runtime dependencies.
+A compiler-first reactive JavaScript UI framework with compile-time JSX and proxy-based stores. No virtual DOM — the Vite plugin analyzes your JSX at build time and generates surgical DOM patches that update only what changed. A hello-world production build is 121 B brotli; an equivalent interactive todo ships 4.9 kb of brotli JavaScript.
+
+Svelte made "compile the framework away" famous. Gea takes the phrase literally: in a static hello-world app, the framework runtime disappears from the bundle.
+
+## Compile To Almost Nothing
+
+In a fresh Vite production hello-world build, Gea ships **121 B** of brotli JavaScript. The equivalent Solid build ships 3.6 kb, Svelte ships 8.5 kb, Vue ships 20.7 kb, and React ships 50.8 kb.
+
+| Framework | Version | Raw minified JS | Brotli JS | Brotli vs Gea |
+| --- | --- | ---: | ---: | ---: |
+| Gea | 1.3.0 | 214 B | **121 B** | 1.0x |
+| Solid | 1.9.12 | 10,196 B | 3,601 B | 29.8x |
+| Svelte | 5.55.5 | 23,461 B | 8,537 B | 70.6x |
+| Vue | 3.5.33 | 58,174 B | 20,711 B | 171.2x |
+| React | 19.2.5 / React DOM 19.2.5 | 189,717 B | 50,816 B | 420.0x |
+
+Measured from fresh Vite 8.0.10 production apps, summing JavaScript assets only. Gea used the compiled component output; React, Vue, and Svelte used equivalent minimal hello-world components.
+
+## Stays Lean When The App Does Work
+
+Hello world proves the compiler can disappear. Todo proves the runtime stays lean when the app actually does something.
+
+In an equivalent interactive todo app with reactive state, input handling, filtering, item updates, and identical CSS, Gea ships **4.9 kb** of brotli JavaScript. Solid ships 5.7 kb, Svelte ships 13.7 kb, Vue ships 22.6 kb, and React ships 51.5 kb.
+
+| Framework | Version | Minified JS raw | Minified JS brotli | Total raw JS+CSS | Total brotli JS+CSS |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Gea | 1.3.0 | 15,265 B | **4,850 B** | 17,976 B | **5,607 B** |
+| Solid | 1.9.12 | 16,181 B | 5,721 B | 18,892 B | 6,485 B |
+| Svelte | 5.55.5 | 38,812 B | 13,661 B | 41,523 B | 14,429 B |
+| Vue | 3.5.33 | 63,676 B | 22,585 B | 66,387 B | 23,411 B |
+| React | 19.2.5 / React DOM 19.2.5 | 192,330 B | 51,460 B | 195,041 B | 52,287 B |
+
+Measured from fresh Vite production builds in `/tmp/gea-todo-framework-size-compare`. CSS was identical across all builds: 2,711 B raw, 746 B brotli.
 
 ## Philosophy
 
@@ -21,12 +53,12 @@ Gea is the fastest compiled UI framework — benchmarked with the [js-framework-
 
 | Framework | Weighted geometric mean |
 | --- | --- |
-| vanillajs | 1.02 |
-| **Gea 1.0** | **1.03** |
-| Solid 1.9 | 1.12 |
-| Svelte 5 | 1.14 |
-| Vue 3.6 | 1.26 |
-| React 19.2 | 1.50 |
+| vanillajs | 1.00 |
+| **Gea 1.3** | **1.02** |
+| Solid 1.9 | 1.10 |
+| Svelte 5 | 1.10 |
+| Vue 3.6 | 1.22 |
+| React 19.2 | 1.43 |
 
 Lower is better (1.00 = fastest). Gea outperforms every compiled framework while requiring zero framework-specific concepts — no signals, no hooks, no compiler directives. It's not just the DX — it's the fastest, too. [Full benchmark report](https://geajs.com/benchmark-report.html)
 
@@ -330,6 +362,8 @@ Components render once. Subsequent state changes trigger surgical DOM patches �
 ## Router
 
 Gea includes a built-in client-side router for single-page applications.
+
+Router APIs are part of the main Gea API, so you can import `Link`, `RouterView`, and `router` from `@geajs/core`.
 
 ### Quick Example
 

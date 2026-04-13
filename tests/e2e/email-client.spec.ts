@@ -66,7 +66,7 @@ test.describe('Email Client', () => {
 
     test('clicking email marks it as read', async ({ page }) => {
       const firstRow = page.locator('.email-row.unread').first()
-      const hadUnread = await firstRow.count() > 0
+      const hadUnread = (await firstRow.count()) > 0
       if (hadUnread) {
         // Capture the email ID before clicking, since the locator re-evaluates after click
         const emailId = await firstRow.getAttribute('data-email-id')

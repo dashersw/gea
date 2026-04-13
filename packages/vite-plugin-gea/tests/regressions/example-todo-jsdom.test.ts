@@ -198,7 +198,9 @@ describe('examples/todo app in JSDOM (ported from todo.spec)', { concurrency: fa
     ;(root.querySelector('.todo-checkbox') as HTMLInputElement).click()
     await flushMicrotasks()
 
-    const completedBtn = [...root.querySelectorAll('.filter-btn')].find((b) => b.textContent?.includes('Completed'))! as HTMLElement
+    const completedBtn = [...root.querySelectorAll('.filter-btn')].find((b) =>
+      b.textContent?.includes('Completed'),
+    )! as HTMLElement
     completedBtn.click()
     await flushMicrotasks()
     assert.equal(root.querySelectorAll('.todo-item').length, 1)

@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { GEA_PROXY_GET_RAW_TARGET, Store } from '@geajs/core'
+import { GEA_ROOT_PROXY_HANDLER_FACTORY } from '@geajs/core/ssr'
 import { createSSRRootProxyHandler, SSR_DELETED } from '../src/ssr-proxy-handler.ts'
 import { resolveOverlay, runInSSRContext } from '../src/ssr-context.ts'
 
@@ -11,11 +12,11 @@ function getRaw(store: object): object {
 
 describe('Store SSR Proxy has trap', () => {
   beforeEach(() => {
-    Store.rootProxyHandlerFactory = createSSRRootProxyHandler
+    Store[GEA_ROOT_PROXY_HANDLER_FACTORY] = createSSRRootProxyHandler
   })
 
   afterEach(() => {
-    Store.rootProxyHandlerFactory = null
+    Store[GEA_ROOT_PROXY_HANDLER_FACTORY] = null
   })
 
   it('returns false for tombstoned properties via "in" operator', () => {

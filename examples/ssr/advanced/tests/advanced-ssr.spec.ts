@@ -1,7 +1,6 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Advanced SSR Features', () => {
-
   // --- Head Management ---
 
   test.describe('Head Management', () => {

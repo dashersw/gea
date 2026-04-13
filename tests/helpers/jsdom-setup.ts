@@ -57,6 +57,9 @@ export function installDom(url = 'http://localhost/'): () => void {
     HTMLElement: globalThis.HTMLElement,
     HTMLUnknownElement: (globalThis as typeof globalThis & { HTMLUnknownElement?: typeof HTMLElement })
       .HTMLUnknownElement,
+    DocumentFragment: (globalThis as typeof globalThis & { DocumentFragment?: typeof DocumentFragment })
+      .DocumentFragment,
+    Element: (globalThis as typeof globalThis & { Element?: typeof Element }).Element,
     Node: globalThis.Node,
     NodeFilter: globalThis.NodeFilter,
     MutationObserver: globalThis.MutationObserver,
@@ -81,6 +84,8 @@ export function installDom(url = 'http://localhost/'): () => void {
     document: dom.window.document,
     HTMLElement: dom.window.HTMLElement,
     HTMLUnknownElement: dom.window.HTMLUnknownElement,
+    DocumentFragment: dom.window.DocumentFragment,
+    Element: dom.window.Element,
     Node: dom.window.Node,
     NodeFilter: dom.window.NodeFilter,
     MutationObserver: dom.window.MutationObserver,
