@@ -4,13 +4,9 @@ export { signal, effect, computed, batch } from './signals/index.js';
 export { geaEscapeHtml as geaEscapeHtml, geaSanitizeAttr as geaSanitizeAttr } from './dom/xss.js';
 export { default as getUid, resetUidCounter, setUidProvider, clearUidProvider } from './component/uid.js';
 
-// TODO: These are Gea v1 APIs — stub for compatibility, implement as needed
-export const ComponentManager = {} as any
-export function applyListChanges() {}
-
 import { Component } from './component/index.js';
 import { Store } from './store/index.js';
-const gea = { Store, Component, applyListChanges }
+const gea = { Store, Component }
 export default gea
 export {
   GEA_ELEMENT,

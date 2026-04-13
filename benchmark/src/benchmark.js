@@ -55,7 +55,7 @@ export default class Benchmark extends Component {
                   <a click={() => store.select(item.id)}>{item.label}</a>
                 </td>
                 <td class="col-md-1">
-                  <a click={() => store.remove(index)}>
+                  <a click={() => store.remove(item.id)}>
                     <span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
                   </a>
                 </td>

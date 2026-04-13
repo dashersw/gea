@@ -91,8 +91,9 @@ class BenchmarkStore extends Store {
   select(id: number) {
     this.selected = id
   }
-  remove(index: number) {
-    this.data.splice(index, 1)
+  remove(id: number) {
+    const idx = this.data.findIndex(r => r.id === id)
+    if (idx !== -1) this.data.splice(idx, 1)
   }
 }
 
