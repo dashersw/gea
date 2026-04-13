@@ -114,7 +114,7 @@ Tasks:
 - [ ] `src/types.ts` — `SuspenseProps` interface (Phase 1 subset: `fallback`, `onResolve`)
 - [ ] `src/suspense.ts` — `Suspense` class extending `Component`
   - Collect child components with pending `async created()` lifecycle
-  - `Promise.all()` parallel resolution (anti-waterfall)
+  - `Promise.allSettled()` parallel resolution (anti-waterfall, enables partial render)
   - `GEA_SWAP_CHILD` reuse for fallback → content transition
   - Insert fallback on mount
   - Swap to content on resolve
@@ -190,6 +190,7 @@ Tasks:
 - [ ] `src/types.ts` — add `staleWhileRefresh`, `AbortSignal` propagation
 - [ ] `src/suspense.ts`:
   - `staleWhileRefresh=true`: on re-fetch, add `suspense-refreshing` CSS class to content container instead of swapping to fallback
+  - Optional `refreshing` render prop: `refreshing={(children) => <div class="overlay">{children}</div>}` — wraps stale content if provided
   - Remove CSS class on new content arrival
   - Abort previous operations when new fetch starts
   - Memory leak prevention: abort on component unmount
@@ -311,162 +312,23 @@ Benchmark targets:
 
 ---
 
-## 8. Open Questions (Need Answers Before Implementation)
+## 8. Confirmed Decisions (All Questions Answered)
 
-> **Please answer these before we start coding.**
-
-### Q1 — Phase Scope for This PR
-**Should this PR cover all 6 phases, or ship incrementally?**
-
-Options:
-- A) All 6 phases in one PR (matches issue's full spec)
-- B) Phase 1–3 now (core functionality), Phase 4–6 as follow-up PRs
-- C) Phase 1–4 now (adds AbortController), Phase 5–6 follow-up
-
-Recommendation: B or C — get working code merged faster, reduce review surface.
-
----
-
-### Q2 — Package vs. Core Export
-**Should `Suspense` also be re-exported from `@geajs/core` for convenience?**
-
-Options:
-- A) Only from `@geajs/suspense` (clean separation, no re-export)
-- B) Re-export from `@geajs/core` as a convenience (risks coupling)
-- C) `@geajs/core` gets a `/suspense` subpath export that re-exports from `@geajs/suspense`
-
-Recommendation: A — separate package, import explicitly.
-
----
-
-### Q3 — `async created()` Signal API
-**How should AbortController signal be passed to the component lifecycle?**
-
-Options:
-- A) Parameter: `async created(signal: AbortSignal) { ... }` — explicit, standard
-- B) Instance property: `this.abortSignal` — more "Gea-like" (class-based)
-- C) Both: parameter for new code, property for compatibility
-
-Context: This changes the `Component` base class signature. Option B is more consistent with how Gea components access things (`this.props`, `this.store`, etc.).
-
----
-
-### Q4 — `staleWhileRefresh` — CSS vs Render Prop
-**How should the "refreshing" state be communicated to users?**
-
-Options:
-- A) CSS class only: `suspense-refreshing` added to content wrapper
-- B) Render prop: `refreshing={(children) => <div class="opacity-50">{children}</div>}`
-- C) Both: CSS class by default, render prop as override
-
-Recommendation: A (simpler, YAGNI) — can add render prop later without breaking changes.
-
----
-
-### Q5 — Lazy Route Auto-Wrapping
-**Should the router automatically wrap lazy routes in a Suspense boundary?**
-
-Options:
-- A) Opt-in via router config: `{ lazy: true, suspense: { fallback: <Spinner /> } }`
-- B) Auto-wrap all lazy routes (breaking change — adds fallback where there was none)
-- C) No router integration in this PR — document it as a pattern instead
-
-Recommendation: A or C for Phase 1 PR. Auto-wrap can come in a dedicated router PR.
-
----
-
-### Q6 — Trigger Scope
-**Should all 6 Angular-inspired triggers be in scope for this PR?**
-
-Options:
-- A) All triggers (viewport, idle, interaction, hover, timer)
-- B) Only `"immediate"` and `"viewport"` — the two highest-value triggers
-- C) Only `"immediate"` for Phase 1, triggers as Phase 5
-
-Recommendation: C — triggers are valuable but independent. Ship Phase 1 fast.
-
----
-
-### Q7 — SSR Phase Scope
-**Is Phase 6 (SSR integration) in scope for this PR?**
-
-Options:
-- A) Yes — full SSR integration in this PR
-- B) No — `ssrStreamId` prop is defined in types but implementation is a TODO
-- C) No — SSR phase is a completely separate PR
-
-Recommendation: B or C — SSR integration requires coordination with `@geajs/ssr` and warrants its own review.
-
----
-
-### Q8 — Build Tool
-**`tsdown` (like `@geajs/core`) or `tsup` (like `@geajs/ssr`)?**
-
-Options:
-- A) `tsdown` — newer, same as core
-- B) `tsup` — battle-tested, same as ssr
-
-Recommendation: A (`tsdown`) for consistency with the newer packages.
-
----
-
-### Q9 — Example App
-**Should we add a dedicated example app for Suspense?**
-
-Options:
-- A) Yes — new `examples/suspense-demo/` app with kitchen-sink demo
-- B) Add Suspense to an existing example (e.g., `examples/chat/`)
-- C) No example app for Phase 1 — just tests
-
-Recommendation: C for this PR, A as a follow-up.
-
----
-
-### Q10 — Benchmark Expectations
-**Are there specific performance budgets or regression gates?**
-
-Options:
-- A) Just write benchmarks, no hard limits
-- B) Suspense overhead must be < X ms per boundary (define X)
-- C) Add benchmarks to CI as regression gate
-
-Recommendation: A for now — establish baseline, set gates in follow-up.
-
----
-
-### Q11 — `minimumFallback` Default
-**Issue proposes `minimumFallback: 300`. Should this be the default or opt-in?**
-
-Options:
-- A) Default `300ms` — avoids flash by default (Vue-like)
-- B) Default `0ms` — explicit opt-in (React-like, simpler mental model)
-- C) No default, required when `timeout` is set
-
-Recommendation: Depends on philosophy alignment. B is safer for correctness, A is better UX.
-
----
-
-### Q12 — Nested Suspense Boundary Behavior
-**When a child is itself wrapped in a Suspense, does the parent Suspense wait for it?**
-
-Options:
-- A) Fully independent — inner resolves without affecting outer (issue proposes this)
-- B) Outer waits for inner too — simpler mental model, matches React's old behavior
-- C) Configurable via `isolate` prop
-
-Recommendation: A — per the issue's explicit design, fully independent boundaries.
-
----
-
-### Q13 — `partial failure` behavior
-**If 3 out of 5 children resolve but 2 fail, what does the Suspense show?**
-
-Options:
-- A) Error state for the whole boundary (all-or-nothing)
-- B) Show resolved children, show error only for failed children (partial render)
-- C) Configurable via `failureMode` prop
-
-Recommendation: A for Phase 1 (simpler), B can come later.
+| # | Question | Decision |
+|---|----------|----------|
+| Q1 | PR phase scope | **All 6 phases** in this PR |
+| Q2 | `@geajs/core` re-export | **No** — import only from `@geajs/suspense` |
+| Q3 | AbortController signal API | **`this.abortSignal`** instance property |
+| Q4 | `staleWhileRefresh` display | **Both** — CSS class (`suspense-refreshing`) + optional `refreshing` render prop |
+| Q5 | Router lazy route wrapping | **Opt-in** — `{ lazy: true, suspense: { fallback: <Spinner /> } }` in router config |
+| Q6 | Trigger scope | **All 6 triggers** — viewport, idle, interaction, hover, timer, immediate |
+| Q7 | SSR phase scope | **Full SSR integration** in this PR (Phase 6) |
+| Q8 | Build tool | **`tsdown`** — consistent with `@geajs/core` |
+| Q9 | Example app | **New `examples/suspense-demo/`** — kitchen-sink demo |
+| Q10 | Benchmark limits | **Write benchmarks, no hard CI gates** — establish baseline |
+| Q11 | `minimumFallback` default | **300ms** — Vue-like, avoids spinner flash by default |
+| Q12 | Nested Suspense | **Fully independent** — each boundary resolves on its own timeline |
+| Q13 | Partial failure behavior | **Partial render** via `Promise.allSettled()` — resolved children show, failed ones show error |
 
 ---
 
@@ -480,9 +342,16 @@ Recommendation: A for Phase 1 (simpler), B can come later.
 | Test framework | `node:test` | Consistent with `@geajs/core` |
 | Build tool | `tsdown` | Consistent with `@geajs/core` |
 | Runtime dependencies | Zero | Peer dep on `@geajs/core` only |
-| Promise strategy | `Promise.all()` | Parallel, anti-waterfall |
+| Promise strategy | `Promise.allSettled()` | Parallel + partial render support |
 | Error + Suspense | Same component | One `error` prop, no separate ErrorBoundary |
 | Race conditions | Generation counter | Monotonic ID, stale responses discarded |
+| AbortController | `this.abortSignal` | Consistent with Gea class-based API |
+| staleWhileRefresh | CSS class + render prop | `suspense-refreshing` class + optional `refreshing` prop |
+| minimumFallback | 300ms default | Avoids spinner flash for fast responses |
+| Partial failure | Partial render | Each child independent via `Promise.allSettled()` |
+| Router integration | Opt-in config | `{ suspense: { fallback } }` in route definition |
+| Triggers | All 6 | viewport, idle, interaction, hover, timer, immediate |
+| Example app | `examples/suspense-demo/` | Kitchen-sink demo |
 
 ---
 
