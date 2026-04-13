@@ -4,7 +4,7 @@
 > **Issue**: [#63 — Suspense Component](https://github.com/dashersw/gea/issues/63)  
 > **Author**: Recep Şen  
 > **Date**: 2026-04-13  
-> **Status**: Planning complete — all design questions resolved, ready for implementation
+> **Status**: Planning complete — 31 design decisions resolved, ready for implementation
 
 ---
 
@@ -326,11 +326,16 @@ Benchmark targets:
 ```markdown
 ---
 "@geajs/suspense": minor
+"@geajs/ssr": patch
 ---
 
 ### @geajs/suspense (minor)
 
 - **Initial release**: Declarative async rendering boundaries with fallback, error handling, timing control, stale-while-refresh, trigger-based loading, and SSR streaming integration
+
+### @geajs/ssr (patch)
+
+- **`renderToStringAsync`**: New async SSR function that awaits all `GEA_CREATED_PROMISE` instances before rendering; required for Suspense SSR streaming integration
 ```
 
 ---
@@ -369,6 +374,16 @@ Benchmark targets:
 | Q19 | CSS transition hooks | **Yes** — `suspense-entering` / `suspense-entered` / `suspense-leaving` CSS classes |
 | Q20 | `ssrStreamId` generation | **Compiler auto-generates** from file path + line hash; manual override supported |
 | Q21 | `onLoadStart` callback | **Yes** — fires when trigger activates and loading begins |
+| Q22 | DOM structure | **Comment marker** — `<!-- suspense-{id}-content -->` anchor; zero wrapper element; CSS classes on the content element itself |
+| Q23 | Default error (no `error` prop) | **Console.error + fallback stays** — error is logged, fallback remains visible; app does not crash |
+| Q24 | `revealOrder` prop | **Added** — `'together'` (default batch), `'forwards'` (DOM order), `'backwards'`; meaningful with `progressive={true}`, ignored with `progressive={false}` |
+| Q25 | Concurrent refresh (staleWhileRefresh) | **Cancel + restart** — new prop change calls previous `AbortController.abort()`, increments generation counter, starts fresh refresh cycle |
+| Q26 | Children scanning depth | **Deep scan** — all descendants scanned; stops at nested `Suspense` boundaries (inner shields outer) |
+| Q27 | Reactive re-fetch owner | **Suspense intercepts `GEA_ON_PROP_CHANGE`** — wraps child's prop change hook; detects new `GEA_CREATED_PROMISE` and starts refresh cycle |
+| Q28 | `prefetch='idle'` semantics | **Data first, show on trigger** — idle callback silently pre-runs `async created()`; when trigger fires, promises already resolved → zero-allocation instant render |
+| Q29 | Zero-allocation fast path | **Documented** — if no `GEA_CREATED_PROMISE` found on mount, fallback never inserted; timers, observers, and `allSettled` calls never created |
+| Q30 | Nested Suspense: outer sees inner children? | **No — inner shields** — outer deep scan stops at inner Suspense boundary; each boundary fully independent |
+| Q31 | Waterfall: AsyncParent renders AsyncChild | **Outer Suspense waits for all** — after parent resolves, newly mounted children's `GEA_CREATED_PROMISE` is detected and added to the pending set |
 
 ---
 
@@ -852,6 +867,7 @@ interface SuspenseProps {
 
   // --- Rendering ---
   progressive?: boolean        // Q14: false=batch (default), true=show each child as it resolves
+  revealOrder?: 'together' | 'forwards' | 'backwards'  // Q24: default='together'; 'forwards'/'backwards' only meaningful with progressive=true
 
   // --- Timing ---
   timeout?: number             // ms before showing fallback (default: 0)
@@ -911,6 +927,7 @@ resolved ──(prop change triggers re-fetch, staleWhileRefresh=true)──→ 
 resolved ──(prop change triggers re-fetch, staleWhileRefresh=false)──→ loading
 refreshing ──(all resolve)──→ resolved (suspense-refreshing class removed)
 refreshing ──(fail)──→ refresh-error (error UI replaces stale content)
+refreshing ──(new prop change, staleWhileRefresh=true)──→ refreshing (cancel+restart: previous AbortController.abort(), generation counter incremented)
 refresh-error ──(retry() called)──→ refreshing
 ```
 
@@ -938,6 +955,20 @@ When `retry()` is called:
 5. Already-resolved children's DOM is **preserved** — not re-rendered
 6. `GEA_CREATED_PROMISE` on successfully re-run children is cleared after `allSettled()`
 
+### `revealOrder` behavior
+
+| `revealOrder` | `progressive` | Behavior |
+|--------------|--------------|---------|
+| `'together'` (default) | `false` | All children wait until all resolved — current batch behavior |
+| `'together'` | `true` | Equivalent to `progressive=false`; `revealOrder` takes precedence |
+| `'forwards'` | `true` | Children revealed in DOM order — child N waits until children 0..N-1 are in `suspense-entered` state |
+| `'backwards'` | `true` | Children revealed in reverse DOM order |
+| any | `false` | `revealOrder` has no effect; batch behavior unchanged |
+
+**Implementation note**: In `'forwards'` mode, each child maintains a "ready buffer" — resolved content is held in memory until all preceding siblings are revealed. DOM write only happens when the preceding sibling slot enters `suspense-entered` state. The `suspense-entering` class is applied at DOM-write time (not at resolution time).
+
+---
+
 ### `progressive=true` + `staleWhileRefresh=true` interaction
 
 When refresh starts:
@@ -946,6 +977,171 @@ When refresh starts:
 - As each child resolves: its `suspense-refreshing` class is removed (progressive removal)
 - If a child fails: error UI replaces that child's container (stale content removed for that slot)
 - `onResolve()` fires when ALL children have completed the refresh (success or error)
+
+---
+
+## 15. DOM Structure
+
+Suspense uses the **comment marker pattern** — identical to `GEA_SWAP_CHILD` — rather than injecting a wrapper element.
+
+### Marker format
+
+```html
+<!-- suspense-{id}-content -->
+<div class="spinner suspense-entering">Loading…</div>
+```
+
+The comment anchor is a DOM sibling of the content element, not a wrapper. `GEA_SWAP_CHILD` is called with marker ID `content` to swap between fallback / resolved / error states.
+
+### CSS lifecycle classes
+
+Applied directly to the content element (fallback or resolved):
+
+| Class | Applied when | Removed when |
+|-------|-------------|--------------|
+| `suspense-entering` | Element inserted into DOM | Next `requestAnimationFrame` |
+| `suspense-entered` | After first `rAF` (transition complete) | Element is about to be replaced |
+| `suspense-leaving` | Before element is removed | Element removed from DOM |
+
+No built-in wait for CSS transition duration — users control timing via CSS `transition-duration`. Gea only toggles classes.
+
+### Default error behavior (no `error` prop)
+
+When a child throws and no `error` prop is provided:
+1. `console.error(err)` — error is logged
+2. Fallback remains visible — no crash, no blank screen
+3. `onError(err)` callback is still invoked if provided
+
+### Progressive mode DOM
+
+In `progressive={true}` mode each child has its own slot:
+
+```html
+<!-- suspense-0-child-0 -->
+<div class="user-name suspense-entered">Alice</div>   ← resolved
+
+<!-- suspense-0-child-1 -->
+<div class="spinner suspense-entering">Loading…</div> ← still loading
+```
+
+`GEA_SWAP_CHILD` is called per child with marker ID `child-{index}`. Each slot is independently managed.
+
+---
+
+## 16. Deep Scan Algorithm & Waterfall Pattern
+
+### Deep scan
+
+`Suspense.created()` walks the **full component subtree** to collect all `GEA_CREATED_PROMISE` instances — not only direct children.
+
+#### Stop conditions
+
+1. **Nested `Suspense` boundary** — stop descending; inner boundary self-manages its children
+2. **Leaf component (no children)** — stop
+
+#### Algorithm
+
+```ts
+function collectPendingPromises(root: Component, promises: Promise<void>[]): void {
+  for (const child of internals(root).childComponents) {
+    if (child instanceof Suspense) continue  // inner boundary shields
+
+    if (child[GEA_CREATED_PROMISE] instanceof Promise) {
+      promises.push(child[GEA_CREATED_PROMISE])
+    }
+
+    collectPendingPromises(child, promises)  // recurse
+  }
+}
+```
+
+#### Zero-allocation fast path
+
+If `collectPendingPromises` returns an empty array:
+- Fallback is **never inserted**
+- No `setTimeout`, no `IntersectionObserver`, no `allSettled` call
+- Content rendered immediately — zero overhead for sync-only subtrees
+
+---
+
+### Waterfall pattern (AsyncParent → AsyncChild)
+
+When `AsyncParent.created()` resolves and its `template()` runs, new child components (including `AsyncChild`) are mounted. Suspense must detect these **post-resolution additions**.
+
+#### Protocol
+
+1. Initial `collectPendingPromises` → finds `AsyncParent`'s promise
+2. `AsyncParent` resolves → `template()` runs → `AsyncChild` mounted with its own `GEA_CREATED_PROMISE`
+3. Suspense detects new child via `childComponents` change and re-scans the subtree
+4. `AsyncChild`'s promise added to the pending set
+5. Suspense stays in `loading` state until `AsyncChild` also resolves
+6. Only then transitions to `resolved`
+
+This eliminates the waterfall problem: the outer boundary is a single await point for the entire async tree regardless of nesting depth.
+
+---
+
+### `IntersectionObserver` sharing
+
+Creating one `IntersectionObserver` per boundary is expensive at scale. The package should use a **shared root observer** keyed by root element + threshold:
+
+```ts
+const observerPool = new Map<string, IntersectionObserver>()
+
+function getSharedObserver(threshold: number): IntersectionObserver {
+  const key = `root:${threshold}`
+  if (!observerPool.has(key)) {
+    observerPool.set(key, new IntersectionObserver(handleIntersection, { threshold }))
+  }
+  return observerPool.get(key)!
+}
+```
+
+Each boundary registers its element with the shared observer and removes itself on unmount. This keeps per-boundary cost O(1) regardless of how many boundaries exist on the page.
+
+---
+
+## 17. Reactive Re-fetch Contract
+
+### Owner: Suspense intercepts `GEA_ON_PROP_CHANGE`
+
+When a child's reactive props change, the Suspense component **wraps** the child's `GEA_ON_PROP_CHANGE` hook to detect when a new `async created()` cycle begins:
+
+```ts
+const original = child[GEA_ON_PROP_CHANGE]
+child[GEA_ON_PROP_CHANGE] = (key: string, value: unknown) => {
+  original?.(key, value)
+  // After prop update, child may have set a new GEA_CREATED_PROMISE
+  if (child[GEA_CREATED_PROMISE] instanceof Promise) {
+    this.onChildRefetch(child, child[GEA_CREATED_PROMISE])
+  }
+}
+```
+
+`onChildRefetch` drives the `staleWhileRefresh` / `loading` state transition based on current Suspense state.
+
+### Concurrent refresh: cancel + restart
+
+When `staleWhileRefresh=true` and a new prop change arrives before the current refresh completes:
+
+1. `previousAbortController.abort()` — in-flight request gets abort signal
+2. Generation counter incremented — `allSettled` callbacks from old fetch are discarded
+3. New `allSettled` cycle starts with new `GEA_CREATED_PROMISE`
+4. State stays `refreshing` — no flicker, no fallback
+
+The `refreshing → refreshing` transition is now explicit in the state machine (§14).
+
+---
+
+### `prefetch='idle'` vs `trigger='idle'`
+
+| | `trigger='idle'` | `prefetch='idle'` (+ any trigger) |
+|--|----------|---------|
+| Data loading | During idle callback | During idle callback |
+| Content shown | Immediately after data loads | When `trigger` fires |
+| Best for | Low-priority background rendering | Pre-warming + instant render on user action |
+
+Implementation: When `prefetch='idle'`, `requestIdleCallback` pre-runs `async created()` on all children. Results sit in already-resolved `GEA_CREATED_PROMISE` instances. When `trigger` fires, `collectPendingPromises` finds no pending promises → zero-allocation fast path → instant render.
 
 ---
 
@@ -960,3 +1156,12 @@ When refresh starts:
 - [ ] README for `@geajs/suspense` written
 - [ ] Philosophy doc updated (remove "no suspense boundaries" from the list)
 - [ ] PR description links to issue #63
+- [ ] `@geajs/ssr` changeset included (patch — `renderToStringAsync`)
+- [ ] `revealOrder` prop implemented and tested
+- [ ] Deep scan algorithm implemented (stops at nested Suspense boundaries)
+- [ ] Waterfall pattern tested (AsyncParent → AsyncChild)
+- [ ] Zero-allocation fast path verified (no fallback inserted for sync-only subtrees)
+- [ ] Shared `IntersectionObserver` pool implemented
+- [ ] Concurrent refresh (cancel+restart) tested with `staleWhileRefresh=true`
+- [ ] DOM structure uses comment markers (no wrapper elements)
+- [ ] CSS lifecycle classes (`suspense-entering/entered/leaving`) documented in README
