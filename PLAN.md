@@ -4,7 +4,7 @@
 > **Issue**: [#63 — Suspense Component](https://github.com/dashersw/gea/issues/63)  
 > **Author**: Recep Şen  
 > **Date**: 2026-04-13  
-> **Status**: Planning — awaiting answers to open questions before implementation begins
+> **Status**: Planning complete — all design questions resolved, ready for implementation
 
 ---
 
@@ -45,7 +45,7 @@ import { Suspense } from '@geajs/suspense'
 
 ## 2. Package Location
 
-```
+```text
 packages/
   gea-suspense/           ← new package
     src/
@@ -150,7 +150,7 @@ Tasks:
   - retry re-runs async created
   - retry succeeds and shows content
   - `onError` callback called with correct error
-  - partial failure renders error for whole boundary
+  - partial failure: resolved children render, failed children show error state independently (Promise.allSettled semantics)
 
 **Deliverable**: Error boundary with retry built into Suspense.
 
@@ -485,7 +485,7 @@ is to check whether the child instance's `created` method is an `AsyncFunction`:
 
 ```ts
 function isAsyncCreated(child: Component): boolean {
-  return child.created?.constructor?.name === 'AsyncFunction'
+  return child[GEA_CREATED_PROMISE] instanceof Promise
 }
 ```
 
@@ -639,18 +639,17 @@ The `Component` class currently has no `abortSignal` property. The decision (Q3/
 **Change needed** — add the property and wire it into `dispose()`:
 
 ```ts
-// In Component class body (near other instance property declarations):
-declare abortSignal: AbortSignal
+// Lazy getter — only allocates when accessed
+get abortSignal(): AbortSignal {
+  let controller = (this as any)[GEA_ABORT_CONTROLLER]
+  if (!controller) {
+    controller = new AbortController()
+    ;(this as any)[GEA_ABORT_CONTROLLER] = controller
+  }
+  return controller.signal
+}
 
-// In constructor (after _cm().setComponent(this) at line 431):
-const _ac = new AbortController()
-;(this as any)[GEA_ABORT_CONTROLLER] = _ac
-Object.defineProperty(this, 'abortSignal', {
-  get: () => _ac.signal,
-  configurable: true,
-})
-
-// In dispose() (line 626), before GEA_CLEANUP_BINDINGS:
+// In dispose() — only abort if controller was created:
 ;(this as any)[GEA_ABORT_CONTROLLER]?.abort()
 ```
 
