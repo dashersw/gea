@@ -111,10 +111,12 @@ Build tool: `tsdown` (same as `@geajs/core`, consistent toolchain).
 
 Tasks:
 - [ ] Scaffold `packages/gea-suspense/` with `package.json`, `tsconfig.json`
-- [ ] `src/types.ts` — `SuspenseProps` interface (Phase 1 subset: `fallback`, `onResolve`)
+- [ ] `src/types.ts` — `SuspenseProps` interface (Phase 1 subset: `fallback`, `onResolve`, `progressive`)
 - [ ] `src/suspense.ts` — `Suspense` class extending `Component`
   - Collect child components with pending `async created()` lifecycle
   - `Promise.allSettled()` parallel resolution (anti-waterfall, enables partial render)
+  - `queueMicrotask` batching — same-tick resolves grouped into single DOM update cycle
+  - CSS lifecycle classes: `suspense-entering` (loading), `suspense-entered` (resolved), `suspense-leaving` (unmounting)
   - `GEA_SWAP_CHILD` reuse for fallback → content transition
   - Insert fallback on mount
   - Swap to content on resolve
@@ -151,6 +153,7 @@ Tasks:
   - retry succeeds and shows content
   - `onError` callback called with correct error
   - partial failure: resolved children render, failed children show error state independently (Promise.allSettled semantics)
+- [ ] Progressive mode (`progressive={true}`): render each child individually as it resolves; each failed child's error rendered at its position using `error(err, retry, index)`
 
 **Deliverable**: Error boundary with retry built into Suspense.
 
@@ -329,6 +332,14 @@ Benchmark targets:
 | Q11 | `minimumFallback` default | **300ms** — Vue-like, avoids spinner flash by default |
 | Q12 | Nested Suspense | **Fully independent** — each boundary resolves on its own timeline |
 | Q13 | Partial failure behavior | **Partial render** via `Promise.allSettled()` — resolved children show, failed ones show error |
+| Q14 | Rendering mode | **Both** — `progressive={false}` default (batch), `progressive={true}` for progressive |
+| Q15 | Per-child error API | **Both** — `error` accepts both `(err, retry)` and `(err, retry, index)` signatures |
+| Q16 | `staleWhileRefresh` + error | **Error UI replaces stale content** when refresh fails |
+| Q17 | Bundle size target | **None for now** — implement correctly first, optimize later |
+| Q18 | DOM update batching | **`queueMicrotask` batch** — same-tick resolves grouped into single DOM update |
+| Q19 | CSS transition hooks | **Yes** — `suspense-entering` / `suspense-entered` / `suspense-leaving` CSS classes |
+| Q20 | `ssrStreamId` generation | **Compiler auto-generates** from file path + line hash; manual override supported |
+| Q21 | `onLoadStart` callback | **Yes** — fires when trigger activates and loading begins |
 
 ---
 
@@ -774,6 +785,44 @@ All changes are **fully backwards-compatible**:
 | No `ComponentManager` changes | Zero risk. |
 
 The public API surface of `@geajs/core` (`index.ts`) is unchanged except for two new exported symbols via the existing `export * from './lib/symbols'` wildcard, which is non-breaking by definition.
+
+---
+
+## 13. Updated SuspenseProps Interface
+
+The complete `SuspenseProps` interface reflecting all confirmed decisions:
+
+```ts
+interface SuspenseProps {
+  // --- Core ---
+  fallback: Component | (() => JSX)
+  error?: (err: Error, retry: () => void, childIndex?: number) => JSX  // Q15: dual signature
+
+  // --- Rendering ---
+  progressive?: boolean        // Q14: false=batch (default), true=show each child as it resolves
+
+  // --- Timing ---
+  timeout?: number             // ms before showing fallback (default: 0)
+  minimumFallback?: number     // ms minimum fallback display (default: 300ms)
+
+  // --- Stale ---
+  staleWhileRefresh?: boolean  // Q16: on refresh fail, error UI replaces stale content
+  refreshing?: (children: JSX) => JSX  // optional overlay render prop
+
+  // --- Callbacks ---
+  onResolve?: () => void
+  onError?: (err: Error, childIndex?: number) => void
+  onFallback?: () => void
+  onLoadStart?: () => void     // Q21: fires when trigger activates and loading begins
+
+  // --- Triggers ---
+  trigger?: 'immediate' | 'viewport' | 'idle' | 'interaction' | 'hover' | `timer(${number})`
+  prefetch?: 'idle'
+
+  // --- SSR ---
+  ssrStreamId?: string         // Q20: compiler auto-generates; user can override
+}
+```
 
 ---
 
