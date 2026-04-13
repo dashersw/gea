@@ -355,6 +355,429 @@ Benchmark targets:
 
 ---
 
+## 11. Compiler Support (@geajs/vite-plugin)
+
+`<Suspense>` must be usable in JSX without any compiler changes blocking correctness — but to
+generate efficient, reactive compiled output the compiler needs to recognise `Suspense` as a
+**built-in framework component**, not as a user-imported component.  This section documents every
+change required in `packages/vite-plugin-gea/`.
+
+---
+
+### 11.1 Files that need changes
+
+| File | What changes |
+|------|-------------|
+| `src/codegen/jsx-utils.ts` | Add `BUILT_IN_COMPONENT_TAGS` set; extend `isComponentTag` (or add a sibling `isBuiltInComponent`) to recognise `"Suspense"` |
+| `src/parse/parser.ts` | Whitelist `Suspense` so the import-presence check (if any) is skipped for built-ins |
+| `src/ir/types.ts` | Add optional fields to `ChildComponent` for Suspense-specific metadata (render-prop JSX slots) |
+| `src/codegen/gen-children.ts` | Handle the `Suspense` child specially: extract `fallback`, `error`, `timeout`, `minimumFallback`, `staleWhileRefresh`, `trigger`, `refreshing` props and pass them through as a props object |
+| `src/codegen/gen-prop-change.ts` | Emit reactive `__onPropChange` entries for every reactive Suspense prop so the boundary updates when the parent's store changes |
+| `src/codegen/gen-observer-wiring.ts` | Register `__observe()` calls for store paths referenced inside `fallback={...}` / `error={...}` JSX render-prop expressions |
+| `tests/` | New test file `packages/vite-plugin-gea/tests/suspense-transform.test.ts` |
+
+---
+
+### 11.2 Detecting `<Suspense>` as a built-in
+
+The compiler currently uses a single rule in `src/codegen/jsx-utils.ts`:
+
+```ts
+export function isComponentTag(tagName: string): boolean {
+  return tagName.length > 0 && isUpperCase(tagName[0])
+}
+```
+
+Any PascalCase tag is treated as a component **and** must be resolvable from an `import` in the
+file.  `Suspense` satisfies PascalCase, but it lives in `@geajs/suspense` — a peer dep the parent
+component may or may not import (the import exists at the *user* level; the compiler still needs to
+know it is framework-owned and not a user-defined class it must introspect for props).
+
+**Required change — `jsx-utils.ts`:**
+
+```ts
+/** Tags that are framework built-ins and require special codegen treatment. */
+export const BUILT_IN_COMPONENT_TAGS = new Set(['Suspense'])
+
+/**
+ * Returns true when the tag is a framework built-in component.
+ * Built-ins are handled by dedicated codegen paths; they do not go through
+ * the generic ChildComponent IR construction path.
+ */
+export function isBuiltInComponentTag(tagName: string): boolean {
+  return BUILT_IN_COMPONENT_TAGS.has(tagName)
+}
+```
+
+Callers that walk the JSX tree and collect child components (in the analyzer and parser) must check
+`isBuiltInComponentTag(tagName)` *before* `isComponentTag(tagName)` and route to the Suspense
+codegen path instead of the generic `ChildComponent` path.
+
+---
+
+### 11.3 Extracting render-prop slots at compile time
+
+`<Suspense>` accepts JSX expressions as props (`fallback`, `error`, `refreshing`).  These are
+**render props** — they contain JSX trees that must be compiled into template strings just like any
+other JSX in the file.
+
+The compiler already handles JSX-valued props for list `itemTemplate` (see `ArrayMapBinding.itemTemplate`).
+The same mechanism applies:
+
+1. During JSX analysis, when a `<Suspense>` element is encountered, walk its JSX attributes.
+2. For each attribute whose value is a `JSXExpressionContainer` wrapping a `JSXElement` or
+   `JSXFragment` (i.e. `fallback={<Spinner />}`), extract the inner JSX node.
+3. Compile that inner JSX node to a template string via `transformJSXElementToTemplate` /
+   `transformJSXFragmentToTemplate` (the same functions used in `gen-template.ts`).
+4. Store the compiled template string alongside the Suspense props object so `gen-children.ts` can
+   emit it as a string literal argument rather than a live JSX expression.
+
+If the render-prop JSX references reactive store paths (e.g. `fallback={<div>{store.message}</div>}`),
+those paths must be registered in the observer wiring (see §11.4).
+
+---
+
+### 11.4 Generating observer bindings for reactive Suspense props
+
+Suspense props that are **expressions** (not static JSX trees) must participate in the reactive
+observer system so the boundary re-renders when the underlying store value changes.
+
+The existing pattern for child component prop reactivity is:
+
+- `gen-prop-change.ts` emits a `[GEA_ON_PROP_CHANGE]` method on the parent class.
+- `gen-observer-wiring.ts` emits `createdHooks()` which calls `this.__observe(store, pathParts, methodName)`.
+
+For `<Suspense>`, the same hooks apply for any prop whose value references a store path:
+
+| Prop type | Reactive? | How |
+|-----------|-----------|-----|
+| `fallback={<StaticJSX />}` | No — static template string | Compiled to string constant; no observer needed |
+| `fallback={this.store.loadingMsg ? <A/> : <B/>}` | Yes — conditional on store path | Register `__observe` for `store.loadingMsg`; patch via `this.suspenseChild.__updateFallback(newTemplate)` |
+| `timeout={this.store.timeoutMs}` | Yes — scalar store value | Register `__observe` for `store.timeoutMs`; update via `this.suspenseChild[GEA_ON_PROP_CHANGE]('timeout', newVal)` |
+| `error={(e, retry) => <div>{e.message}</div>}` | No — function literal | Passed once at construction; no observer |
+
+The `__onPropChange` method on the `Suspense` component (inside `@geajs/suspense`) receives the
+prop name + new value and applies it to internal state — this is the same protocol already used for
+all `ChildComponent` instances (see `gen-prop-change.ts` → `ensureOnPropChangeMethod`).
+
+For `fallback` props that are reactive JSX, the compiler cannot pre-compile to a static string; it
+must emit an inline function that re-evaluates the JSX expression and re-compiles the template
+whenever the store changes.  This is the same "rerender" observer method pattern used for
+conditional slots today.
+
+---
+
+### 11.5 Detecting children with `async created()` — compile time vs runtime
+
+**Verdict: runtime detection only.**
+
+The compiler cannot reliably determine at the call site whether a child component has an
+`async created()` lifecycle, because:
+
+- The child class is imported from another file (or a library).
+- The compiler transforms each file independently; it does not cross-file analyse the superclass
+  chain at JSX-use time.
+- The child might be a dynamic expression (e.g. `<this.store.widget />`).
+
+Therefore `<Suspense>` must discover async children at **runtime** by inspecting each mounted child
+after `this[GEA_CHILD](ChildClass, props)` returns.  The proposed mechanism (in `src/suspense.ts`)
+is to check whether the child instance's `created` method is an `AsyncFunction`:
+
+```ts
+function isAsyncCreated(child: Component): boolean {
+  return child.created?.constructor?.name === 'AsyncFunction'
+}
+```
+
+The compiler's role is limited to:
+1. Passing the children through as normal `ChildComponent` instantiations (no special annotation).
+2. Ensuring `Suspense`'s own props (fallback, timeout, etc.) are wired reactively (§11.4).
+
+No compile-time `async created()` detection is required or planned.
+
+---
+
+### 11.6 Generated output for a simple `<Suspense fallback={...}>` usage
+
+**Input source:**
+
+```tsx
+import { Component } from '@geajs/core'
+import { Suspense } from '@geajs/suspense'
+import UserProfile from './UserProfile'
+
+export default class Dashboard extends Component {
+  template(props) {
+    return (
+      <Suspense fallback={<div class="spinner">Loading…</div>} timeout={200}>
+        <UserProfile userId={props.userId} />
+      </Suspense>
+    )
+  }
+}
+```
+
+**Expected compiled output (pseudocode — actual AST differs):**
+
+```js
+import { GEA_CHILD, GEA_ON_PROP_CHANGE } from '@geajs/core'
+import { Suspense } from '@geajs/suspense'
+import UserProfile from './UserProfile'
+
+export default class Dashboard extends Component {
+  // Lazy getter for the Suspense boundary instance
+  get __suspense0() {
+    if (!this.__lazySuspense0) {
+      this.__lazySuspense0 = this[GEA_CHILD](Suspense, this.__suspense0Props())
+    }
+    return this.__lazySuspense0
+  }
+
+  // Props builder — called once on construction and again via __onPropChange
+  __suspense0Props() {
+    return {
+      // Static render-prop compiled to a template string constant
+      fallback: `<div class="spinner">Loading…</div>`,
+      timeout: 200,
+      // Children passed as class references (runtime constructs them)
+      children: [{ component: UserProfile, props: { userId: this.props.userId } }],
+    }
+  }
+
+  // Reactive prop update hook — fires when parent store/props change
+  [GEA_ON_PROP_CHANGE](key, value) {
+    if (key === 'userId') {
+      this.__suspense0[GEA_ON_PROP_CHANGE]('children[0].props.userId', value)
+    }
+  }
+
+  template(props) {
+    return this.__suspense0.element
+  }
+}
+```
+
+Key observations:
+- `fallback={<div class="spinner">Loading…</div>}` — static JSX → compiled to a string constant at
+  build time; zero runtime overhead.
+- `timeout={200}` — static scalar → inlined directly; no observer.
+- `<UserProfile userId={props.userId} />` — passed as a `{ component, props }` descriptor; the
+  `Suspense` runtime instantiates it and listens for `async created()`.
+- If `timeout` were `{this.store.loadoutMs}`, the compiler would additionally emit a
+  `createdHooks()` `__observe` call targeting `store.loadoutMs` and a corresponding
+  `__onPropChange` branch updating `this.__suspense0[GEA_ON_PROP_CHANGE]('timeout', newVal)`.
+
+---
+
+### 11.7 New test file
+
+`packages/vite-plugin-gea/tests/suspense-transform.test.ts` should cover:
+
+- `<Suspense fallback={<Spinner />}>` compiles without errors
+- `Suspense` tag is not treated as a user-imported component (no "missing import" error)
+- Static `fallback` JSX is compiled to a string constant in the output
+- Reactive `timeout={this.store.ms}` emits an `__observe` call in `createdHooks()`
+- Reactive `timeout` emits a `[GEA_ON_PROP_CHANGE]` branch in the parent
+- Nested `<Suspense>` inside another `<Suspense>` compiles correctly (independent boundaries)
+- `<Suspense>` with no async children compiles and runs without errors (immediate render path)
+
+---
+
+## 12. Core Integration Details (@geajs/core Changes)
+
+This section documents the **minimal, targeted changes** required in `@geajs/core` to support `@geajs/suspense`. All changes are additive; no existing public API is removed or altered.
+
+---
+
+### 12.1 `component.tsx` — Changes Required
+
+#### 12.1.1 `async created()` lifecycle hook
+
+**Location**: `component.tsx` line 434 (constructor body) and line 442 (method stub).
+
+```ts
+// Line 433–435 — constructor calls created() for non-compiled components:
+if (!(this.constructor as any)[GEA_COMPILED]) {
+  this.created(this.props)   // returns void; if overridden as async, the Promise is discarded
+  this.createdHooks(this.props)
+  ...
+}
+
+// Line 442 — stub in Component base class:
+created(_props: P) {}
+```
+
+**Key observations**:
+- `created(props: P)` is a plain synchronous stub. When a subclass overrides it as `async created()`, the returned `Promise` is silently discarded by the constructor call on line 434.
+- There is **no existing flag or stored Promise** indicating that an async `created()` is in flight.
+- The compiled path (`GEA_COMPILED` is `true`) skips the constructor call entirely; the compiler-generated code calls `created` at a different point.
+
+**Change needed** — store the return value so Suspense can detect pending async work:
+
+```ts
+// In constructor (replacing the current this.created(this.props) call):
+if (!(this.constructor as any)[GEA_COMPILED]) {
+  const createdResult = this.created(this.props)
+  if (createdResult instanceof Promise) {
+    ;(this as any)[GEA_CREATED_PROMISE] = createdResult
+  }
+  this.createdHooks(this.props)
+  ...
+}
+```
+
+This is a **one-line additive change** (capture return value + conditional assign). Components that return `void` from `created()` are completely unaffected.
+
+---
+
+#### 12.1.2 `this.abortSignal: AbortSignal` property
+
+**Location**: `Component` base class (after the `created` stub, ~line 442).
+
+The `Component` class currently has no `abortSignal` property. The decision (Q3/Q4, section 9) is `this.abortSignal` as the access pattern.
+
+**Change needed** — add the property and wire it into `dispose()`:
+
+```ts
+// In Component class body (near other instance property declarations):
+declare abortSignal: AbortSignal
+
+// In constructor (after _cm().setComponent(this) at line 431):
+const _ac = new AbortController()
+;(this as any)[GEA_ABORT_CONTROLLER] = _ac
+Object.defineProperty(this, 'abortSignal', {
+  get: () => _ac.signal,
+  configurable: true,
+})
+
+// In dispose() (line 626), before GEA_CLEANUP_BINDINGS:
+;(this as any)[GEA_ABORT_CONTROLLER]?.abort()
+```
+
+---
+
+#### 12.1.3 `GEA_SWAP_CHILD` — How Suspense Reuses It
+
+**Location**: `component.tsx` lines 1266–1292.
+
+```ts
+Component.prototype[GEA_SWAP_CHILD] = function (
+  this: AC,
+  markerId: string,
+  newChild: Component | false | null | undefined,
+) {
+  // 1. Find the DOM comment marker: <parent-id>-<markerId>
+  const marker = _getEl(eng[GEA_ID] + '-' + markerId)
+  if (!marker) return
+
+  // 2. Remove element immediately after the marker (current content)
+  const oldEl = marker.nextElementSibling
+  if (newChild && newChild[GEA_RENDERED] && engineThis(newChild)[GEA_ELEMENT] === oldEl) return  // already correct, no-op
+  if (oldEl && oldEl.tagName !== 'TEMPLATE') {
+    const oldChild = _i.childComponents.find(c => engineThis(c)[GEA_ELEMENT] === oldEl)
+    if (oldChild) { oldChild[GEA_RENDERED] = false; engineThis(oldChild)[GEA_ELEMENT] = null }
+    oldEl.remove()
+  }
+  if (!newChild) return  // removes old, inserts nothing (clear slot)
+
+  // 3. Render newChild HTML after the marker, then mount it
+  marker.insertAdjacentHTML('afterend', String(newChild.template(newChild.props)).trim())
+  const newEl = marker.nextElementSibling
+  engineThis(newChild)[GEA_ELEMENT] = newEl
+  _pushCC(_i, newChild)    // register as child component
+  _mountComp(newChild, false)  // set rendered=true, call onAfterRender
+}
+```
+
+**How Suspense uses this**: The `Suspense` component owns a comment marker (e.g. `<!--<id>-content-->`). On mount it calls `this[GEA_SWAP_CHILD]('content', this.fallbackInstance)` to insert the fallback. When all pending children resolve it calls `this[GEA_SWAP_CHILD]('content', this.contentWrapper)` to swap in the real content. `GEA_SWAP_CHILD` handles removing the old element, deregistering the old child, and inserting + mounting the new child atomically.
+
+**No changes needed** to `GEA_SWAP_CHILD` itself — Suspense calls it identically to the router/conditional rendering system.
+
+---
+
+#### 12.1.4 `GEA_PATCH_COND` — Reference Only
+
+**Location**: `component.tsx` line 1031.
+
+`GEA_PATCH_COND` is the compiler-generated conditional-slot mechanism. It works with comment-bounded DOM ranges and a `getCond()` callback. **Suspense does not use `GEA_PATCH_COND`** — it uses `GEA_SWAP_CHILD`, which is the simpler single-child-swap primitive. No changes to `GEA_PATCH_COND` are needed.
+
+---
+
+#### 12.1.5 `dispose()` — Teardown Hook
+
+**Location**: `component.tsx` lines 626–645.
+
+```ts
+dispose() {
+  _cm().removeComponent(this)
+  // Removes DOM element, clears GEA_ELEMENT
+  for (const fn of _i.observerRemovers) fn()
+  this[GEA_CLEANUP_BINDINGS]()
+  this[GEA_TEARDOWN_SELF_LISTENERS]()
+  for (const child of _i.childComponents) child?.dispose?.()
+  _i.childComponents = []
+}
+```
+
+There is **no `destroyed()` lifecycle hook** in the current `Component` class. `dispose()` is the only teardown path. The `GEA_ABORT_CONTROLLER?.abort()` call (§12.1.2) must be placed here, before `GEA_CLEANUP_BINDINGS`, so any in-flight `async created()` is cancelled when the component is removed (e.g. when a Suspense boundary unmounts before its children resolve).
+
+---
+
+### 12.2 `component-manager.ts` — No Changes Required
+
+**Current parent-child tracking**: `GEA_PARENT_COMPONENT` is stored on `engineThis(child)` (set at line 107 of `component.tsx`). The array of child instances lives in `internals(parent).childComponents` (used throughout component.tsx). `ComponentManager.componentRegistry` is a flat `Record<id, ComponentLike>` with no tree structure.
+
+**For Suspense**: No `ComponentManager` changes are needed. The `@geajs/suspense` package will:
+1. On `Suspense.created()`, iterate `internals(this).childComponents` (via exported `GEA_CHILD_COMPONENTS` symbol accessor) to find children with a pending `GEA_CREATED_PROMISE`.
+2. Walk up from any descendant via `engineThis(child)[GEA_PARENT_COMPONENT]` to find the nearest Suspense ancestor.
+
+If Phase 6 (SSR streaming) requires global Suspense boundary enumeration, a `suspenseBoundaries: Set<ComponentLike>` field can be added to `ComponentManager` at that point. This is explicitly deferred.
+
+---
+
+### 12.3 `symbols.ts` — Two New Symbols
+
+Add to `packages/gea/src/lib/symbols.ts`:
+
+```ts
+/** Pending Promise from async created() — set in constructor, cleared on resolve/reject. */
+export const GEA_CREATED_PROMISE = /*#__PURE__*/ Symbol.for('gea.component.createdPromise')
+
+/** AbortController instance backing the public `abortSignal` getter. */
+export const GEA_ABORT_CONTROLLER = /*#__PURE__*/ Symbol.for('gea.component.abortController')
+```
+
+`GEA_CREATED_PROMISE` is the internal flag Suspense reads to detect pending async children:
+
+```ts
+// In Suspense.created() — collect promises from direct children:
+const pendingPromises = this[GEA_CHILD_COMPONENTS]
+  .filter((child: any) => child[GEA_CREATED_PROMISE] instanceof Promise)
+  .map((child: any) => child[GEA_CREATED_PROMISE] as Promise<void>)
+```
+
+`GEA_ABORT_CONTROLLER` stores the `AbortController` instance using a symbol key, consistent with all other engine-internal state in this codebase (which uses `Symbol.for()`-keyed properties exclusively for internals).
+
+Both symbols are automatically re-exported via the existing `export * from './lib/symbols'` wildcard in `index.ts` — no changes to `index.ts` are needed.
+
+---
+
+### 12.4 Backwards Compatibility
+
+All changes are **fully backwards-compatible**:
+
+| Change | Impact on existing consumers |
+|--------|------------------------------|
+| `GEA_CREATED_PROMISE` stored in constructor | Only set when `created()` returns a `Promise`. Components returning `void` are unaffected. |
+| `abortSignal` getter added to `Component` | Purely additive. An `AbortController` is created per instance (one object allocation). Existing components that never use `async created()` have an unaborted controller that is discarded on `dispose()`. |
+| `AbortController.abort()` in `dispose()` | No-op for components that never fetched. For existing async components managing their own controllers, abort-on-dispose is correct and expected behavior. |
+| `GEA_CREATED_PROMISE`, `GEA_ABORT_CONTROLLER` in `symbols.ts` | Purely additive. Symbol keys are collision-proof. |
+| No `ComponentManager` changes | Zero risk. |
+
+The public API surface of `@geajs/core` (`index.ts`) is unchanged except for two new exported symbols via the existing `export * from './lib/symbols'` wildcard, which is non-breaking by definition.
+
+---
+
 ## 10. PR Checklist (to be done at the end)
 
 - [ ] All phases in scope implemented
