@@ -13,6 +13,8 @@ The extension is focused on code intelligence, not custom syntax highlighting. I
 - Component completion inside JSX tags
 - Prop completion based on the target component's declared props
 - Event attribute completion for Gea JSX events like `click`, `input`, `change`, and `keydown`
+- Go to Definition for imported or workspace-discovered JSX components
+- Quick Fix auto-imports for unknown default-exported JSX components
 - Hover details for components, props, and event attributes
 - Unknown component warnings for JSX tags that look like Gea components
 - TypeScript plugin support for suppressing noisy JSX diagnostics and unused-import warnings for imported components used as JSX tags
@@ -98,6 +100,14 @@ export default function PaymentForm(props) {
   return <div />
 }
 ```
+
+### Go to Definition
+
+Place the cursor on a JSX component tag such as `<TodoItem />` and run Go to Definition to jump to the component declaration. The language server resolves both already-imported components and matching default-exported workspace components.
+
+### Quick Fix Auto Import
+
+If you reference a default-exported component before importing it, Gea Tools offers a Quick Fix to add the missing relative import. When multiple components share the same name, the closest matching file path is preferred.
 
 ### Event Completion
 
