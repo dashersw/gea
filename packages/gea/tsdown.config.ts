@@ -29,6 +29,30 @@ export default defineConfig([
   },
   {
     entry: {
+      runtime: 'src/runtime.ts',
+    },
+    ...esmOpts,
+    clean: false,
+    deps: {
+      neverBundle: (id) => /[/\\]src[/\\]index\.ts$/.test(id),
+    },
+    hooks: {
+      async 'build:done'({ chunks }) {
+        for (const chunk of chunks) {
+          if (chunk.fileName === 'runtime.mjs' && 'outDir' in chunk && typeof chunk.outDir === 'string') {
+            const file = path.join(chunk.outDir, chunk.fileName)
+            let code = await readFile(file, 'utf8')
+            if (code.includes('./index.ts')) {
+              code = code.replace(/\.\/index\.ts/g, './index.mjs')
+              await writeFile(file, code)
+            }
+          }
+        }
+      },
+    },
+  },
+  {
+    entry: {
       router: 'src/router-subpath.ts',
     },
     ...esmOpts,
