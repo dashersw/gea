@@ -2,6 +2,7 @@ import { Component } from '../component/component';
 import { createPropsProxy, type PropThunks } from '../component/props';
 import { GEA_DOM_COMPONENT, GEA_PARENT_COMPONENT, GEA_SET_PROPS, GEA_CREATE_TEMPLATE, GEA_PROPS } from '../symbols.js';
 import { _renderingStack } from '../component/rendering-context.js';
+import { getDisposalScope } from '../signals/tracking.js';
 
 export function mountComponent(
   Class: new () => Component,
@@ -39,6 +40,12 @@ export function mountComponent(
   }
 
   (node as any)[GEA_DOM_COMPONENT] = instance;
+
+  // Register component disposal so conditional/keyed-list teardown
+  // calls instance.dispose() — critical for components with cleanup
+  // (e.g. Zag machines that lock body scroll and aria-hidden).
+  const scope = getDisposalScope();
+  if (scope) scope.push({ dispose: () => instance.dispose() });
 
   instance.rendered = true;
   instance.created((instance as any)[GEA_PROPS]);

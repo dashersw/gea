@@ -21,6 +21,19 @@ export function substituteExpression(
   return substituteNode(t.cloneDeep(node), subs) as t.Expression
 }
 
+/**
+ * Apply substitution map to a Babel AST statement (or array of statements).
+ * Replaces Identifier references that appear in the substitution map.
+ * Operates on CLONED nodes to avoid mutating the originals.
+ */
+export function substituteStatements(
+  stmts: t.Statement[],
+  subs: SubstitutionMap,
+): t.Statement[] {
+  if (subs.size === 0) return stmts
+  return stmts.map((s) => substituteNode(t.cloneDeep(s), subs) as t.Statement)
+}
+
 function substituteNode(node: t.Node, subs: SubstitutionMap): t.Node {
   // Base case: Identifier that's in the substitution map
   if (t.isIdentifier(node) && subs.has(node.name)) {

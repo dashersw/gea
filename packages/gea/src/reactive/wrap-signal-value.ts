@@ -1,21 +1,19 @@
 /**
  * Runtime wrapper for compiled Store field getters.
  *
- * Reads the signal's .value and wraps it based on its runtime type:
- * - Arrays → wrapArray (fine-grained item reactivity)
- * - Objects → wrapObject (nested mutation notification)
- * - Primitives → returned directly
+ * Reads the signal's .value and wraps arrays with wrapArray
+ * (for mutating method overrides — push/pop/splice/etc notify the signal).
  *
- * This eliminates the need for static type analysis in the compiler.
+ * Objects and primitives are returned directly — the compiler handles
+ * all mutation notifications via _notify() insertion and itemSignal transforms.
  */
 import { type Signal } from '../signals/signal.js';
 import { wrapArray } from './wrap-array.js';
-import { wrapObject } from './wrap-object.js';
 
 export function wrapSignalValue<T>(sig: Signal<T>): T {
   const v = sig.value;
-  if (v === null || typeof v !== 'object') return v;
-  if (Array.isArray(v)) return wrapArray(v as any, sig as any) as T;
-  if (typeof Node !== 'undefined' && v instanceof Node) return v;
-  return wrapObject(v as any, sig as any) as T;
+  if (v !== null && typeof v === 'object' && Array.isArray(v)) {
+    return wrapArray(v as any, sig as any) as T;
+  }
+  return v;
 }

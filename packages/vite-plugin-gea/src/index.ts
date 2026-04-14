@@ -1,4 +1,5 @@
 import type { Plugin } from 'vite'
+import { existsSync } from 'node:fs'
 import { transformSource } from './transform/index.js'
 
 export interface GeaPluginOptions {
@@ -11,25 +12,23 @@ export interface GeaPluginOptions {
  */
 export { geaPlugin }
 export default function geaPlugin(_options?: GeaPluginOptions): Plugin {
+  // Resolve gea-ui imports to source files so Vite compiles them fresh
+  // with the gea plugin, avoiding stale dist files from the old engine.
+  const pluginDir = new URL('.', import.meta.url).pathname
+  const geaUiComponents = pluginDir + '../../gea-ui/src/components'
+
   return {
     name: 'gea-plugin',
     enforce: 'pre',
 
-    config() {
-      // Resolve gea-ui imports to source files so Vite compiles them fresh
-      // with the gea plugin, avoiding stale dist files from the old engine.
-      // Navigate from this plugin's location to the gea-ui source directory.
-      const pluginDir = new URL('.', import.meta.url).pathname
-      // pluginDir is packages/vite-plugin-gea/dist/ — go up to packages/, then into gea-ui/src/components/
-      const geaUiSrc = pluginDir + '../../gea-ui/src'
-
-      return {
-        resolve: {
-          alias: [
-            { find: /^@geajs\/ui\/(.*)$/, replacement: geaUiSrc + '/$1' },
-          ],
-        },
+    resolveId(source) {
+      const match = source.match(/^@geajs\/ui\/(.+)$/)
+      if (!match) return null
+      const base = geaUiComponents + '/' + match[1]
+      for (const ext of ['.tsx', '.ts', '.js']) {
+        if (existsSync(base + ext)) return base + ext
       }
+      return null
     },
 
     transform(code: string, id: string) {

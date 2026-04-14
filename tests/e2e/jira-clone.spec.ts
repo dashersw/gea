@@ -825,4 +825,175 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       await expect(page.locator('.assignee-chip')).toHaveCount(chipsBefore)
     }
   })
+
+  test('moving a card between columns must not re-fetch avatar images', async ({ page }) => {
+    // Collect all image request URLs during the drag-drop operation
+    const imageRequests: string[] = []
+
+    const backlogCards = page.locator('.board-list').nth(0).locator('.issue-card')
+    const selectedCards = page.locator('.board-list').nth(1).locator('.issue-card')
+
+    const backlogCountBefore = await backlogCards.count()
+    expect(backlogCountBefore).toBeGreaterThan(0)
+
+    // Wait for all initial avatar images to fully load before monitoring
+    await page.waitForTimeout(500)
+
+    // Start monitoring network requests AFTER initial render
+    page.on('request', (req) => {
+      const url = req.url()
+      if (req.resourceType() === 'image' || /\.(png|jpg|jpeg|gif|svg|webp|avif)(\?|$)/i.test(url) || url.includes('avatar')) {
+        imageRequests.push(url)
+      }
+    })
+
+    // Drag from backlog to selected column
+    const firstCard = backlogCards.first()
+    const selectedDropZone = page.locator('.board-list').nth(1).locator('.board-list-issues')
+
+    const cardBox = await firstCard.boundingBox()
+    const dropBox = await selectedDropZone.boundingBox()
+
+    await page.mouse.move(cardBox!.x + cardBox!.width / 2, cardBox!.y + cardBox!.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(cardBox!.x + cardBox!.width / 2 + 10, cardBox!.y + cardBox!.height / 2 + 10, { steps: 3 })
+    await page.mouse.move(dropBox!.x + dropBox!.width / 2, dropBox!.y + 20, { steps: 10 })
+    await page.waitForTimeout(100)
+    await page.mouse.up()
+
+    // Wait for reconciliation
+    await page.waitForTimeout(500)
+
+    // Card should have moved
+    await expect(backlogCards).toHaveCount(backlogCountBefore - 1, { timeout: 1000 })
+
+    // CRITICAL: No avatar image requests should have been made during the move.
+    // If DOM nodes are pooled/reused across columns, the <img> elements keep their
+    // loaded src and the browser does not re-fetch. New image requests mean DOM
+    // was recreated instead of transferred.
+    const avatarReqs = imageRequests.filter((url) => url.includes('avatar'))
+    expect(avatarReqs).toEqual([])
+  })
+
+  test('adding an assignee must not re-fetch comment avatar images', async ({ page }) => {
+    await boardIssueCards(page).first().click()
+    await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
+
+    // Ensure comments section is visible and has at least one comment with an avatar
+    const comments = page.locator('.comment')
+    const commentCount = await comments.count()
+    if (commentCount === 0) {
+      // Create a comment first so we have an avatar to monitor
+      await issueDetail(page).locator('.comment-create-fake').click()
+      await issueDetail(page).locator('.comment-create-form textarea').fill('Setup comment')
+      await issueDetail(page).locator('.comment-create-form button', { hasText: 'Save' }).click()
+      await expect(page.locator('.comment')).toHaveCount(1)
+    }
+
+    // Wait for all existing avatars to load
+    await page.waitForTimeout(500)
+
+    // Start monitoring image requests
+    const imageRequests: string[] = []
+    page.on('request', (req) => {
+      const url = req.url()
+      if (req.resourceType() === 'image' || /\.(png|jpg|jpeg|gif|svg|webp|avif)(\?|$)/i.test(url) || url.includes('avatar')) {
+        imageRequests.push(url)
+      }
+    })
+
+    // Store references to comment avatar DOM nodes
+    const commentAvatarCount = await page.locator('.comment .avatar img, .comment img[class*="avatar"]').count()
+    if (commentAvatarCount > 0) {
+      await page.evaluate(() => {
+        const imgs = document.querySelectorAll('.comment .avatar img, .comment img[class*="avatar"]')
+        ;(window as any).__commentAvatarRefs = Array.from(imgs)
+      })
+    }
+
+    // Add an assignee
+    await page.locator('.assignee-add-more').click()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
+    const availableUsers = issueDetail(page).locator('.custom-dropdown-item')
+    const userCount = await availableUsers.count()
+    if (userCount > 0) {
+      await availableUsers.first().click()
+      await page.waitForTimeout(300)
+
+      // CRITICAL: Comment avatar images should NOT have been re-fetched.
+      // The assignee list and comments section are separate parts of the DOM.
+      // If the compiler over-notifies (e.g., firing this.$gea_issue._notify()),
+      // ALL template effects re-run, causing comment avatars to be recreated.
+      const commentAvatarReqs = imageRequests.filter((url) => url.includes('avatar'))
+      expect(commentAvatarReqs).toEqual([])
+
+      // Comment avatar DOM nodes should be the same references
+      if (commentAvatarCount > 0) {
+        const avatarsSame = await page.evaluate(() => {
+          const currentImgs = document.querySelectorAll('.comment .avatar img, .comment img[class*="avatar"]')
+          const refs = (window as any).__commentAvatarRefs as Element[]
+          if (!refs || currentImgs.length !== refs.length) return false
+          return refs.every((ref, i) => ref === currentImgs[i])
+        })
+        expect(avatarsSame).toBe(true)
+      }
+    }
+  })
+
+  test('assignee chips must render as div.assignee-chip after add and remove', async ({ page }) => {
+    await boardIssueCards(page).first().click()
+    await expect(page.locator('.issue-details')).toBeVisible({ timeout: 500 })
+
+    const chipsBefore = await page.locator('.assignee-chip').count()
+
+    // Add an assignee
+    await page.locator('.assignee-add-more').click()
+    await expect(issueDetail(page).locator('.custom-dropdown')).toBeVisible()
+    const availableUsers = issueDetail(page).locator('.custom-dropdown-item')
+    const userCount = await availableUsers.count()
+    if (userCount > 0) {
+      await availableUsers.first().click()
+      await expect(page.locator('.assignee-chip')).toHaveCount(chipsBefore + 1)
+
+      // CRITICAL: Every assignee chip must be a <div> with class "assignee-chip".
+      // A cross-list pooling bug previously caused chips to render as
+      // <div class="custom-dropdown-item"> (the dropdown template) instead.
+      const chipTags = await page.evaluate(() => {
+        const chips = document.querySelectorAll('.assignee-chip')
+        return Array.from(chips).map((el) => ({
+          tag: el.tagName.toLowerCase(),
+          hasAvatar: !!el.querySelector('.assignee-chip-avatar'),
+          hasName: !!el.querySelector('.assignee-chip-name'),
+          hasRemove: !!el.querySelector('.assignee-chip-remove'),
+        }))
+      })
+
+      for (const chip of chipTags) {
+        expect(chip.tag).toBe('div')
+        expect(chip.hasAvatar).toBe(true)
+        expect(chip.hasName).toBe(true)
+        expect(chip.hasRemove).toBe(true)
+      }
+
+      // No elements with custom-dropdown-item class should be inside assignee-chips container
+      const wrongElements = await page.locator('.assignee-chips .custom-dropdown-item').count()
+      expect(wrongElements).toBe(0)
+
+      // Remove the last added chip and verify structure again
+      await page.locator('.assignee-chip-remove').last().click()
+      await expect(page.locator('.assignee-chip')).toHaveCount(chipsBefore)
+
+      // Remaining chips should still have correct structure
+      const remainingChips = await page.evaluate(() => {
+        const chips = document.querySelectorAll('.assignee-chip')
+        return Array.from(chips).every(
+          (el) =>
+            el.tagName.toLowerCase() === 'div' &&
+            !!el.querySelector('.assignee-chip-avatar') &&
+            !!el.querySelector('.assignee-chip-name'),
+        )
+      })
+      expect(remainingChips).toBe(true)
+    }
+  })
 })

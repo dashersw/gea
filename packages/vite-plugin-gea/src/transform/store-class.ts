@@ -210,9 +210,40 @@ function collectAliases(
     if (t.isVariableDeclaration(stmt)) {
       for (const decl of stmt.declarations) {
         if (!t.isIdentifier(decl.id) || !decl.init) continue
+        // const d = this.rows → d → 'rows'
         const fieldName = getThisFieldAccess(decl.init, fieldNames)
         if (fieldName) {
           aliasMap.set(decl.id.name, fieldName)
+          continue
+        }
+        // const x = this.field.find(...) / this.field.at(...)
+        if (t.isCallExpression(decl.init) && t.isMemberExpression(decl.init.callee)) {
+          const callee = decl.init.callee
+          if (t.isIdentifier(callee.property) &&
+              (callee.property.name === 'find' || callee.property.name === 'at')) {
+            const rootField = getThisFieldChainRoot(callee.object, fieldNames, aliasMap)
+            if (rootField) {
+              aliasMap.set(decl.id.name, rootField)
+              continue
+            }
+          }
+        }
+        // const x = this.field[i]
+        if (t.isMemberExpression(decl.init) && decl.init.computed) {
+          const rootField = getThisFieldChainRoot(decl.init.object, fieldNames, aliasMap)
+          if (rootField) {
+            aliasMap.set(decl.id.name, rootField)
+          }
+        }
+      }
+    }
+    // for (const x of this.field) → x → field
+    if (t.isForOfStatement(stmt) && t.isVariableDeclaration(stmt.left)) {
+      const decl = stmt.left.declarations[0]
+      if (t.isIdentifier(decl?.id)) {
+        const rootField = getThisFieldChainRoot(stmt.right, fieldNames, aliasMap)
+        if (rootField) {
+          aliasMap.set(decl.id.name, rootField)
         }
       }
     }
@@ -235,6 +266,19 @@ function collectAliases(
       }
     }
   }
+}
+
+function makeNotifyStmt(fieldName: string): t.ExpressionStatement {
+  const privateName = `$$gea_${fieldName}`
+  return t.expressionStatement(
+    t.callExpression(
+      t.memberExpression(
+        t.memberExpression(t.thisExpression(), t.identifier(privateName), false),
+        t.identifier('_notify'),
+      ),
+      [],
+    ),
+  )
 }
 
 function processStatements(
@@ -268,33 +312,99 @@ function processStatements(
 
     if (!t.isExpressionStatement(stmt)) continue
     const expr = stmt.expression
-    if (!t.isAssignmentExpression(expr)) continue
 
-    const left = expr.left
-    if (!t.isMemberExpression(left) || !left.computed) continue
-
-    // Check if the object is this.<field> or an alias of one
     let fieldName: string | null = null
-    if (t.isIdentifier(left.object) && aliasMap.has(left.object.name)) {
-      fieldName = aliasMap.get(left.object.name)!
-    } else {
-      fieldName = getThisFieldAccess(left.object, fieldNames)
+
+    // Pattern 1: Index assignment — this.<field>[expr] = value / alias[expr] = value
+    if (t.isAssignmentExpression(expr) && t.isMemberExpression(expr.left) && expr.left.computed) {
+      const left = expr.left
+      fieldName = getThisFieldChainRoot(left.object, fieldNames, aliasMap)
+    }
+
+    // Pattern 2: Mutating method call — this.<field>...push/pop/splice/etc(...)
+    // e.g., this.todos.push(x), this.messages[id].push(msg), col.taskIds.splice(idx, 1)
+    if (!fieldName && t.isCallExpression(expr) && t.isMemberExpression(expr.callee)) {
+      const method = expr.callee.property
+      if (t.isIdentifier(method) && MUTATING_METHODS.has(method.name)) {
+        fieldName = getThisFieldChainRoot(expr.callee.object, fieldNames, aliasMap)
+      }
+    }
+
+    // Pattern 3: delete this.<field>[expr] / delete alias[expr]
+    if (!fieldName && t.isUnaryExpression(expr) && expr.operator === 'delete' && t.isMemberExpression(expr.argument)) {
+      fieldName = getThisFieldChainRoot(expr.argument.object, fieldNames, aliasMap)
+    }
+
+    // Pattern 4: Object.assign(this.<field>, ...) or Object.assign(alias, ...)
+    // Object.assign mutates the target in-place (same reference), so the parent
+    // signal's value doesn't change. We must _notify() the parent so that
+    // dependents (keyed-lists, computations) re-evaluate.
+    // This does NOT cause comment avatar re-renders because keyed-lists compare
+    // keys and bail out when the data hasn't structurally changed.
+    if (!fieldName && t.isCallExpression(expr) &&
+      t.isMemberExpression(expr.callee) &&
+      t.isIdentifier(expr.callee.object, { name: 'Object' }) &&
+      t.isIdentifier(expr.callee.property, { name: 'assign' }) &&
+      expr.arguments.length >= 2) {
+      const target = expr.arguments[0]
+      if (t.isExpression(target)) {
+        const directField = getThisFieldAccess(target, fieldNames)
+        if (directField) {
+          fieldName = directField
+        } else if (t.isIdentifier(target) && aliasMap.has(target.name)) {
+          fieldName = aliasMap.get(target.name)!
+        }
+      }
+    }
+
+    // Pattern 5: External function call with a direct store field/alias argument.
+    // Only match when the store field ITSELF or an alias is passed directly,
+    // NOT when reading a sub-property like this.issue.id (that's a scalar read).
+    // e.g., utilityFn(this.issues) → notify issues (the array may be mutated)
+    //        externalFn(this.issue.id) → don't notify (just reading .id)
+    if (!fieldName && t.isCallExpression(expr)) {
+      const isSafeCall = t.isMemberExpression(expr.callee) && (
+        t.isIdentifier(expr.callee.object, { name: 'Object' }) ||
+        t.isIdentifier(expr.callee.object, { name: 'console' }) ||
+        t.isIdentifier(expr.callee.object, { name: 'Math' }) ||
+        t.isIdentifier(expr.callee.object, { name: 'JSON' })
+      )
+      if (!isSafeCall) {
+        for (const arg of expr.arguments) {
+          if (!t.isExpression(arg)) continue
+          // Only match direct store field (this.field)
+          const directField = getThisFieldAccess(arg, fieldNames)
+          if (directField) {
+            fieldName = directField
+            break
+          }
+          // Match alias directly (e.g., `items` where `const items = this.field`)
+          if (t.isIdentifier(arg) && aliasMap.has(arg.name)) {
+            fieldName = aliasMap.get(arg.name)!
+            break
+          }
+          // Match this.field.subProp passed to a standalone utility function
+          // e.g., updateArrayItemById(this.project.issues, ...) → notify project
+          // But NOT when calling methods on other objects (they handle their own notifications):
+          // e.g., otherStore.method(this.issue.id, ...) → skip (otherStore notifies itself)
+          if (t.isMemberExpression(arg) && !arg.computed && t.isIdentifier(expr.callee)) {
+            const parentField = getThisFieldAccess(arg.object, fieldNames)
+            if (parentField) {
+              fieldName = parentField
+              break
+            }
+            if (t.isIdentifier(arg.object) && aliasMap.has(arg.object.name)) {
+              fieldName = aliasMap.get(arg.object.name)!
+              break
+            }
+          }
+        }
+      }
     }
 
     if (!fieldName) continue
 
-    // Insert: this.$$gea_<field>._notify()
-    const privateName = `$$gea_${fieldName}`
-    const notifyStmt = t.expressionStatement(
-      t.callExpression(
-        t.memberExpression(
-          t.memberExpression(t.thisExpression(), t.identifier(privateName), false),
-          t.identifier('_notify'),
-        ),
-        [],
-      ),
-    )
-    stmts.splice(i + 1, 0, notifyStmt)
+    stmts.splice(i + 1, 0, makeNotifyStmt(fieldName))
   }
 }
 
@@ -309,11 +419,41 @@ function getThisFieldAccess(node: t.Node, fieldNames: Set<string>): string | nul
   return fieldNames.has(node.property.name) ? node.property.name : null
 }
 
+/**
+ * Trace a member expression chain back to a root store field.
+ * Handles: this.<field>, this.<field>[expr], this.<field>.subProp.subProp,
+ * alias (from find/indexing), alias.subProp, etc.
+ * Returns the root field name or null.
+ */
+function getThisFieldChainRoot(
+  node: t.Node,
+  fieldNames: Set<string>,
+  aliasMap: Map<string, string>,
+): string | null {
+  // Direct: this.<field>
+  const direct = getThisFieldAccess(node, fieldNames)
+  if (direct) return direct
+
+  // Alias: identifier that maps to a field
+  if (t.isIdentifier(node) && aliasMap.has(node.name)) {
+    return aliasMap.get(node.name)!
+  }
+
+  // Chain: x.y or x[y] → trace x
+  if (t.isMemberExpression(node)) {
+    return getThisFieldChainRoot(node.object, fieldNames, aliasMap)
+  }
+
+  return null
+}
+
+const MUTATING_METHODS = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'])
+
 // ─── Item property access transformation ─────────────────────────────────────
 // Transforms item.prop → __itemSignal(item, 'prop').value in store methods/getters.
 // This eliminates the need for makeItemReactive at runtime.
 
-const ARRAY_ITEM_METHODS = new Set(['find', 'filter', 'map', 'forEach', 'some', 'every', 'findIndex', 'flatMap', 'reduce'])
+const ARRAY_ITEM_METHODS = new Set(['find', 'filter', 'map', 'forEach', 'some', 'every', 'findIndex', 'flatMap', 'reduce', 'sort'])
 
 /**
  * Transform item property access in a method/getter body to use __itemSignal.
@@ -436,7 +576,28 @@ function makeItemSignalAccess(itemExpr: t.Expression, propName: string): t.Membe
 }
 
 /**
+ * Check if a node traces back to a reactive source (store field or item alias)
+ * through any chain of member expressions.
+ */
+function isReactiveChain(
+  node: t.Node,
+  fieldNames: Set<string>,
+  itemAliases: Set<string>,
+): boolean {
+  if (getThisFieldAccess(node, fieldNames)) return true
+  if (t.isIdentifier(node) && itemAliases.has(node.name)) return true
+  if (t.isMemberExpression(node)) return isReactiveChain(node.object, fieldNames, itemAliases)
+  return false
+}
+
+/**
  * Recursively walk AST and transform item property accesses.
+ *
+ * IMPORTANT: When a MemberExpression is the callee of a CallExpression,
+ * the outermost property is a METHOD name (e.g. .push, .find) — not a data
+ * property. We must NOT transform it via isItemPropertyAccess. Instead, we
+ * walk only the callee's object so that sub-expressions like `col.taskIds`
+ * in `col.taskIds.push(id)` DO get transformed to `itemSignal(col, 'taskIds').value`.
  */
 function walkAndTransform(
   node: t.Node,
@@ -444,41 +605,69 @@ function walkAndTransform(
   itemAliases: Set<string>,
   onTransform: () => void,
   callbackItemParams: Set<string> = new Set(),
+  looseMode: boolean = false,
 ): void {
   if (!node || typeof node !== 'object') return
 
-  // Detect array method callbacks to find item params
+  // ── CallExpression with MemberExpression callee ──────────────────
+  // The callee's property is a method name — never transform it as a data access.
   if (t.isCallExpression(node) && t.isMemberExpression(node.callee)) {
     const callee = node.callee
-    if (t.isIdentifier(callee.property) && ARRAY_ITEM_METHODS.has(callee.property.name)) {
-      // Check if the object is this.<arrayField> or an alias of one
-      const isOnArray = getThisFieldAccess(callee.object, fieldNames) ||
-        (t.isIdentifier(callee.object) && itemAliases.has(callee.object.name))
+    const methodName = t.isIdentifier(callee.property) ? callee.property.name : null
+
+    // Detect array method callbacks to find item params
+    if (methodName && ARRAY_ITEM_METHODS.has(methodName)) {
+      // Extended isOnArray: trace through this.<field>, aliases, AND nested access
+      // e.g., this.todos, msgs (alias), this.messages[id], col.taskIds
+      // In looseMode (standalone functions), skip the reactive chain check —
+      // any .filter()/.map()/etc. callback params get item signal transforms.
+      const isOnArray = looseMode || isReactiveChain(callee.object, fieldNames, itemAliases)
       if (isOnArray && node.arguments.length > 0) {
         const callback = node.arguments[0]
         if ((t.isArrowFunctionExpression(callback) || t.isFunctionExpression(callback)) &&
             callback.params.length > 0) {
           // For reduce(), the item is the 2nd param (1st is accumulator)
+          // For sort(), both params are items
           // For all other array methods, the item is the 1st param
-          const isReduce = callee.property.name === 'reduce'
+          const isReduce = methodName === 'reduce'
+          const isSort = methodName === 'sort'
           const itemParamIdx = isReduce ? 1 : 0
           const itemParam = callback.params[itemParamIdx]
           if (itemParam && t.isIdentifier(itemParam)) {
             const extendedParams = new Set(callbackItemParams)
             extendedParams.add(itemParam.name)
+            // For sort(a, b), both a and b are items
+            if (isSort && callback.params.length > 1) {
+              const secondParam = callback.params[1]
+              if (t.isIdentifier(secondParam)) extendedParams.add(secondParam.name)
+            }
             // Walk callback body with extended params
-            walkAndTransform(callback.body, fieldNames, itemAliases, onTransform, extendedParams)
+            walkAndTransform(callback.body, fieldNames, itemAliases, onTransform, extendedParams, looseMode)
             // Walk other arguments normally
             for (let i = 1; i < node.arguments.length; i++) {
-              walkAndTransform(node.arguments[i], fieldNames, itemAliases, onTransform, callbackItemParams)
+              walkAndTransform(node.arguments[i], fieldNames, itemAliases, onTransform, callbackItemParams, looseMode)
             }
-            // Walk callee object
-            walkAndTransform(callee.object, fieldNames, itemAliases, onTransform, callbackItemParams)
+            // Walk callee object (NOT the method property)
+            walkAndTransform(callee.object, fieldNames, itemAliases, onTransform, callbackItemParams, looseMode)
             return // already handled children
           }
         }
       }
     }
+
+    // For ALL method calls (including unrecognized array methods, push/pop/etc):
+    // Walk the callee's object for transformable sub-expressions but NOT the method property.
+    walkAndTransform(callee.object, fieldNames, itemAliases, onTransform, callbackItemParams, looseMode)
+    if (callee.computed) {
+      walkAndTransform(callee.property as t.Expression, fieldNames, itemAliases, onTransform, callbackItemParams, looseMode)
+    }
+    // Walk arguments
+    for (const arg of node.arguments) {
+      if (arg && typeof arg === 'object' && (arg as any).type) {
+        walkAndTransform(arg as t.Node, fieldNames, itemAliases, onTransform, callbackItemParams, looseMode)
+      }
+    }
+    return // already handled children
   }
 
   // Check and transform member expressions
@@ -504,11 +693,35 @@ function walkAndTransform(
     if (Array.isArray(child)) {
       for (const item of child) {
         if (item && typeof item === 'object' && item.type) {
-          walkAndTransform(item, fieldNames, itemAliases, onTransform, callbackItemParams)
+          walkAndTransform(item, fieldNames, itemAliases, onTransform, callbackItemParams, looseMode)
         }
       }
     } else if (child && typeof child === 'object' && child.type) {
-      walkAndTransform(child, fieldNames, itemAliases, onTransform, callbackItemParams)
+      walkAndTransform(child, fieldNames, itemAliases, onTransform, callbackItemParams, looseMode)
     }
+  }
+}
+
+/**
+ * Transform item property access in standalone functions (not Store/Component methods).
+ * Uses looseMode: any .filter()/.map()/.sort()/etc. callback params get item signal transforms,
+ * regardless of whether the array is a known reactive source.
+ * This handles patterns like:
+ *   function filterIssues(issues, status) { return issues.filter(i => i.status === status) }
+ */
+export function transformStandaloneFunctionItemAccess(
+  node: t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression,
+  usedHelpers: Set<RuntimeHelper>,
+): void {
+  const body = t.isBlockStatement(node.body) ? node.body : null
+  if (!body) return
+
+  let transformed = false
+  const emptyFields = new Set<string>()
+  const emptyAliases = new Set<string>()
+  walkAndTransform(body, emptyFields, emptyAliases, () => { transformed = true }, new Set(), true)
+
+  if (transformed) {
+    usedHelpers.add('itemSignal')
   }
 }

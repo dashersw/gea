@@ -41,7 +41,8 @@ export function conditional(
 
   function cleanupNodes(nodes: Node[]) {
     for (let i = 0; i < nodes.length; i++) {
-      if (nodes[i].parentNode) parent.removeChild(nodes[i]);
+      const p = nodes[i].parentNode;
+      if (p) p.removeChild(nodes[i]);
     }
   }
 
@@ -68,14 +69,18 @@ export function conditional(
   }
 
   function collectAndInsert(node: Node): Node[] {
+    // Use anchor.parentNode instead of the captured `parent` because a
+    // DocumentFragment's children are moved when mounted into real DOM,
+    // making the original fragment reference stale.
+    const p = anchor.parentNode!;
     // If the node is a DocumentFragment, collect its children before inserting
     // because insertBefore moves them out of the fragment.
     if (isFragment(node)) {
       const children = Array.from(node.childNodes);
-      parent.insertBefore(node, anchor);
+      p.insertBefore(node, anchor);
       return children;
     }
-    parent.insertBefore(node, anchor);
+    p.insertBefore(node, anchor);
     return [node];
   }
 

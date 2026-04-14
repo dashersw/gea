@@ -5,6 +5,12 @@ import type { RuntimeHelper } from '../utils.js'
 import { transformJSXElement, transformJSXFragment, transformPropItemAccess } from './jsx-element.js'
 import { substituteExpression } from './jsx-expression.js'
 
+interface EarlyReturnIf {
+  index: number
+  test: t.Expression
+  jsxReturn: t.JSXElement | t.JSXFragment | null
+}
+
 /**
  * Apply substitution map to ALL identifiers in an AST node (not just JSX).
  * Replaces e.g. `column` → `__props.column` in regular JS code.
@@ -64,6 +70,7 @@ export function transformClassComponent(
   usedHelpers: Set<RuntimeHelper>,
   templateDeclarations?: t.Statement[],
   templateCounter?: { value: number },
+  poolCounter?: { value: number },
 ): void {
   for (const member of classBody.body) {
     if (!t.isClassMethod(member)) continue
@@ -116,6 +123,38 @@ export function transformClassComponent(
     for (const [k, v] of localSubs) subs.set(k, v)
     for (const idx of localIndicesToRemove) indicesToRemove.add(idx)
 
+    // 3c. Detect early-return if-statements: if (cond) return <JSX>
+    const earlyReturnIfs: EarlyReturnIf[] = []
+
+    for (let i = 0; i < body.body.length; i++) {
+      if (i >= returnIdx) break
+      if (indicesToRemove.has(i)) continue
+      const stmt = body.body[i]
+      if (!t.isIfStatement(stmt)) continue
+      if (stmt.alternate) continue // only simple `if (...) return`
+
+      let retArg: t.Expression | null | undefined = undefined
+      const cons = stmt.consequent
+      if (t.isBlockStatement(cons)) {
+        const lastStmt = cons.body[cons.body.length - 1]
+        if (t.isReturnStatement(lastStmt)) retArg = lastStmt.argument ?? null
+      } else if (t.isReturnStatement(cons)) {
+        retArg = cons.argument ?? null
+      }
+
+      if (retArg === undefined) continue
+
+      // Unwrap parens
+      let arg = retArg
+      if (arg && t.isParenthesizedExpression(arg)) arg = arg.expression
+
+      if (arg && (t.isJSXElement(arg) || t.isJSXFragment(arg))) {
+        earlyReturnIfs.push({ index: i, test: stmt.test, jsxReturn: arg })
+      } else if (!arg || t.isNullLiteral(arg)) {
+        earlyReturnIfs.push({ index: i, test: stmt.test, jsxReturn: null })
+      }
+    }
+
     // The return argument might be a JSXElement or JSXFragment (possibly wrapped in parens)
     let jsxElement: t.JSXElement | t.JSXFragment | null = null
     if (t.isJSXElement(returnStmt.argument) || t.isJSXFragment(returnStmt.argument)) {
@@ -138,13 +177,144 @@ export function transformClassComponent(
       compCounter: { value: 0 },
       templateDeclarations: templateDeclarations || [],
       templateCounter: templateCounter || { value: 0 },
+      poolCounter: poolCounter || { value: 0 },
     }
 
     const [stmts, rootId] = t.isJSXFragment(jsxElement)
       ? transformJSXFragment(jsxElement, ctx)
       : transformJSXElement(jsxElement as t.JSXElement, ctx)
 
-    // 5. Build new method body
+    // 4b. Handle early-return if-statements → reactive conditional()
+    if (earlyReturnIfs.length > 0) {
+      const er = earlyReturnIfs[0]
+      const earlyIndices = new Set(earlyReturnIfs.map(e => e.index))
+      usedHelpers.add('conditional')
+
+      // Apply substitution to condition
+      const condExpr = substituteExpression(er.test as t.Expression, subs)
+
+      // Transform early return's JSX
+      let earlyStmts: t.Statement[] = []
+      let earlyRootId: t.Expression
+
+      if (er.jsxReturn) {
+        // Reset counters for the early-return branch scope
+        ctx.elementCounter = { value: 0 }
+        ctx.anchorCounter = { value: 0 }
+        ctx.compCounter = { value: 0 }
+
+        const [es, eid] = t.isJSXFragment(er.jsxReturn)
+          ? transformJSXFragment(er.jsxReturn, ctx)
+          : transformJSXElement(er.jsxReturn as t.JSXElement, ctx)
+        earlyStmts = es
+        earlyRootId = eid
+        transformPropItemAccess(earlyStmts, usedHelpers)
+      } else {
+        // null return — empty comment node
+        earlyRootId = t.callExpression(
+          t.memberExpression(t.identifier('document'), t.identifier('createComment')),
+          [t.stringLiteral('')],
+        )
+      }
+
+      // Early return branch: () => { ...earlyStmts; return earlyRootId }
+      const earlyBranch = t.arrowFunctionExpression(
+        [],
+        t.blockStatement([...earlyStmts, t.returnStatement(earlyRootId)]),
+      )
+
+      // Main content branch: kept statements after early return + main JSX
+      const mainBranchBody: t.Statement[] = []
+      for (let i = 0; i < body.body.length; i++) {
+        if (i === returnIdx) continue
+        if (indicesToRemove.has(i)) continue
+        if (earlyIndices.has(i)) continue
+        if (i <= er.index) continue // pre-early-return statements go outside
+        if (subs.size > 0) applySubsToNode(body.body[i], subs)
+        mainBranchBody.push(body.body[i])
+      }
+      transformPropItemAccess(stmts, usedHelpers)
+      mainBranchBody.push(...stmts)
+      mainBranchBody.push(t.returnStatement(rootId))
+      const mainBranch = t.arrowFunctionExpression([], t.blockStatement(mainBranchBody))
+
+      // Build new method body
+      const newBodyStmts: t.Statement[] = []
+
+      // Add `const __props = this[GEA_PROPS]` at the top
+      usedHelpers.add('GEA_PROPS')
+      newBodyStmts.push(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier('__props'),
+            t.memberExpression(t.thisExpression(), t.identifier('GEA_PROPS'), true),
+          ),
+        ]),
+      )
+
+      // Statements before the early return (outside the conditional)
+      for (let i = 0; i < er.index; i++) {
+        if (i === returnIdx) continue
+        if (indicesToRemove.has(i)) continue
+        if (subs.size > 0) applySubsToNode(body.body[i], subs)
+        newBodyStmts.push(body.body[i])
+      }
+
+      // Fragment + anchor + conditional
+      const fragId = t.identifier('__frag')
+      const condAnchorId = t.identifier('__condAnchor')
+
+      newBodyStmts.push(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(fragId,
+            t.callExpression(
+              t.memberExpression(t.identifier('document'), t.identifier('createDocumentFragment')),
+              [],
+            ),
+          ),
+        ]),
+        t.variableDeclaration('const', [
+          t.variableDeclarator(condAnchorId,
+            t.callExpression(
+              t.memberExpression(t.identifier('document'), t.identifier('createComment')),
+              [t.stringLiteral('')],
+            ),
+          ),
+        ]),
+        t.expressionStatement(
+          t.callExpression(
+            t.memberExpression(fragId, t.identifier('appendChild')),
+            [condAnchorId],
+          ),
+        ),
+        t.expressionStatement(
+          t.callExpression(t.identifier('conditional'), [
+            fragId,
+            condAnchorId,
+            t.arrowFunctionExpression([], condExpr),
+            earlyBranch,
+            mainBranch,
+          ]),
+        ),
+      )
+
+      newBodyStmts.push(t.returnStatement(fragId))
+
+      // Rename method to [GEA_CREATE_TEMPLATE] and update
+      usedHelpers.add('GEA_CREATE_TEMPLATE')
+      member.key = t.identifier('GEA_CREATE_TEMPLATE')
+      member.computed = true
+      member.params = []
+      member.body = t.blockStatement(newBodyStmts)
+
+      if ((member as any).returnType) {
+        ;(member as any).returnType = null
+      }
+
+      continue // skip normal path below
+    }
+
+    // 5. Build new method body (no early returns — original path)
     const newBodyStmts: t.Statement[] = []
 
     // Add `const __props = this[GEA_PROPS]` at the top

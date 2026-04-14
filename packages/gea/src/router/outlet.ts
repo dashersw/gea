@@ -65,7 +65,8 @@ export default class Outlet extends Component {
       const removePath = r.observe('path', () => _updateView(this, op(this)))
       const removeError = r.observe('error', () => _updateView(this, op(this)))
       const removeQuery = r.observe('query', () => _updateView(this, op(this)))
-      p.observerRemovers.push(removePath, removeError, removeQuery)
+      const removeTick = r.observe('_tick', () => _updateView(this, op(this)))
+      p.observerRemovers.push(removePath, removeError, removeQuery, removeTick)
     }
     _updateView(this, p)
   }

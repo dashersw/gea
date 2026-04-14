@@ -6,7 +6,7 @@ export { computation, mergedComputation, signalEffect } from './signals/effect.j
 export { GEA_PROPS, GEA_PROP_THUNKS, GEA_SET_PROPS, GEA_CREATE_TEMPLATE, GEA_COMPILED } from './symbols.js';
 
 // Reactive helpers
-export { wrapArray, itemSignal, wrapObject, wrapSignalValue } from './reactive/index.js';
+export { wrapArray, itemSignal, wrapSignalValue } from './reactive/index.js';
 
 // Component helpers
 export { createPropsProxy } from './component/index.js';

@@ -8,7 +8,7 @@ import type { RuntimeHelper } from '../utils.js'
 import { isUpperCase } from '../utils.js'
 import { transformClassComponent } from './component-class.js'
 import { transformFunctionComponent } from './function-component.js'
-import { transformStoreClass } from './store-class.js'
+import { transformStoreClass, transformStandaloneFunctionItemAccess } from './store-class.js'
 import { transformJSXElement } from './jsx-element.js'
 import { substituteExpression } from './jsx-expression.js'
 
@@ -38,6 +38,7 @@ export function transformSource(source: string, id?: string): string | null {
   const usedHelpers = new Set<RuntimeHelper>()
   const templateDeclarations: t.Statement[] = []
   const templateCounter = { value: 0 }
+  const poolCounter = { value: 0 }
 
   // 1. Transform Component templates FIRST (renames template → __createTemplate)
   //    Recognises `extends Component` and any class with a `template()` method
@@ -61,7 +62,7 @@ export function transformSource(source: string, id?: string): string | null {
           t.isIdentifier(node.superClass.property, { name: 'Component' })) ||
         hasTemplateMethod(node.body)
       if (!isComponent) return
-      transformClassComponent(node.body, reactiveSources, usedHelpers, templateDeclarations, templateCounter)
+      transformClassComponent(node.body, reactiveSources, usedHelpers, templateDeclarations, templateCounter, poolCounter)
     },
   })
 
@@ -90,14 +91,27 @@ export function transformSource(source: string, id?: string): string | null {
     ExportDefaultDeclaration(path) {
       const decl = path.node.declaration
       if (t.isFunctionDeclaration(decl) && decl.id && isUpperCase(decl.id.name)) {
-        transformFunctionComponent(decl, reactiveSources, usedHelpers, templateDeclarations, templateCounter)
+        transformFunctionComponent(decl, reactiveSources, usedHelpers, templateDeclarations, templateCounter, poolCounter)
       }
     },
     ExportNamedDeclaration(path) {
       const decl = path.node.declaration
       if (t.isFunctionDeclaration(decl) && decl.id && isUpperCase(decl.id.name)) {
-        transformFunctionComponent(decl, reactiveSources, usedHelpers, templateDeclarations, templateCounter)
+        transformFunctionComponent(decl, reactiveSources, usedHelpers, templateDeclarations, templateCounter, poolCounter)
       }
+    },
+  })
+
+  // Transform item property access in standalone functions (not Store/Component methods).
+  // Standalone functions like filterIssues(issues, status) that call .filter(i => i.status)
+  // need item signal transforms so that reactive item property reads work correctly.
+  traverse(ast, {
+    FunctionDeclaration(path) {
+      // Skip class methods (already handled by store-class transform)
+      if (path.parentPath.isClassBody()) return
+      // Skip function components (uppercase name, already handled)
+      if (path.node.id && isUpperCase(path.node.id.name)) return
+      transformStandaloneFunctionItemAccess(path.node, usedHelpers)
     },
   })
 
@@ -169,6 +183,7 @@ export function transformSource(source: string, id?: string): string | null {
         compCounter: { value: 0 },
         templateDeclarations,
         templateCounter,
+        poolCounter,
       }
 
       try {

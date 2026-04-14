@@ -1,5 +1,5 @@
 import { effect } from '../signals/index.js';
-import { setDisposalScope, type Disposable } from '../signals/tracking.js';
+import { getDisposalScope, setDisposalScope, type Disposable } from '../signals/tracking.js';
 
 /**
  * Reactively render dynamic content (DOM nodes, arrays, or primitives) into a parent.
@@ -34,12 +34,13 @@ export function reactiveContent(
     // The getter MUST run with the effect active so signal reads are tracked.
     // Reuse disposals array when possible to avoid allocation.
     if (!disposals) disposals = [];
+    const outerScope = getDisposalScope();
     setDisposalScope(disposals);
     let value: any;
     try {
       value = getter();
     } finally {
-      setDisposalScope(null);
+      setDisposalScope(outerScope);
     }
 
     // Insert content — handle arrays and single values without wrapping

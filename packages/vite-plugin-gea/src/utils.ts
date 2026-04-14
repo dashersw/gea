@@ -160,7 +160,6 @@ export type RuntimeHelper =
   | 'reactiveContent'
   | 'mergedComputation'
   | 'itemSignal'
-  | 'wrapObject'
   | 'wrapSignalValue'
   | 'signalEffect'
   | 'GEA_PROPS'

@@ -32,9 +32,18 @@ export function effect(fn: () => void, isComputed?: boolean): () => void {
     (run as any).__computed = true;
   }
 
+  // Capture disposal scope BEFORE initial run (which may alter it via setDisposalScope).
+  // Root-level effects (no parent) need explicit disposal scope registration so
+  // parent conditionals/branches (createDetached) can clean them up.
+  const scope = !parent ? getDisposalScope() : null;
+
   run();
 
-  return () => dispose(node);
+  const disposeFn = () => dispose(node);
+
+  if (scope) scope.push({ dispose: disposeFn });
+
+  return disposeFn;
 }
 
 function cleanup(node: EffectNode): void {

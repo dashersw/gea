@@ -1,9 +1,5 @@
 import { effect, signal, type Signal } from '../signals/index.js';
-import { getActiveEffect, pushEffect, popEffect, setDisposalScope } from '../signals/tracking.js';
-
-// Shared sentinels for extracting raw arrays and dirty hints from wrapArray proxies
-const RAW_ARRAY = Symbol.for('gea.rawArray');
-const DIRTY_INDICES = Symbol.for('gea.dirty');
+import { getActiveEffect, pushEffect, popEffect, getDisposalScope, setDisposalScope } from '../signals/tracking.js';
 
 interface KeyedItem {
   node: Node | null;
@@ -12,6 +8,125 @@ interface KeyedItem {
   _idxSig: Signal<number> | null;    // Direct signal ref — avoids setIndex closure
   _disposals: { dispose(): void }[] | null; // Stored on entry — avoids per-item dispose closure
   _oldIdx: number; // Temp field used during general reconciliation (avoids Map alloc)
+}
+
+// ---------------------------------------------------------------------------
+// Cross-keyed-list DOM node transfer (SCOPED by poolGroup)
+//
+// Two complementary mechanisms handle DOM node reuse across keyed-lists
+// that share the same poolGroup (i.e., same compiled template origin),
+// regardless of which keyed-list's effect runs first during a batch flush:
+//
+// 1. POOL (forward: source removes before destination creates):
+//    Source pools entry by (poolGroup, key). Destination checks pool, reclaims.
+//
+// 2. SWAP (backward: destination creates before source removes):
+//    Destination creates fresh entry, registers a swap request. When source
+//    later pools the old entry, it finds the swap request and replaces the
+//    fresh DOM node with the old one in-place.
+//
+// A microtask (before paint) disposes unclaimed pool entries and clears
+// unmatched swap requests (the fresh DOM is already working, no harm).
+//
+// poolGroup scoping ensures that keyed-lists from different templates
+// (e.g., assignee chips vs dropdown items) never share DOM nodes, even
+// if they use the same item keys.
+// ---------------------------------------------------------------------------
+const _pools = new Map<string, Map<unknown, KeyedItem>>();
+const _swapPools = new Map<string, Map<unknown, SwapRequest>>();
+let _poolCleanupScheduled = false;
+
+interface SwapRequest {
+  freshEntry: KeyedItem;
+  keyMap: Map<unknown, KeyedItem>;
+  newItem: unknown;
+  newIndex: number;
+  noIndex: boolean | undefined;
+}
+
+function scheduleCleanup(): void {
+  if (!_poolCleanupScheduled) {
+    _poolCleanupScheduled = true;
+    queueMicrotask(_poolCleanup);
+  }
+}
+
+function getPool(group: string): Map<unknown, KeyedItem> {
+  let pool = _pools.get(group);
+  if (!pool) { pool = new Map(); _pools.set(group, pool); }
+  return pool;
+}
+
+function getSwapPool(group: string): Map<unknown, SwapRequest> {
+  let pool = _swapPools.get(group);
+  if (!pool) { pool = new Map(); _swapPools.set(group, pool); }
+  return pool;
+}
+
+function poolEntry(group: string, key: unknown, entry: KeyedItem, sourceKeyMap: Map<unknown, KeyedItem>): void {
+  const swapPool = _swapPools.get(group);
+  const swap = swapPool?.get(key);
+  // Backward direction: destination already created a fresh entry for this key.
+  // Swap the old DOM node into the destination, dispose the fresh entry.
+  // Only swap if the destination keyMap differs from the source (cross-list transfer).
+  if (swap && swap.keyMap !== sourceKeyMap) {
+    swapPool!.delete(key);
+    const oldNode = entry.node!;
+    const freshNode = swap.freshEntry.node!;
+    // replaceChild moves oldNode from its current parent (source) into
+    // the destination parent, replacing freshNode in one DOM operation.
+    if (freshNode.parentNode) {
+      freshNode.parentNode.replaceChild(oldNode, freshNode);
+    }
+    // Update old entry's signals to match destination context
+    setEntryItem(entry, swap.newItem);
+    if (!swap.noIndex) setEntryIndex(entry, swap.newIndex);
+    entry._oldIdx = -1;
+    // Point destination's keyMap to the old (transferred) entry
+    swap.keyMap.set(key, entry);
+    // Dispose the throwaway fresh entry
+    disposeEntry(swap.freshEntry);
+    return;
+  }
+
+  // Forward direction: pool the entry for later reclaim by destination
+  const node = entry.node;
+  if (node && node.parentNode) node.parentNode.removeChild(node);
+  const pool = getPool(group);
+  const existing = pool.get(key);
+  if (existing) disposeEntry(existing);
+  pool.set(key, entry);
+  scheduleCleanup();
+}
+
+function reclaimEntry(group: string, key: unknown, newItem: unknown, newIndex: number, noIndex: boolean | undefined): KeyedItem | null {
+  const pool = _pools.get(group);
+  if (!pool) return null;
+  const pooled = pool.get(key);
+  if (!pooled) return null;
+  pool.delete(key);
+  setEntryItem(pooled, newItem);
+  if (!noIndex) setEntryIndex(pooled, newIndex);
+  pooled._oldIdx = -1;
+  return pooled;
+}
+
+function registerSwap(group: string, key: unknown, entry: KeyedItem, kMap: Map<unknown, KeyedItem>,
+  item: unknown, index: number, nIdx: boolean | undefined): void {
+  const swapPool = getSwapPool(group);
+  swapPool.set(key, { freshEntry: entry, keyMap: kMap, newItem: item, newIndex: index, noIndex: nIdx });
+  scheduleCleanup();
+}
+
+function _poolCleanup(): void {
+  for (const pool of _pools.values()) {
+    for (const entry of pool.values()) disposeEntry(entry);
+    pool.clear();
+  }
+  _pools.clear();
+  for (const swapPool of _swapPools.values()) swapPool.clear();
+  _swapPools.clear();
+  _poolCleanupScheduled = false;
 }
 
 // Shared helpers — avoid per-item closure overhead
@@ -44,93 +159,29 @@ export function keyedList(
   keyFn: (item: unknown, index: number) => unknown,
   createFn: (getter: () => unknown, index?: () => number) => Node,
   noIndex?: boolean,
+  poolGroup?: string,
 ): void {
   const keyMap = new Map<unknown, KeyedItem>();
   let currentKeys: unknown[] = [];
+  // Pool group — when provided, enables cross-list DOM reuse between
+  // keyed-lists that share the same compiled template origin.
+  const pg = poolGroup || '';
+  const poolEnabled = !!poolGroup;
 
   effect(() => {
     const items = itemsFn();
     const newLen = items.length;
-
-    // --- Targeted reconciliation via dirty index hints ---
-    // When only a few array indices changed (e.g. swap), skip the O(n) key
-    // extraction and comparison entirely. The wrapped array proxy tracks
-    // which indices were written and exposes them via DIRTY_INDICES.
-    const dirty: number[] | null | undefined = (items as any)[DIRTY_INDICES];
-    if (dirty !== undefined && dirty !== null && dirty.length > 0 && dirty.length <= 4 && newLen === currentKeys.length) {
-      const rawArr = (items as any)[RAW_ARRAY] || items;
-      const outerNode = getActiveEffect();
-      if (outerNode) popEffect();
-
-      // Extract keys only at dirty positions
-      let allMatch = true;
-      for (let d = 0; d < dirty.length; d++) {
-        const idx = dirty[d];
-        if (idx < 0 || idx >= newLen) { allMatch = false; break; }
-        const newKey = keyFn(rawArr[idx], idx);
-        if (newKey === currentKeys[idx]) {
-          // Key didn't change at this index — item replaced with same key (in-place update)
-          continue;
-        }
-        allMatch = false;
-      }
-
-      if (outerNode) pushEffect(outerNode);
-
-      if (allMatch) {
-        // Keys unchanged — no DOM reorder needed (e.g. label update on same items)
-        return;
-      }
-
-      // Check for swap: exactly 2 dirty indices whose keys exchanged positions
-      if (dirty.length === 2) {
-        const idxA = dirty[0], idxB = dirty[1];
-        if (idxA >= 0 && idxA < newLen && idxB >= 0 && idxB < newLen) {
-          const oldKeyA = currentKeys[idxA];
-          const oldKeyB = currentKeys[idxB];
-          // After swap, position A has old B's key and vice versa
-          if (oldKeyA === currentKeys[idxB] || oldKeyB === currentKeys[idxA]) {
-            // Verify by extracting new keys at those positions
-            if (outerNode) popEffect();
-            const newKeyA = keyFn(rawArr[idxA], idxA);
-            const newKeyB = keyFn(rawArr[idxB], idxB);
-            if (outerNode) pushEffect(outerNode);
-
-            if (newKeyA === oldKeyB && newKeyB === oldKeyA) {
-              // Confirmed swap — do targeted DOM swap
-              const entryA = keyMap.get(oldKeyA)!;
-              const entryB = keyMap.get(oldKeyB)!;
-              // Update item/index signals: entryA (oldKeyA) moved to idxB, entryB (oldKeyB) moved to idxA
-              setEntryItem(entryA, items[idxB]);
-              setEntryIndex(entryA, idxB);
-              setEntryItem(entryB, items[idxA]);
-              setEntryIndex(entryB, idxA);
-              const nodeAfterB = entryB.node!.nextSibling;
-              parent.insertBefore(entryB.node!, entryA.node!);
-              parent.insertBefore(entryA.node!, nodeAfterB);
-              // Update currentKeys in-place
-              currentKeys[idxA] = newKeyA;
-              currentKeys[idxB] = newKeyB;
-              return;
-            }
-          }
-        }
-      }
-      // Dirty hints didn't lead to a targeted fast path — fall through to full reconciliation
-    }
 
     const newKeys: unknown[] = new Array(newLen);
 
     // Extract keys WITHOUT tracking — reading item.id through item proxies
     // would subscribe this effect to every item's id signal, causing O(n)
     // cleanup/re-subscribe on every reconciliation.
-    // Use the raw array (bypassing item proxies) if available, and also
-    // pop the active effect to suppress any remaining signal reads.
-    const rawArr = (items as any)[RAW_ARRAY] || items;
+    // Pop the active effect to suppress any remaining signal reads.
     const outerNode = getActiveEffect();
     if (outerNode) popEffect();
     for (let i = 0; i < newLen; i++) {
-      newKeys[i] = keyFn(rawArr[i], i);
+      newKeys[i] = keyFn(items[i], i);
     }
     if (outerNode) pushEffect(outerNode);
 
@@ -140,14 +191,18 @@ export function keyedList(
     // Fast path: empty list (clear)
     if (newLen === 0) {
       if (oldLen > 0) {
-        // Fast bulk DOM clear: remove anchor, clear textContent, re-add anchor
-        // This is much faster than removing nodes one by one
-        parent.textContent = '';
-        parent.appendChild(anchor);
-
-        // Dispose all entries
-        for (let i = 0; i < oldLen; i++) {
-          disposeEntry(keyMap.get(oldKeys[i])!);
+        if (poolEnabled) {
+          // Pool entries before clearing DOM — another keyed-list may reclaim them
+          for (let i = 0; i < oldLen; i++) {
+            poolEntry(pg, oldKeys[i], keyMap.get(oldKeys[i])!, keyMap);
+          }
+        } else {
+          // No pooling — fast bulk DOM clear
+          parent.textContent = '';
+          parent.appendChild(anchor);
+          for (let i = 0; i < oldLen; i++) {
+            disposeEntry(keyMap.get(oldKeys[i])!);
+          }
         }
         keyMap.clear();
       }
@@ -163,16 +218,27 @@ export function keyedList(
       const frag = document.createDocumentFragment();
       for (let i = 0; i < newLen; i++) {
         const key = newKeys[i];
+        // Check cross-list pool before creating fresh DOM
+        if (poolEnabled) {
+          const reclaimed = reclaimEntry(pg, key, items[i], i, noIndex);
+          if (reclaimed) {
+            keyMap.set(key, reclaimed);
+            frag.appendChild(reclaimed.node!);
+            continue;
+          }
+        }
         const itemSig = signal(items[i]);
         const idxSig = noIndex ? null : signal(i);
         const disposals: { dispose(): void }[] = [];
+        const outerScope = getDisposalScope();
         setDisposalScope(disposals);
         const node = noIndex
           ? createFn(() => itemSig.value)
           : createFn(() => itemSig.value, () => idxSig!.value);
-        setDisposalScope(null);
+        setDisposalScope(outerScope);
         const entry: KeyedItem = { node, item: items[i], _itemSig: itemSig as Signal<unknown>, _idxSig: idxSig, _disposals: disposals, _oldIdx: i };
         keyMap.set(key, entry);
+        if (poolEnabled) registerSwap(pg, key, entry, keyMap, items[i], i, noIndex);
         frag.appendChild(node);
       }
       if (outerNode2) pushEffect(outerNode2);
@@ -192,7 +258,14 @@ export function keyedList(
         const frag = document.createDocumentFragment();
         for (let i = oldLen; i < newLen; i++) {
           const key = newKeys[i];
-          const entry = createEntry(items[i], i);
+          let entry: KeyedItem;
+          if (poolEnabled) {
+            const reclaimed = reclaimEntry(pg, key, items[i], i, noIndex);
+            entry = reclaimed || createEntry(items[i], i);
+            if (!reclaimed) registerSwap(pg, key, entry, keyMap, items[i], i, noIndex);
+          } else {
+            entry = createEntry(items[i], i);
+          }
           keyMap.set(key, entry);
           frag.appendChild(entry.node!);
         }
@@ -220,10 +293,14 @@ export function keyedList(
       if (removedIdx !== -1 && j === newLen) {
         const removedKey = oldKeys[removedIdx];
         const entry = keyMap.get(removedKey)!;
-        const removedNode = entry.node!;
-        disposeEntry(entry);
-        if (removedNode.parentNode) {
-          parent.removeChild(removedNode);
+        if (poolEnabled) {
+          poolEntry(pg, removedKey, entry, keyMap);
+        } else {
+          const removedNode = entry.node!;
+          disposeEntry(entry);
+          if (removedNode.parentNode) {
+            parent.removeChild(removedNode);
+          }
         }
         keyMap.delete(removedKey);
         // Update item/index signals for shifted items
@@ -283,9 +360,15 @@ export function keyedList(
         }
       }
       if (isFullReplace) {
-        // Bulk dispose all old entries
-        for (let i = 0; i < oldLen; i++) {
-          disposeEntry(keyMap.get(oldKeys[i])!);
+        if (poolEnabled) {
+          // Pool all old entries (another keyed-list may reclaim them)
+          for (let i = 0; i < oldLen; i++) {
+            poolEntry(pg, oldKeys[i], keyMap.get(oldKeys[i])!, keyMap);
+          }
+        } else {
+          for (let i = 0; i < oldLen; i++) {
+            disposeEntry(keyMap.get(oldKeys[i])!);
+          }
         }
         keyMap.clear();
 
@@ -294,22 +377,32 @@ export function keyedList(
         parent.appendChild(anchor);
 
         // Create all new rows with effect stack management outside the loop
-        // (saves 2×N effect stack ops for N rows)
         const outerNode2 = getActiveEffect();
         if (outerNode2) popEffect();
         const frag = document.createDocumentFragment();
         for (let i = 0; i < newLen; i++) {
           const key = newKeys[i];
+          // Check cross-list pool before creating fresh DOM
+          if (poolEnabled) {
+            const reclaimed = reclaimEntry(pg, key, items[i], i, noIndex);
+            if (reclaimed) {
+              keyMap.set(key, reclaimed);
+              frag.appendChild(reclaimed.node!);
+              continue;
+            }
+          }
           const itemSig = signal(items[i]);
           const idxSig = noIndex ? null : signal(i);
           const disposals: { dispose(): void }[] = [];
+          const outerScope = getDisposalScope();
           setDisposalScope(disposals);
           const node = noIndex
             ? createFn(() => itemSig.value)
             : createFn(() => itemSig.value, () => idxSig!.value);
-          setDisposalScope(null);
+          setDisposalScope(outerScope);
           const entry: KeyedItem = { node, item: items[i], _itemSig: itemSig as Signal<unknown>, _idxSig: idxSig, _disposals: disposals, _oldIdx: i };
           keyMap.set(key, entry);
+          if (poolEnabled) registerSwap(pg, key, entry, keyMap, items[i], i, noIndex);
           frag.appendChild(node);
         }
         if (outerNode2) pushEffect(outerNode2);
@@ -326,10 +419,14 @@ export function keyedList(
       const key = oldKeys[i];
       if (!newKeySet.has(key)) {
         const entry = keyMap.get(key)!;
-        const nodeToRemove = entry.node!;
-        disposeEntry(entry);
-        if (nodeToRemove.parentNode) {
-          parent.removeChild(nodeToRemove);
+        if (poolEnabled) {
+          poolEntry(pg, key, entry, keyMap);
+        } else {
+          const nodeToRemove = entry.node!;
+          disposeEntry(entry);
+          if (nodeToRemove.parentNode) {
+            parent.removeChild(nodeToRemove);
+          }
         }
         keyMap.delete(key);
       }
@@ -343,7 +440,13 @@ export function keyedList(
         setEntryItem(entry, items[i]);
         setEntryIndex(entry, i);
       } else {
-        entry = createEntry(items[i], i);
+        if (poolEnabled) {
+          const reclaimed = reclaimEntry(pg, key, items[i], i, noIndex);
+          entry = reclaimed || createEntry(items[i], i);
+          if (!reclaimed) registerSwap(pg, key, entry, keyMap, items[i], i, noIndex);
+        } else {
+          entry = createEntry(items[i], i);
+        }
         keyMap.set(key, entry);
       }
     }
@@ -399,6 +502,7 @@ export function keyedList(
     if (outerNode) popEffect();
 
     // Set disposal scope — computations created inside createFn register here
+    const outerScope = getDisposalScope();
     setDisposalScope(disposals);
     let node: Node;
     try {
@@ -406,7 +510,7 @@ export function keyedList(
         ? createFn(() => itemSig.value)
         : createFn(() => itemSig.value, () => idxSig!.value);
     } finally {
-      setDisposalScope(null);
+      setDisposalScope(outerScope);
       if (outerNode) pushEffect(outerNode);
     }
 

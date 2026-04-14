@@ -4,7 +4,7 @@ import type { RuntimeHelper } from '../utils.js'
 import { isUpperCase, DOM_EVENTS, ATTR_TO_PROP, DOM_PROPERTIES } from '../utils.js'
 import { classifyAttributes } from './jsx-attributes.js'
 import { classifyChildren } from './jsx-children.js'
-import { substituteExpression, exprToString } from './jsx-expression.js'
+import { substituteExpression, substituteStatements, exprToString } from './jsx-expression.js'
 import { isConditionalPattern, getConditionalParts } from './conditional.js'
 import { isKeyedListPattern, extractKeyedListInfo } from './keyed-list.js'
 import { SVG_CHILDREN } from '../utils.js'
@@ -86,6 +86,7 @@ export interface TransformContext {
   compCounter: { value: number }
   templateDeclarations: t.Statement[]
   templateCounter: { value: number }
+  poolCounter: { value: number }
 }
 
 /**
@@ -298,6 +299,29 @@ function analyzeStaticTree(
       if (isKeyedListPattern(child.expression)) {
         const info = extractKeyedListInfo(child.expression as t.CallExpression)
         if (info) {
+          orderedChildren.push({ kind: 'keyedList', ...info, nextStaticElementIndex: elementChildIndex })
+          continue
+        }
+      }
+      // Check for guarded keyed list: `expr && expr.map(item => <El key=... />)`
+      // The `&&` guard means "render nothing when falsy, keyed-list when truthy".
+      // Compile as a keyedList whose itemsFn returns [] when the guard is falsy.
+      if (
+        t.isLogicalExpression(child.expression) &&
+        child.expression.operator === '&&' &&
+        isKeyedListPattern(child.expression.right)
+      ) {
+        const info = extractKeyedListInfo(child.expression.right as t.CallExpression)
+        if (info) {
+          // Wrap collection with guard: () => (guard && collection) || []
+          // This way the keyed-list receives [] when guard is falsy, avoiding
+          // the overhead of conditional() + reactiveContent() which would
+          // recreate all DOM on every re-evaluation.
+          info.collection = t.logicalExpression(
+            '||',
+            t.logicalExpression('&&', child.expression.left, info.collection),
+            t.arrayExpression([]),
+          )
           orderedChildren.push({ kind: 'keyedList', ...info, nextStaticElementIndex: elementChildIndex })
           continue
         }
@@ -924,6 +948,36 @@ function transformHTMLElementLegacy(
         }
       }
 
+      // Check for guarded keyed list: `expr && expr.map(item => <El key=... />)`
+      if (
+        t.isLogicalExpression(child.expression) &&
+        child.expression.operator === '&&' &&
+        isKeyedListPattern(child.expression.right)
+      ) {
+        const info = extractKeyedListInfo(child.expression.right as t.CallExpression)
+        if (info) {
+          info.collection = t.logicalExpression(
+            '||',
+            t.logicalExpression('&&', child.expression.left, info.collection),
+            t.arrayExpression([]),
+          )
+          const listStmts = transformKeyedList(
+            info.collection,
+            info.itemParam,
+            info.keyExpression,
+            info.element,
+            elIdentifier,
+            ctx,
+            info.guardCondition,
+            undefined,
+            info.preStatements,
+            info.indexParam,
+          )
+          stmts.push(...listStmts)
+          continue
+        }
+      }
+
       const substituted = substituteExpression(child.expression, ctx.subs)
       // props.children or any prop slot may return DOM nodes — use reactiveContent
       if (isChildrenAccess(child.expression) || isPropSlotAccess(child.expression, ctx.subs)) {
@@ -1290,7 +1344,7 @@ function transformKeyedList(
   const keyFnParams: t.Identifier[] = [t.identifier(itemParam.name)]
   if (indexParam) keyFnParams.push(t.identifier(indexParam.name))
   const keyFn = preStatements
-    ? t.arrowFunctionExpression(keyFnParams, t.blockStatement([...preStatements, t.returnStatement(keyExpr)]))
+    ? t.arrowFunctionExpression(keyFnParams, t.blockStatement([...substituteStatements(preStatements, ctx.subs), t.returnStatement(keyExpr)]))
     : t.arrowFunctionExpression(keyFnParams, keyExpr)
 
   // Create function: (__itemGetter) => { const item = __itemGetter(); ... return __el/comp }
@@ -1327,9 +1381,10 @@ function transformKeyedList(
     ]),
   ]
 
-  // Include any pre-return statements from block body (e.g., local variable declarations)
+  // Include any pre-return statements from block body (e.g., local variable declarations).
+  // Apply substitutions so that template-local variables (e.g. `users`) are inlined.
   if (preStatements) {
-    createBodyStmts.push(...preStatements)
+    createBodyStmts.push(...substituteStatements(preStatements, ctx.subs))
   }
 
   // Replace index references with __indexGetter() calls so event handlers
@@ -1416,8 +1471,9 @@ function transformKeyedList(
 
   const createBody = t.blockStatement(createBodyStmts)
 
-  // keyedList(parent, __anchorN, () => collection, (item) => item.id, (__itemGetter, __indexGetter) => { ... })
+  // keyedList(parent, __anchorN, () => collection, (item) => item.id, (__itemGetter, __indexGetter) => { ... }, noIndex?, poolGroup?)
   const createFnParams = indexGetterParam ? [itemGetterParam, indexGetterParam] : [itemGetterParam]
+  const poolGroupId = `__pool_${ctx.poolCounter.value++}`
   const keyedListArgs: t.Expression[] = [
     parentId,
     anchorIdentifier,
@@ -1428,7 +1484,13 @@ function transformKeyedList(
   // When index param is unused, pass noIndex=true to skip index signal allocation
   if (!indexParam) {
     keyedListArgs.push(t.booleanLiteral(true))
+  } else {
+    // Push undefined placeholder so poolGroup is at correct position
+    keyedListArgs.push(t.identifier('undefined'))
   }
+  // Pool group: unique per keyedList call site — enables cross-instance DOM reuse
+  // while preventing cross-template contamination (e.g., assignee chips vs dropdown items)
+  keyedListArgs.push(t.stringLiteral(poolGroupId))
   stmts.push(t.expressionStatement(t.callExpression(t.identifier('keyedList'), keyedListArgs)))
 
   return stmts
@@ -1979,6 +2041,9 @@ function hoistEventHandlers(
 
     const eventName = eventLiteral.value
 
+    // Don't hoist handlers that reference `this` — it's only valid inside the class method
+    if (containsThisExpression(handler.body)) continue
+
     // Collect all Identifier references in the handler body
     const refs = new Set<string>()
     collectIdentifiers(handler.body, refs)
@@ -2040,6 +2105,19 @@ function hoistEventHandlers(
     // Replace the delegateEvent statement with data + handler assignments
     stmts.splice(i, 1, assignData, assignHandler)
   }
+}
+
+/** Check if an AST subtree contains a ThisExpression (skipping nested functions). */
+function containsThisExpression(node: any): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (Array.isArray(node)) return node.some(containsThisExpression)
+  if (node.type === 'ThisExpression') return true
+  if (node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') return false
+  for (const key of Object.keys(node)) {
+    if (key === 'type' || key === 'start' || key === 'end' || key === 'loc') continue
+    if (containsThisExpression(node[key])) return true
+  }
+  return false
 }
 
 /** Collect all Identifier names referenced in an AST subtree. */

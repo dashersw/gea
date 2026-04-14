@@ -93,7 +93,14 @@ function flush(): void {
       _batch.depth++;
       try {
         for (let i = 0; i < fns.length; i++) {
-          fns[i]();
+          try {
+            fns[i]();
+          } catch (e) {
+            // Don't let one effect crash abort all remaining effects.
+            // Schedule error re-throw so the browser reports it without
+            // blocking the flush (same pattern as React's rethrowError).
+            queueMicrotask(() => { throw e; });
+          }
         }
       } finally {
         _batch.depth--;

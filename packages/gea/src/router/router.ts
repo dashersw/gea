@@ -91,33 +91,37 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
 
   // Signal-backed reactive fields — initialized in constructor.
 
-  get path() { return (this as any)[SYM_PATH].peek() }
+  get path() { return (this as any)[SYM_PATH].value }
   set path(v: string) { (this as any)[SYM_PATH].value = v }
-  get route() { return (this as any)[SYM_ROUTE].peek() }
+  get route() { return (this as any)[SYM_ROUTE].value }
   set route(v: string) { (this as any)[SYM_ROUTE].value = v }
-  get params() { return (this as any)[SYM_PARAMS].peek() }
+  get params() { return (this as any)[SYM_PARAMS].value }
   set params(v: Record<string, string>) { (this as any)[SYM_PARAMS].value = v }
-  get query() { return (this as any)[SYM_QUERY].peek() }
+  get query() { return (this as any)[SYM_QUERY].value }
   set query(v: Record<string, string | string[]>) { (this as any)[SYM_QUERY].value = v }
-  get hash() { return (this as any)[SYM_HASH].peek() }
+  get hash() { return (this as any)[SYM_HASH].value }
   set hash(v: string) { (this as any)[SYM_HASH].value = v }
-  get matches() { return (this as any)[SYM_MATCHES].peek() }
+  get matches() { return (this as any)[SYM_MATCHES].value }
   set matches(v: string[]) { (this as any)[SYM_MATCHES].value = v }
-  get error() { return (this as any)[SYM_ERROR].peek() }
+  get error() { return (this as any)[SYM_ERROR].value }
   set error(v: string | null) { (this as any)[SYM_ERROR].value = v }
 
   constructor(routes?: T, options?: RouterOptions) {
     super()
 
-    // Initialize signal-backed fields
+    // Initialize signal-backed fields.
+    // Dual-key: Symbol for internal access, $$gea_ string for Store.observe().
     const self = this as any
-    self[SYM_PATH] = signal('')
-    self[SYM_ROUTE] = signal('')
-    self[SYM_PARAMS] = signal({})
-    self[SYM_QUERY] = signal({})
-    self[SYM_HASH] = signal('')
-    self[SYM_MATCHES] = signal([])
-    self[SYM_ERROR] = signal(null)
+    self[SYM_PATH] = self['$$gea_path'] = signal('')
+    self[SYM_ROUTE] = self['$$gea_route'] = signal('')
+    self[SYM_PARAMS] = self['$$gea_params'] = signal({})
+    self[SYM_QUERY] = self['$$gea_query'] = signal({})
+    self[SYM_HASH] = self['$$gea_hash'] = signal('')
+    self[SYM_MATCHES] = self['$$gea_matches'] = signal([])
+    self[SYM_ERROR] = self['$$gea_error'] = signal(null)
+    // View-version counter: incremented on every resolve so the Outlet
+    // re-renders even when path/query/hash haven't changed (e.g. guard→page transition).
+    self['$$gea__tick'] = signal(0)
 
     this.routeConfig = (routes ?? {}) as T
 
@@ -261,6 +265,12 @@ export class Router<T extends RouteMap = RouteMap> extends Store {
   }
 }
 
+/** Bump the view-version counter so Outlet observers always fire. */
+function _bumpTick(router: Router): void {
+  const s = (router as any)['$$gea__tick']
+  s.value = s._v + 1
+}
+
 function _navigate(router: Router, target: string | NavigationTarget, method: 'push' | 'replace'): void {
   if (typeof window === 'undefined') return
   const p = rp(router)
@@ -338,6 +348,7 @@ function _resolve(router: Router): void {
         router.query = parseQuery(currentSearch)
         router.hash = currentHash
         router.matches = resolved.matches
+        _bumpTick(router)
       })
       return
     }
@@ -361,6 +372,7 @@ function _resolve(router: Router): void {
           router.query = parseQuery(currentSearch)
           router.hash = currentHash
           router.matches = resolved.matches
+          _bumpTick(router)
         })
       })
 
@@ -371,6 +383,7 @@ function _resolve(router: Router): void {
       router.query = parseQuery(currentSearch)
       router.hash = currentHash
       router.matches = resolved.matches
+      _bumpTick(router)
     })
     return
   }
@@ -399,6 +412,7 @@ function _applyResolved(
     router.query = parseQuery(currentSearch)
     router.hash = currentHash
     router.matches = resolved.matches
+    _bumpTick(router)
   })
 }
 
