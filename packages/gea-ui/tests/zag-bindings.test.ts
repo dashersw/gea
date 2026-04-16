@@ -90,6 +90,11 @@ async function flushMicrotasks(rounds = 20) {
 
 // ── Compilation helpers ──────────────────────────────────────────────────
 
+async function loadGeaCoreBindings() {
+  const { default: _default, ...coreBindings } = await import('../../gea/src/index')
+  return coreBindings
+}
+
 async function compileSource(source: string, id: string, className: string, bindings: Record<string, unknown>) {
   const plugin = geaPlugin()
   const transform = typeof plugin.transform === 'function' ? plugin.transform : plugin.transform?.handler
@@ -107,7 +112,8 @@ async function compileSource(source: string, id: string, className: string, bind
 return ${className};`
 
   try {
-    return new Function(...Object.keys(bindings), compiledSource)(...Object.values(bindings))
+    const runtimeBindings = { ...(await loadGeaCoreBindings()), ...bindings }
+    return new Function(...Object.keys(runtimeBindings), compiledSource)(...Object.values(runtimeBindings))
   } catch (e) {
     console.error(`\n=== COMPILATION ERROR for ${id} ===\n${compiledSource.substring(0, 2000)}\n===END===\n`)
     throw e
@@ -134,13 +140,23 @@ function transpileTs(source: string): string {
 
 async function loadZagComponent(Component: any) {
   const { VanillaMachine, normalizeProps, spreadProps } = await import('@zag-js/vanilla')
+  const { GEA_MAPS, GEA_SYNC_MAP, GEA_UPDATE_PROPS } = await import('../../gea/src/lib/symbols')
   const src = await readFile(resolve(__dirname, '../src/primitives/zag-component.ts'), 'utf-8')
   const js = transpileTs(src)
     .replace(/^import\b.*$/gm, '')
     .replace(/^export\s+default\s+class\s+/, 'class ')
     .replace(/^export\s*\{[\s\S]*?\};?\s*$/gm, '')
-  const fn = new Function('Component', 'VanillaMachine', 'normalizeProps', 'spreadProps', `${js}\nreturn ZagComponent;`)
-  return fn(Component, VanillaMachine, normalizeProps, spreadProps)
+  const fn = new Function(
+    'Component',
+    'VanillaMachine',
+    'normalizeProps',
+    'spreadProps',
+    'GEA_MAPS',
+    'GEA_SYNC_MAP',
+    'GEA_UPDATE_PROPS',
+    `${js}\nreturn ZagComponent;`,
+  )
+  return fn(Component, VanillaMachine, normalizeProps, spreadProps, GEA_MAPS, GEA_SYNC_MAP, GEA_UPDATE_PROPS)
 }
 
 async function loadRealComponent(fileName: string, className: string, ZagComponent: any, zagModule: any) {
