@@ -752,7 +752,53 @@ export default class Component<P = Record<string, any>> extends Store {
       ;(existing as any)[GEA_DOM_COMPONENT] = child
       _mountComp(child, true)
       child[GEA_SYNC_UNRENDERED_LIST_ITEMS]()
+      if (typeof (child as any).__adoptListItems === 'function') (child as any).__adoptListItems()
       requestAnimationFrame(() => child.onAfterRenderAsync())
+    }
+  }
+
+  /**
+   * After hydration adopts compiled children, populate the compiler-generated
+   * `_<name>Items` tracking arrays with the adopted list-item components.
+   *
+   * During normal client rendering, `template()` populates these arrays via
+   * `this[GEA_CHILD]()` calls inside `.map()`.  During SSR hydration, `template()`
+   * is never called, so the arrays stay empty.  When a store change later
+   * triggers `GEA_RECONCILE_LIST`, the empty `oldItems` array causes every item
+   * to be re-created — duplicating the server-rendered DOM.
+   */
+  __adoptListItems(): void {
+    const _i = internals(this)
+    const adopted = _i.childComponents.filter(
+      (c) => c[GEA_ITEM_KEY] != null && (c as any)[GEA_RENDERED] && engineThis(c)[GEA_ELEMENT],
+    )
+    if (adopted.length === 0) return
+
+    adopted.sort((a, b) => {
+      const elA = engineThis(a)[GEA_ELEMENT]
+      const elB = engineThis(b)[GEA_ELEMENT]
+      if (!elA || !elB) return 0
+      const pos = elA.compareDocumentPosition(elB)
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1
+      return 0
+    })
+
+    const raw = ((this as any).__raw ?? this) as Record<string, unknown>
+
+    for (const key of Object.keys(raw)) {
+      if (!key.endsWith('Items') || !key.startsWith('_')) continue
+      const arr = raw[key]
+      if (!Array.isArray(arr) || arr.length > 0) continue
+      Array.prototype.push.apply(arr, adopted)
+    }
+
+    const configs = _i.listConfigs
+    if (!Array.isArray(configs)) return
+    for (const { config: c } of configs as Array<{ config: { items: AnyComponent[] | null; itemsKey?: string } }>) {
+      if (!c.items && c.itemsKey) c.items = raw[c.itemsKey] as AnyComponent[]
+      if (!c.items || c.items.length > 0) continue
+      Array.prototype.push.apply(c.items, adopted)
     }
   }
 

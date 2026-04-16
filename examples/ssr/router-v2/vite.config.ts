@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import type { Plugin } from 'vite'
 import { geaCoreAliases } from '../../shared/vite-config-base'
-import { geaPlugin } from '../../../packages/vite-plugin-gea/index.ts'
+import { geaPlugin } from '../../../packages/vite-plugin-gea/src/index.ts'
 import { geaSSR } from '../../../packages/gea-ssr/src/vite.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
