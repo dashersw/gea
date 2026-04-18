@@ -2,6 +2,7 @@ name: Performance
 
 on:
   push:
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -38,11 +39,11 @@ jobs:
       - run: npm run benchmark:record:simulation
       - run: cp benchmark-history/benchmark-simulation.latest.json /tmp/branch-results.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v8
         with:
           name: main-results
           path: /tmp/main-results.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v8
         with:
           name: branch-results
           path: /tmp/branch-results.json
@@ -50,17 +51,51 @@ jobs:
   compare:
     needs: benchmark
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: main-results
           path: /tmp/main
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: branch-results
           path: /tmp/branch
-      - run: |
+      - name: Compare benchmarks
+        id: compare
+        continue-on-error: true
+        run: |
+          set -o pipefail
           node scripts/compare-benchmarks.mjs \
             /tmp/main/main-results.json \
-            /tmp/branch/branch-results.json
+            /tmp/branch/branch-results.json | tee /tmp/perf-report.md
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs')
+            const path = '/tmp/perf-report.md'
+            if (!fs.existsSync(path) || fs.statSync(path).size === 0) {
+              core.warning('No performance report generated — skipping PR comment')
+              return
+            }
+            const report = fs.readFileSync(path, 'utf8')
+            const marker = '<!-- perf-regression -->'
+            const body = `${marker}\n${report}\n\n_Commit: ${{ github.sha }}_`
+            const { owner, repo } = context.repo
+            const issue_number = context.issue.number
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number })
+            const existing = comments.find(c => c.body.includes(marker))
+            const params = { owner, repo, body }
+            if (existing) {
+              await github.rest.issues.updateComment({ ...params, comment_id: existing.id })
+            } else {
+              await github.rest.issues.createComment({ ...params, issue_number })
+            }
+      - name: Fail on regression
+        if: steps.compare.outcome == 'failure'
+        run: exit 1
