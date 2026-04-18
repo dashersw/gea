@@ -91,6 +91,11 @@ export function collectExpressionDependencies(
   return Array.from(dependencies.values())
 }
 
+/** Returns true when a dependency is reactive state (not a prop dependency). */
+export function isStateDep(d: ObserveDependency): boolean {
+  return d.storeVar !== undefined || (d.pathParts.length > 0 && d.pathParts[0] !== 'props')
+}
+
 function collectExpressionDependenciesInto(
   expr: t.Expression,
   stateRefs: Map<string, StateRefMeta> | undefined,
