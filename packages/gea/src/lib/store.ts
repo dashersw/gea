@@ -152,6 +152,94 @@ function shouldWrapNestedReactiveValue(value: any): boolean {
 
 const getByPathParts = (obj: any, pathParts: string[]): any => pathParts.reduce((o: any, k: string) => o?.[k], obj)
 
+/** Per-prototype getter name cache — computed once per subclass. */
+const _protoGetterCache = new WeakMap<object, Set<string>>()
+
+function _getProtoGetters(t: Store): Set<string> {
+  const proto = Object.getPrototypeOf(t)
+  let cache = _protoGetterCache.get(proto)
+  if (!cache) {
+    cache = new Set<string>()
+    let p: any = proto
+    while (p && p !== Object.prototype) {
+      for (const name of Object.getOwnPropertyNames(p)) {
+        if (name === 'constructor') continue
+        const desc = Object.getOwnPropertyDescriptor(p, name)
+        if (desc?.get) cache.add(name)
+      }
+      p = Object.getPrototypeOf(p)
+    }
+    _protoGetterCache.set(proto, cache)
+  }
+  return cache
+}
+
+interface GetterMemo {
+  cache: Map<string, any>
+  fieldDeps: Map<string, Set<string>>
+  fieldToGetters: Map<string, Set<string>>
+  stack: string[]
+  stackSet: Set<string>
+  uncacheable: Set<string>
+}
+
+const _getterMemo = new WeakMap<Store, GetterMemo>()
+
+function _gm(t: Store): GetterMemo {
+  let m = _getterMemo.get(t)
+  if (!m) {
+    m = { cache: new Map(), fieldDeps: new Map(), fieldToGetters: new Map(), stack: [], stackSet: new Set(), uncacheable: new Set() }
+    _getterMemo.set(t, m)
+  }
+  return m
+}
+
+function _gmRecordDep(m: GetterMemo, fieldName: string): void {
+  const getter = m.stack[m.stack.length - 1]
+  let deps = m.fieldDeps.get(getter)
+  if (!deps) { deps = new Set(); m.fieldDeps.set(getter, deps) }
+  if (!deps.has(fieldName)) {
+    deps.add(fieldName)
+    let gtrs = m.fieldToGetters.get(fieldName)
+    if (!gtrs) { gtrs = new Set(); m.fieldToGetters.set(fieldName, gtrs) }
+    gtrs.add(getter)
+  }
+}
+
+function _gmMergeChild(m: GetterMemo, childGetter: string): void {
+  const parentGetter = m.stack[m.stack.length - 1]
+  const childDeps = m.fieldDeps.get(childGetter)
+  if (!childDeps || !childDeps.size) return
+  let parentDeps = m.fieldDeps.get(parentGetter)
+  if (!parentDeps) { parentDeps = new Set(); m.fieldDeps.set(parentGetter, parentDeps) }
+  for (const field of childDeps) {
+    if (!parentDeps.has(field)) {
+      parentDeps.add(field)
+      let gtrs = m.fieldToGetters.get(field)
+      if (!gtrs) { gtrs = new Set(); m.fieldToGetters.set(field, gtrs) }
+      gtrs.add(parentGetter)
+    }
+  }
+}
+
+function _gmClearDeps(m: GetterMemo, getterName: string): void {
+  const oldDeps = m.fieldDeps.get(getterName)
+  if (!oldDeps) return
+  for (const field of oldDeps) {
+    const gtrs = m.fieldToGetters.get(field)
+    if (gtrs) { gtrs.delete(getterName); if (!gtrs.size) m.fieldToGetters.delete(field) }
+  }
+  m.fieldDeps.delete(getterName)
+}
+
+function _gmInvalidate(t: Store, fieldName: string): void {
+  const m = _getterMemo.get(t)
+  if (!m) return
+  const gtrs = m.fieldToGetters.get(fieldName)
+  if (!gtrs || !gtrs.size) return
+  for (const getter of gtrs) m.cache.delete(getter)
+}
+
 function _wrapItem(store: Store, arr: any[], i: number, basePath: string, baseParts: string[]): any {
   const raw = arr[i]
   return shouldWrapNestedReactiveValue(raw)
@@ -602,8 +690,15 @@ function _flushChanges(raw: Store, p: StoreInstancePrivate): void {
 }
 
 function _pushAndSchedule(raw: Store, changes: StoreChange | StoreChange[], p: StoreInstancePrivate): void {
-  if (_isArr(changes)) for (const c of changes) p.pendingChanges.push(c)
-  else p.pendingChanges.push(changes)
+  if (_isArr(changes)) {
+    for (const c of changes) {
+      p.pendingChanges.push(c)
+      if (c.pathParts.length > 0) _gmInvalidate(raw, c.pathParts[0])
+    }
+  } else {
+    p.pendingChanges.push(changes)
+    if (changes.pathParts.length > 0) _gmInvalidate(raw, changes.pathParts[0])
+  }
   if (p.pendingBatchKind !== 2) {
     p.pendingBatchKind = 2
     p.pendingBatchArrayPathParts = null
@@ -626,6 +721,7 @@ function _isAppend(oldArr: any[], newArr: any[], unwrap: boolean): boolean {
 
 function _queueChange(raw: Store, change: StoreChange, p: StoreInstancePrivate): void {
   p.pendingChanges.push(change)
+  if (change.pathParts.length > 0) _gmInvalidate(raw, change.pathParts[0])
   if (
     p.pendingBatchKind !== 2 &&
     !(p.pendingBatchKind === 1 && p.pendingBatchArrayPathParts === change.arrayPathParts)
@@ -1076,8 +1172,50 @@ export class Store {
   }
 
   static rootGetValue(t: Store, prop: string, receiver: any): any {
-    if (!_hasOwn.call(t, prop)) return Reflect.get(t, prop, receiver)
+    if (!_hasOwn.call(t, prop)) {
+      // Memoize user-defined getters on Store subclasses
+      if (_getProtoGetters(t).has(prop)) {
+        const m = _gm(t)
+        if (!m.stackSet.has(prop)) {
+          if (m.cache.has(prop)) {
+            if (m.stack.length > 0) _gmMergeChild(m, prop)
+            return m.cache.get(prop)
+          }
+          _gmClearDeps(m, prop)
+          m.uncacheable.delete(prop)
+          m.stack.push(prop)
+          m.stackSet.add(prop)
+          let value: any
+          try {
+            value = Reflect.get(t, prop, receiver)
+          } finally {
+            m.stack.pop()
+            m.stackSet.delete(prop)
+            if (m.uncacheable.has(prop) && m.stack.length > 0) {
+              m.uncacheable.add(m.stack[m.stack.length - 1])
+            }
+          }
+          if (m.stack.length > 0) _gmMergeChild(m, prop)
+          const deps = m.fieldDeps.get(prop)
+          if (deps && deps.size > 0 && !m.uncacheable.has(prop)) {
+            m.cache.set(prop, value)
+          }
+          return value
+        }
+      }
+      return Reflect.get(t, prop, receiver)
+    }
     const value = (t as any)[prop]
+    // Track deps for any currently-computing getter
+    const gm = _getterMemo.get(t)
+    if (gm && gm.stack.length > 0) {
+      if (typeof value === 'function' || (prop as string).startsWith('_')) {
+        // Function fields and internal (_-prefixed) fields prevent caching
+        gm.uncacheable.add(gm.stack[gm.stack.length - 1])
+      } else {
+        _gmRecordDep(gm, prop)
+      }
+    }
     if (typeof value === 'function') return value
     if (value != null && typeof value === 'object') {
       if (!_isPlain(value)) return value
@@ -1107,6 +1245,7 @@ export class Store {
         p.topLevelProxies.delete(prop)
       }
       ;(t as any)[prop] = value
+      _gmInvalidate(t, prop)
       _pushAndSchedule(t, _mkChange(hadProp ? 'update' : 'add', prop, t, pathParts, value, oldValue), p)
       return true
     }
@@ -1120,6 +1259,7 @@ export class Store {
     _dropOld(p, oldValue)
     p.topLevelProxies.delete(prop)
     ;(t as any)[prop] = value
+    _gmInvalidate(t, prop)
     _commitObjSet(t, !hadProp, prop, t, pathParts, value, oldValue, false, p)
     return true
   }
@@ -1132,6 +1272,7 @@ export class Store {
     _dropOld(dp, oldValue)
     dp.topLevelProxies.delete(prop)
     delete (t as any)[prop]
+    _gmInvalidate(t, prop)
     _pushAndSchedule(t, [_mkChange('delete', prop, t, _rootPathPartsCache(dp, prop), undefined, oldValue)], dp)
     return true
   }
