@@ -95,8 +95,24 @@ function splitPath(path: string | string[]): string[] {
   return path ? path.split('.') : []
 }
 
-function appendPathParts(pathParts: string[], propStr: string): string[] {
-  return [...pathParts, propStr]
+// Module-level cache: WeakMap<baseParts, Map<segment, result>>.
+// Keys are the stable cached baseParts arrays produced by _makePathCache,
+// so entries are GC'd automatically when the owning proxy is collected.
+const _appendCache = new WeakMap<string[], Map<string, string[]>>()
+
+function _internAppend(baseParts: string[], segment: string): string[] {
+  let inner = _appendCache.get(baseParts)
+  if (inner === undefined) {
+    inner = new Map()
+    _appendCache.set(baseParts, inner)
+  }
+  let result = inner.get(segment)
+  if (result === undefined) {
+    result = baseParts.length > 0 ? [...baseParts, segment] : [segment]
+    // Cap inner Map to prevent unbounded growth for large arrays (e.g., numeric index keys)
+    if (inner.size < 10000) inner.set(segment, result)
+  }
+  return result
 }
 
 function joinPath(basePath: string, seg: string | number): string {
@@ -155,7 +171,7 @@ const getByPathParts = (obj: any, pathParts: string[]): any => pathParts.reduce(
 function _wrapItem(store: Store, arr: any[], i: number, basePath: string, baseParts: string[]): any {
   const raw = arr[i]
   return shouldWrapNestedReactiveValue(raw)
-    ? _createProxy(store, raw, joinPath(basePath, i), appendPathParts(baseParts, String(i)))
+    ? _createProxy(store, raw, joinPath(basePath, i), _internAppend(baseParts, String(i)))
     : raw
 }
 
@@ -327,7 +343,7 @@ function _addObserver(store: Store, pathParts: string[], handler: StoreObserver)
     const part = pathParts[i]
     let child = node.children.get(part)
     if (!child) {
-      child = _mkNode(appendPathParts(node.pathParts, part))
+      child = _mkNode(_internAppend(node.pathParts, part))
       node.children.set(part, child)
     }
     node = child
@@ -721,11 +737,11 @@ function _interceptArray(
         const changes: StoreChange[] = []
         for (let i = 0; i < removed.length; i++) {
           const idx = String(start + i)
-          changes.push(_mkChange('delete', idx, arr, appendPathParts(baseParts, idx), undefined, removed[i]))
+          changes.push(_mkChange('delete', idx, arr, _internAppend(baseParts, idx), undefined, removed[i]))
         }
         for (let i = 0; i < items.length; i++) {
           const idx = String(start + i)
-          changes.push(_mkChange('add', idx, arr, appendPathParts(baseParts, idx), items[i]))
+          changes.push(_mkChange('add', idx, arr, _internAppend(baseParts, idx), items[i]))
         }
         if (changes.length > 0) _pushAndSchedule(store, changes, p)
         return removed
@@ -743,7 +759,7 @@ function _interceptArray(
         } else {
           const changes: StoreChange[] = []
           for (let i = 0; i < rawItems.length; i++)
-            changes.push(_mkChange('add', String(i), arr, appendPathParts(baseParts, String(i)), rawItems[i]))
+            changes.push(_mkChange('add', String(i), arr, _internAppend(baseParts, String(i)), rawItems[i]))
           _pushAndSchedule(store, changes, p)
         }
         return arr.length
@@ -758,7 +774,7 @@ function _interceptArray(
         ;(Array.prototype as any)[method].call(arr)
         _pushAndSchedule(
           store,
-          [_mkChange('delete', String(idx), arr, appendPathParts(baseParts, String(idx)), undefined, removed)],
+          [_mkChange('delete', String(idx), arr, _internAppend(baseParts, String(idx)), undefined, removed)],
           p,
         )
         return removed
