@@ -389,4 +389,160 @@ describe('Component', () => {
       assert.deepEqual(values, [5])
     })
   })
+
+  describe('Map and Set reactivity in components', () => {
+    it('component with Map property fires observer on Map.set()', async () => {
+      class MapComp extends Component {
+        data = new Map<string, number>()
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new MapComp()
+      const changes: any[][] = []
+      comp.observe('data', (_v: any, c: any) => changes.push(c))
+      ;(comp.data as Map<string, number>).set('count', 42)
+      await flush()
+      assert.equal(changes.length, 1)
+      assert.equal(changes[0][0].type, 'set')
+      assert.equal(changes[0][0].property, 'count')
+      assert.equal(changes[0][0].newValue, 42)
+    })
+
+    it('component with Map property fires observer on Map.delete()', async () => {
+      class MapComp extends Component {
+        data = new Map<string, number>([['x', 1]])
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new MapComp()
+      const changes: any[][] = []
+      comp.observe('data', (_v: any, c: any) => changes.push(c))
+      ;(comp.data as Map<string, number>).delete('x')
+      await flush()
+      assert.equal(changes.length, 1)
+      assert.equal(changes[0][0].type, 'delete')
+      assert.equal(changes[0][0].property, 'x')
+    })
+
+    it('component with Map property does not fire observer when setting same value', async () => {
+      class MapComp extends Component {
+        data = new Map<string, number>([['a', 1]])
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new MapComp()
+      const changes: any[][] = []
+      comp.observe('data', (_v: any, c: any) => changes.push(c))
+      ;(comp.data as Map<string, number>).set('a', 1)
+      await flush()
+      assert.equal(changes.length, 0)
+    })
+
+    it('component Map proxy returns stable reference', () => {
+      class MapComp extends Component {
+        counters = new Map<string, number>()
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new MapComp()
+      assert.equal(comp.counters, comp.counters)
+    })
+
+    it('component with Set property fires observer on Set.add()', async () => {
+      class TagComp extends Component {
+        tags = new Set<string>()
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new TagComp()
+      const changes: any[][] = []
+      comp.observe('tags', (_v: any, c: any) => changes.push(c))
+      ;(comp.tags as Set<string>).add('react')
+      await flush()
+      assert.equal(changes.length, 1)
+      assert.equal(changes[0][0].type, 'set')
+      assert.equal(changes[0][0].property, 'react')
+      assert.equal(changes[0][0].newValue, 'react')
+    })
+
+    it('component with Set property fires observer on Set.delete()', async () => {
+      class TagComp extends Component {
+        tags = new Set<string>(['foo', 'bar'])
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new TagComp()
+      const changes: any[][] = []
+      comp.observe('tags', (_v: any, c: any) => changes.push(c))
+      ;(comp.tags as Set<string>).delete('foo')
+      await flush()
+      assert.equal(changes.length, 1)
+      assert.equal(changes[0][0].type, 'delete')
+      assert.equal(changes[0][0].property, 'foo')
+    })
+
+    it('component Set proxy returns stable reference', () => {
+      class SetComp extends Component {
+        ids = new Set<number>()
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new SetComp()
+      assert.equal(comp.ids, comp.ids)
+    })
+
+    it('component renders Map-based content and observer tracks key change', async () => {
+      class DictComp extends Component {
+        dict = new Map<string, string>([['greeting', 'Hello']])
+        getGreeting() {
+          return (this.dict as Map<string, string>).get('greeting') ?? ''
+        }
+        template() {
+          return `<div>${this.getGreeting()}</div>`
+        }
+      }
+      const comp = new DictComp()
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      comp.render(container)
+      assert.ok(container.textContent?.includes('Hello'))
+      const changes: any[][] = []
+      // Simulate reactive re-render driven by the observer (mirrors what the vite plugin
+      // compiles into components: rerun template expressions when observed data changes).
+      comp.observe('dict', (_v: any, c: any) => {
+        changes.push(c)
+        container.children[0].textContent = comp.getGreeting()
+      })
+      ;(comp.dict as Map<string, string>).set('greeting', 'Hi')
+      await flush()
+      assert.equal(changes.length, 1)
+      assert.equal(changes[0][0].newValue, 'Hi')
+      assert.ok(container.textContent?.includes('Hi'), 'DOM must reflect Map update via observer-driven re-render')
+    })
+
+    it('component with Set fires observer on Set.clear() only when non-empty', async () => {
+      class FlagComp extends Component {
+        flags = new Set<string>(['active', 'visible'])
+        template() {
+          return '<div></div>'
+        }
+      }
+      const comp = new FlagComp()
+      const changes: any[][] = []
+      comp.observe('flags', (_v: any, c: any) => changes.push(c))
+      ;(comp.flags as Set<string>).clear()
+      await flush()
+      assert.equal(changes.length, 1)
+      ;(comp.flags as Set<string>).clear()
+      await flush()
+      assert.equal(changes.length, 1, 'clear on empty set must not fire again')
+    })
+  })
 })

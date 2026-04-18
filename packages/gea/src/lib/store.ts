@@ -64,6 +64,7 @@ interface StoreInstancePrivate {
   nextArrayOpId: number
   observerRoot: ObserverNode
   proxyCache: WeakMap<any, any>
+  mapSetProxyCache: WeakMap<any, Map<string, any>>
   arrayIndexProxyCache: WeakMap<any, Map<string, any>>
   internedArrayPaths: Map<string, string[]>
   topLevelProxies: Map<string, [raw: any, proxy: any]>
@@ -150,7 +151,8 @@ function shouldWrapNestedReactiveValue(value: any): boolean {
   return value != null && typeof value === 'object' && _isPlain(value)
 }
 
-const getByPathParts = (obj: any, pathParts: string[]): any => pathParts.reduce((o: any, k: string) => o?.[k], obj)
+const getByPathParts = (obj: any, pathParts: string[]): any =>
+  pathParts.reduce((o: any, k: string) => (o instanceof Map ? o.get(k) : o?.[k]), obj)
 
 function _wrapItem(store: Store, arr: any[], i: number, basePath: string, baseParts: string[]): any {
   const raw = arr[i]
@@ -412,6 +414,7 @@ function _tagArrayItem(c: StoreChange, m: ArrayProxyMeta, leafParts: string[]): 
 
 function _dropCaches(p: StoreInstancePrivate, v: any): void {
   p.proxyCache.delete(v)
+  p.mapSetProxyCache.delete(v)
   p.arrayIndexProxyCache.delete(v)
 }
 
@@ -841,6 +844,128 @@ function _makePathCache(base: string[]): (prop: string) => string[] {
   }
 }
 
+/**
+ * Creates a reactive Proxy for a Map instance.
+ *
+ * Keys MUST be strings or numbers. Object keys are rejected with a TypeError
+ * because non-string keys would be silently serialized to "[object Object]"
+ * when stored in StoreChange.property and pathParts, causing observer path
+ * collisions and unreachable change events.
+ */
+function _createMapProxy(
+  store: Store,
+  map: Map<any, any>,
+  baseParts: string[],
+  p: StoreInstancePrivate,
+): any {
+  const proxy = new Proxy(map, {
+    get(target, prop) {
+      if (prop === 'set') {
+        return (key: any, value: any) => {
+          if (typeof key !== 'string' && typeof key !== 'number') {
+            throw new TypeError(
+              `[gea] Reactive Map keys must be strings or numbers, got: ${typeof key}`,
+            )
+          }
+          const keyStr = String(key)
+          const oldValue = target.get(key)
+          target.set(key, value)
+          if (oldValue !== value) {
+            _pushAndSchedule(
+              store,
+              [{ type: 'set', property: keyStr, target, pathParts: appendPathParts(baseParts, keyStr), newValue: value, previousValue: oldValue }],
+              p,
+            )
+          }
+          return proxy
+        }
+      }
+      if (prop === 'delete') {
+        return (key: any) => {
+          if (typeof key !== 'string' && typeof key !== 'number') {
+            throw new TypeError(
+              `[gea] Reactive Map keys must be strings or numbers, got: ${typeof key}`,
+            )
+          }
+          const keyStr = String(key)
+          const existed = target.has(key)
+          const oldValue = target.get(key)
+          target.delete(key)
+          if (existed) {
+            _pushAndSchedule(
+              store,
+              [{ type: 'delete', property: keyStr, target, pathParts: appendPathParts(baseParts, keyStr), previousValue: oldValue }],
+              p,
+            )
+          }
+          return existed
+        }
+      }
+      if (prop === 'clear') {
+        return () => {
+          if (target.size > 0) {
+            target.clear()
+            _pushAndSchedule(store, [{ type: 'set', property: '', target, pathParts: baseParts }], p)
+          }
+        }
+      }
+      const value = Reflect.get(target, prop, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  return proxy
+}
+
+function _createSetProxy(
+  store: Store,
+  set: Set<any>,
+  baseParts: string[],
+  p: StoreInstancePrivate,
+): any {
+  const proxy = new Proxy(set, {
+    get(target, prop) {
+      if (prop === 'add') {
+        return (value: any) => {
+          if (!target.has(value)) {
+            target.add(value)
+            _pushAndSchedule(
+              store,
+              [{ type: 'set', property: String(value), target, pathParts: appendPathParts(baseParts, String(value)), newValue: value }],
+              p,
+            )
+          }
+          return proxy
+        }
+      }
+      if (prop === 'delete') {
+        return (value: any) => {
+          const existed = target.has(value)
+          target.delete(value)
+          if (existed) {
+            _pushAndSchedule(
+              store,
+              [{ type: 'delete', property: String(value), target, pathParts: appendPathParts(baseParts, String(value)), previousValue: value }],
+              p,
+            )
+          }
+          return existed
+        }
+      }
+      if (prop === 'clear') {
+        return () => {
+          if (target.size > 0) {
+            target.clear()
+            _pushAndSchedule(store, [{ type: 'set', property: '', target, pathParts: baseParts }], p)
+          }
+        }
+      }
+      const v = Reflect.get(target, prop, target)
+      return typeof v === 'function' ? v.bind(target) : v
+    },
+  })
+  return proxy
+}
+
 function _createProxy(
   store: Store,
   target: any,
@@ -911,8 +1036,38 @@ function _createProxy(
           return proxyCached
         }
       } else {
-        const cached = _p.proxyCache.get(value)
-        if (cached) return cached
+        if (!(value instanceof Map) && !(value instanceof Set)) {
+          const cached = _p.proxyCache.get(value)
+          if (cached) return cached
+        }
+      }
+      if (value instanceof Map) {
+        const currentPath = joinPath(basePath, prop as string)
+        let pathMap = _p.mapSetProxyCache.get(value)
+        if (!pathMap) {
+          pathMap = new Map()
+          _p.mapSetProxyCache.set(value, pathMap)
+        }
+        let mapProxy = pathMap.get(currentPath)
+        if (!mapProxy) {
+          mapProxy = _createMapProxy(store, value, getCachedPathParts(prop as string), _p)
+          pathMap.set(currentPath, mapProxy)
+        }
+        return mapProxy
+      }
+      if (value instanceof Set) {
+        const currentPath = joinPath(basePath, prop as string)
+        let pathMap = _p.mapSetProxyCache.get(value)
+        if (!pathMap) {
+          pathMap = new Map()
+          _p.mapSetProxyCache.set(value, pathMap)
+        }
+        let setProxy = pathMap.get(currentPath)
+        if (!setProxy) {
+          setProxy = _createSetProxy(store, value, getCachedPathParts(prop as string), _p)
+          pathMap.set(currentPath, setProxy)
+        }
+        return setProxy
       }
       if (!_isPlain(value)) return value
       if (isArrIdx) {
@@ -1080,6 +1235,22 @@ export class Store {
     const value = (t as any)[prop]
     if (typeof value === 'function') return value
     if (value != null && typeof value === 'object') {
+      if (value instanceof Map) {
+        const p = storeInstancePrivate.get(t)!
+        const entry = p.topLevelProxies.get(prop)
+        if (entry && entry[0] === value) return entry[1]
+        const mapProxy = _createMapProxy(t, value, _rootPathPartsCache(p, prop), p)
+        p.topLevelProxies.set(prop, [value, mapProxy])
+        return mapProxy
+      }
+      if (value instanceof Set) {
+        const p = storeInstancePrivate.get(t)!
+        const entry = p.topLevelProxies.get(prop)
+        if (entry && entry[0] === value) return entry[1]
+        const setProxy = _createSetProxy(t, value, _rootPathPartsCache(p, prop), p)
+        p.topLevelProxies.set(prop, [value, setProxy])
+        return setProxy
+      }
       if (!_isPlain(value)) return value
       if (shouldSkipReactiveWrapForPath(prop)) return value
       const p = storeInstancePrivate.get(t)!
@@ -1145,6 +1316,7 @@ export class Store {
       nextArrayOpId: 0,
       observerRoot: _mkNode([]),
       proxyCache: new WeakMap(),
+      mapSetProxyCache: new WeakMap(),
       arrayIndexProxyCache: new WeakMap(),
       internedArrayPaths: new Map(),
       topLevelProxies: new Map(),

@@ -675,3 +675,181 @@ describe('Store – silent()', () => {
     assert.equal(notified, false, 'observer must not fire for array mutations inside silent()')
   })
 })
+
+describe('Store – Map reactivity', () => {
+  it('Map.set() triggers observer', async () => {
+    const store = new Store({ data: new Map<string, number>() })
+    const changes: StoreChange[][] = []
+    store.observe('data', (_v, c) => changes.push(c))
+    ;(store.data as Map<string, number>).set('a', 1)
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0][0].type, 'set')
+    assert.equal(changes[0][0].property, 'a')
+    assert.equal(changes[0][0].newValue, 1)
+  })
+
+  it('Map.set() same value does not trigger observer', async () => {
+    const store = new Store({ data: new Map<string, number>([['a', 1]]) })
+    const changes: StoreChange[][] = []
+    store.observe('data', (_v, c) => changes.push(c))
+    ;(store.data as Map<string, number>).set('a', 1)
+    await flush()
+    assert.equal(changes.length, 0)
+  })
+
+  it('Map.delete() triggers observer', async () => {
+    const store = new Store({ data: new Map<string, number>([['a', 1]]) })
+    const changes: StoreChange[][] = []
+    store.observe('data', (_v, c) => changes.push(c))
+    ;(store.data as Map<string, number>).delete('a')
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0][0].type, 'delete')
+    assert.equal(changes[0][0].property, 'a')
+  })
+
+  it('Map.clear() triggers observer', async () => {
+    const store = new Store({ data: new Map<string, number>([['a', 1], ['b', 2]]) })
+    const changes: StoreChange[][] = []
+    store.observe('data', (_v, c) => changes.push(c))
+    ;(store.data as Map<string, number>).clear()
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0][0].type, 'set')
+  })
+
+  it('Map.clear() on empty map does not trigger observer', async () => {
+    const store = new Store({ data: new Map<string, number>() })
+    const changes: StoreChange[][] = []
+    store.observe('data', (_v, c) => changes.push(c))
+    ;(store.data as Map<string, number>).clear()
+    await flush()
+    assert.equal(changes.length, 0)
+  })
+
+  it('Map reads work correctly through proxy', () => {
+    const store = new Store({ data: new Map<string, number>([['x', 42]]) })
+    const map = store.data as Map<string, number>
+    assert.equal(map.get('x'), 42)
+    assert.equal(map.has('x'), true)
+    assert.equal(map.has('y'), false)
+    assert.equal(map.size, 1)
+  })
+
+  it('Map proxy returns same proxy reference', () => {
+    const store = new Store({ data: new Map<string, number>() })
+    assert.equal(store.data, store.data)
+  })
+
+  it('Map.set() with object key throws TypeError', () => {
+    const store = new Store({ data: new Map<any, number>() })
+    assert.throws(
+      () => (store.data as Map<any, number>).set({}, 1),
+      /Reactive Map keys must be strings or numbers/,
+    )
+  })
+
+  it('Map.set() with numeric key works correctly', async () => {
+    const store = new Store({ data: new Map<number, string>() })
+    const changes: StoreChange[][] = []
+    store.observe('data', (_v, c) => changes.push(c))
+    ;(store.data as Map<number, string>).set(1, 'one')
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0][0].property, '1')
+    assert.equal(changes[0][0].newValue, 'one')
+  })
+
+  it('observer at Map key path receives correct value', async () => {
+    const store = new Store({ data: new Map<string, number>([['x', 10]]) })
+    const values: number[] = []
+    store.observe('data.x', (v) => values.push(v))
+    ;(store.data as Map<string, number>).set('x', 42)
+    await flush()
+    assert.equal(values.length, 1)
+    assert.equal(values[0], 42)
+  })
+
+  it('same Map instance at two nested paths uses correct pathParts for each', async () => {
+    const shared = new Map<string, number>([['k', 1]])
+    const store = new Store({ a: { m: shared }, b: { m: shared } })
+    const aChanges: any[][] = []
+    const bChanges: any[][] = []
+    store.observe('a.m', (_v, c) => aChanges.push(c))
+    store.observe('b.m', (_v, c) => bChanges.push(c))
+    ;(store.a.m as Map<string, number>).set('k', 2)
+    await flush()
+    ;(store.b.m as Map<string, number>).set('k', 3)
+    await flush()
+    assert.equal(aChanges.length, 1, 'a.m observer must fire once')
+    assert.equal(bChanges.length, 1, 'b.m observer must fire once')
+    assert.deepEqual(aChanges[0][0].pathParts, ['a', 'm', 'k'])
+    assert.deepEqual(bChanges[0][0].pathParts, ['b', 'm', 'k'])
+  })
+})
+
+describe('Store – Set reactivity', () => {
+  it('Set.add() triggers observer', async () => {
+    const store = new Store({ tags: new Set<string>() })
+    const changes: StoreChange[][] = []
+    store.observe('tags', (_v, c) => changes.push(c))
+    ;(store.tags as Set<string>).add('hello')
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0][0].type, 'set')
+    assert.equal(changes[0][0].property, 'hello')
+    assert.equal(changes[0][0].newValue, 'hello')
+  })
+
+  it('Set.add() duplicate does not trigger observer', async () => {
+    const store = new Store({ tags: new Set<string>(['hello']) })
+    const changes: StoreChange[][] = []
+    store.observe('tags', (_v, c) => changes.push(c))
+    ;(store.tags as Set<string>).add('hello')
+    await flush()
+    assert.equal(changes.length, 0)
+  })
+
+  it('Set.delete() triggers observer', async () => {
+    const store = new Store({ tags: new Set<string>(['hello']) })
+    const changes: StoreChange[][] = []
+    store.observe('tags', (_v, c) => changes.push(c))
+    ;(store.tags as Set<string>).delete('hello')
+    await flush()
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0][0].type, 'delete')
+    assert.equal(changes[0][0].property, 'hello')
+  })
+
+  it('Set.clear() triggers observer', async () => {
+    const store = new Store({ tags: new Set<string>(['a', 'b']) })
+    const changes: StoreChange[][] = []
+    store.observe('tags', (_v, c) => changes.push(c))
+    ;(store.tags as Set<string>).clear()
+    await flush()
+    assert.equal(changes.length, 1)
+  })
+
+  it('Set.clear() on empty set does not trigger observer', async () => {
+    const store = new Store({ tags: new Set<string>() })
+    const changes: StoreChange[][] = []
+    store.observe('tags', (_v, c) => changes.push(c))
+    ;(store.tags as Set<string>).clear()
+    await flush()
+    assert.equal(changes.length, 0)
+  })
+
+  it('Set reads work correctly through proxy', () => {
+    const store = new Store({ tags: new Set<string>(['a', 'b']) })
+    const set = store.tags as Set<string>
+    assert.equal(set.has('a'), true)
+    assert.equal(set.has('c'), false)
+    assert.equal(set.size, 2)
+  })
+
+  it('Set proxy returns same proxy reference', () => {
+    const store = new Store({ tags: new Set<string>() })
+    assert.equal(store.tags, store.tags)
+  })
+})
