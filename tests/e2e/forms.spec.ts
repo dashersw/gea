@@ -90,14 +90,16 @@ test.describe('forms settings page', () => {
     const deleteBtn = page.locator('[data-scope="tags-input"] [data-part="item-delete-trigger"]').first()
     await deleteBtn.click()
 
-    await expect(page.locator('[data-scope="tags-input"] [data-part="item-preview"]', { hasText: '192.168.1.1' })).toHaveCount(0)
+    await expect(
+      page.locator('[data-scope="tags-input"] [data-part="item-preview"]', { hasText: '192.168.1.1' }),
+    ).toHaveCount(0)
     await expect(page.getByText('10.0.0.1')).toBeVisible()
   })
 
   test('documents section has file upload', async ({ page }) => {
     await expect(page.getByRole('heading', { name: 'Documents' })).toBeVisible()
     // FileUpload component should exist
-    await expect(page.locator('[data-scope="file-upload"]')).toBeAttached()
+    await expect(page.locator('[data-scope="file-upload"][data-part="dropzone"]')).toBeAttached()
   })
 
   test('action buttons are visible', async ({ page }) => {

@@ -1791,9 +1791,9 @@ export default class App extends Component {
             <p class="doc-desc">Drag-and-drop or click-to-browse file uploader.</p>
             <div class="demo-block">
               <div class="demo-preview" style={{ width: '100%' }}>
-                <FileUpload maxFiles={3} multiple />
+                <FileUpload maxFiles={3} />
               </div>
-              <div class="demo-code">{`<FileUpload maxFiles={3} multiple />`}</div>
+              <div class="demo-code">{`<FileUpload maxFiles={3} />`}</div>
             </div>
             <h3>API</h3>
             <table class="prop-table">
@@ -1809,7 +1809,7 @@ export default class App extends Component {
                 <tr>
                   <td class="prop-name">accept</td>
                   <td class="prop-type">
-                    <code>Record&lt;string, string[]&gt;</code>
+                    <code>string | string[] | Record&lt;string, string[]&gt;</code>
                   </td>
                   <td class="prop-default">—</td>
                   <td>Accepted file types</td>
@@ -1823,6 +1823,14 @@ export default class App extends Component {
                   <td>Maximum file count</td>
                 </tr>
                 <tr>
+                  <td class="prop-name">minFileSize</td>
+                  <td class="prop-type">
+                    <code>number</code>
+                  </td>
+                  <td class="prop-default">—</td>
+                  <td>Min file size in bytes</td>
+                </tr>
+                <tr>
                   <td class="prop-name">maxFileSize</td>
                   <td class="prop-type">
                     <code>number</code>
@@ -1831,20 +1839,141 @@ export default class App extends Component {
                   <td>Max file size in bytes</td>
                 </tr>
                 <tr>
-                  <td class="prop-name">multiple</td>
+                  <td class="prop-name">allowDrop</td>
+                  <td class="prop-type">
+                    <code>boolean</code>
+                  </td>
+                  <td class="prop-default">true</td>
+                  <td>Allow drag&drop selection</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">preventDocumentDrop</td>
+                  <td class="prop-type">
+                    <code>boolean</code>
+                  </td>
+                  <td class="prop-default">true</td>
+                  <td>Prevent dropping file outside the dropzone</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">name</td>
+                  <td class="prop-type">
+                    <code>string</code>
+                  </td>
+                  <td class="prop-default">—</td>
+                  <td>Input name (for usage in form)</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">class</td>
+                  <td class="prop-type">
+                    <code>string</code>
+                  </td>
+                  <td class="prop-default">—</td>
+                  <td>Class name(s) added to the root element</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">label</td>
+                  <td class="prop-type">
+                    <code>JSXNode</code>
+                  </td>
+                  <td class="prop-default">—</td>
+                  <td>Label above the dropzone</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">disabled</td>
                   <td class="prop-type">
                     <code>boolean</code>
                   </td>
                   <td class="prop-default">false</td>
-                  <td>Allow multiple files</td>
+                  <td>Disable interaction</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">formatFileSize</td>
+                  <td class="prop-type">
+                    <code>{'(bytes: number) => string'}</code>
+                  </td>
+                  <td class="prop-default">localized, 2 decimal points, suffix</td>
+                  <td>Function formatting file size in the file list</td>
                 </tr>
                 <tr>
                   <td class="prop-name">onFileChange</td>
                   <td class="prop-type">
-                    <code>{'(details) => void'}</code>
+                    <code>
+                      {
+                        '(details: { acceptedFiles: File[], rejectedFiles: { file: File, errors: string[] }[] }) => void'
+                      }
+                    </code>
                   </td>
                   <td class="prop-default">—</td>
-                  <td>File change callback</td>
+                  <td>
+                    <a href="https://zagjs.com/components/react/file-upload#listening-to-file-changes">
+                      File change callback
+                    </a>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="prop-name">translations</td>
+                  <td class="prop-type">
+                    <code>
+                      Partial{'<'}FileUploadTranslations{'>'}
+                    </code>
+                  </td>
+                  <td class="prop-default">see Translations</td>
+                  <td>Override UI strings</td>
+                </tr>
+              </tbody>
+            </table>
+            <h3>Translations</h3>
+            <table class="prop-table">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Type</th>
+                  <th>Default</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="prop-name">dropzone</td>
+                  <td class="prop-type">
+                    <code>string</code>
+                  </td>
+                  <td class="prop-default">Drag and drop files here</td>
+                  <td>Default dropzone text</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">dropzoneButton</td>
+                  <td class="prop-type">
+                    <code>string</code>
+                  </td>
+                  <td class="prop-default">Choose Files</td>
+                  <td>Button triggering file selection</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">dropzoneActive</td>
+                  <td class="prop-type">
+                    <code>string</code>
+                  </td>
+                  <td class="prop-default">Drop your files here</td>
+                  <td>Dropzone text while files are being dragged</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">deleteFile</td>
+                  <td class="prop-type">
+                    <code>{'(file: File) => string'}</code>
+                  </td>
+                  <td class="prop-default">
+                    <code>{`(file: File) => 'Remove file ' + file.name`}</code>
+                  </td>
+                  <td>Button removing single file from the list</td>
+                </tr>
+                <tr>
+                  <td class="prop-name">clearAllButton</td>
+                  <td class="prop-type">
+                    <code>string</code>
+                  </td>
+                  <td class="prop-default">Clear all</td>
+                  <td>Button removing all files from the list</td>
                 </tr>
               </tbody>
             </table>

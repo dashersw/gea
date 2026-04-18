@@ -578,11 +578,29 @@ import { FileUpload } from '@geajs/ui'
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `label` | `string` | — | Label text |
-| `accept` | `Record<string, string[]>` | — | Accepted MIME types and extensions |
+| `label` | `JSXNode` | — | Label text |
+| `accept` | `string \| string[] \| Record<string, string[]>` | — | Accepted MIME types and extensions |
 | `maxFiles` | `number` | — | Maximum number of files |
+| `minFileSize` | `number` | — | Minimum file size in bytes |
 | `maxFileSize` | `number` | — | Maximum file size in bytes |
-| `onFileChange` | `(details: { acceptedFiles: File[], rejectedFiles: File[] }) => void` | — | Called when files are selected |
+| `allowDrop` | `boolean` | `true` | Allow drag&drop selection |
+| `preventDocumentDrop` | `boolean` | `true` | Prevent dropping file outside the dropzone |
+| `name` | `string` | — | Input name (for usage in form) |
+| `class` | `string` | — | Class name(s) added to the root element |
+| `disabled` | `boolean` | `false` | Disable interaction |
+| `formatFileSize` | `(bytes: number) => string` | localized, 2 decimal points, suffix | Function formatting file size in the file list |
+| `onFileChange` | `(details: { acceptedFiles: File[], rejectedFiles: { file: File, errors: string[] }[] }) => void` | — | Called when files are selected  |
+| `translations` | `Partial<FileUploadTranslations>` | see Translations | Override UI strings |
+
+### Translations
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `dropzone` | `string` | Drag and drop files here | Default dropzone text |
+| `dropzoneButton` | `string` | Choose Files | Button triggering file selection |
+| `dropzoneActive` | `string` | Drop your files here | Dropzone text while files are being dragged |
+| `deleteFile` | `(file: File) => string` | ``(file: File) => `Remove file ${file.name}` `` | Button removing single file from the list |
+| `clearAllButton` | `string` | Clear all | Button removing all files from the list |
 
 ## Toast
 
