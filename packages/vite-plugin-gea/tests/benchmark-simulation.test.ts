@@ -1219,4 +1219,112 @@ describe('benchmark simulation: gea vs vanilla slowdown', () => {
       restoreDom()
     }
   })
+
+  test('12 clone optimization: static-only vs child-instance component (1k mounts)', async () => {
+    const seed = `bench-clone-${Date.now()}-${Math.random()}`
+    const restoreDom = installDom()
+
+    try {
+      const [{ default: Component }] = await loadRuntimeModules(seed)
+
+      // ── Baseline: static-only component (no child instances) ──
+      const staticSource = `
+        import { Component } from '@geajs/core'
+        export default class StaticComp extends Component {
+          template() {
+            return (
+              <div class="static">
+                <h1>Title</h1>
+                <p>paragraph</p>
+                <span>footer</span>
+              </div>
+            )
+          }
+        }
+      `
+      const StaticComp = await compileJsxComponent(staticSource, '/virtual/StaticComp.jsx', 'StaticComp', { Component })
+
+      // ── Subject: component with child instance (uses replaceChild slot) ──
+      const childSource = `
+        import { Component } from '@geajs/core'
+        export default class ChildComp extends Component {
+          template() { return <div class="child">child content</div> }
+        }
+      `
+      const ChildComp = await compileJsxComponent(childSource, '/virtual/ChildComp.jsx', 'ChildComp', { Component })
+
+      const parentSource = `
+        import { Component } from '@geajs/core'
+        import ChildComp from './ChildComp'
+        export default class ParentComp extends Component {
+          template() {
+            return (
+              <div class="parent">
+                <ChildComp />
+                <p>static content</p>
+              </div>
+            )
+          }
+        }
+      `
+      const ParentComp = await compileJsxComponent(parentSource, '/virtual/ParentComp.jsx', 'ParentComp', { Component, ChildComp })
+
+      const COUNT = 1000
+      const TRIALS = 5
+      const root = document.createElement('div')
+      document.body.appendChild(root)
+
+      function measureMounts(Cls: new () => { render: (el: HTMLElement) => void; dispose: () => void }, count: number): number {
+        const apps: Array<{ dispose(): void }> = []
+        const t0 = performance.now()
+        for (let i = 0; i < count; i++) {
+          const app = new Cls()
+          app.render(root)
+          apps.push(app)
+        }
+        const elapsed = performance.now() - t0
+        for (const app of apps) app.dispose()
+        return elapsed
+      }
+
+      // Warm-up
+      for (let i = 0; i < 3; i++) {
+        measureMounts(StaticComp as any, 10)
+        measureMounts(ParentComp as any, 10)
+      }
+      await flush()
+
+      // Trials
+      const staticTimes: number[] = []
+      const parentTimes: number[] = []
+      for (let t = 0; t < TRIALS; t++) {
+        staticTimes.push(measureMounts(StaticComp as any, COUNT))
+        await flush()
+        parentTimes.push(measureMounts(ParentComp as any, COUNT))
+        await flush()
+      }
+
+      root.remove()
+
+      const staticMed = staticTimes.sort((a, b) => a - b)[Math.floor(TRIALS / 2)]
+      const parentMed = parentTimes.sort((a, b) => a - b)[Math.floor(TRIALS / 2)]
+      const overheadPct = ((parentMed - staticMed) / staticMed) * 100
+      const overhead = overheadPct.toFixed(1)
+
+      console.log(
+        `  static (${COUNT} mounts): ${staticMed.toFixed(1)}ms = ${(staticMed / COUNT).toFixed(3)}ms/mount\n` +
+          `  with child (${COUNT} mounts): ${parentMed.toFixed(1)}ms = ${(parentMed / COUNT).toFixed(3)}ms/mount\n` +
+          `  overhead vs static-only: +${overhead}%  (child slot replaceChild cost)`,
+      )
+
+      assert.ok(staticMed > 0, 'static mount time should be positive')
+      assert.ok(parentMed > 0, 'parent+child mount time should be positive')
+      assert.ok(overheadPct < 50, `child instance overhead should be < 50% (got ${overhead}%)`)
+
+      report('12 clone (child instances)', { vanilla: staticMed / COUNT, gea: parentMed / COUNT, slowdown: parentMed / staticMed })
+    } finally {
+      await cleanupDelay()
+      restoreDom()
+    }
+  })
 })
