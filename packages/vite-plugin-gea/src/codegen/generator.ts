@@ -218,7 +218,6 @@ export function transformComponentFile(
       const preCloneEligible =
         t.isJSXElement(retStmt.argument) &&
         preReturnStmts.length === 0 &&
-        componentInstances.size === 0 &&
         analysis.conditionalSlots.length === 0 &&
         analysis.arrayMaps.length === 0 &&
         analysis.unresolvedMaps.length === 0 &&

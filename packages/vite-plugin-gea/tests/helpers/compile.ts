@@ -190,11 +190,12 @@ return ${className};`
 export async function loadRuntimeModules(seed: string) {
   const { default: ComponentManager } = await import('../../../gea/src/lib/base/component-manager')
   ComponentManager.instance = undefined
-  const [componentModule, storeModule] = await Promise.all([
+  const [componentModule, storeModule, symbolsModule] = await Promise.all([
     import(`../../../gea/src/lib/base/component.tsx?${seed}`),
     import(`../../../gea/src/lib/store.ts?${seed}`),
+    import(`../../../gea/src/lib/symbols.ts?${seed}`),
   ])
-  return [componentModule, storeModule]
+  return [componentModule, storeModule, symbolsModule] as const
 }
 
 /** Same `Component` module as `@geajs/ui` and `RouterView` — required when mixing compiled examples with those packages (seeded `component.tsx?seed` breaks prototype checks). */
