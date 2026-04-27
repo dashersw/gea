@@ -31,7 +31,7 @@ In an equivalent interactive todo app with reactive state, input handling, filte
 
 | Framework | Version | Minified JS raw | Minified JS brotli | Total raw JS+CSS | Total brotli JS+CSS |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Gea | 1.3.0 | 15,265 B | **4,850 B** | 17,976 B | **5,607 B** |
+| Gea | 1.3.0 | 15,364 B | **4,896 B** | 18,075 B | **5,664 B** |
 | Solid | 1.9.12 | 16,181 B | 5,721 B | 18,892 B | 6,485 B |
 | Svelte | 5.55.5 | 38,812 B | 13,661 B | 41,523 B | 14,429 B |
 | Vue | 3.5.33 | 63,676 B | 22,585 B | 66,387 B | 23,411 B |
