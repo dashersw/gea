@@ -1,5 +1,11 @@
 # @geajs/vite-plugin
 
+## 1.3.1
+
+### Patch Changes
+
+- Run Vite dev through the same semantic compiler transforms as production builds, including Store class compilation, dotted observe-path rewriting, and static root mount inlining. Static root inlining now also registers watched source files so dev invalidation tracks the files it embeds.
+
 ## 1.3.0
 
 ### Minor Changes
