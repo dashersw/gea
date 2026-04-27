@@ -237,7 +237,7 @@ export function geaPlugin(): Plugin {
 
       if (/\bclass\s+Component\s+extends\s+Store\b/.test(code)) return null
 
-      if (!isServeCommand && !isSSR) {
+      if (!isSSR) {
         const observeResult = transformDottedObserveCalls(transformedCode)
         if (observeResult?.changed) {
           transformedCode = observeResult.code
@@ -248,7 +248,10 @@ export function geaPlugin(): Plugin {
         if (storeResult?.changed) return { code: storeResult.code, map: null }
 
         const rootMountResult = transformStaticRootMount(transformedCode, cleanId, resolveImportPath)
-        if (rootMountResult?.changed) return { code: rootMountResult.code, map: null }
+        if (rootMountResult?.changed) {
+          for (const file of rootMountResult.watchFiles ?? []) this.addWatchFile?.(file)
+          return { code: rootMountResult.code, map: null }
+        }
       }
 
       const result = transform({

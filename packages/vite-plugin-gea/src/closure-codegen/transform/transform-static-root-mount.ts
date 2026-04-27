@@ -37,6 +37,7 @@ interface StaticTemplateFactory {
   declarations: Statement[]
   mountExpression: Expression
   importsNeeded: Set<string>
+  watchFiles: string[]
 }
 
 interface ImportedStaticFunction {
@@ -48,6 +49,7 @@ interface ImportedStaticFunction {
 export interface StaticRootMountTransformResult {
   code: string
   changed: boolean
+  watchFiles?: string[]
 }
 
 export function transformStaticRootMount(
@@ -93,7 +95,7 @@ export function transformStaticRootMount(
   ensureCoreImports(ast, factory.importsNeeded)
 
   const out = generate(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } })
-  return { code: out.code, changed: true }
+  return { code: out.code, changed: true, watchFiles: [resolved, ...factory.watchFiles] }
 }
 
 function collectDefaultImports(ast: File): Map<string, { source: string; declaration: ImportDeclaration }> {
@@ -190,6 +192,7 @@ function createStaticTemplateFactory(
   if (!jsx || !isBuiltinElementRoot(jsx)) return null
 
   const ctx = createEmitContext()
+  const watchFiles = new Set<string>()
   ctx.directFnComponents = collectDirectFnComponents(ast)
   ctx.directFnComponentParams = collectDirectFnComponentParams(ast, ctx.directFnComponents)
   ctx.directFnNoDisposer = new Set()
@@ -198,7 +201,9 @@ function createStaticTemplateFactory(
   ctx.directFactoryComponents = new Set()
 
   const importedFns: ImportedStaticFunction[] = []
-  if (!collectImportedStaticFunctionComponents(ast, componentPath, resolveImportPath, ctx, importedFns)) return null
+  if (!collectImportedStaticFunctionComponents(ast, componentPath, resolveImportPath, ctx, importedFns, watchFiles)) {
+    return null
+  }
   ctx.directFnStringProps = collectDirectFnStringProps(ast, ctx.directFnComponents)
 
   const blockedRootBindings = collectRootModuleBindings(ast, classDecl, ctx.directFnComponents)
@@ -265,6 +270,7 @@ function createStaticTemplateFactory(
     declarations: [...ctx.templateDecls, ...importedFnDecls, ...fnDecls, factoryDecl],
     mountExpression: t.callExpression(t.identifier(tplName + '_create'), disposerArg),
     importsNeeded: ctx.importsNeeded,
+    watchFiles: [...watchFiles],
   }
 }
 
@@ -310,6 +316,7 @@ function collectImportedStaticFunctionComponents(
   resolveImportPath: (importer: string, source: string) => string | null,
   ctx: ReturnType<typeof createEmitContext>,
   importedFns: ImportedStaticFunction[],
+  watchFiles: Set<string>,
 ): boolean {
   for (const stmt of ast.program.body) {
     if (!t.isImportDeclaration(stmt)) continue
@@ -322,6 +329,7 @@ function collectImportedStaticFunctionComponents(
     if (componentSpecs.length === 0) continue
     const resolved = resolveImportPath(importerPath, stmt.source.value)
     if (!resolved) return false
+    watchFiles.add(resolved)
     const imported = readImportModule(resolved)
     if (!imported) return false
     for (const spec of componentSpecs) {
