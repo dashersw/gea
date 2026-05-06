@@ -159,50 +159,8 @@ declare global {
 }
 
 // ── Node interop helpers ────────────────────────────────────────────────────
+// Defined in `./node-stream` so they don't transitively pull `@geajs/core` into
+// the Vite plugin's config-load path. Re-exported here for backward compat.
 
-/**
- * Minimal interface for piping a stream to a Node-style response.
- * `ServerResponse` satisfies this structurally.
- */
-export interface NodeResponseWriter {
-  write(chunk: Uint8Array): boolean
-  end(): void
-  once(event: string, listener: () => void): void
-  on(event: string, listener: () => void): void
-  removeListener(event: string, listener: () => void): void
-}
-
-/**
- * Convert IncomingHttpHeaders (values may be string | string[] | undefined)
- * to a flat Record<string, string> suitable for the Fetch API `Headers`.
- */
-export function flattenHeaders(headers: Record<string, string | string[] | undefined>): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const key of Object.keys(headers)) {
-    const value = headers[key]
-    if (typeof value === 'string') {
-      result[key] = value
-    } else if (Array.isArray(value)) {
-      result[key] = value.join(', ')
-    }
-  }
-  return result
-}
-
-/**
- * Copy headers from a Fetch Response to a Node ServerResponse,
- * preserving multiple Set-Cookie headers as an array.
- */
-export function copyHeadersToNodeResponse(
-  from: Headers,
-  to: { setHeader(name: string, value: string | string[]): void },
-): void {
-  const cookies = from.getSetCookie()
-  from.forEach((value, key) => {
-    if (key.toLowerCase() === 'set-cookie') return
-    to.setHeader(key, value)
-  })
-  if (cookies.length > 0) {
-    to.setHeader('set-cookie', cookies)
-  }
-}
+export { flattenHeaders, copyHeadersToNodeResponse } from './node-stream'
+export type { NodeResponseWriter } from './node-stream'

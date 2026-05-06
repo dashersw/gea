@@ -1,45 +1,10 @@
 import { handleRequest } from './handle-request'
 import type { SSROptions } from './handle-request'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { GeaComponentConstructor, NodeResponseWriter } from './types'
-import { flattenHeaders, copyHeadersToNodeResponse } from './types'
+import type { GeaComponentConstructor } from './types'
+import { flattenHeaders, copyHeadersToNodeResponse, pipeToNodeResponse } from './node-stream'
 
-export async function pipeToNodeResponse(stream: ReadableStream<Uint8Array>, res: NodeResponseWriter): Promise<void> {
-  const reader = stream.getReader()
-  let cancelled = false
-
-  const onClose = () => {
-    cancelled = true
-    reader.cancel().catch(() => {})
-  }
-  res.on('close', onClose)
-
-  try {
-    while (!cancelled) {
-      const { done, value } = await reader.read()
-      if (done || cancelled) break
-      const ok = res.write(value)
-      if (!ok && !cancelled) {
-        await new Promise<void>((resolve) => {
-          const onDrain = () => {
-            res.removeListener('close', onCloseWhileDraining)
-            resolve()
-          }
-          const onCloseWhileDraining = () => {
-            res.removeListener('drain', onDrain)
-            resolve()
-          }
-          res.once('drain', onDrain)
-          res.once('close', onCloseWhileDraining)
-        })
-      }
-    }
-  } finally {
-    res.removeListener('close', onClose)
-    reader.releaseLock()
-    if (!cancelled) res.end()
-  }
-}
+export { pipeToNodeResponse }
 
 export function createNodeHandler(
   App: GeaComponentConstructor,

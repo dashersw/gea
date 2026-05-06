@@ -1,8 +1,10 @@
 import type { Plugin, ViteDevServer, UserConfig } from 'vite'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { flattenHeaders, copyHeadersToNodeResponse } from './types'
-import { pipeToNodeResponse } from './node'
+// Imported from `./node-stream` (not `./types` / `./node`) so loading this Vite
+// plugin does not transitively require `@geajs/core` — the SSR example's
+// `vite.config.ts` would otherwise need a built `dist/` to resolve the package.
+import { flattenHeaders, copyHeadersToNodeResponse, pipeToNodeResponse } from './node-stream'
 
 const ASSET_EXT_RE =
   /\.(?:js|css|ts|tsx|jsx|json|map|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|mp[34]|webm|ogg|wav)$/i
