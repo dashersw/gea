@@ -336,6 +336,8 @@ describe('generator: structural slots (conditional, list, mount)', () => {
     const { method, importsNeeded } = emitCreateTemplateMethod(spec, tplName)
     const code = generate(method).code
     assert.match(code, /\b__kl_reconcile\s*=/)
+    assert.match(code, /__kl_reconcile\(_value, changes\)/)
+    assert.doesNotMatch(code, /__kl_reconcile\(__kl_resolve\(\), changes\)/)
     assert.match(code, /const __kl_container = parent0/)
     assert.doesNotMatch(code, /keyedListProp\(/)
     assert.match(code, /item\?\.id \?\? item \?\? idx/)

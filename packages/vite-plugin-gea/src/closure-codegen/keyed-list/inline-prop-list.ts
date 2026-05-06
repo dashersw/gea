@@ -59,6 +59,66 @@ const INLINE_PROP_LIST_SOURCE = `{
   }
   let __kl_prev = __kl_first;
   const __kl_reconcile = (arr, changes) => {
+    if (!Array.isArray(arr)) arr = [];
+    if (changes && changes.length > 0) {
+      let aipuPatchable = true;
+      for (let i = 0; i < changes.length; i++) {
+        const change = changes[i];
+        const idx = change.arix;
+        if (!change.aipu || idx < 0 || idx >= __kl_entries.length || (!change.itemDirty && __kl_entries[idx].key !== __kl_key(change.newValue, idx))) {
+          aipuPatchable = false;
+          break;
+        }
+      }
+      if (aipuPatchable) {
+        for (let i = 0; i < changes.length; i++) {
+          const idx = changes[i].arix;
+          let superseded = false;
+          for (let j = i + 1; j < changes.length; j++) {
+            if (changes[j].arix === idx) {
+              superseded = true;
+              break;
+            }
+          }
+          if (superseded) continue;
+          const item = changes[i].newValue;
+          __kl_patch(__kl_entries[idx], item, idx);
+          if (item && typeof item === "object") {
+            item[GEA_DIRTY] = false;
+            item[GEA_DIRTY_PROPS]?.clear();
+          }
+          __kl_entries[idx].item = __kl_unwrap(item);
+          if (__kl_prev && __kl_prev.length === __kl_entries.length) __kl_prev[idx] = __kl_unwrap(item);
+        }
+        return;
+      }
+      let dirtyOnly = true;
+      for (let i = 0; i < changes.length; i++) {
+        const change = changes[i];
+        if (change.aipu || change.type === "append" || change.type === "remove" || change.type === "delete" || change.type === "reorder") {
+          dirtyOnly = false;
+          break;
+        }
+      }
+      if (dirtyOnly) {
+        const raw = arr[GEA_PROXY_RAW] || arr;
+        if (__kl_entries.length === arr.length) {
+          let patched = false;
+          for (let i = 0; i < raw.length; i++) {
+            const item = raw[i];
+            if (item && typeof item === "object" && item[GEA_DIRTY]) {
+              __kl_patch(__kl_entries[i], item, i);
+              item[GEA_DIRTY] = false;
+              item[GEA_DIRTY_PROPS]?.clear();
+              __kl_entries[i].item = item;
+              patched = true;
+            }
+          }
+          if (patched) return;
+        }
+      }
+    }
+    const raw = arr[GEA_PROXY_RAW] || arr;
     if (arr === __kl_prev && __kl_entries.length === arr.length) {
       let structural = false;
       let aipuOnly = changes && changes.length > 0;
@@ -97,7 +157,6 @@ const INLINE_PROP_LIST_SOURCE = `{
         }
       }
       if (!structural) {
-        const raw = arr[GEA_PROXY_RAW] || arr;
         for (let i = 0; i < raw.length; i++) {
           const item = raw[i];
           if (item && typeof item === "object" && item[GEA_DIRTY]) {
@@ -242,7 +301,14 @@ const INLINE_PROP_LIST_SOURCE = `{
     if (oldLen > 0 && newLen > 0 && __kl_container.childNodes.length === oldLen + (__kl_anchor ? 1 : 0)) {
       let disjoint = true;
       for (let i = 0; i < newLen; i++) {
-        if (__kl_byKey.has(newKeys[i])) {
+        let existing = null;
+        for (let j = 0; j < oldLen; j++) {
+          if (__kl_entries[j].key === newKeys[i]) {
+            existing = __kl_entries[j];
+            break;
+          }
+        }
+        if (existing) {
           disjoint = false;
           break;
         }
@@ -270,7 +336,13 @@ const INLINE_PROP_LIST_SOURCE = `{
     const seenOld = new Array(oldLen).fill(false);
     const nextEntries = new Array(newLen);
     for (let i = 0; i < newLen; i++) {
-      const entry = __kl_byKey.get(newKeys[i]);
+      let entry = null;
+      for (let j = 0; j < oldLen; j++) {
+        if (__kl_entries[j].key === newKeys[i]) {
+          entry = __kl_entries[j];
+          break;
+        }
+      }
       if (entry) {
         const oldIdx = entry._i;
         seenOld[oldIdx] = true;
@@ -299,7 +371,7 @@ const INLINE_PROP_LIST_SOURCE = `{
 
   if (__kl_root && typeof __kl_root.observe === "function") {
     const off = __kl_root.observe(__PROP__, (_value, changes) => {
-      __kl_reconcile(__kl_resolve(), changes);
+      __kl_reconcile(_value, changes);
     });
     d.add(off);
   }
@@ -335,6 +407,7 @@ const INLINE_PROP_LIST_COMPACT_ANCHORLESS_SOURCE = `{
   };
   let __kl_prev = __kl_resolve();
   let __kl_reconcile = (arr, changes) => {
+    if (!Array.isArray(arr)) arr = [];
     if (arr.length === 0) {
       __kl_prev = arr;
       return;
@@ -381,6 +454,65 @@ const INLINE_PROP_LIST_COMPACT_ANCHORLESS_SOURCE = `{
       __kl_entries = nextEntries;
     };
     const __kl_real_reconcile = (arr, changes) => {
+      if (!Array.isArray(arr)) arr = [];
+      if (changes && changes.length > 0) {
+        let aipuPatchable = true;
+        for (let i = 0; i < changes.length; i++) {
+          const change = changes[i];
+          const idx = change.arix;
+          if (!change.aipu || idx < 0 || idx >= __kl_entries.length || (!change.itemDirty && __kl_entries[idx].key !== change.newValue.id)) {
+            aipuPatchable = false;
+            break;
+          }
+        }
+        if (aipuPatchable) {
+          for (let i = 0; i < changes.length; i++) {
+            const idx = changes[i].arix;
+            let superseded = false;
+            for (let j = i + 1; j < changes.length; j++) {
+              if (changes[j].arix === idx) {
+                superseded = true;
+                break;
+              }
+            }
+            if (superseded) continue;
+            const item = changes[i].newValue;
+            __kl_patch(__kl_entries[idx], item, idx);
+            if (item && typeof item === "object") {
+              item[GEA_DIRTY] = false;
+              item[GEA_DIRTY_PROPS]?.clear();
+            }
+            __kl_entries[idx].item = __kl_raw(item);
+            if (__kl_prev && __kl_prev.length === __kl_entries.length) __kl_prev[idx] = __kl_raw(item);
+          }
+          return;
+        }
+        let dirtyOnly = true;
+        for (let i = 0; i < changes.length; i++) {
+          const change = changes[i];
+          if (change.aipu || change.type === "append" || change.type === "remove" || change.type === "delete" || change.type === "reorder") {
+            dirtyOnly = false;
+            break;
+          }
+        }
+        if (dirtyOnly) {
+          const raw = __kl_raw(arr);
+          if (__kl_entries.length === arr.length) {
+            let patched = false;
+            for (let i = 0; i < raw.length; i++) {
+              const item = raw[i];
+              if (item && typeof item === "object" && item[GEA_DIRTY]) {
+                __kl_patch(__kl_entries[i], item, i);
+                item[GEA_DIRTY] = false;
+                item[GEA_DIRTY_PROPS]?.clear();
+                __kl_entries[i].item = item;
+                patched = true;
+              }
+            }
+            if (patched) return;
+          }
+        }
+      }
       const raw = __kl_raw(arr);
       if (arr === __kl_prev && __kl_entries.length === arr.length) {
         let structural = false;
@@ -483,7 +615,7 @@ const INLINE_PROP_LIST_COMPACT_ANCHORLESS_SOURCE = `{
 
   if (__kl_root && typeof __kl_root.observe === "function") {
     const off = __kl_root.observe(__PROP__, (_value, changes) => {
-      __kl_reconcile(__kl_resolve(), changes);
+      __kl_reconcile(_value, changes);
     });
     d.add(off);
   }
@@ -534,6 +666,65 @@ const INLINE_PROP_LIST_COMPONENT_SOURCE = `{
   }
   let __kl_prev = __kl_first;
   const __kl_reconcile = (arr, changes) => {
+    if (!Array.isArray(arr)) arr = [];
+    if (changes && changes.length > 0) {
+      let aipuPatchable = true;
+      for (let i = 0; i < changes.length; i++) {
+        const change = changes[i];
+        const idx = change.arix;
+        if (!change.aipu || idx < 0 || idx >= __kl_entries.length || (!change.itemDirty && __kl_entries[idx].key !== __kl_key(change.newValue, idx))) {
+          aipuPatchable = false;
+          break;
+        }
+      }
+      if (aipuPatchable) {
+        for (let i = 0; i < changes.length; i++) {
+          const idx = changes[i].arix;
+          let superseded = false;
+          for (let j = i + 1; j < changes.length; j++) {
+            if (changes[j].arix === idx) {
+              superseded = true;
+              break;
+            }
+          }
+          if (superseded) continue;
+          const item = changes[i].newValue;
+          __kl_patch(__kl_entries[idx], item, idx);
+          if (item && typeof item === "object") {
+            item[GEA_DIRTY] = false;
+            item[GEA_DIRTY_PROPS]?.clear();
+          }
+          __kl_entries[idx].item = __kl_raw(item);
+          if (__kl_prev && __kl_prev.length === __kl_entries.length) __kl_prev[idx] = __kl_raw(item);
+        }
+        return;
+      }
+      let dirtyOnly = true;
+      for (let i = 0; i < changes.length; i++) {
+        const change = changes[i];
+        if (change.aipu || change.type === "append" || change.type === "remove" || change.type === "delete" || change.type === "reorder") {
+          dirtyOnly = false;
+          break;
+        }
+      }
+      if (dirtyOnly) {
+        const raw = __kl_raw(arr);
+        if (__kl_entries.length === arr.length) {
+          let patched = false;
+          for (let i = 0; i < raw.length; i++) {
+            const item = raw[i];
+            if (item && typeof item === "object" && item[GEA_DIRTY]) {
+              __kl_patch(__kl_entries[i], item, i);
+              item[GEA_DIRTY] = false;
+              item[GEA_DIRTY_PROPS]?.clear();
+              __kl_entries[i].item = item;
+              patched = true;
+            }
+          }
+          if (patched) return;
+        }
+      }
+    }
     const raw = __kl_raw(arr);
     if (arr === __kl_prev && __kl_entries.length === arr.length) {
       let structural = false;
@@ -598,7 +789,7 @@ const INLINE_PROP_LIST_COMPONENT_SOURCE = `{
   };
   if (__kl_root && typeof __kl_root.observe === "function") {
     const off = __kl_root.observe(__PROP__, (_value, changes) => {
-      __kl_reconcile(__kl_resolve(), changes);
+      __kl_reconcile(_value, changes);
     });
     d.add(off);
   }
@@ -624,7 +815,9 @@ const INLINE_PROP_LIST_COMPONENT_ANCHORLESS_BLOCK = parse(INLINE_PROP_LIST_COMPO
 const INLINE_PROP_LIST_COMPONENT_ID_SOURCE = INLINE_PROP_LIST_COMPONENT_SOURCE.replace(
   '  const __kl_key = __KEY__;\n',
   '',
-).replace('__kl_byKey.get(__kl_key(arr[i], i))', '__kl_byKey.get(arr[i].id)')
+)
+  .replace('__kl_byKey.get(__kl_key(arr[i], i))', '__kl_byKey.get(arr[i].id)')
+  .replaceAll('__kl_key(change.newValue, idx)', 'change.newValue.id')
 
 const INLINE_PROP_LIST_COMPONENT_ID_BLOCK = parse(INLINE_PROP_LIST_COMPONENT_ID_SOURCE, {
   sourceType: 'module',
@@ -634,7 +827,9 @@ const INLINE_PROP_LIST_COMPONENT_ID_BLOCK = parse(INLINE_PROP_LIST_COMPONENT_ID_
 const INLINE_PROP_LIST_COMPONENT_ID_ANCHORLESS_SOURCE = INLINE_PROP_LIST_COMPONENT_ANCHORLESS_SOURCE.replace(
   '  const __kl_key = __KEY__;\n',
   '',
-).replace('__kl_byKey.get(__kl_key(arr[i], i))', '__kl_byKey.get(arr[i].id)')
+)
+  .replace('__kl_byKey.get(__kl_key(arr[i], i))', '__kl_byKey.get(arr[i].id)')
+  .replaceAll('__kl_key(change.newValue, idx)', 'change.newValue.id')
 
 const INLINE_PROP_LIST_COMPONENT_ID_ANCHORLESS_BLOCK = parse(INLINE_PROP_LIST_COMPONENT_ID_ANCHORLESS_SOURCE, {
   sourceType: 'module',

@@ -29,6 +29,25 @@ function _unwrap(v: any): any {
   return (v && v[GEA_PROXY_RAW]) || v
 }
 
+function _fireBucket(bucket: Set<Handler>, value: any, changes: any[]): void {
+  if (bucket.size === 0) return
+  if (bucket.size === 1) {
+    for (const h of bucket) {
+      h(value, changes)
+      return
+    }
+  }
+  const snapshot: Handler[] = []
+  for (const h of bucket) snapshot.push(h)
+  for (let i = 0; i < snapshot.length; i++) {
+    try {
+      snapshot[i](value, changes)
+    } catch {
+      /* isolate sibling observers */
+    }
+  }
+}
+
 function _flush(raw: any, state: StoreState): void {
   state.scheduled = false
   const pending = state.pending
@@ -42,10 +61,10 @@ function _flush(raw: any, state: StoreState): void {
     }
     const bucket = state.observers?.get(prop)
     if (!bucket || bucket.size === 0) continue
-    for (const h of bucket) h(raw[prop], changes)
+    _fireBucket(bucket, raw[prop], changes)
   }
   if (allChanges && state.rootObservers) {
-    for (const h of state.rootObservers) h(raw, allChanges)
+    _fireBucket(state.rootObservers, raw, allChanges)
   }
   if (allChanges && state.derived) {
     for (const [prop, bucket] of state.derived) {
@@ -56,13 +75,22 @@ function _flush(raw: any, state: StoreState): void {
       } catch {
         continue
       }
-      for (const h of bucket) h(value, allChanges)
+      _fireBucket(bucket, value, allChanges)
     }
   }
 }
 
+function _hasQueuedConsumers(state: StoreState, prop: string): boolean {
+  const bucket = state.observers?.get(prop)
+  return !!(
+    (bucket && bucket.size > 0) ||
+    (state.rootObservers && state.rootObservers.size > 0) ||
+    (state.derived && state.derived.size > 0)
+  )
+}
+
 function _queue(raw: any, state: StoreState, prop: string, change: any = {}): void {
-  if (!state.ready || !state.observers?.has(prop)) return
+  if (!state.ready || !_hasQueuedConsumers(state, prop)) return
   const rec = { prop, pathParts: [prop], type: 'update', target: raw, ...change }
   const pending = state.pending ?? (state.pending = new Map())
   const arr = pending.get(prop)
@@ -85,6 +113,7 @@ function _wrapNested(raw: any, state: StoreState, target: any, rootProp: string)
     get(obj, prop) {
       if (prop === GEA_PROXY_RAW) return obj
       if (typeof prop === 'symbol') return obj[prop as any]
+      trackRead(raw, rootProp)
       const val = obj[prop as any]
       if (_isArr(obj) && typeof val === 'function') {
         if (prop === 'push') {
@@ -93,6 +122,8 @@ function _wrapNested(raw: any, state: StoreState, target: any, rootProp: string)
             const result = Array.prototype.push.apply(obj, args.map(_unwrap))
             if (obj === raw[rootProp] && obj.length > start) {
               _queue(raw, state, rootProp, { type: 'append', start, count: obj.length - start })
+            } else {
+              _queue(raw, state, rootProp)
             }
             return result
           }
@@ -109,6 +140,33 @@ function _wrapNested(raw: any, state: StoreState, target: any, rootProp: string)
               const after = obj.length
               if (after < before) _queue(raw, state, rootProp, { type: 'remove', start, count: before - after })
               else _queue(raw, state, rootProp, { type: 'reorder' })
+            } else {
+              _queue(raw, state, rootProp)
+            }
+            return result
+          }
+        }
+        if (prop === 'pop' || prop === 'shift') {
+          return (...args: any[]) => {
+            const before = obj.length
+            const result = (Array.prototype as any)[prop].apply(obj, args)
+            const after = obj.length
+            if (obj === raw[rootProp] && after < before) {
+              _queue(raw, state, rootProp, { type: 'remove', start: prop === 'pop' ? after : 0, count: 1 })
+            } else {
+              _queue(raw, state, rootProp)
+            }
+            return result
+          }
+        }
+        if (prop === 'unshift' || prop === 'sort' || prop === 'reverse') {
+          return (...args: any[]) => {
+            const callArgs = prop === 'unshift' ? args.map(_unwrap) : args
+            const result = (Array.prototype as any)[prop].apply(obj, callArgs)
+            if (obj === raw[rootProp]) {
+              _queue(raw, state, rootProp, { type: 'reorder' })
+            } else {
+              _queue(raw, state, rootProp)
             }
             return result
           }
@@ -137,6 +195,17 @@ function _wrapNested(raw: any, state: StoreState, target: any, rootProp: string)
         ;(obj[GEA_DIRTY_PROPS] ??= new Set()).add(prop)
       }
       _queue(raw, state, rootProp, { previousValue: old, newValue: value })
+      return true
+    },
+    deleteProperty(obj, prop) {
+      if (typeof prop === 'symbol') {
+        delete obj[prop as any]
+        return true
+      }
+      const old = obj[prop as any]
+      delete obj[prop as any]
+      if (!_isArr(obj)) obj[GEA_DIRTY] = true
+      _queue(raw, state, rootProp, { previousValue: old, type: 'delete' })
       return true
     },
   })
@@ -168,7 +237,10 @@ export class CompiledStore {
         }
         value = _unwrap(value)
         const old = (target as any)[prop]
-        if (old === value && prop in target) return true
+        if (old === value && prop in target) {
+          if (_isArr(value)) _queue(target, state, prop, { previousValue: old, newValue: value })
+          return true
+        }
         if (old && typeof old === 'object') _nestedCache.delete(old)
         ;(target as any)[prop] = value
         const direct = state.direct?.get(prop)

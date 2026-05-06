@@ -7,6 +7,7 @@ type Handler = (value: any, changes?: any[]) => void
 
 interface LeanState {
   observers?: Map<string, Set<Handler>>
+  rootObservers?: Set<Handler>
   derived?: Map<string, Set<Handler>>
   direct?: Map<string, Set<(value: any) => void>>
   pending?: Map<string, any[]>
@@ -16,7 +17,7 @@ interface LeanState {
 }
 
 const _priv = new WeakMap<any, LeanState>()
-const _nested = new WeakMap<object, any>()
+const _nested = new WeakMap<object, Map<string, any>>()
 const _isArr = Array.isArray
 
 function _plain(v: any): boolean {
@@ -29,6 +30,25 @@ function _raw(v: any): any {
   return (v && v[GEA_PROXY_RAW]) || v
 }
 
+function _fireBucket(bucket: Set<Handler>, value: any, changes: any[]): void {
+  if (bucket.size === 0) return
+  if (bucket.size === 1) {
+    for (const h of bucket) {
+      h(value, changes)
+      return
+    }
+  }
+  const snapshot: Handler[] = []
+  for (const h of bucket) snapshot.push(h)
+  for (let i = 0; i < snapshot.length; i++) {
+    try {
+      snapshot[i](value, changes)
+    } catch {
+      /* isolate sibling observers */
+    }
+  }
+}
+
 function _flush(state: LeanState): void {
   state.scheduled = false
   const pending = state.pending
@@ -36,29 +56,42 @@ function _flush(state: LeanState): void {
   state.pending = undefined
   let all: any[] | null = null
   for (const [prop, changes] of pending) {
-    if (state.derived) {
+    if (state.rootObservers || state.derived) {
       all ??= []
       for (let i = 0; i < changes.length; i++) all.push(changes[i])
     }
     const bucket = state.observers?.get(prop)
-    if (bucket) for (const h of bucket) h(state.proxy[prop], changes)
+    if (bucket) _fireBucket(bucket, state.proxy[prop], changes)
+  }
+  if (all && state.rootObservers) {
+    _fireBucket(state.rootObservers, state.proxy, all)
   }
   if (all && state.derived) {
     for (const [prop, bucket] of state.derived) {
+      if (bucket.size === 0) continue
       let value
       try {
         value = state.proxy[prop]
       } catch {
         continue
       }
-      for (const h of bucket) h(value, all)
+      _fireBucket(bucket, value, all)
     }
   }
 }
 
+function _hasQueuedConsumers(state: LeanState, prop: string): boolean {
+  const bucket = state.observers?.get(prop)
+  return !!(
+    (bucket && bucket.size > 0) ||
+    (state.rootObservers && state.rootObservers.size > 0) ||
+    (state.derived && state.derived.size > 0)
+  )
+}
+
 function _queue(state: LeanState, prop: string, change: any = {}): void {
   if (!state.ready) return
-  if (!state.observers?.has(prop) && !state.derived) return
+  if (!_hasQueuedConsumers(state, prop)) return
   const rec = { prop, pathParts: [prop], type: 'update', target: state.proxy, ...change }
   const pending = state.pending ?? (state.pending = new Map())
   const arr = pending.get(prop)
@@ -72,12 +105,16 @@ function _queue(state: LeanState, prop: string, change: any = {}): void {
 
 function _wrap(state: LeanState, target: any, rootProp: string): any {
   if (!_plain(target)) return target
-  const cached = _nested.get(target)
-  if (cached) return cached
+  let perTarget = _nested.get(target)
+  if (perTarget) {
+    const cached = perTarget.get(rootProp)
+    if (cached) return cached
+  }
   const proxy = new Proxy(target, {
     get(obj, prop) {
       if (prop === GEA_PROXY_RAW) return obj
       if (typeof prop === 'symbol') return obj[prop as any]
+      trackRead(state.proxy, rootProp)
       const value = obj[prop as any]
       if (_isArr(obj) && typeof value === 'function') {
         if (prop === 'push') {
@@ -114,8 +151,23 @@ function _wrap(state: LeanState, target: any, rootProp: string): any {
       _queue(state, rootProp, { previousValue: old, newValue: value })
       return true
     },
+    deleteProperty(obj, prop) {
+      if (typeof prop === 'symbol') {
+        delete obj[prop as any]
+        return true
+      }
+      const old = obj[prop as any]
+      delete obj[prop as any]
+      if (!_isArr(obj)) obj[GEA_DIRTY] = true
+      _queue(state, rootProp, { previousValue: old, type: 'delete' })
+      return true
+    },
   })
-  _nested.set(target, proxy)
+  if (!perTarget) {
+    perTarget = new Map()
+    _nested.set(target, perTarget)
+  }
+  perTarget.set(rootProp, proxy)
   return proxy
 }
 
@@ -158,6 +210,11 @@ export function leanObserve(self: any, pathOrProp: string | readonly string[], h
   if (!state) return () => {}
   state.ready = true
   const isArr = Array.isArray(pathOrProp)
+  if ((isArr && pathOrProp.length === 0) || pathOrProp === '') {
+    const bucket = state.rootObservers ?? (state.rootObservers = new Set())
+    bucket.add(handler)
+    return () => bucket.delete(handler)
+  }
   const prop = isArr ? pathOrProp[0] : pathOrProp
   if (!prop) return () => {}
   const tail = isArr && pathOrProp.length > 1 ? pathOrProp.slice(1) : null

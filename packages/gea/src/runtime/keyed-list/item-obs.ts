@@ -23,17 +23,15 @@ class ItemObs implements ItemObservable {
     this.current = initial
   }
   observe(_path: string | string[], fn: () => void): () => void {
-    const o = this._o
-    const idx = o.length
-    o.push(fn)
+    const idx = this._o.length
+    this._o.push(fn)
     return () => {
-      o[idx] = null
+      this._o[idx] = null
     }
   }
   _fire(): void {
-    const o = this._o
-    for (let i = 0; i < o.length; i++) {
-      const fn = o[i]
+    for (let i = 0; i < this._o.length; i++) {
+      const fn = this._o[i]
       if (fn) fn()
     }
   }

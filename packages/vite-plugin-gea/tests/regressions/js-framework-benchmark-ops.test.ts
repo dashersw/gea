@@ -743,9 +743,14 @@ async function compileBenchmarkComponent(bindings: Record<string, unknown>): Pro
   }
   const transformed = await transformGeaSourceToEvalBody(BENCHMARK_SOURCE, BENCHMARK_SOURCE_URL)
   assert.match(transformed, /\b__kl_reconcile\s*=/, 'benchmark-shaped keyed lists should inline the prop kernel')
+  assert.doesNotMatch(
+    transformed,
+    /__kl_reconcile\(__kl_resolve\(\), changes\)/,
+    'list observers should pass the observed array value instead of re-resolving and copying it',
+  )
   assert.match(
     transformed,
-    /let __kl_reconcile = \(arr, changes\) => \{\s*if \(arr\.length === 0\)/,
+    /let __kl_reconcile = \(arr, changes\) => \{\s*if \(!Array\.isArray\(arr\)\) arr = \[\];\s*if \(arr\.length === 0\)/,
     'empty benchmark lists should keep the compact kernel cold until rows exist',
   )
   assert.match(

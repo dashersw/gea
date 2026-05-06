@@ -35,6 +35,7 @@ export function subscribe(root: any, path: PathInput, fn: (v: any, changes?: Cha
   if (!r || typeof r.observe !== 'function') return () => {}
   // Empty path → fire on any change (root-observer semantics in Store.observe).
   if (p.length === 0) return (r as Store).observe('', fn as any)
+  if (p.length === 1) return (r as Store).observe(p[0], fn as any)
   // Pass `fn` directly as the observer — the trampoline `(v, changes) => fn(...)`
   // was a no-op hop that allocated one closure per subscribe (5k closures for
   // a 1000-row 5-binding list). Drop it.

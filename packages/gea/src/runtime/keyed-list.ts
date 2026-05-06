@@ -136,6 +136,22 @@ export function keyedList(cfg: KeyedListConfig): void {
 
   let prevArrRef: any = firstArr
 
+  const patchDirtyItems = (arr: any[]): boolean => {
+    let patched = false
+    const raw = (arr as any)[GEA_PROXY_RAW] || arr
+    for (let i = 0; i < raw.length; i++) {
+      const item = raw[i]
+      if (item && typeof item === 'object' && item[GEA_DIRTY]) {
+        patchEntry(entries[i], item, i)
+        item[GEA_DIRTY] = false
+        item[GEA_DIRTY_PROPS]?.clear()
+        entries[i].item = item
+        patched = true
+      }
+    }
+    return patched
+  }
+
   // ── Reconciliation ────────────────────────────────────────────────────
   const reconcile = (arr: any[], changes?: Change[]): void => {
     // Same array ref + same length → structural no-op. Dirty-bit scan
@@ -143,16 +159,38 @@ export function keyedList(cfg: KeyedListConfig): void {
     if (arr === prevArrRef && entries.length === arr.length) {
       let structural = false
       let aipuOnly = changes && changes.length > 0
+      let itemDirtyOnly = changes && changes.length > 0
       if (changes && changes.length > 0) {
         for (let i = 0; i < changes.length; i++) {
           const c = changes[i]
           if (c.type === 'append' || c.type === 'remove' || c.type === 'delete' || c.type === 'reorder') {
             structural = true
             aipuOnly = false
+            itemDirtyOnly = false
             break
           }
-          if (!c.aipu) aipuOnly = false
-          else structural = true
+          if (!c.aipu) {
+            aipuOnly = false
+            itemDirtyOnly = false
+          } else {
+            structural = true
+            if (!c.itemDirty) itemDirtyOnly = false
+          }
+        }
+      }
+      if (itemDirtyOnly) {
+        const raw = (arr as any)[GEA_PROXY_RAW] || arr
+        let stableKeys = true
+        for (let i = 0; i < changes!.length; i++) {
+          const idx = changes![i].arix as number
+          if (idx < 0 || idx >= entries.length || entries[idx].key !== keyFn(raw[idx], idx)) {
+            stableKeys = false
+            break
+          }
+        }
+        if (stableKeys) {
+          patchDirtyItems(arr)
+          return
         }
       }
       // aipu-only 2-swap: items[i]↔items[j] via two symmetric aipu records.
@@ -184,16 +222,22 @@ export function keyedList(cfg: KeyedListConfig): void {
         // The store's nested-proxy set trap stamped `item[GEA_DIRTY]=true`;
         // walk the raw array and patch marked items. Runtime owns the
         // dirty-bit protocol — compiler-emitted patchEntry doesn't see it.
-        const raw = (arr as any)[GEA_PROXY_RAW] || arr
-        for (let i = 0; i < raw.length; i++) {
-          const item = raw[i]
-          if (item && typeof item === 'object' && item[GEA_DIRTY]) {
-            patchEntry(entries[i], item, i)
-            item[GEA_DIRTY] = false
-            item[GEA_DIRTY_PROPS]?.clear()
-            entries[i].item = item
-          }
+        patchDirtyItems(arr)
+        return
+      }
+    }
+
+    if (entries.length === arr.length && changes && changes.length > 0) {
+      let structural = false
+      for (let i = 0; i < changes.length; i++) {
+        const c = changes[i]
+        if (c.type === 'append' || c.type === 'remove' || c.type === 'delete' || c.type === 'reorder' || c.aipu) {
+          structural = true
+          break
         }
+      }
+      if (!structural && patchDirtyItems(arr)) {
+        prevArrRef = arr
         return
       }
     }

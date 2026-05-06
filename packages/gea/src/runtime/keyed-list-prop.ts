@@ -58,6 +58,22 @@ export function keyedListProp(cfg: PropKeyedListConfig): void {
 
   let prevArrRef: any = firstArr
 
+  const patchDirtyItems = (arr: any[]): boolean => {
+    let patched = false
+    const raw = (arr as any)[GEA_PROXY_RAW] || arr
+    for (let i = 0; i < raw.length; i++) {
+      const item = raw[i]
+      if (item && typeof item === 'object' && item[GEA_DIRTY]) {
+        patchEntry(entries[i], item, i)
+        item[GEA_DIRTY] = false
+        item[GEA_DIRTY_PROPS]?.clear()
+        entries[i].item = item
+        patched = true
+      }
+    }
+    return patched
+  }
+
   const reconcile = (arr: any[], changes?: Change[]): void => {
     if (arr === prevArrRef && entries.length === arr.length) {
       let structural = false
@@ -104,16 +120,22 @@ export function keyedListProp(cfg: PropKeyedListConfig): void {
       }
 
       if (!structural) {
-        const raw = (arr as any)[GEA_PROXY_RAW] || arr
-        for (let i = 0; i < raw.length; i++) {
-          const item = raw[i]
-          if (item && typeof item === 'object' && item[GEA_DIRTY]) {
-            patchEntry(entries[i], item, i)
-            item[GEA_DIRTY] = false
-            item[GEA_DIRTY_PROPS]?.clear()
-            entries[i].item = item
-          }
+        patchDirtyItems(arr)
+        return
+      }
+    }
+
+    if (entries.length === arr.length && changes && changes.length > 0) {
+      let structural = false
+      for (let i = 0; i < changes.length; i++) {
+        const change = changes[i]
+        if (change.type === 'append' || change.type === 'remove' || change.type === 'delete' || change.type === 'reorder' || change.aipu) {
+          structural = true
+          break
         }
+      }
+      if (!structural && patchDirtyItems(arr)) {
+        prevArrRef = arr
         return
       }
     }

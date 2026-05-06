@@ -71,7 +71,7 @@ function _depsEqual(a: Dep[], b: Dep[]): boolean {
   return true
 }
 
-export function withTracking(disposer: Disposer, root: any, fn: () => void): void {
+export function withTracking(disposer: Disposer, root: any, fn: () => void, staticDeps = false): void {
   let offs: Array<() => void> = []
   let prevDeps: Dep[] = []
   // Reused across the 2 pre-lock runs — saves a Scope + deps array alloc
@@ -98,9 +98,9 @@ export function withTracking(disposer: Disposer, root: any, fn: () => void): voi
       _active = prev
       const d2 = scope.deps
       if (_depsEqual(d2, prevDeps)) {
-        stable++
+        stable = staticDeps ? 2 : stable + 1
       } else {
-        stable = 0
+        stable = staticDeps ? 2 : 0
         for (let i = 0; i < offs.length; i++) offs[i]()
         offs = []
         for (let i = 0; i < d2.length; i++) {
