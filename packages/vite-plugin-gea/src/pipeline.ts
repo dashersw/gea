@@ -48,6 +48,7 @@ import { transformFile } from './closure-codegen/transform.ts'
 import { injectHMR } from './postprocess/hmr.ts'
 import { isComponentTag, pascalToKebabCase } from './utils/component-tags.ts'
 import { ensureGeaCompilerSymbolImports } from './utils/imports.ts'
+import type { GeaIrComponent, GeaIrModule } from './closure-codegen/ir.ts'
 
 export interface CompilerContext {
   sourceFile: string
@@ -78,7 +79,7 @@ function isComponentImportSource(source: string): boolean {
  * before the store module is loaded, so the store can safely import the component
  * classes back without hitting the temporal dead zone.
  */
-export function transform(ctx: CompilerContext): { code: string; map: any } | null {
+export function transform(ctx: CompilerContext): { code: string; map: any; ir?: { module: GeaIrModule; components: GeaIrComponent[] } } | null {
   const { sourceFile, code, isServe, hmrImportSource } = ctx
 
   // ── Quick checks ──────────────────────────────────────────────────────
@@ -182,6 +183,7 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
     // ── CodeGen per component ─────────────────────────────────────────
     // NEW PATH: transformFile — closure-compiled emission (cloneNode + runtime helpers).
     // No fallback. If transformFile can't rewrite this file's JSX, leave it.
+    let ir: { module: GeaIrModule; components: GeaIrComponent[] } | undefined
     if (hasJSX) {
       const emitted = transformFile(code, sourceFile, {
         directClassComponents: knownClassComponentImports,
@@ -189,6 +191,7 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
         enableTinyReactiveComponents: !isServe,
       })
       if (emitted.changed) {
+        ir = emitted.ir
         // Re-parse the transformed code so the downstream passes (HMR, __geaTagName
         // injection, symbol imports, source-map generation) run against the new AST.
         const reparsed = parseSource(emitted.code)
@@ -261,7 +264,7 @@ export function transform(ctx: CompilerContext): { code: string; map: any } | nu
 
     // ── Emit ──────────────────────────────────────────────────────────
     const output = generate(ast, { sourceMaps: true, sourceFileName: sourceFile }, code)
-    return { code: output.code, map: output.map }
+    return { code: output.code, map: output.map, ir }
   } catch (error: any) {
     if (error?.__geaCompileError) {
       throw error

@@ -5,8 +5,9 @@ import { transformDottedObserveCalls } from './closure-codegen/transform/transfo
 import { transformStaticRootMount } from './closure-codegen/transform/transform-static-root-mount.ts'
 import { minifyGeaSymbolForKeys } from './symbol-key-minify.ts'
 import { dirname, relative, resolve } from 'node:path'
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import type { GeaIrBundleV1, GeaIrComponent, GeaIrModule, GeaIrStore } from './closure-codegen/ir.ts'
 import {
   COMPILER_RUNTIME_ID,
   HMR_RUNTIME_ID,
@@ -39,11 +40,25 @@ function shouldMinifyGeaSymbolsForBuild(config: ResolvedConfig): boolean {
   return formats.length > 0 && formats.every((format) => format === 'iife' || format === 'umd')
 }
 
-export function geaPlugin(): Plugin {
+export interface GeaPluginOptions {
+  ir?: {
+    enabled: boolean
+    outFile?: string
+  }
+}
+
+export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
+  const envIrOutFile = process.env.GEA_IR_OUT || process.env.GEA_IR_FILE
+  const irOptions = options.ir ?? (envIrOutFile ? { enabled: true, outFile: envIrOutFile } : undefined)
   const storeModules = new Set<string>()
   const componentModules = new Set<string>()
   let isServeCommand = false
   let shouldMinifyGeaSymbolKeys = false
+  let resolvedConfig: ResolvedConfig | null = null
+  const irModules = new Map<string, GeaIrModule>()
+  const irComponents = new Map<string, GeaIrComponent>()
+  const irStores = new Map<string, GeaIrStore>()
+  const hostCapabilities = new Set<string>()
   // Maps absolute file path → { className, hasDefaultExport }
   const storeRegistry = new Map<string, { className: string; hasDefaultExport: boolean }>()
 
@@ -173,6 +188,7 @@ export function geaPlugin(): Plugin {
     name: 'gea-plugin',
     enforce: 'pre',
     configResolved(config: ResolvedConfig) {
+      resolvedConfig = config
       isServeCommand = config.command === 'serve'
       shouldMinifyGeaSymbolKeys = shouldMinifyGeaSymbolsForBuild(config)
     },
@@ -224,6 +240,7 @@ export function geaPlugin(): Plugin {
       if (!cleanId.match(/\.(js|jsx|ts|tsx)$/) || cleanId.includes('node_modules')) return null
       let transformedCode = code
       let changed = false
+      if (irOptions?.enabled) recordHostCapabilities(code)
 
       // Register stores (must happen before pipeline for cross-file tracking)
       if (code.includes('extends Store') || code.includes('new Store(')) {
@@ -244,7 +261,8 @@ export function geaPlugin(): Plugin {
           changed = true
         }
 
-        const storeResult = transformCompiledStoreModule(transformedCode)
+        const storeResult = transformCompiledStoreModule(transformedCode, cleanId)
+        if (storeResult?.ir) recordStoreIr(cleanId, storeResult.ir)
         if (storeResult?.changed) return { code: storeResult.code, map: null }
 
         const rootMountResult = transformStaticRootMount(transformedCode, cleanId, resolveImportPath)
@@ -268,7 +286,10 @@ export function geaPlugin(): Plugin {
         registerStoreModule: (fp) => storeModules.add(fp),
         registerComponentModule: (fp) => componentModules.add(fp),
       })
-      if (result) return result
+      if (result) {
+        if (result.ir) recordComponentIr(cleanId, result.ir)
+        return result
+      }
 
       // For non-component files (like router.ts) that import from component
       // modules, inject HMR dep-accept so updates don't propagate further
@@ -293,7 +314,80 @@ export function geaPlugin(): Plugin {
       const next = minifyGeaSymbolForKeys(code)
       return next === code ? null : { code: next, map: null }
     },
+    generateBundle(_options, bundle) {
+      if (!irOptions?.enabled) return
+      const irBundle: GeaIrBundleV1 = {
+        schema: 'gea-ir',
+        version: 1,
+        entry: geaIrEntryFromBundle(bundle) ?? geaIrConfiguredEntry(resolvedConfig),
+        modules: Array.from(irModules.values()),
+        components: Array.from(irComponents.values()),
+        stores: Array.from(irStores.values()),
+        hostCapabilities: Array.from(hostCapabilities).sort(),
+      }
+      const source = JSON.stringify(irBundle, null, 2)
+      const outFile = irOptions.outFile ?? 'gea-ir.json'
+      if (outFile.startsWith('/') || /^[A-Za-z]:[\\/]/.test(outFile)) {
+        mkdirSync(dirname(outFile), { recursive: true })
+        writeFileSync(outFile, source)
+      } else {
+        this.emitFile({ type: 'asset', fileName: outFile, source })
+      }
+    },
   }
+
+  function recordComponentIr(moduleId: string, ir: { module: GeaIrModule; components: GeaIrComponent[] }): void {
+    const existing = irModules.get(moduleId) ?? { id: moduleId, file: moduleId, components: [], stores: [] }
+    const componentIds = new Set(existing.components)
+    for (const component of ir.components) {
+      irComponents.set(component.id, component)
+      componentIds.add(component.id)
+    }
+    irModules.set(moduleId, { ...existing, components: Array.from(componentIds) })
+  }
+
+  function recordStoreIr(moduleId: string, store: GeaIrStore): void {
+    const existing = irModules.get(moduleId) ?? { id: moduleId, file: moduleId, components: [], stores: [] }
+    const storeIds = new Set(existing.stores)
+    irStores.set(store.id, store)
+    storeIds.add(store.id)
+    irModules.set(moduleId, { ...existing, stores: Array.from(storeIds) })
+  }
+
+  function recordHostCapabilities(source: string): void {
+    if (/\bfetch\s*\(/.test(source)) hostCapabilities.add('fetch')
+    if (source.includes('https://')) hostCapabilities.add('https')
+    if (/\bApps\s*\./.test(source)) hostCapabilities.add('apps')
+    if (/\b(?:BLE|BLEServer)\b|\bgea_embedded_ble_|\b__gea_embedded_ble_/.test(source)) hostCapabilities.add('ble')
+    if (/\bWiFi\s*\./.test(source)) hostCapabilities.add('wifi')
+    if (/\b(?:Accelerometer|accelerometer)\s*\.|\bgea_embedded_imu_/.test(source)) hostCapabilities.add('imu')
+    if (/\baudioContext\s*\.|\bgea_embedded_audio_/.test(source)) hostCapabilities.add('audio')
+    if (/\bscreen\s*\./.test(source)) hostCapabilities.add('screen')
+    if (/\b__gea_embedded_image\b/.test(source)) hostCapabilities.add('image')
+    if (/\b__gea_embedded_touch\b/.test(source)) hostCapabilities.add('touch')
+    if (/\bdocument\s*\./.test(source)) hostCapabilities.add('dom')
+  }
+}
+
+type GeaRollupBundle = Record<string, { type: string; fileName?: string; isEntry?: boolean; facadeModuleId?: string | null }>
+
+function geaIrEntryFromBundle(bundle: GeaRollupBundle): string | null {
+  const entries = Object.values(bundle)
+    .filter((item) => item.type === 'chunk' && item.isEntry && item.fileName)
+    .map((item) => item.fileName!)
+    .sort()
+  return entries[0] ?? null
+}
+
+function geaIrConfiguredEntry(config: ResolvedConfig | null): string {
+  const input = config?.build.rollupOptions.input
+  if (typeof input === 'string') return input
+  if (Array.isArray(input)) return input[0] ? String(input[0]) : ''
+  if (input && typeof input === 'object') {
+    const firstKey = Object.keys(input).sort()[0]
+    return firstKey ? String(input[firstKey]) : ''
+  }
+  return ''
 }
 
 function resolveToFile(base: string): string | null {

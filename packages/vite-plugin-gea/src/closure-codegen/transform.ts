@@ -11,6 +11,13 @@ import type { DirectFnComponentParams } from './emit.ts'
 import { buildCreateTemplateMethod, createEmitContext, lowerJsxInStatement } from './emit.ts'
 import { extractTemplateJsx, findTemplateMethod } from './generator.ts'
 import {
+  componentIrId,
+  sourceSpan,
+  type GeaIrComponent,
+  type GeaIrModule,
+  type GeaIrRuntimeBase,
+} from './ir.ts'
+import {
   bodyContainsJsx,
   canSkipComponentStoreProxy,
   canUseLeanReactiveComponent,
@@ -32,6 +39,11 @@ export interface TransformResult {
   rewritten: string[]
   /** used compiler-runtime helper names (for diagnostics) */
   importsNeeded: string[]
+  /** gea compiler IR for rewritten components in this module */
+  ir?: {
+    module: GeaIrModule
+    components: GeaIrComponent[]
+  }
 }
 
 export interface TransformFileOptions {
@@ -58,6 +70,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
   }
 
   const ctx = createEmitContext()
+  ctx.irTemplates = []
   ctx.directFnComponents = collectDirectFnComponents(ast)
   ctx.directFnComponentParams = collectDirectFnComponentParams(ast, ctx.directFnComponents)
   ctx.directFnStringProps = collectDirectFnStringProps(ast, ctx.directFnComponents)
@@ -121,15 +134,26 @@ export function transformFile(source: string, _filename?: string, options: Trans
         !useTinyReactiveComponent &&
         canUseLeanReactiveComponent(classDecl)
       const hasAfterRenderAsyncHook = hasOwnInstanceMethod(classDecl, 'onAfterRenderAsync')
+      const className = (classDecl.id && classDecl.id.name) || '<anonymous>'
+      const runtimeBase = runtimeBaseForComponent({
+        useStaticCompiledComponent,
+        useCompiledComponent,
+        useTinyReactiveComponent,
+        useLeanReactiveComponent,
+      })
 
       // Lower JSX in every non-template method body that contains JSX.
       // This runs regardless of whether the class has a `template()` method.
+      ctx.currentIrComponent = className
+      ctx.currentIrRuntimeBase = runtimeBase
       for (const m of methodsWithJsx) {
         m.body.body = m.body.body.map((s: any) => lowerJsxInStatement(s, ctx))
       }
 
       if (!templateMethod) {
-        rewritten.push((classDecl.id && classDecl.id.name) || '<anonymous>')
+        rewritten.push(className)
+        ctx.currentIrComponent = undefined
+        ctx.currentIrRuntimeBase = undefined
         continue
       }
 
@@ -162,6 +186,11 @@ export function transformFile(source: string, _filename?: string, options: Trans
       const method = buildCreateTemplateMethod(jsx, ctx, preceding, templateSymbol)
       const useStaticElementComponent =
         useStaticCompiledComponent && isStaticBuiltinElementRoot(jsx) && !nodeContainsIdentifier(method.body, 'd')
+      if (useStaticElementComponent && ctx.irTemplates) {
+        for (const template of ctx.irTemplates) {
+          if (template.component === className) template.runtimeBase = 'static-element'
+        }
+      }
       if (useStaticElementComponent) method.params = []
       if (plainPropsParamName) ctx.bindings.delete(plainPropsParamName)
       // Clear per-template bindings so they don't leak to the next class
@@ -200,7 +229,9 @@ export function transformFile(source: string, _filename?: string, options: Trans
         ctx.importsNeeded.add('scheduleAfterRenderAsync')
         classDecl.body.body.push(buildAfterRenderAsyncRenderMethod())
       }
-      rewritten.push((classDecl.id && classDecl.id.name) || '<anonymous>')
+      rewritten.push(className)
+      ctx.currentIrComponent = undefined
+      ctx.currentIrRuntimeBase = undefined
       continue
     }
 
@@ -226,7 +257,65 @@ export function transformFile(source: string, _filename?: string, options: Trans
     changed: true,
     rewritten,
     importsNeeded: Array.from(ctx.importsNeeded),
+    ir: buildModuleIr(_filename ?? '<unknown>', rewritten, ctx.irTemplates ?? [], ast),
   }
+}
+
+function runtimeBaseForComponent(options: {
+  useStaticCompiledComponent: boolean
+  useCompiledComponent: boolean
+  useTinyReactiveComponent: boolean
+  useLeanReactiveComponent: boolean
+}): GeaIrRuntimeBase {
+  if (options.useStaticCompiledComponent) return 'static'
+  if (options.useCompiledComponent) return 'compiled'
+  if (options.useTinyReactiveComponent) return 'tiny-reactive'
+  if (options.useLeanReactiveComponent) return 'lean-reactive'
+  return 'reactive'
+}
+
+function buildModuleIr(
+  moduleId: string,
+  rewritten: string[],
+  templates: NonNullable<ReturnType<typeof createEmitContext>['irTemplates']>,
+  ast: File,
+): { module: GeaIrModule; components: GeaIrComponent[] } {
+  const components: GeaIrComponent[] = []
+  for (const name of rewritten) {
+    const record = templates.find((template) => template.component === name)
+    if (!record) continue
+    const declaration = findClassDeclarationByName(ast, name)
+    components.push({
+      id: componentIrId(moduleId, name),
+      module: moduleId,
+      exportName: name,
+      runtimeBase: record.runtimeBase,
+      template: record.template,
+      ...(declaration ? { sourceSpan: sourceSpan(declaration) } : {}),
+    })
+  }
+  return {
+    module: {
+      id: moduleId,
+      file: moduleId,
+      components: components.map((component) => component.id),
+      stores: [],
+    },
+    components,
+  }
+}
+
+function findClassDeclarationByName(ast: File, name: string): ClassDeclaration | null {
+  for (const node of ast.program.body) {
+    if (t.isClassDeclaration(node) && node.id?.name === name) return node
+    if (t.isExportDefaultDeclaration(node) && t.isClassDeclaration(node.declaration) && node.declaration.id?.name === name) {
+      return node.declaration
+    }
+    if (t.isExportNamedDeclaration(node) && t.isClassDeclaration(node.declaration) && node.declaration.id?.name === name) {
+      return node.declaration
+    }
+  }
+  return null
 }
 
 function collectLocalClassComponents(ast: File): Set<string> {

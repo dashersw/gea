@@ -1,5 +1,6 @@
 import type { Statement, Expression } from '@babel/types'
 import { t } from '../../utils/babel-interop.ts'
+import type { GeaIrRuntimeBase, GeaIrTemplate } from '../ir.ts'
 
 export interface DirectFnComponentParams {
   props: string[]
@@ -96,6 +97,18 @@ export interface EmitContext {
   directClassComponents?: Set<string>
   /** Imported function components already compiled to DOM factory functions. */
   directFactoryComponents?: Set<string>
+  /** IR templates emitted while lowering JSX in the current module. */
+  irTemplates?: GeaIrTemplateRecord[]
+  /** Component currently being lowered for IR association. */
+  currentIrComponent?: string
+  /** Runtime base selected for the current component. */
+  currentIrRuntimeBase?: GeaIrRuntimeBase
+}
+
+export interface GeaIrTemplateRecord {
+  component: string
+  runtimeBase: GeaIrRuntimeBase
+  template: GeaIrTemplate
 }
 
 export function createEmitContext(reactiveRoot?: Expression): EmitContext {

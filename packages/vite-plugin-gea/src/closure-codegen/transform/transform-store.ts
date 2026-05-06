@@ -3,16 +3,17 @@ import type { ClassDeclaration, Expression, File, ImportDeclaration, Statement }
 
 import { COMPILER_RUNTIME_ID } from '../../virtual-modules.ts'
 import { generate, t } from '../../utils/babel-interop.ts'
+import { sourceSpan, storeFieldsToIr, storeIrId, type GeaIrStore } from '../ir.ts'
 
 export interface StoreTransformResult {
   code: string
   changed: boolean
+  ir?: GeaIrStore
 }
 
-export function transformCompiledStoreModule(source: string): StoreTransformResult | null {
+export function transformCompiledStoreModule(source: string, moduleId = '<unknown>'): StoreTransformResult | null {
   if (!source.includes('extends Store')) return null
   if (source.includes('CompiledStore')) return null
-  if (/\b(flushSync|silent|Store\.|new\s+Store\s*\()/.test(source)) return null
 
   let ast: File
   try {
@@ -29,13 +30,20 @@ export function transformCompiledStoreModule(source: string): StoreTransformResu
   if (!imported) return null
   const classDecl = findStoreClass(ast, imported.localName)
   if (!classDecl || !classDecl.id) return null
+  const fallbackIr = buildStoreIr(classDecl, moduleId, 'compiled')
+  if (/\b(flushSync|silent|Store\.|new\s+Store\s*\()/.test(source)) {
+    return { code: source, changed: false, ir: fallbackIr }
+  }
   if (!isCompiledStoreSafeClass(classDecl)) return null
-  if (!hasDefaultNewStore(ast, classDecl.id.name)) return null
+  if (!hasDefaultNewStore(ast, classDecl.id.name)) {
+    return { code: source, changed: false, ir: fallbackIr }
+  }
 
-  const leanResult = transformLeanDataSelectedStore(ast, classDecl, imported)
+  const leanResult = transformLeanDataSelectedStore(ast, classDecl, imported, moduleId)
   if (leanResult) return leanResult
 
   const storeBase = canUseLeanStore(classDecl) ? 'CompiledLeanStore' : 'CompiledStore'
+  const storeIr = buildStoreIr(classDecl, moduleId, storeBase === 'CompiledLeanStore' ? 'lean' : 'compiled')
 
   removeStoreSpecifier(imported.importDecl, imported.localName)
   ast.program.body = ast.program.body.filter((node) => {
@@ -53,6 +61,7 @@ export function transformCompiledStoreModule(source: string): StoreTransformResu
   return {
     code: generate(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } }).code,
     changed: true,
+    ir: storeIr,
   }
 }
 
@@ -187,6 +196,7 @@ function transformLeanDataSelectedStore(
   ast: File,
   classDecl: ClassDeclaration,
   imported: { importDecl: ImportDeclaration; localName: string },
+  moduleId: string,
 ): StoreTransformResult | null {
   if (!classDecl.id) return null
   const classIndex = ast.program.body.indexOf(classDecl)
@@ -198,6 +208,7 @@ function transformLeanDataSelectedStore(
   const fields = collectLeanStoreFields(classDecl)
   if (!fields) return null
   if (!isBenchmarkOperationStoreShape(classDecl)) return null
+  const storeIr = buildStoreIr(classDecl, moduleId, 'lean')
 
   const methodProps = buildLeanStoreMethods(classDecl)
   if (!methodProps) return null
@@ -234,6 +245,19 @@ function transformLeanDataSelectedStore(
   return {
     code: generate(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } }).code,
     changed: true,
+    ir: storeIr,
+  }
+}
+
+function buildStoreIr(classDecl: ClassDeclaration, moduleId: string, runtimeBase: 'compiled' | 'lean'): GeaIrStore {
+  const className = classDecl.id?.name ?? '<anonymous>'
+  return {
+    id: storeIrId(moduleId, className),
+    module: moduleId,
+    className,
+    runtimeBase,
+    fields: storeFieldsToIr(classDecl),
+    ...(sourceSpan(classDecl) ? { sourceSpan: sourceSpan(classDecl) } : {}),
   }
 }
 
@@ -341,7 +365,7 @@ function replaceThisExpressions(node: any, replacement: Expression): void {
 function findStoreImport(ast: File): { importDecl: ImportDeclaration; localName: string } | null {
   for (const node of ast.program.body) {
     if (!t.isImportDeclaration(node)) continue
-    if (node.source.value !== 'gea' && node.source.value !== '@geajs/core') continue
+    if (node.source.value !== 'gea' && node.source.value !== '@geajs/core' && node.source.value !== 'gea-embedded') continue
     for (const spec of node.specifiers) {
       if (!t.isImportSpecifier(spec)) continue
       const importedName = t.isIdentifier(spec.imported) ? spec.imported.name : spec.imported.value

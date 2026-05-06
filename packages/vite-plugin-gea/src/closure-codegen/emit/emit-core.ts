@@ -7,6 +7,7 @@ import type { EmitContext } from './emit-context.ts'
 import { emitSlot } from './emit-slot.ts'
 import { emitTemplateCloneExpression, emitTemplateDecl } from './template-decl.ts'
 import { normalizeEventAttrName, walkJsxToTemplate, type Slot, type TemplateSpec } from '../generator.ts'
+import { templateSpecToIr } from '../ir.ts'
 
 export function compileJsxToBlock(jsxRoot: any, ctx: EmitContext): BlockStatement {
   // Wrap the JSX root in a `<span style="display:contents">` when it would
@@ -33,6 +34,13 @@ export function compileJsxToBlock(jsxRoot: any, ctx: EmitContext): BlockStatemen
   } else if (!spec.html.startsWith('<') || spec.html.startsWith('<!--')) {
     spec.html = '<span style="display:contents">' + spec.html + '</span>'
     for (const slot of spec.slots) slot.walk = [0, ...slot.walk]
+  }
+  if (ctx.irTemplates && ctx.currentIrComponent && ctx.currentIrRuntimeBase) {
+    ctx.irTemplates.push({
+      component: ctx.currentIrComponent,
+      runtimeBase: ctx.currentIrRuntimeBase,
+      template: templateSpecToIr(spec),
+    })
   }
   const tplName = '_tpl' + ctx.tplCounter++
   ctx.templateDecls.push(...emitTemplateDecl(spec.html, tplName))

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { transformFile } from '../../src/closure-codegen/transform.ts'
+import { transformCompiledStoreModule } from '../../src/closure-codegen/transform/transform-store.ts'
 
 describe('transform: end-to-end file transform', () => {
   it('transforms hello-world', () => {
@@ -78,7 +79,7 @@ export default class App extends Component {
 export class Counter extends Component {
   template() { return <div>Count: {this.count}</div> }
 }`
-    const { code, changed, importsNeeded } = transformFile(src)
+    const { code, changed, importsNeeded, ir } = transformFile(src)
     assert.equal(changed, true)
     assert.ok(importsNeeded.includes('reactiveTextValue'))
     assert.match(
@@ -87,6 +88,49 @@ export class Counter extends Component {
     )
     assert.match(code, /import \{ Component \} from ["']@geajs\/core["']/)
     assert.match(code, /reactiveTextValue\(t0, d, this, \["count"\]\)/)
+    assert.equal(ir?.components[0]?.exportName, 'Counter')
+    assert.equal(ir?.components[0]?.template.slots[0]?.kind, 'text')
+    assert.equal(ir?.components[0]?.template.slots[0]?.expr, 'this.count')
+    assert.deepEqual(ir?.components[0]?.template.slots[0]?.exprPath, ['this', 'count'])
+  })
+
+  it('emits IR for keyed-list slots', () => {
+    const src = `import { Component } from '@geajs/core'
+export class Rows extends Component {
+  template() { return <ul>{this.items.map(item => <li style={{ left: item.x }}>{item.label}</li>)}</ul> }
+}`
+    const { changed, ir } = transformFile(src, '/virtual/Rows.tsx')
+    assert.equal(changed, true)
+    assert.equal(ir?.components[0]?.exportName, 'Rows')
+    const listSlot = ir?.components[0]?.template.slots.find((slot) => slot.kind === 'keyed-list')
+    assert.ok(listSlot)
+    assert.equal(listSlot.expr, 'this.items')
+    assert.deepEqual(listSlot.exprPath, ['this', 'items'])
+    assert.equal(listSlot.payload?.itemParam, 'item')
+    assert.match(listSlot.payload?.rowTemplate?.html ?? '', /^<li/)
+    assert.equal(listSlot.payload?.rowTemplate?.slots[0]?.kind, 'style')
+    assert.deepEqual(listSlot.payload?.rowTemplate?.slots[0]?.exprObjectFields, [
+      { name: 'left', expr: 'item.x', exprPath: ['item', 'x'] },
+    ])
+    assert.equal(listSlot.payload?.rowTemplate?.slots[1]?.kind, 'text')
+    assert.deepEqual(listSlot.payload?.rowTemplate?.slots[1]?.exprPath, ['item', 'label'])
+    assert.match(JSON.stringify(listSlot.payload), /item\.label|item\.x/)
+  })
+
+  it('emits store IR for named gea-embedded store instances without rewriting JS', () => {
+    const src = `import { Store } from 'gea-embedded'
+export class BreakoutStore extends Store {
+  bricks = [{ x: 0, y: 0, alive: 1, opacity: 255, color: '#EF4444' }]
+}
+export const breakout = new BreakoutStore()
+`
+    const result = transformCompiledStoreModule(src, '/virtual/BreakoutStore.tsx')
+    assert.equal(result?.changed, false)
+    assert.equal(result?.code, src)
+    assert.equal(result?.ir?.className, 'BreakoutStore')
+    const bricks = result?.ir?.fields.find((field) => field.name === 'bricks')
+    assert.equal(bricks?.shape?.kind, 'array')
+    assert.match(JSON.stringify(bricks?.shape), /"x"|"opacity"|"color"/)
   })
 
   it('leaves non-component class untouched', () => {
