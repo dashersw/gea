@@ -1,9 +1,10 @@
 import { parse } from '@babel/parser'
 import type { ClassDeclaration, Expression, File, ImportDeclaration, Statement } from '@babel/types'
+import { existsSync, readFileSync } from 'node:fs'
 
 import { COMPILER_RUNTIME_ID } from '../../virtual-modules.ts'
 import { generate, t } from '../../utils/babel-interop.ts'
-import { sourceSpan, storeFieldsToIr, storeIrId, type GeaIrStore } from '../ir.ts'
+import { sourceSpan, storeFieldsToIr, storeIrId, storeMethodsToIr, type GeaIrConstant, type GeaIrStore } from '../ir.ts'
 
 export interface StoreTransformResult {
   code: string
@@ -11,7 +12,13 @@ export interface StoreTransformResult {
   ir?: GeaIrStore
 }
 
-export function transformCompiledStoreModule(source: string, moduleId = '<unknown>'): StoreTransformResult | null {
+export type ResolveImportPath = (importer: string, source: string) => string | null
+
+export function transformCompiledStoreModule(
+  source: string,
+  moduleId = '<unknown>',
+  resolveImportPath?: ResolveImportPath,
+): StoreTransformResult | null {
   if (!source.includes('extends Store')) return null
   if (source.includes('CompiledStore')) return null
 
@@ -30,7 +37,8 @@ export function transformCompiledStoreModule(source: string, moduleId = '<unknow
   if (!imported) return null
   const classDecl = findStoreClass(ast, imported.localName)
   if (!classDecl || !classDecl.id) return null
-  const fallbackIr = buildStoreIr(classDecl, moduleId, 'compiled')
+  const constants = collectImportedLiteralConstants(ast, moduleId, resolveImportPath)
+  const fallbackIr = buildStoreIr(classDecl, moduleId, 'compiled', constants)
   if (/\b(flushSync|silent|Store\.|new\s+Store\s*\()/.test(source)) {
     return { code: source, changed: false, ir: fallbackIr }
   }
@@ -39,11 +47,11 @@ export function transformCompiledStoreModule(source: string, moduleId = '<unknow
     return { code: source, changed: false, ir: fallbackIr }
   }
 
-  const leanResult = transformLeanDataSelectedStore(ast, classDecl, imported, moduleId)
+  const leanResult = transformLeanDataSelectedStore(ast, classDecl, imported, moduleId, constants)
   if (leanResult) return leanResult
 
   const storeBase = canUseLeanStore(classDecl) ? 'CompiledLeanStore' : 'CompiledStore'
-  const storeIr = buildStoreIr(classDecl, moduleId, storeBase === 'CompiledLeanStore' ? 'lean' : 'compiled')
+  const storeIr = buildStoreIr(classDecl, moduleId, storeBase === 'CompiledLeanStore' ? 'lean' : 'compiled', constants)
 
   removeStoreSpecifier(imported.importDecl, imported.localName)
   ast.program.body = ast.program.body.filter((node) => {
@@ -197,6 +205,7 @@ function transformLeanDataSelectedStore(
   classDecl: ClassDeclaration,
   imported: { importDecl: ImportDeclaration; localName: string },
   moduleId: string,
+  constants: GeaIrConstant[],
 ): StoreTransformResult | null {
   if (!classDecl.id) return null
   const classIndex = ast.program.body.indexOf(classDecl)
@@ -208,7 +217,7 @@ function transformLeanDataSelectedStore(
   const fields = collectLeanStoreFields(classDecl)
   if (!fields) return null
   if (!isBenchmarkOperationStoreShape(classDecl)) return null
-  const storeIr = buildStoreIr(classDecl, moduleId, 'lean')
+  const storeIr = buildStoreIr(classDecl, moduleId, 'lean', constants)
 
   const methodProps = buildLeanStoreMethods(classDecl)
   if (!methodProps) return null
@@ -249,7 +258,12 @@ function transformLeanDataSelectedStore(
   }
 }
 
-function buildStoreIr(classDecl: ClassDeclaration, moduleId: string, runtimeBase: 'compiled' | 'lean'): GeaIrStore {
+function buildStoreIr(
+  classDecl: ClassDeclaration,
+  moduleId: string,
+  runtimeBase: 'compiled' | 'lean',
+  constants: GeaIrConstant[] = [],
+): GeaIrStore {
   const className = classDecl.id?.name ?? '<anonymous>'
   return {
     id: storeIrId(moduleId, className),
@@ -257,8 +271,67 @@ function buildStoreIr(classDecl: ClassDeclaration, moduleId: string, runtimeBase
     className,
     runtimeBase,
     fields: storeFieldsToIr(classDecl),
+    methods: storeMethodsToIr(classDecl),
+    ...(constants.length > 0 ? { constants } : {}),
     ...(sourceSpan(classDecl) ? { sourceSpan: sourceSpan(classDecl) } : {}),
   }
+}
+
+function collectImportedLiteralConstants(
+  ast: File,
+  moduleId: string,
+  resolveImportPath?: ResolveImportPath,
+): GeaIrConstant[] {
+  if (!resolveImportPath) return []
+  const namesByFile = new Map<string, Set<string>>()
+  for (const node of ast.program.body) {
+    if (!t.isImportDeclaration(node) || typeof node.source.value !== 'string') continue
+    const resolved = resolveImportPath(moduleId, node.source.value)
+    if (!resolved) continue
+    for (const specifier of node.specifiers) {
+      if (!t.isImportSpecifier(specifier) || !t.isIdentifier(specifier.imported)) continue
+      const names = namesByFile.get(resolved) ?? new Set<string>()
+      names.add(specifier.imported.name)
+      namesByFile.set(resolved, names)
+    }
+  }
+
+  const constants: GeaIrConstant[] = []
+  for (const [file, names] of namesByFile) constants.push(...literalConstantsFromFile(file, names))
+  return constants
+}
+
+function literalConstantsFromFile(file: string, names: Set<string>): GeaIrConstant[] {
+  if (!existsSync(file)) return []
+  let ast: File
+  try {
+    ast = parse(readFileSync(file, 'utf8'), {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx', 'classProperties'],
+      errorRecovery: false,
+    })
+  } catch {
+    return []
+  }
+
+  const constants: GeaIrConstant[] = []
+  for (const node of ast.program.body) {
+    if (!t.isExportNamedDeclaration(node) || !t.isVariableDeclaration(node.declaration)) continue
+    for (const declaration of node.declaration.declarations) {
+      if (!t.isIdentifier(declaration.id) || !names.has(declaration.id.name) || !declaration.init) continue
+      const literal = literalConstant(declaration.id.name, declaration.init)
+      if (literal) constants.push(literal)
+    }
+  }
+  return constants
+}
+
+function literalConstant(name: string, value: Expression): GeaIrConstant | null {
+  if (t.isStringLiteral(value)) return { name, value: value.value, valueType: 'string' }
+  if (t.isNumericLiteral(value)) return { name, value: String(value.value), valueType: 'number' }
+  if (t.isBooleanLiteral(value)) return { name, value: value.value ? 'true' : 'false', valueType: 'boolean' }
+  if (t.isNullLiteral(value)) return { name, value: 'null', valueType: 'null' }
+  return null
 }
 
 function isBenchmarkOperationStoreShape(classDecl: ClassDeclaration): boolean {

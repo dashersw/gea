@@ -261,7 +261,7 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
           changed = true
         }
 
-        const storeResult = transformCompiledStoreModule(transformedCode, cleanId)
+        const storeResult = transformCompiledStoreModule(transformedCode, cleanId, resolveImportPath)
         if (storeResult?.ir) recordStoreIr(cleanId, storeResult.ir)
         if (storeResult?.changed) return { code: storeResult.code, map: null }
 
@@ -361,7 +361,7 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
     if (/\b(?:BLE|BLEServer)\b|\bgea_embedded_ble_|\b__gea_embedded_ble_/.test(source)) hostCapabilities.add('ble')
     if (/\bWiFi\s*\./.test(source)) hostCapabilities.add('wifi')
     if (/\b(?:Accelerometer|accelerometer)\s*\.|\bgea_embedded_imu_/.test(source)) hostCapabilities.add('imu')
-    if (/\baudioContext\s*\.|\bgea_embedded_audio_/.test(source)) hostCapabilities.add('audio')
+    if (/\baudioContext\s*\.|\b__gea_audioContext\b|\b__gea_Audio\b/.test(source)) hostCapabilities.add('audio')
     if (/\bscreen\s*\./.test(source)) hostCapabilities.add('screen')
     if (/\b__gea_embedded_image\b/.test(source)) hostCapabilities.add('image')
     if (/\b__gea_embedded_touch\b/.test(source)) hostCapabilities.add('touch')

@@ -65,6 +65,8 @@ export interface GeaIrStore {
   className: string
   runtimeBase: 'compiled' | 'lean'
   fields: GeaIrStoreField[]
+  methods?: GeaIrStoreMethod[]
+  constants?: GeaIrConstant[]
   sourceSpan?: GeaIrSourceSpan
 }
 
@@ -78,6 +80,47 @@ export type GeaIrStoreValueShape =
   | { kind: 'array'; element?: GeaIrStoreValueShape }
   | { kind: 'object'; fields: GeaIrStoreField[] }
   | { kind: 'literal'; valueType: 'string' | 'number' | 'boolean' | 'null' }
+
+export interface GeaIrStoreMethod {
+  name: string
+  params: GeaIrStoreMethodParam[]
+  body: string
+  ops?: GeaIrStoreStmt[]
+  sourceSpan?: GeaIrSourceSpan
+}
+
+export interface GeaIrStoreMethodParam {
+  name: string
+}
+
+export interface GeaIrConstant {
+  name: string
+  value: string
+  valueType: 'string' | 'number' | 'boolean' | 'null'
+}
+
+export type GeaIrStoreStmt =
+  | { kind: 'var'; name: string; mutable?: boolean; init?: GeaIrStoreExpr }
+  | { kind: 'assign'; target: GeaIrStoreExpr; value: GeaIrStoreExpr }
+  | { kind: 'expr'; expr: GeaIrStoreExpr }
+  | { kind: 'if'; test: GeaIrStoreExpr; consequent: GeaIrStoreStmt[]; alternate?: GeaIrStoreStmt[] }
+  | { kind: 'for'; init?: GeaIrStoreStmt; test?: GeaIrStoreExpr; update?: GeaIrStoreExpr; body: GeaIrStoreStmt[] }
+  | { kind: 'return'; value?: GeaIrStoreExpr }
+
+export type GeaIrStoreExpr =
+  | { kind: 'identifier'; name: string }
+  | { kind: 'this' }
+  | { kind: 'number'; value: number }
+  | { kind: 'string'; value: string }
+  | { kind: 'boolean'; value: boolean }
+  | { kind: 'null' }
+  | { kind: 'member'; object: GeaIrStoreExpr; property: string; computed?: false }
+  | { kind: 'index'; object: GeaIrStoreExpr; index: GeaIrStoreExpr }
+  | { kind: 'call'; callee: GeaIrStoreExpr; args: GeaIrStoreExpr[] }
+  | { kind: 'unary'; op: string; arg: GeaIrStoreExpr }
+  | { kind: 'binary'; op: string; left: GeaIrStoreExpr; right: GeaIrStoreExpr }
+  | { kind: 'logical'; op: string; left: GeaIrStoreExpr; right: GeaIrStoreExpr }
+  | { kind: 'update'; op: string; arg: GeaIrStoreExpr; prefix: boolean }
 
 export interface GeaIrSourceSpan {
   start?: number
@@ -110,6 +153,138 @@ export function storeFieldsToIr(classDecl: ClassDeclaration): GeaIrStoreField[] 
     })
   }
   return fields
+}
+
+export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[] {
+  const methods: GeaIrStoreMethod[] = []
+  for (const member of classDecl.body.body) {
+    if (!t.isClassMethod(member) || member.static || member.computed || member.kind !== 'method') continue
+    if (!t.isIdentifier(member.key)) continue
+
+    const params: GeaIrStoreMethodParam[] = []
+    let unsupportedParam = false
+    for (const param of member.params) {
+      if (t.isIdentifier(param)) {
+        params.push({ name: param.name })
+      } else {
+        unsupportedParam = true
+        break
+      }
+    }
+    if (unsupportedParam) continue
+
+    const ops = storeStmtsToIr(member.body.body)
+    methods.push({
+      name: member.key.name,
+      params,
+      body: generate(member.body).code,
+      ...(ops ? { ops } : {}),
+      ...(sourceSpan(member) ? { sourceSpan: sourceSpan(member) } : {}),
+    })
+  }
+  return methods
+}
+
+function storeStmtsToIr(statements: unknown[]): GeaIrStoreStmt[] | null {
+  const out: GeaIrStoreStmt[] = []
+  for (const statement of statements) {
+    const converted = storeStmtToIr(statement)
+    if (!converted) return null
+    out.push(...converted)
+  }
+  return out
+}
+
+function storeStmtToIr(statement: unknown): GeaIrStoreStmt[] | null {
+  if (t.isBlockStatement(statement)) return storeStmtsToIr(statement.body)
+  if (t.isVariableDeclaration(statement)) {
+    const declarations: GeaIrStoreStmt[] = []
+    for (const declaration of statement.declarations) {
+      if (!t.isIdentifier(declaration.id)) return null
+      const init = declaration.init ? storeExprToIr(declaration.init) : undefined
+      if (declaration.init && !init) return null
+      declarations.push({ kind: 'var', name: declaration.id.name, mutable: statement.kind !== 'const', ...(init ? { init } : {}) })
+    }
+    return declarations
+  }
+  if (t.isExpressionStatement(statement)) {
+    const expr = statement.expression
+    if (t.isAssignmentExpression(expr) && expr.operator === '=') {
+      const target = storeExprToIr(expr.left)
+      const value = storeExprToIr(expr.right)
+      return target && value ? [{ kind: 'assign', target, value }] : null
+    }
+    const converted = storeExprToIr(expr)
+    return converted ? [{ kind: 'expr', expr: converted }] : null
+  }
+  if (t.isIfStatement(statement)) {
+    const test = storeExprToIr(statement.test)
+    const consequent = storeStatementList(statement.consequent)
+    const alternate = statement.alternate ? storeStatementList(statement.alternate) : undefined
+    if (!test || !consequent || (statement.alternate && !alternate)) return null
+    return [{ kind: 'if', test, consequent, ...(alternate ? { alternate } : {}) }]
+  }
+  if (t.isForStatement(statement)) {
+    const init = statement.init ? storeStmtToIr(t.isVariableDeclaration(statement.init) ? statement.init : t.expressionStatement(statement.init)) : undefined
+    const test = statement.test ? storeExprToIr(statement.test) : undefined
+    const update = statement.update ? storeExprToIr(statement.update) : undefined
+    const body = storeStatementList(statement.body)
+    if ((statement.init && (!init || init.length !== 1)) || (statement.test && !test) || (statement.update && !update) || !body) return null
+    return [{ kind: 'for', ...(init ? { init: init[0] } : {}), ...(test ? { test } : {}), ...(update ? { update } : {}), body }]
+  }
+  if (t.isReturnStatement(statement)) {
+    const value = statement.argument ? storeExprToIr(statement.argument) : undefined
+    if (statement.argument && !value) return null
+    return [{ kind: 'return', ...(value ? { value } : {}) }]
+  }
+  return null
+}
+
+function storeStatementList(statement: unknown): GeaIrStoreStmt[] | null {
+  if (t.isBlockStatement(statement)) return storeStmtsToIr(statement.body)
+  return storeStmtToIr(statement)
+}
+
+function storeExprToIr(expression: unknown): GeaIrStoreExpr | null {
+  if (t.isIdentifier(expression)) return { kind: 'identifier', name: expression.name }
+  if (t.isThisExpression(expression)) return { kind: 'this' }
+  if (t.isNumericLiteral(expression)) return { kind: 'number', value: expression.value }
+  if (t.isStringLiteral(expression)) return { kind: 'string', value: expression.value }
+  if (t.isBooleanLiteral(expression)) return { kind: 'boolean', value: expression.value }
+  if (t.isNullLiteral(expression)) return { kind: 'null' }
+  if (t.isMemberExpression(expression)) {
+    const object = storeExprToIr(expression.object)
+    if (!object) return null
+    if (expression.computed) {
+      const index = storeExprToIr(expression.property)
+      return index ? { kind: 'index', object, index } : null
+    }
+    return t.isIdentifier(expression.property) ? { kind: 'member', object, property: expression.property.name } : null
+  }
+  if (t.isCallExpression(expression)) {
+    const callee = storeExprToIr(expression.callee)
+    const args = expression.arguments.map((arg) => (t.isSpreadElement(arg) ? null : storeExprToIr(arg)))
+    return callee && args.every((arg): arg is GeaIrStoreExpr => !!arg) ? { kind: 'call', callee, args } : null
+  }
+  if (t.isUnaryExpression(expression)) {
+    const arg = storeExprToIr(expression.argument)
+    return arg ? { kind: 'unary', op: expression.operator, arg } : null
+  }
+  if (t.isBinaryExpression(expression)) {
+    const left = storeExprToIr(expression.left)
+    const right = storeExprToIr(expression.right)
+    return left && right ? { kind: 'binary', op: expression.operator, left, right } : null
+  }
+  if (t.isLogicalExpression(expression)) {
+    const left = storeExprToIr(expression.left)
+    const right = storeExprToIr(expression.right)
+    return left && right ? { kind: 'logical', op: expression.operator, left, right } : null
+  }
+  if (t.isUpdateExpression(expression)) {
+    const arg = storeExprToIr(expression.argument)
+    return arg ? { kind: 'update', op: expression.operator, arg, prefix: expression.prefix } : null
+  }
+  return null
 }
 
 export function sourceSpan(node: { start?: number | null; end?: number | null }): GeaIrSourceSpan | undefined {
