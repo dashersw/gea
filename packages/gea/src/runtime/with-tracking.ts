@@ -61,6 +61,7 @@ export function untrack<T>(fn: () => T): T {
   } finally {
     _active = prev
   }
+  return undefined as T
 }
 
 function _depsEqual(a: Dep[], b: Dep[]): boolean {

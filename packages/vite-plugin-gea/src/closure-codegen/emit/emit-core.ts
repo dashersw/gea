@@ -39,7 +39,7 @@ export function compileJsxToBlock(jsxRoot: any, ctx: EmitContext): BlockStatemen
     ctx.irTemplates.push({
       component: ctx.currentIrComponent,
       runtimeBase: ctx.currentIrRuntimeBase,
-      template: templateSpecToIr(spec),
+      template: templateSpecToIr(spec, ctx.bindings),
     })
   }
   const tplName = '_tpl' + ctx.tplCounter++

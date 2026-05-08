@@ -1,6 +1,7 @@
-import type { ClassDeclaration } from '@babel/types'
+import type { ClassDeclaration, Expression } from '@babel/types'
 import { generate, t } from '../utils/babel-interop.ts'
 import { walkJsxToTemplate, type Slot, type TemplateSpec } from './generator.ts'
+import { substituteBindings } from './emit/emit-substitution.ts'
 
 export interface GeaIrBundleV1 {
   schema: 'gea-ir'
@@ -117,6 +118,7 @@ export type GeaIrStoreExpr =
   | { kind: 'member'; object: GeaIrStoreExpr; property: string; computed?: false }
   | { kind: 'index'; object: GeaIrStoreExpr; index: GeaIrStoreExpr }
   | { kind: 'call'; callee: GeaIrStoreExpr; args: GeaIrStoreExpr[] }
+  | { kind: 'object'; fields: Array<{ name: string; value: GeaIrStoreExpr }> }
   | { kind: 'unary'; op: string; arg: GeaIrStoreExpr }
   | { kind: 'binary'; op: string; left: GeaIrStoreExpr; right: GeaIrStoreExpr }
   | { kind: 'logical'; op: string; left: GeaIrStoreExpr; right: GeaIrStoreExpr }
@@ -135,10 +137,10 @@ export function storeIrId(moduleId: string, className: string): string {
   return `${moduleId}#${className}`
 }
 
-export function templateSpecToIr(spec: TemplateSpec): GeaIrTemplate {
+export function templateSpecToIr(spec: TemplateSpec, bindings: Map<string, Expression> = new Map()): GeaIrTemplate {
   return {
     html: spec.html,
-    slots: spec.slots.map(slotToIr),
+    slots: spec.slots.map((slot) => slotToIr(slot, bindings)),
   }
 }
 
@@ -266,6 +268,17 @@ function storeExprToIr(expression: unknown): GeaIrStoreExpr | null {
     const args = expression.arguments.map((arg) => (t.isSpreadElement(arg) ? null : storeExprToIr(arg)))
     return callee && args.every((arg): arg is GeaIrStoreExpr => !!arg) ? { kind: 'call', callee, args } : null
   }
+  if (t.isObjectExpression(expression)) {
+    const fields: Array<{ name: string; value: GeaIrStoreExpr }> = []
+    for (const property of expression.properties) {
+      if (!t.isObjectProperty(property) || property.computed) return null
+      const name = objectPropertyName(property.key)
+      const value = storeExprToIr(property.value)
+      if (!name || !value) return null
+      fields.push({ name, value })
+    }
+    return { kind: 'object', fields }
+  }
   if (t.isUnaryExpression(expression)) {
     const arg = storeExprToIr(expression.argument)
     return arg ? { kind: 'unary', op: expression.operator, arg } : null
@@ -294,16 +307,17 @@ export function sourceSpan(node: { start?: number | null; end?: number | null })
   return span.start === undefined && span.end === undefined ? undefined : span
 }
 
-function slotToIr(slot: Slot): GeaIrSlot {
+function slotToIr(slot: Slot, bindings: Map<string, Expression>): GeaIrSlot {
+  const expr = slot.expr ? substituteBindings(slot.expr, bindings) : null
   return {
     index: slot.index,
     kind: slot.kind,
     walk: slot.walk,
     ...(slot.walkKinds ? { walkKinds: slot.walkKinds } : {}),
-    ...(slot.expr ? { expr: generate(slot.expr).code } : {}),
-    ...(slot.expr ? expressionPathToIr(slot.expr) : {}),
-    ...(slot.expr ? expressionObjectFieldsToIr(slot.expr) : {}),
-    ...(slot.payload ? { payload: slotPayloadToIr(slot) } : {}),
+    ...(expr ? { expr: generate(expr).code } : {}),
+    ...(expr ? expressionPathToIr(expr) : {}),
+    ...(expr ? expressionObjectFieldsToIr(expr) : {}),
+    ...(slot.payload ? { payload: slotPayloadToIr(slot, bindings) } : {}),
     ...(slot.directText ? { directText: true } : {}),
   }
 }
@@ -345,8 +359,8 @@ function expressionObjectFieldsToIr(expr: unknown): { exprObjectFields: GeaIrExp
   return fields.length > 0 ? { exprObjectFields: fields } : {}
 }
 
-function slotPayloadToIr(slot: Slot): unknown {
-  const payload = serializePayload(slot.payload)
+function slotPayloadToIr(slot: Slot, bindings: Map<string, Expression>): unknown {
+  const payload = serializePayload(slot.payload, bindings)
   if (slot.kind !== 'keyed-list' || !isRecord(payload)) return payload
 
   const cb = slot.payload?.mapCallback
@@ -381,19 +395,42 @@ function callbackParamName(param: unknown): string | undefined {
   return t.isIdentifier(param) ? param.name : undefined
 }
 
-function serializePayload(value: unknown): unknown {
+function serializePayload(value: unknown, bindings: Map<string, Expression>): unknown {
   if (value === null || value === undefined) return value
   if (typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(serializePayload)
+  if (Array.isArray(value)) return value.map((child) => serializePayload(child, bindings))
   if (isBabelNode(value)) {
+    const node = substitutePayloadNode(value, bindings)
     return {
-      nodeType: value.type,
-      code: generate(value).code,
+      nodeType: node.type,
+      code: generate(node).code,
     }
   }
   const out: Record<string, unknown> = {}
-  for (const [key, child] of Object.entries(value)) out[key] = serializePayload(child)
+  for (const [key, child] of Object.entries(value)) out[key] = serializePayload(child, bindings)
   return out
+}
+
+function substitutePayloadNode(value: { type: string }, bindings: Map<string, Expression>): any {
+  if (bindings.size === 0) return value
+  if (
+    t.isJSXAttribute(value) &&
+    value.value &&
+    t.isJSXExpressionContainer(value.value) &&
+    !t.isJSXEmptyExpression(value.value.expression)
+  ) {
+    return {
+      ...value,
+      value: {
+        ...value.value,
+        expression: substituteBindings(value.value.expression, bindings),
+      },
+    }
+  }
+  if (t.isJSXExpressionContainer(value) && !t.isJSXEmptyExpression(value.expression)) {
+    return { ...value, expression: substituteBindings(value.expression, bindings) }
+  }
+  return substituteBindings(value, bindings)
 }
 
 function isBabelNode(value: unknown): value is { type: string } {
