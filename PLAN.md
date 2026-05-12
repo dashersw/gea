@@ -1,0 +1,1241 @@
+# `@geajs/suspense` — Implementation Plan
+
+> **Branch**: `feat/suspense`  
+> **Issue**: [#63 — Suspense Component](https://github.com/dashersw/gea/issues/63)  
+> **Author**: Recep Şen  
+> **Date**: 2026-04-13  
+> **Status**: Planning complete — 31 design decisions resolved, ready for implementation
+
+---
+
+## 1. Package Decision
+
+### Name: `@geajs/suspense`
+
+All official packages in this monorepo use the `@geajs/` scope:
+
+| Package | Name |
+|---------|------|
+| Core runtime | `@geajs/core` |
+| SSR | `@geajs/ssr` |
+| UI library | `@geajs/ui` |
+| Mobile | `@geajs/mobile` |
+| Vite plugin | `@geajs/vite-plugin` |
+
+Therefore: **`@geajs/suspense`** (not `@geajs/core/suspense`, not a subpath export).
+
+### Separate Package vs. Core Integration
+
+**Decision: Separate package** — following the `@geajs/ssr` precedent.
+
+Rationale:
+- Tree-shaking: users who don't need Suspense pay zero cost
+- Versioning independence: Suspense can ship patches/features without bumping `@geajs/core`
+- API surface: keeps `@geajs/core` minimal per the framework's philosophy
+- Precedent: `@geajs/ssr` is also a "core extension" shipped as its own package
+
+`@geajs/core` will NOT export `Suspense` directly. Users import from `@geajs/suspense`.
+
+```ts
+// Usage
+import { Suspense } from '@geajs/suspense'
+```
+
+---
+
+## 2. Package Location
+
+```text
+packages/
+  gea-suspense/           ← new package
+    src/
+      index.ts            ← public exports
+      suspense.ts         ← core Suspense component
+      types.ts            ← SuspenseProps, SuspenseState
+      abort.ts            ← AbortController integration
+      triggers.ts         ← viewport/idle/interaction triggers
+    tests/
+      suspense.test.ts    ← unit tests
+      suspense-error.test.ts
+      suspense-timing.test.ts
+      suspense-abort.test.ts
+      suspense-triggers.test.ts
+      suspense-benchmarks.test.ts  ← benchmarks
+    package.json
+    tsconfig.json
+    README.md
+```
+
+---
+
+## 3. Package Configuration (`package.json` skeleton)
+
+```json
+{
+  "name": "@geajs/suspense",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Declarative async rendering boundaries for Gea framework",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "peerDependencies": {
+    "@geajs/core": "*"
+  },
+  "devDependencies": {
+    "@geajs/core": "*",
+    "tsdown": "^0.21.2",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.0",
+    "jsdom": "^29.0.0",
+    "@types/node": "^25.5.0"
+  }
+}
+```
+
+**Zero runtime dependencies** — `@geajs/core` is a peer dep (not bundled), no third-party libs.
+
+Build tool: `tsdown` (same as `@geajs/core`, consistent toolchain).
+
+---
+
+## 4. Implementation Phases
+
+### Phase 1 — Core Suspense (Fallback + Resolve)
+
+**Goal**: `<Suspense fallback={<Spinner />}><AsyncChild /></Suspense>` works.
+
+Tasks:
+- [ ] Scaffold `packages/gea-suspense/` with `package.json`, `tsconfig.json`
+- [ ] `src/types.ts` — `SuspenseProps` interface (Phase 1 subset: `fallback`, `onResolve`, `progressive`)
+- [ ] `src/suspense.ts` — `Suspense` class extending `Component`
+  - Collect child components with pending `async created()` lifecycle
+  - `Promise.allSettled()` parallel resolution (anti-waterfall, enables partial render)
+  - After `allSettled()` completes: `delete child[GEA_CREATED_PROMISE]` on every child to prevent stale promise retention and enable correct retry semantics
+  - `queueMicrotask` batching — same-tick resolves grouped into single DOM update cycle
+  - CSS lifecycle classes: `suspense-entering` (loading), `suspense-entered` (resolved), `suspense-leaving` (unmounting)
+  - `GEA_SWAP_CHILD` reuse for fallback → content transition — **Suspense must call `dispose()` on the outgoing child instance BEFORE each swap** to prevent observer/listener leaks; `GEA_SWAP_CHILD` does not call `dispose()` internally
+  - Insert fallback on mount
+  - Swap to content on resolve
+- [ ] Add package to workspace `package.json`
+- [ ] `tests/suspense.test.ts` — unit tests:
+  - renders fallback initially
+  - replaces fallback with content on resolve
+  - parallel resolution (all children start simultaneously)
+  - works with no async children (immediate render)
+  - works with multiple async children
+- [ ] Export from `src/index.ts`
+- [ ] Add to monorepo root `tsconfig`
+
+**Deliverable**: Basic fallback/resolve works.
+
+---
+
+### Phase 2 — Error Handling + Retry
+
+**Goal**: `error={(err, retry) => <ErrorUI onRetry={retry} />}` works.
+
+Tasks:
+- [ ] `src/types.ts` — add `error`, `onError` to `SuspenseProps`
+- [ ] `src/suspense.ts` — error state management
+  - `Promise.allSettled()` for error handling — each child's `result.status` checked independently; no short-circuiting on first failure
+  - render `error(err, retry)` JSX on failure for each rejected child
+  - `retry()` protocol: for each failed child → `dispose()` old instance → re-instantiate → call `created()` → capture new `GEA_CREATED_PROMISE` → run new `allSettled()` cycle; already-resolved children's DOM is preserved
+  - `GEA_SWAP_CHILD` to switch between fallback/error/content states
+  - `onError(err)` callback invocation for each failed child; `onResolve(results)` IS called after all settle (Q41)
+  - **Auto-retry on prop change**: if a child is in error state when a reactive prop changes, error state resets and `retry()` runs automatically
+- [ ] Partial failure handling (some children resolve, some fail)
+- [ ] `tests/suspense-error.test.ts`:
+  - shows error UI when child throws
+  - retry re-runs async created
+  - retry succeeds and shows content
+  - `onError` callback called with correct error
+  - partial failure: resolved children render, failed children show error state independently (Promise.allSettled semantics)
+- [ ] Progressive mode (`progressive={true}`): render each child individually as it resolves; each failed child's error rendered at its position using `error(err, retry, index)`
+
+**Deliverable**: Error boundary with retry built into Suspense.
+
+---
+
+### Phase 3 — Timing + Race Condition Prevention
+
+**Goal**: Fast responses don't flash spinner; slow responses display spinner for at least `minimumFallback` ms.
+
+Tasks:
+- [ ] `src/types.ts` — add `timeout`, `minimumFallback`, `onFallback` to `SuspenseProps`
+- [ ] `src/suspense.ts`:
+  - `timeout` — delay timer before showing fallback (`setTimeout` → show fallback)
+  - `minimumFallback` — track `fallbackShownAt` timestamp; if resolve arrives too early, wait remaining ms
+  - `onFallback()` callback when fallback becomes visible
+  - Generation counter (monotonic integer) — stale async responses are discarded silently
+- [ ] `tests/suspense-timing.test.ts`:
+  - `timeout=200`: fast resolve (50ms) → fallback NEVER shown
+  - `timeout=200`: slow resolve (300ms) → fallback shown
+  - `minimumFallback=300`: resolve at 50ms but fallback shown → wait until 300ms
+  - timing interaction: `timeout=500, minimumFallback=300`, resolve at 750ms → fallback shown at 500ms, content shown at 800ms (250ms < 300ms minimum → wait remaining 50ms); if resolve at 400ms → fallback never shown, `minimumFallback` irrelevant
+  - generation counter: rapid re-mounts don't show stale content
+  - `onFallback` fires exactly once
+
+**Deliverable**: Configurable flicker prevention.
+
+---
+
+### Phase 4 — Stale-While-Refresh + AbortController
+
+**Goal**: Re-fetches show stale content with CSS class instead of flashing to skeleton.
+
+Tasks:
+- [ ] `src/abort.ts` — `AbortController` lifecycle integration
+  - Create controller on mount
+  - Abort on unmount
+  - Pass signal to `async created()` (TBD: parameter vs `this.abortSignal` — see Q4)
+- [ ] `src/types.ts` — add `staleWhileRefresh`, `AbortSignal` propagation
+- [ ] `src/suspense.ts`:
+  - `staleWhileRefresh=true`: on re-fetch, add `suspense-refreshing` CSS class to content container instead of swapping to fallback
+  - Optional `refreshing` render prop: `refreshing={(children) => <div class="overlay">{children}</div>}` — wraps stale content if provided
+  - Remove CSS class on new content arrival
+  - Abort previous operations when new fetch starts
+  - Memory leak prevention: abort on component unmount
+- [ ] `tests/suspense-abort.test.ts`:
+  - abort signal is aborted on unmount
+  - `staleWhileRefresh`: old content stays visible during refresh
+  - `staleWhileRefresh`: CSS class added/removed correctly
+  - rapid re-mounts don't leak AbortControllers
+
+**Deliverable**: No more skeleton flash on data refresh.
+
+---
+
+### Phase 5 — Trigger-Based Loading
+
+**Goal**: `<Suspense trigger="viewport"><HeavyChart /></Suspense>` loads only when scrolled into view.
+
+Tasks:
+- [ ] `src/triggers.ts`:
+  - `"immediate"` — default, loads on mount
+  - `"idle"` — `requestIdleCallback` (with `setTimeout` fallback for Safari)
+  - `"viewport"` — `IntersectionObserver`
+  - `"interaction"` — `addEventListener("click")` / `"keydown"` attached to `marker.nextElementSibling`; re-attached after each `GEA_SWAP_CHILD` call; removed once trigger fires (one-shot)
+  - `"hover"` — `addEventListener("mouseenter")`
+  - `"timer(ms)"` — `setTimeout(ms)`
+- [ ] `src/types.ts` — add `trigger`, `prefetch` to `SuspenseProps`
+- [ ] `src/suspense.ts`:
+  - Wire trigger logic: only start child loading after trigger fires
+  - `prefetch="idle"` — pre-load during idle, display on trigger; if `async created()` fails during prefetch, trigger arrival shows error UI immediately (promise is already rejected) — `retry()` available to re-run
+  - Clean up observers/listeners on unmount
+  - **Trigger vs refresh contract**: triggers are one-shot for initial load only; subsequent re-fetches are driven by reactive prop changes propagating via `GEA_ON_PROP_CHANGE` to the Suspense boundary, which re-runs `async created()` on children — `staleWhileRefresh` applies to these reactive re-fetches, not to trigger re-fires
+- [ ] Router integration (TBD: auto-wrap or opt-in — see Q6)
+- [ ] `tests/suspense-triggers.test.ts`:
+  - `"immediate"` starts on mount
+  - `"idle"` defers until requestIdleCallback
+  - `"viewport"` uses IntersectionObserver (mock in tests)
+  - `"timer(500)"` delays 500ms
+  - observers cleaned up on unmount
+
+**Deliverable**: Deferred loading with all Angular `@defer`-inspired triggers.
+
+---
+
+### Phase 6 — SSR Streaming Integration
+
+**Goal**: Suspense works with `@geajs/ssr` streaming deferreds — same boundary on server and client.
+
+Tasks:
+- [ ] `src/types.ts` — add `ssrStreamId` to `SuspenseProps`
+- [ ] `src/suspense.ts` (client side):
+  - On hydration: find element by `ssrStreamId`
+  - If SSR stream already resolved → skip loading, go straight to "resolved" state
+  - If still showing SSR fallback → take over async operation client-side
+- [ ] `@geajs/ssr` coordination (may need minor changes to SSR deferred chunk format)
+- [ ] Tests (requires jsdom + SSR test helper):
+  - server renders fallback with correct ID
+  - client hydrates and continues where SSR left off
+  - edge case: SSR resolved before hydration
+  - edge case: SSR failed — client shows error boundary
+
+#### SSR Architecture (required design — currently underspecified)
+
+**Problem**: `@geajs/ssr`'s `renderToString` is synchronous — it calls `new ComponentClass(props)` and immediately calls `template()`. For `async created()` components, data is not available when `template()` runs, rendering empty/default content.
+
+**Required changes to `@geajs/ssr`**:
+
+1. **New `renderToStringAsync`** function (non-breaking addition):
+   ```ts
+   export async function renderToStringAsync(
+     ComponentClass: ComponentLike,
+     props?: object,
+     options?: SSROptions
+   ): Promise<{ html: string; deferreds: DeferredChunk[] }>
+   ```
+   This function awaits all `GEA_CREATED_PROMISE` instances before calling `template()`.
+
+2. **Suspense boundary registration**: When a `Suspense` component mounts server-side, it registers a `DeferredChunk` in the SSR context with its `ssrStreamId` as the placeholder ID.
+
+3. **Fallback HTML generation**: Server-side Suspense renders the `fallback` prop as initial HTML with a wrapper element carrying `id={ssrStreamId}`.
+
+4. **Stream coordination**: The existing `createSSRStream` / `handleRequest` pipeline in `stream.ts` picks up `deferreds` from the Suspense boundaries and streams `<script>` replacements as async data resolves.
+
+5. **Client hydration logic**: Client-side Suspense checks for an element with matching `ssrStreamId`:
+   - If element's data attribute indicates SSR already resolved → skip to `resolved` state
+   - If element still shows fallback → proceed with client-side `async created()` calls
+
+**Deliverable**: Unified server/client Suspense with zero hydration mismatches.
+
+---
+
+## 5. Testing Strategy
+
+### Framework
+`node:test` (same as `@geajs/core`) + `jsdom` for DOM simulation.
+
+```ts
+import { describe, it, before, after } from 'node:test'
+import assert from 'node:assert/strict'
+```
+
+### Test script (package.json)
+```json
+"test": "tsx --conditions source --test 'tests/**/*.test.ts'"
+```
+
+### Coverage target
+- Phase 1–3: **≥90% line coverage**
+- Phase 4–6: **≥85% line coverage**
+- All edge cases explicitly named in test descriptions
+
+### Benchmark strategy
+Using `node:test`'s built-in benchmark support:
+
+```ts
+import { bench, run } from 'node:test'
+```
+
+Benchmark targets:
+1. **Mount time**: Suspense with 10 async children vs. 10 direct children
+2. **Memory**: No leaked references after unmount (AbortController cleanup)
+3. **Re-render**: `staleWhileRefresh` re-fetch performance
+4. **Trigger overhead**: Cost of setting up IntersectionObserver per boundary
+
+---
+
+## 6. Changeset
+
+```markdown
+---
+"@geajs/suspense": minor
+"@geajs/ssr": patch
+---
+
+### @geajs/suspense (minor)
+
+- **Initial release**: Declarative async rendering boundaries with fallback, error handling, timing control, stale-while-refresh, trigger-based loading, and SSR streaming integration
+
+### @geajs/ssr (patch)
+
+- **`renderToStringAsync`**: New async SSR function that awaits all `GEA_CREATED_PROMISE` instances before rendering; required for Suspense SSR streaming integration
+```
+
+---
+
+## 7. Monorepo Integration
+
+1. Add `packages/gea-suspense` to root `package.json` workspaces
+2. Add to root `tsconfig.json` project references
+3. Register in `.changeset/` with `minor` bump (new package)
+4. Add to CI test matrix
+
+---
+
+## 8. Confirmed Decisions (All Questions Answered)
+
+| # | Question | Decision |
+|---|----------|----------|
+| Q1 | PR phase scope | **All 6 phases** in this PR |
+| Q2 | `@geajs/core` re-export | **No** — import only from `@geajs/suspense` |
+| Q3 | AbortController signal API | **`this.abortSignal`** instance property |
+| Q4 | `staleWhileRefresh` display | **Both** — CSS class (`suspense-refreshing`) + optional `refreshing` render prop + `refreshingOverlay` prop (Q58); `staleWhileRefresh` type extended to `boolean \| { delay: number }` (Q61) |
+| Q5 | Router lazy route wrapping | **Opt-in** — `{ lazy: true, suspense: { fallback: <Spinner /> } }` in router config |
+| Q6 | Trigger scope | **All 6 triggers** — viewport, idle, interaction, hover, timer, immediate |
+| Q7 | SSR phase scope | **Full SSR integration** in this PR (Phase 6) |
+| Q8 | Build tool | **`tsdown`** — consistent with `@geajs/core` |
+| Q9 | Example app | **New `examples/suspense-demo/`** — kitchen-sink demo |
+| Q10 | Benchmark limits | **Write benchmarks, no hard CI gates** — establish baseline |
+| Q11 | `minimumFallback` default | **300ms** — Vue-like, avoids spinner flash by default |
+| Q12 | Nested Suspense | **Fully independent** — each boundary resolves on its own timeline |
+| Q13 | Partial failure behavior | **Partial render** via `Promise.allSettled()` — resolved children show, failed ones show error |
+| Q14 | Rendering mode | **Both** — `progressive={false}` default (batch), `progressive={true}` for progressive |
+| Q15 | Per-child error API | **Both** — `error` accepts both `(err, retry)` and `(err, retry, index)` signatures |
+| Q16 | `staleWhileRefresh` + error | **Error UI replaces stale content** when refresh fails |
+| Q17 | Bundle size target | **None for now** — implement correctly first, optimize later |
+| Q18 | DOM update batching | **`queueMicrotask` batch** — same-tick resolves grouped into single DOM update |
+| Q19 | CSS transition hooks | **Yes** — `suspense-entering` / `suspense-entered` CSS classes only (`suspense-leaving` removed — Q32: `GEA_SWAP_CHILD` is synchronous, no exit transition opportunity) |
+| Q20 | `ssrStreamId` generation | **Compiler auto-generates** from file path + line hash + JSX `key` prop (for list/map contexts); manual override supported |
+| Q21 | `onLoadStart` callback | **Yes** — fires when trigger activates and loading begins |
+| Q22 | DOM structure | **Comment marker** — `<!-- suspense-{id}-content -->` anchor; zero wrapper element; CSS classes on the content element itself |
+| Q23 | Default error (no `error` prop) | **Console.error + fallback stays** — error is logged, fallback remains visible; app does not crash |
+| Q24 | `revealOrder` prop | **Added** — `'together'` (default batch), `'forwards'` (DOM order), `'backwards'`; meaningful with `progressive={true}`, ignored with `progressive={false}` |
+| Q25 | Concurrent refresh (staleWhileRefresh) | **Cancel + restart** — new prop change calls previous `AbortController.abort()`, increments generation counter, starts fresh refresh cycle |
+| Q26 | Children scanning depth | **Deep scan** — all descendants scanned; stops at nested `Suspense` boundaries (inner shields outer) |
+| Q27 | Reactive re-fetch owner | **Suspense intercepts `GEA_ON_PROP_CHANGE`** — wraps child's prop change hook; detects new `GEA_CREATED_PROMISE` and starts refresh cycle |
+| Q28 | `prefetch='idle'` semantics | **Data first, show on trigger** — idle callback silently pre-runs `async created()`; when trigger fires, promises already resolved → zero-allocation instant render |
+| Q29 | Zero-allocation fast path | **Documented** — if no `GEA_CREATED_PROMISE` found on mount, fallback never inserted; timers, observers, and `allSettled` calls never created |
+| Q30 | Nested Suspense: outer sees inner children? | **No — inner shields** — outer deep scan stops at inner Suspense boundary; each boundary fully independent |
+| Q31 | Waterfall: AsyncParent renders AsyncChild | **Outer Suspense waits for all** — after parent resolves, newly mounted children's `GEA_CREATED_PROMISE` is detected and added to the pending set |
+| Q32 | Exit animation (`suspense-leaving`) | **Removed** — `GEA_SWAP_CHILD` removes elements synchronously; no time for CSS exit transition; only enter animations (`suspense-entering`/`suspense-entered`) supported |
+| Q33 | Error state + prop change | **Auto-retry** — prop change on a child in error state resets error and reruns `created()` automatically |
+| Q34 | SSR map/list `ssrStreamId` uniqueness | **`key` prop included** — compiler generates `${file}-${line}-${key ?? ''}`; list usages must provide JSX `key` |
+| Q35 | Progressive `timeout`/`minimumFallback` | **Global** — single boundary-level timer, not per-child |
+| Q36 | Viewport trigger concurrency | **Unlimited** — no framework-level throttle; browser HTTP/2 handles connection limits |
+| Q37 | Accessibility | **`aria-busy` auto** on fallback container during loading; **`announceLabel` opt-in** prop enables `aria-live="polite"` |
+| Q38 | `trigger='interaction'` attach point | **`marker.nextElementSibling`** — click/keydown on content/fallback element; re-attached after each `GEA_SWAP_CHILD`; one-shot |
+| Q39 | `prefetch='idle'` + error | **Error UI immediately on trigger** — rejected promise shown as error UI; `retry()` available |
+| Q40 | `revealOrder='backwards'` + partial fail | **Independent** — failed child shows error UI independently; other children continue in reverse order |
+| Q41 | `onResolve()` callback contract | **Always fires on all-settled** — `onResolve(results: PromiseSettledResult<void>[])` fires when ALL children settle (success or error). Caller inspects `.status` to detect failures. `onError()` still fires independently per failed child. |
+| Q42 | Waterfall re-scan detection mechanism | **`GEA_ON_CHILD_MOUNTED` core lifecycle hook** — new symbol added to `@geajs/core`; called by `component.tsx` when a child is pushed to `childComponents`; Suspense hooks into this on all scanned ancestors; removed in `dispose()`. |
+| Q43 | `partial → refreshing` transition (prop change during initial load) | **Queue and wait** — prop change is queued; initial `allSettled()` completes first (reaching `resolved` or `error`); then refresh cycle starts with pending prop. No immediate cancellation of in-progress initial load. |
+| Q44 | `minimumFallback` + `partial` state interaction | **Global/batch-only** — `minimumFallback` applies only to `progressive=false` (batch mode). In `progressive=true`, each child's resolved content is shown immediately without waiting for `minimumFallback`. Timer starts at fallback insertion and guards the first `loading → resolved` (or `loading → error`) transition only. |
+| Q45 | `GEA_ON_CHILD_MOUNTED` hook scope | **Full subtree recursive** — `scanAndHook(comp)` sets the hook on every node in the scanned subtree (stopping at nested Suspense boundaries). Each newly mounted child also receives the hook immediately via the callback itself. Ensures N-level waterfall detection. |
+| Q46 | `GEA_ON_CHILD_MOUNTED` export visibility | **Internal** — defined in `@geajs/core/symbols.ts` but NOT re-exported from `@geajs/core` public index. Only `@geajs/suspense` imports it directly. |
+| Q47 | `onResolve` allocation guard | **Guard added** — `PromiseSettledResult[]` array passed to `onResolve` only when the prop is provided. `if (this.props.onResolve)` check before passing `results`. `allSettled()` result already exists; zero extra allocation when prop absent. |
+| Q48 | `retry()` scope | **Failed children only** — `retry()` re-runs `created()` only for children currently in error state. Resolved children's DOM is preserved. State transitions back to `loading` (all failed) or `partial` (some resolved, some retrying). |
+| Q49 | `onLoadStart` + `prefetch='idle'` timing | **Fires when idle callback starts** — `onLoadStart()` fires when `requestIdleCallback` begins pre-fetching, not when the trigger fires. Trigger-time has no `onLoadStart` call if data is already pre-fetched. |
+| Q50 | `revealOrder='forwards'` buffer + unmount | **Drop and skip** — unmounted buffered child is disposed and removed from the buffer. Subsequent children are revealed without waiting for the dropped slot. Result: [A, _, C] gap in the sequence. |
+| Q51 | `onError(err, index?)` — index meaning | **DOM order (JSX child order)** — index is the position of the child as written in JSX (0-based). Stable, compiler-determined. `UserPosts` at position 1 → `onError(err, 1)`. |
+| Q52 | `IntersectionObserver` pool key | **Threshold only** — `Map<number, IntersectionObserver>`. `rootMargin` fixed at `'0px'`. All boundaries with the same threshold share one observer. |
+| Q53 | `announceLabel` prop type | **`string` only** — static string, compiler can inline it. `aria-live="polite"` + `aria-label` applied to fallback container. |
+| Q54 | Zero children in Suspense | **Dev warning + resolved** — `console.warn('[Gea] <Suspense> has no async children.')` in development. Both modes: immediate `resolved` state, `onResolve([])` fired, fallback never shown. |
+| Q55 | Waterfall child `GEA_CREATED_PROMISE` cleanup | **Delete after allSettled** — after `Promise.allSettled()` completes (including waterfall-added children), `delete child[GEA_CREATED_PROMISE]` on all settled children. Consistent with initial-scan children. |
+| Q56 | `timeout` + `progressive=true` behavior | **Global timer, per-slot fallback** — single timeout timer. Children that resolve before timeout fire are shown immediately. When timeout fires, each still-loading child slot shows the boundary's `fallback` prop independently. `minimumFallback` does not apply in `progressive=true` mode (Q44). |
+| Q57 | `retry()` in `error` render prop scope | **Single child only** — the `retry()` closure passed to the `error` render prop retries only the specific failed child it was called for. The `index` param identifies which child. To retry all failed children, call `retry()` from each individual error slot. |
+| Q58 | `refreshingOverlay` prop | **Added** — new optional prop `refreshingOverlay?: string \| Component \| (() => JSX)`. When provided with `staleWhileRefresh=true`, renders as an overlay on top of stale content (positioned via `position: relative` on container + `position: absolute` on overlay). CSS class `suspense-refreshing` still applied. Both mechanisms coexist. |
+| Q59 | `SuspenseProps.children` TypeScript type | **`ComponentClass[]`** — TypeScript type is `ComponentClass[]`. Compiler codegen passes child props via separate reactive binding mechanism (existing `GEA_ON_PROP_CHANGE` / `__bindChild` infrastructure), not inline in the children array. |
+| Q60 | `gen-observer-wiring.ts` — reactive fallback | **Add `updateFallback()` wiring** — when `fallback` JSX references reactive store paths, compiler generates `__observe()` calls that invoke `this.suspense.updateFallback(newHtml)`. Suspense exposes an internal `updateFallback(html: string)` method for live fallback updates. Same pattern applied to `error` and `refreshing` render props. |
+| Q61 | `staleWhileRefresh` prop type | **`boolean \| { delay: number }`** — `true`/`false` or `{ delay: ms }`. When `delay` is set, `suspense-refreshing` CSS class and `refreshingOverlay` are both withheld until the delay elapses. Fast refreshes (< delay) complete without any visual indicator. |
+| Q62 | `updateFallback()` / `updateError()` method visibility | **Internal — symbol-keyed** — `[GEA_UPDATE_FALLBACK](html: string)` and `[GEA_UPDATE_ERROR](html: string)` are symbol-keyed methods, inaccessible to user code. Only compiler-generated `__observe()` wiring calls them. Two new symbols added to `@geajs/core/symbols.ts` (internal, not re-exported). |
+| Q63 | Nested Suspense + `staleWhileRefresh` | **Fully independent** — inner boundary manages its own `staleWhileRefresh` state independently. Inner refresh does not propagate to outer boundary. Consistent with Q12 (nested boundaries fully independent). |
+
+---
+
+## 9. Decisions Already Made
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Package name | `@geajs/suspense` | Follows `@geajs/` scope convention |
+| Package location | `packages/gea-suspense/` | Follows `packages/gea-ssr/` precedent |
+| Core vs separate | Separate package | Tree-shaking, independent versioning |
+| Test framework | `node:test` | Consistent with `@geajs/core` |
+| Build tool | `tsdown` | Consistent with `@geajs/core` |
+| Runtime dependencies | Zero | Peer dep on `@geajs/core` only |
+| Promise strategy | `Promise.allSettled()` | Parallel + partial render support |
+| Error + Suspense | Same component | One `error` prop, no separate ErrorBoundary |
+| Race conditions | Generation counter | Monotonic ID, stale responses discarded |
+| AbortController | `this.abortSignal` | Consistent with Gea class-based API |
+| staleWhileRefresh | `boolean \| { delay: number }` | `suspense-refreshing` class + optional `refreshing` / `refreshingOverlay` props; `delay` withholds overlay for fast refreshes (Q61) |
+| minimumFallback | 300ms default | Avoids spinner flash for fast responses |
+| Partial failure | Partial render | Each child independent via `Promise.allSettled()` |
+| Router integration | Opt-in config | `{ suspense: { fallback } }` in route definition |
+| Triggers | All 6 | viewport, idle, interaction, hover, timer, immediate |
+| Example app | `examples/suspense-demo/` | Kitchen-sink demo |
+
+---
+
+## 11. Compiler Support (@geajs/vite-plugin)
+
+`<Suspense>` must be usable in JSX without any compiler changes blocking correctness — but to
+generate efficient, reactive compiled output the compiler needs to recognise `Suspense` as a
+**built-in framework component**, not as a user-imported component.  This section documents every
+change required in `packages/vite-plugin-gea/`.
+
+---
+
+### 11.1 Files that need changes
+
+| File | What changes |
+|------|-------------|
+| `src/codegen/jsx-utils.ts` | Add `BUILT_IN_COMPONENT_TAGS` set; extend `isComponentTag` (or add a sibling `isBuiltInComponent`) to recognise `"Suspense"` |
+| `src/parse/parser.ts` | Whitelist `Suspense` so the import-presence check (if any) is skipped for built-ins |
+| `src/ir/types.ts` | Add optional fields to `ChildComponent` for Suspense-specific metadata (render-prop JSX slots) |
+| `src/codegen/gen-children.ts` | Handle the `Suspense` child specially: extract `fallback`, `error`, `timeout`, `minimumFallback`, `staleWhileRefresh`, `trigger`, `refreshing`, `refreshingOverlay` props and pass them through as a props object |
+| `src/codegen/gen-prop-change.ts` | Emit reactive `__onPropChange` entries for every reactive Suspense prop so the boundary updates when the parent's store changes |
+| `src/codegen/gen-observer-wiring.ts` | Register `__observe()` calls for store paths referenced inside `fallback={...}` / `error={...}` JSX render-prop expressions |
+| `tests/` | New test file `packages/vite-plugin-gea/tests/suspense-transform.test.ts` |
+
+---
+
+### 11.2 Detecting `<Suspense>` as a built-in
+
+The compiler currently uses a single rule in `src/codegen/jsx-utils.ts`:
+
+```ts
+export function isComponentTag(tagName: string): boolean {
+  return tagName.length > 0 && isUpperCase(tagName[0])
+}
+```
+
+Any PascalCase tag is treated as a component **and** must be resolvable from an `import` in the
+file.  `Suspense` satisfies PascalCase, but it lives in `@geajs/suspense` — a peer dep the parent
+component may or may not import (the import exists at the *user* level; the compiler still needs to
+know it is framework-owned and not a user-defined class it must introspect for props).
+
+**Required change — `jsx-utils.ts`:**
+
+```ts
+/** Tags that are framework built-ins and require special codegen treatment. */
+export const BUILT_IN_COMPONENT_TAGS = new Set(['Suspense'])
+
+/**
+ * Returns true when the tag is a framework built-in component.
+ * Built-ins are handled by dedicated codegen paths; they do not go through
+ * the generic ChildComponent IR construction path.
+ */
+export function isBuiltInComponentTag(tagName: string): boolean {
+  return BUILT_IN_COMPONENT_TAGS.has(tagName)
+}
+```
+
+Callers that walk the JSX tree and collect child components (in the analyzer and parser) must check
+`isBuiltInComponentTag(tagName)` *before* `isComponentTag(tagName)` and route to the Suspense
+codegen path instead of the generic `ChildComponent` path.
+
+---
+
+### 11.3 Extracting render-prop slots at compile time
+
+`<Suspense>` accepts JSX expressions as props (`fallback`, `error`, `refreshing`).  These are
+**render props** — they contain JSX trees that must be compiled into template strings just like any
+other JSX in the file.
+
+The compiler already handles JSX-valued props for list `itemTemplate` (see `ArrayMapBinding.itemTemplate`).
+The same mechanism applies:
+
+1. During JSX analysis, when a `<Suspense>` element is encountered, walk its JSX attributes.
+2. For each attribute whose value is a `JSXExpressionContainer` wrapping a `JSXElement` or
+   `JSXFragment` (i.e. `fallback={<Spinner />}`), extract the inner JSX node.
+3. Compile that inner JSX node to a template string via `transformJSXElementToTemplate` /
+   `transformJSXFragmentToTemplate` (the same functions used in `gen-template.ts`).
+4. Store the compiled template string alongside the Suspense props object so `gen-children.ts` can
+   emit it as a string literal argument rather than a live JSX expression.
+
+If the render-prop JSX references reactive store paths (e.g. `fallback={<div>{store.message}</div>}`),
+those paths must be registered in the observer wiring (see §11.4).
+
+---
+
+### 11.4 Generating observer bindings for reactive Suspense props
+
+Suspense props that are **expressions** (not static JSX trees) must participate in the reactive
+observer system so the boundary re-renders when the underlying store value changes.
+
+The existing pattern for child component prop reactivity is:
+
+- `gen-prop-change.ts` emits a `[GEA_ON_PROP_CHANGE]` method on the parent class.
+- `gen-observer-wiring.ts` emits `createdHooks()` which calls `this.__observe(store, pathParts, methodName)`.
+
+For `<Suspense>`, the same hooks apply for any prop whose value references a store path:
+
+| Prop type | Reactive? | How |
+|-----------|-----------|-----|
+| `fallback={<StaticJSX />}` | No — static template string | Compiled to string constant; no observer needed |
+| `fallback={this.store.loadingMsg ? <A/> : <B/>}` | Yes — conditional on store path | Register `__observe` for `store.loadingMsg`; patch via `this.suspenseChild.__updateFallback(newTemplate)` |
+| `timeout={this.store.timeoutMs}` | Yes — scalar store value | Register `__observe` for `store.timeoutMs`; update via `this.suspenseChild[GEA_ON_PROP_CHANGE]('timeout', newVal)` |
+| `error={(e, retry) => <div>{e.message}</div>}` | No — function literal | Passed once at construction; no observer |
+
+The `__onPropChange` method on the `Suspense` component (inside `@geajs/suspense`) receives the
+prop name + new value and applies it to internal state — this is the same protocol already used for
+all `ChildComponent` instances (see `gen-prop-change.ts` → `ensureOnPropChangeMethod`).
+
+For `fallback` props that are reactive JSX, the compiler cannot pre-compile to a static string; it
+must emit an inline function that re-evaluates the JSX expression and re-compiles the template
+whenever the store changes.  This is the same "rerender" observer method pattern used for
+conditional slots today.
+
+---
+
+### 11.5 Detecting children with `async created()` — compile time vs runtime
+
+**Verdict: runtime detection only.**
+
+The compiler cannot reliably determine at the call site whether a child component has an
+`async created()` lifecycle, because:
+
+- The child class is imported from another file (or a library).
+- The compiler transforms each file independently; it does not cross-file analyse the superclass
+  chain at JSX-use time.
+- The child might be a dynamic expression (e.g. `<this.store.widget />`).
+
+Therefore `<Suspense>` must discover async children at **runtime** by inspecting each mounted child
+after `this[GEA_CHILD](ChildClass, props)` returns.  The proposed mechanism (in `src/suspense.ts`)
+is to check whether the child instance's `created` method is an `AsyncFunction`:
+
+```ts
+function isAsyncCreated(child: Component): boolean {
+  return child[GEA_CREATED_PROMISE] instanceof Promise
+}
+```
+
+The compiler's role is limited to:
+1. Passing the children through as normal `ChildComponent` instantiations (no special annotation).
+2. Ensuring `Suspense`'s own props (fallback, timeout, etc.) are wired reactively (§11.4).
+
+No compile-time `async created()` detection is required or planned.
+
+---
+
+### 11.6 Generated output for a simple `<Suspense fallback={...}>` usage
+
+**Input source:**
+
+```tsx
+import { Component } from '@geajs/core'
+import { Suspense } from '@geajs/suspense'
+import UserProfile from './UserProfile'
+
+export default class Dashboard extends Component {
+  template(props) {
+    return (
+      <Suspense fallback={<div class="spinner">Loading…</div>} timeout={200}>
+        <UserProfile userId={props.userId} />
+      </Suspense>
+    )
+  }
+}
+```
+
+**Expected compiled output (pseudocode — actual AST differs):**
+
+```js
+import { GEA_CHILD, GEA_ON_PROP_CHANGE } from '@geajs/core'
+import { Suspense } from '@geajs/suspense'
+import UserProfile from './UserProfile'
+
+export default class Dashboard extends Component {
+  // Lazy getter for the Suspense boundary instance
+  get __suspense0() {
+    if (!this.__lazySuspense0) {
+      this.__lazySuspense0 = this[GEA_CHILD](Suspense, this.__suspense0Props())
+    }
+    return this.__lazySuspense0
+  }
+
+  // Props builder — called once on construction and again via __onPropChange
+  __suspense0Props() {
+    return {
+      // Static render-prop compiled to a template string constant
+      fallback: `<div class="spinner">Loading…</div>`,
+      timeout: 200,
+      // Children passed as class references (runtime constructs them)
+      children: [{ component: UserProfile, props: { userId: this.props.userId } }],
+    }
+  }
+
+  // Reactive prop update hook — fires when parent store/props change
+  [GEA_ON_PROP_CHANGE](key, value) {
+    if (key === 'userId') {
+      this.__suspense0[GEA_ON_PROP_CHANGE]('children[0].props.userId', value)
+    }
+  }
+
+  template(props) {
+    return this.__suspense0.element
+  }
+}
+```
+
+Key observations:
+- `fallback={<div class="spinner">Loading…</div>}` — static JSX → compiled to a string constant at
+  build time; zero runtime overhead.
+- `timeout={200}` — static scalar → inlined directly; no observer.
+- `<UserProfile userId={props.userId} />` — passed as a `{ component, props }` descriptor; the
+  `Suspense` runtime instantiates it and listens for `async created()`.
+- If `timeout` were `{this.store.loadoutMs}`, the compiler would additionally emit a
+  `createdHooks()` `__observe` call targeting `store.loadoutMs` and a corresponding
+  `__onPropChange` branch updating `this.__suspense0[GEA_ON_PROP_CHANGE]('timeout', newVal)`.
+
+---
+
+### 11.7 New test file
+
+`packages/vite-plugin-gea/tests/suspense-transform.test.ts` should cover:
+
+- `<Suspense fallback={<Spinner />}>` compiles without errors
+- `Suspense` tag is not treated as a user-imported component (no "missing import" error)
+- Static `fallback` JSX is compiled to a string constant in the output
+- Reactive `timeout={this.store.ms}` emits an `__observe` call in `createdHooks()`
+- Reactive `timeout` emits a `[GEA_ON_PROP_CHANGE]` branch in the parent
+- Nested `<Suspense>` inside another `<Suspense>` compiles correctly (independent boundaries)
+- `<Suspense>` with no async children compiles and runs without errors (immediate render path)
+
+---
+
+### 11.8 Compiled path MUST also capture `async created()` promise (CRITICAL)
+
+The plan's Section 12.1.1 only modifies the **non-compiled** constructor path in `component.tsx`. However, `vite-plugin-gea/src/codegen/generator.ts:651` independently injects its own `this.created(this.props)` call as a standalone `ExpressionStatement` into compiled constructors. This call discards the return value. Since `GEA_COMPILED = true` for all compiled components, the runtime path fix never executes for production code.
+
+**Impact**: Without this fix, Suspense detects zero async children in every production component and immediately renders content without waiting. The entire feature is broken for compiled code.
+
+**Required change in `generator.ts`** — the `injectLifecycleCallsIntoConstructor` function must capture the return value:
+
+```ts
+// Current generated code (broken):
+this.created(this.props);
+
+// Required generated code:
+var __cr = this.created(this.props);
+if (__cr instanceof Promise) this[GEA_CREATED_PROMISE] = __cr;
+```
+
+This change must land in Phase 1 alongside the `component.tsx` fix. Both packages (`@geajs/core` and `@geajs/vite-plugin`) must be updated together.
+
+**Test coverage required**: The existing unit tests that use non-compiled components will pass even without this fix. Phase 1 tests MUST include at least one test using a compiled component (going through the Vite plugin transform) to catch regressions in the compiled path.
+
+---
+
+## 12. Core Integration Details (@geajs/core Changes)
+
+This section documents the **minimal, targeted changes** required in `@geajs/core` to support `@geajs/suspense`. All changes are additive; no existing public API is removed or altered.
+
+---
+
+### 12.1 `component.tsx` — Changes Required
+
+#### 12.1.1 `async created()` lifecycle hook
+
+**Location**: `component.tsx` line 434 (constructor body) and line 442 (method stub).
+
+```ts
+// Line 433–435 — constructor calls created() for non-compiled components:
+if (!(this.constructor as any)[GEA_COMPILED]) {
+  this.created(this.props)   // returns void; if overridden as async, the Promise is discarded
+  this.createdHooks(this.props)
+  ...
+}
+
+// Line 442 — stub in Component base class:
+created(_props: P) {}
+```
+
+**Key observations**:
+- `created(props: P)` is a plain synchronous stub. When a subclass overrides it as `async created()`, the returned `Promise` is silently discarded by the constructor call on line 434.
+- There is **no existing flag or stored Promise** indicating that an async `created()` is in flight.
+- The compiled path (`GEA_COMPILED` is `true`) skips the constructor call entirely; the compiler-generated code calls `created` at a different point.
+
+**Change needed** — store the return value so Suspense can detect pending async work:
+
+```ts
+// In constructor (replacing the current this.created(this.props) call):
+if (!(this.constructor as any)[GEA_COMPILED]) {
+  const createdResult = this.created(this.props)
+  if (createdResult instanceof Promise) {
+    ;(this as any)[GEA_CREATED_PROMISE] = createdResult
+  }
+  this.createdHooks(this.props)
+  ...
+}
+```
+
+This is a **one-line additive change** (capture return value + conditional assign). Components that return `void` from `created()` are completely unaffected.
+
+---
+
+#### 12.1.2 `this.abortSignal: AbortSignal` property
+
+**Location**: `Component` base class (after the `created` stub, ~line 442).
+
+The `Component` class currently has no `abortSignal` property. The decision (Q3/Q4, section 9) is `this.abortSignal` as the access pattern.
+
+**Change needed** — add the property and wire it into `dispose()`:
+
+```ts
+// Lazy getter — only allocates when accessed
+get abortSignal(): AbortSignal {
+  let controller = (this as any)[GEA_ABORT_CONTROLLER]
+  if (!controller) {
+    controller = new AbortController()
+    ;(this as any)[GEA_ABORT_CONTROLLER] = controller
+  }
+  return controller.signal
+}
+
+// In dispose() — only abort if controller was created:
+;(this as any)[GEA_ABORT_CONTROLLER]?.abort()
+```
+
+---
+
+#### 12.1.3 `GEA_SWAP_CHILD` — How Suspense Reuses It
+
+**Location**: `component.tsx` lines 1266–1292.
+
+```ts
+Component.prototype[GEA_SWAP_CHILD] = function (
+  this: AC,
+  markerId: string,
+  newChild: Component | false | null | undefined,
+) {
+  // 1. Find the DOM comment marker: <parent-id>-<markerId>
+  const marker = _getEl(eng[GEA_ID] + '-' + markerId)
+  if (!marker) return
+
+  // 2. Remove element immediately after the marker (current content)
+  const oldEl = marker.nextElementSibling
+  if (newChild && newChild[GEA_RENDERED] && engineThis(newChild)[GEA_ELEMENT] === oldEl) return  // already correct, no-op
+  if (oldEl && oldEl.tagName !== 'TEMPLATE') {
+    const oldChild = _i.childComponents.find(c => engineThis(c)[GEA_ELEMENT] === oldEl)
+    if (oldChild) { oldChild[GEA_RENDERED] = false; engineThis(oldChild)[GEA_ELEMENT] = null }
+    oldEl.remove()
+  }
+  if (!newChild) return  // removes old, inserts nothing (clear slot)
+
+  // 3. Render newChild HTML after the marker, then mount it
+  marker.insertAdjacentHTML('afterend', String(newChild.template(newChild.props)).trim())
+  const newEl = marker.nextElementSibling
+  engineThis(newChild)[GEA_ELEMENT] = newEl
+  _pushCC(_i, newChild)    // register as child component
+  _mountComp(newChild, false)  // set rendered=true, call onAfterRender
+}
+```
+
+**How Suspense uses this**: The `Suspense` component owns a comment marker (e.g. `<!--<id>-content-->`). On mount it calls `this[GEA_SWAP_CHILD]('content', this.fallbackInstance)` to insert the fallback. When all pending children resolve it calls `this[GEA_SWAP_CHILD]('content', this.contentWrapper)` to swap in the real content. `GEA_SWAP_CHILD` handles removing the old element, deregistering the old child, and inserting + mounting the new child atomically.
+
+**No changes needed** to `GEA_SWAP_CHILD` itself — Suspense calls it identically to the router/conditional rendering system.
+
+---
+
+#### 12.1.4 `GEA_PATCH_COND` — Reference Only
+
+**Location**: `component.tsx` line 1031.
+
+`GEA_PATCH_COND` is the compiler-generated conditional-slot mechanism. It works with comment-bounded DOM ranges and a `getCond()` callback. **Suspense does not use `GEA_PATCH_COND`** — it uses `GEA_SWAP_CHILD`, which is the simpler single-child-swap primitive. No changes to `GEA_PATCH_COND` are needed.
+
+---
+
+#### 12.1.5 `dispose()` — Teardown Hook
+
+**Location**: `component.tsx` lines 626–645.
+
+```ts
+dispose() {
+  _cm().removeComponent(this)
+  // Removes DOM element, clears GEA_ELEMENT
+  for (const fn of _i.observerRemovers) fn()
+  this[GEA_CLEANUP_BINDINGS]()
+  this[GEA_TEARDOWN_SELF_LISTENERS]()
+  for (const child of _i.childComponents) child?.dispose?.()
+  _i.childComponents = []
+}
+```
+
+There is **no `destroyed()` lifecycle hook** in the current `Component` class. `dispose()` is the only teardown path. The `GEA_ABORT_CONTROLLER?.abort()` call (§12.1.2) must be placed here, before `GEA_CLEANUP_BINDINGS`, so any in-flight `async created()` is cancelled when the component is removed (e.g. when a Suspense boundary unmounts before its children resolve).
+
+---
+
+### 12.2 `component-manager.ts` — No Changes Required
+
+**Current parent-child tracking**: `GEA_PARENT_COMPONENT` is stored on `engineThis(child)` (set at line 107 of `component.tsx`). The array of child instances lives in `internals(parent).childComponents` (used throughout component.tsx). `ComponentManager.componentRegistry` is a flat `Record<id, ComponentLike>` with no tree structure.
+
+**For Suspense**: No `ComponentManager` changes are needed. The `@geajs/suspense` package will:
+1. On `Suspense.created()`, iterate `internals(this).childComponents` (via exported `GEA_CHILD_COMPONENTS` symbol accessor) to find children with a pending `GEA_CREATED_PROMISE`.
+2. Walk up from any descendant via `engineThis(child)[GEA_PARENT_COMPONENT]` to find the nearest Suspense ancestor.
+
+If Phase 6 (SSR streaming) requires global Suspense boundary enumeration, a `suspenseBoundaries: Set<ComponentLike>` field can be added to `ComponentManager` at that point. This is explicitly deferred.
+
+---
+
+### 12.3 `symbols.ts` — Two New Symbols
+
+Add to `packages/gea/src/lib/symbols.ts`:
+
+```ts
+/** Pending Promise from async created() — set in constructor, cleared on resolve/reject. */
+export const GEA_CREATED_PROMISE = /*#__PURE__*/ Symbol.for('gea.component.createdPromise')
+
+/** AbortController instance backing the public `abortSignal` getter. */
+export const GEA_ABORT_CONTROLLER = /*#__PURE__*/ Symbol.for('gea.component.abortController')
+
+/** Called by component.tsx when a new child is pushed to childComponents. Suspense hooks in for waterfall detection. NOT re-exported from @geajs/core public index (Q42, Q46). */
+export const GEA_ON_CHILD_MOUNTED = /*#__PURE__*/ Symbol.for('gea.component.onChildMounted')
+
+/** Internal method key: Suspense.updateFallback(html). Called by compiler-generated __observe() wiring only. NOT re-exported (Q62). */
+export const GEA_UPDATE_FALLBACK = /*#__PURE__*/ Symbol.for('gea.suspense.updateFallback')
+
+/** Internal method key: Suspense.updateError(html). Called by compiler-generated __observe() wiring only. NOT re-exported (Q62). */
+export const GEA_UPDATE_ERROR = /*#__PURE__*/ Symbol.for('gea.suspense.updateError')
+```
+
+`GEA_CREATED_PROMISE` is the internal flag Suspense reads to detect pending async children:
+
+```ts
+// In Suspense.created() — collect promises from direct children:
+const pendingPromises = this[GEA_CHILD_COMPONENTS]
+  .filter((child: any) => child[GEA_CREATED_PROMISE] instanceof Promise)
+  .map((child: any) => child[GEA_CREATED_PROMISE] as Promise<void>)
+```
+
+`GEA_ABORT_CONTROLLER` stores the `AbortController` instance using a symbol key, consistent with all other engine-internal state in this codebase (which uses `Symbol.for()`-keyed properties exclusively for internals).
+
+Both symbols are automatically re-exported via the existing `export * from './lib/symbols'` wildcard in `index.ts` — no changes to `index.ts` are needed.
+
+---
+
+### 12.4 Backwards Compatibility
+
+All changes are **fully backwards-compatible**:
+
+| Change | Impact on existing consumers |
+|--------|------------------------------|
+| `GEA_CREATED_PROMISE` stored in constructor | Only set when `created()` returns a `Promise`. Components returning `void` are unaffected. |
+| `abortSignal` getter added to `Component` | Purely additive. **Lazy allocation** — `AbortController` is created only when `this.abortSignal` is first accessed. Components that never access `this.abortSignal` pay zero allocation cost. `dispose()` uses optional chaining: `this[GEA_ABORT_CONTROLLER]?.abort()` — no-op if never accessed. Note: Suspense should check `child[GEA_ABORT_CONTROLLER]` directly (symbol-level) rather than via getter to avoid forcing allocation on all children. |
+| `AbortController.abort()` in `dispose()` | No-op for components that never fetched. For existing async components managing their own controllers, abort-on-dispose is correct and expected behavior. |
+| `GEA_CREATED_PROMISE`, `GEA_ABORT_CONTROLLER` in `symbols.ts` | Purely additive. Symbol keys are collision-proof. |
+| No `ComponentManager` changes | Zero risk. |
+
+The public API surface of `@geajs/core` (`index.ts`) is unchanged except for two new exported symbols via the existing `export * from './lib/symbols'` wildcard, which is non-breaking by definition.
+
+---
+
+## 13. Updated SuspenseProps Interface
+
+The complete `SuspenseProps` interface reflecting all confirmed decisions:
+
+```ts
+interface SuspenseProps {
+  // --- Core ---
+  fallback: string | Component | (() => JSX)   // string = pre-compiled template string (compiler output for static JSX); Component or function for runtime
+  error?: (err: Error, retry: () => void, childIndex?: number) => JSX  // Q15: dual signature
+
+  // --- Rendering ---
+  progressive?: boolean        // Q14: false=batch (default), true=show each child as it resolves
+  revealOrder?: 'together' | 'forwards' | 'backwards'  // Q24: default='together'; 'forwards'/'backwards' only meaningful with progressive=true
+
+  // --- Timing ---
+  timeout?: number             // ms before showing fallback (default: 0)
+  minimumFallback?: number     // ms minimum fallback display (default: 300ms)
+
+  // --- Stale ---
+  staleWhileRefresh?: boolean | { delay: number }  // Q61: bool or { delay: ms } to withhold overlay/class until delay elapses
+  refreshing?: (children: JSX) => JSX  // optional render prop wrapping stale content
+  refreshingOverlay?: string | Component | (() => JSX)  // Q58: overlay on top of stale content (position: absolute)
+
+  // --- Callbacks ---
+  onResolve?: (results: PromiseSettledResult<void>[]) => void
+  onError?: (err: Error, childIndex?: number) => void
+  onFallback?: () => void
+  onLoadStart?: () => void     // Q21: fires when trigger activates and loading begins
+
+  // --- Triggers ---
+  trigger?: 'immediate' | 'viewport' | 'idle' | 'interaction' | 'hover' | `timer(${number})`
+  prefetch?: 'idle'
+
+  // --- Accessibility ---
+  announceLabel?: string       // Q37: opt-in aria-live — renders <div aria-live="polite" aria-label={announceLabel}> around content
+
+  // --- SSR ---
+  ssrStreamId?: string         // Q20: compiler auto-generates from ${file}-${line}-${key ?? ''}; user can override
+
+  // --- Children (compiler-provided, not set manually) ---
+  children?: Array<{ component: ComponentClass; props?: object }>
+}
+```
+
+---
+
+## 14. Progressive Mode State Machine
+
+This section defines all valid states and transitions for `<Suspense progressive={true}>` to ensure consistent behavior across all edge cases.
+
+### States
+
+| State | Description |
+|-------|-------------|
+| `idle` | Not yet triggered (trigger ≠ "immediate") |
+| `loading` | All children mounting, none resolved yet — fallback shown |
+| `partial` | Some children resolved (progressive mode only) — resolved children visible, others loading |
+| `partial-error` | Some resolved, some failed — resolved children visible, failed children show error UI |
+| `resolved` | All children resolved — full content visible |
+| `error` | All children failed — error UI shown |
+| `refreshing` | `staleWhileRefresh=true`, refresh in progress — stale content + `suspense-refreshing` class |
+| `refresh-error` | `staleWhileRefresh=true`, refresh failed — error UI replaces stale content |
+
+### Transitions
+
+```
+idle ──(trigger fires)──→ loading
+loading ──(all resolve)──→ resolved
+loading ──(some resolve, progressive=true)──→ partial
+loading ──(all fail)──→ error
+loading ──(some fail, some resolve, progressive=true)──→ partial-error
+partial ──(remaining resolve)──→ resolved
+partial ──(remaining fail)──→ partial-error
+partial-error ──(retry() called)──→ loading (failed children only re-run created())
+error ──(retry() called)──→ loading
+resolved ──(prop change triggers re-fetch, staleWhileRefresh=true)──→ refreshing
+resolved ──(prop change triggers re-fetch, staleWhileRefresh=false)──→ loading
+partial ──(prop change arrives, staleWhileRefresh=*)──→ queued (initial load completes first, then refreshing starts)
+refreshing ──(all resolve)──→ resolved (suspense-refreshing class removed)
+refreshing ──(fail)──→ refresh-error (error UI replaces stale content)
+refreshing ──(new prop change, staleWhileRefresh=true)──→ refreshing (cancel+restart: previous AbortController.abort(), generation counter incremented)
+refresh-error ──(retry() called)──→ refreshing
+```
+
+### Callback firing matrix
+
+| Transition | Callbacks fired |
+|-----------|----------------|
+| `loading → resolved` | `onResolve(results)` |
+| `loading → partial` | — (no callback; individual child resolution is silent) |
+| `partial → resolved` | `onResolve(results)` |
+| `loading → error` | `onError(err, 0..n)` for each failed child; **`onResolve(results)` IS called** with settled results |
+| `partial → partial-error` | `onError(err, index)` for each failed child; **`onResolve(results)` IS called** with settled results |
+| `idle → loading` (after trigger) | `onLoadStart()` |
+| `loading → loading (fallback shown)` | `onFallback()` |
+| `refreshing → resolved` | `onResolve(results)` |
+| `refreshing → refresh-error` | `onError(err, index?)` for each failed child; **`onResolve(results)` IS called** with settled results |
+
+### Progressive mode + retry semantics
+
+When `retry()` is called:
+1. Suspense identifies all children currently in error state
+2. For each failed child: calls `dispose()`, re-instantiates the child, calls `created()` again
+3. Captures new `GEA_CREATED_PROMISE` on the fresh instance
+4. State transitions back to `loading` (for batch mode) or `partial` (if some children already resolved)
+5. Already-resolved children's DOM is **preserved** — not re-rendered
+6. `GEA_CREATED_PROMISE` on successfully re-run children is cleared after `allSettled()`
+
+### `revealOrder` behavior
+
+| `revealOrder` | `progressive` | Behavior |
+|--------------|--------------|---------|
+| `'together'` (default) | `false` | All children wait until all resolved — current batch behavior |
+| `'together'` | `true` | Equivalent to `progressive=false`; `revealOrder` takes precedence |
+| `'forwards'` | `true` | Children revealed in DOM order — child N waits until children 0..N-1 are in `suspense-entered` state |
+| `'backwards'` | `true` | Children revealed in reverse DOM order |
+| any | `false` | `revealOrder` has no effect; batch behavior unchanged |
+
+**Implementation note (`'forwards'`)**: Each child maintains a "ready buffer" — resolved content is held in memory until all preceding siblings are revealed. DOM write only happens when the preceding sibling slot enters `suspense-entered` state. The `suspense-entering` class is applied at DOM-write time (not at resolution time).
+
+**Implementation note (`'backwards'`)**: Mirror of `'forwards'` — children are revealed from last to first (reverse DOM order). Each child waits until all *following* siblings (higher index) are in `suspense-entered` state before its DOM write occurs. A failed child (Q40) shows error UI **independently** at its slot without blocking other children; `onError(err, index)` fires for that child and the reverse-order sequence continues unaffected.
+
+---
+
+### `progressive=true` + `staleWhileRefresh=true` interaction
+
+When refresh starts:
+- All children (resolved or not) get `suspense-refreshing` class on their container
+- Each child's `async created()` is re-run
+- As each child resolves: its `suspense-refreshing` class is removed (progressive removal)
+- If a child fails: error UI replaces that child's container (stale content removed for that slot)
+- `onResolve(results)` fires when ALL children settle (success or error). `results` is a `PromiseSettledResult<void>[]` array — caller inspects `.status` to detect partial failures. `onError()` also fires independently for each failed child.
+
+---
+
+## 15. DOM Structure
+
+Suspense uses the **comment marker pattern** — identical to `GEA_SWAP_CHILD` — rather than injecting a wrapper element.
+
+### Marker format
+
+```html
+<!-- suspense-{id}-content -->
+<div class="spinner suspense-entering">Loading…</div>
+```
+
+The comment anchor is a DOM sibling of the content element, not a wrapper. `GEA_SWAP_CHILD` is called with marker ID `content` to swap between fallback / resolved / error states.
+
+### CSS lifecycle classes
+
+Applied directly to the content element (fallback or resolved):
+
+| Class | Applied when | Removed when |
+|-------|-------------|--------------|
+| `suspense-entering` | Element inserted into DOM | Next `requestAnimationFrame` |
+| `suspense-entered` | After first `rAF` (transition complete) | Element is about to be replaced |
+
+> **Note (Q32)**: `suspense-leaving` is **not supported**. `GEA_SWAP_CHILD` removes the outgoing element synchronously — there is no opportunity to run a CSS exit transition. Only enter animations are supported. Users who need exit animations must manage the transition themselves before the state change occurs.
+
+### Default error behavior (no `error` prop)
+
+When a child throws and no `error` prop is provided:
+1. `console.error(err)` — error is logged
+2. Fallback remains visible — no crash, no blank screen
+3. `onError(err)` callback is still invoked if provided
+
+### Progressive mode DOM
+
+In `progressive={true}` mode each child has its own slot:
+
+```html
+<!-- suspense-0-child-0 -->
+<div class="user-name suspense-entered">Alice</div>   ← resolved
+
+<!-- suspense-0-child-1 -->
+<div class="spinner suspense-entering">Loading…</div> ← still loading
+```
+
+`GEA_SWAP_CHILD` is called per child with marker ID `child-{index}`. Each slot is independently managed.
+
+---
+
+## 16. Deep Scan Algorithm & Waterfall Pattern
+
+### Deep scan
+
+`Suspense.created()` walks the **full component subtree** to collect all `GEA_CREATED_PROMISE` instances — not only direct children.
+
+#### Stop conditions
+
+1. **Nested `Suspense` boundary** — stop descending; inner boundary self-manages its children
+2. **Leaf component (no children)** — stop
+
+#### Algorithm
+
+```ts
+function collectPendingPromises(root: Component, promises: Promise<void>[]): void {
+  for (const child of internals(root).childComponents) {
+    if (child instanceof Suspense) continue  // inner boundary shields
+
+    if (child[GEA_CREATED_PROMISE] instanceof Promise) {
+      promises.push(child[GEA_CREATED_PROMISE])
+    }
+
+    collectPendingPromises(child, promises)  // recurse
+  }
+}
+```
+
+#### Zero-allocation fast path
+
+If `collectPendingPromises` returns an empty array:
+- Fallback is **never inserted**
+- No `setTimeout`, no `IntersectionObserver`, no `allSettled` call
+- Content rendered immediately — zero overhead for sync-only subtrees
+
+---
+
+### Waterfall pattern (AsyncParent → AsyncChild)
+
+When `AsyncParent.created()` resolves and its `template()` runs, new child components (including `AsyncChild`) are mounted. Suspense must detect these **post-resolution additions**.
+
+#### Detection mechanism: `GEA_ON_CHILD_MOUNTED` core lifecycle hook (Q42)
+
+A new symbol `GEA_ON_CHILD_MOUNTED = Symbol.for('gea.component.onChildMounted')` is added to `@geajs/core/symbols.ts`. In `component.tsx`, when a new child is pushed to `internals(this).childComponents`, the parent's `[GEA_ON_CHILD_MOUNTED]?.(child)` is called if present.
+
+Suspense sets `root[GEA_ON_CHILD_MOUNTED]` on all scanned ancestors to receive child mount events:
+
+```ts
+function scanAndHook(comp: Component, callback: (child: Component) => void): void {
+  comp[GEA_ON_CHILD_MOUNTED] = (child: Component) => {
+    if (child instanceof Suspense) return  // inner boundary shields
+    if (child[GEA_CREATED_PROMISE] instanceof Promise) {
+      pendingSet.add(child[GEA_CREATED_PROMISE])
+    }
+    scanAndHook(child, callback)  // ← also hook the newly mounted child for N-level waterfall
+  }
+  for (const child of internals(comp).childComponents) {
+    if (child instanceof Suspense) continue
+    scanAndHook(child, callback)
+  }
+}
+```
+
+`scanAndHook` is called on the Suspense root during `collectPendingPromises`. The hook is removed from all nodes in `Suspense.dispose()` via a matching recursive `unhook(comp)` walk.
+
+#### Protocol
+
+1. Initial `collectPendingPromises` → finds `AsyncParent`'s promise; sets `GEA_ON_CHILD_MOUNTED` on root
+2. `AsyncParent` resolves → `template()` runs → `AsyncChild` mounted → Core calls `parent[GEA_ON_CHILD_MOUNTED](AsyncChild)`
+3. Suspense's callback adds `AsyncChild[GEA_CREATED_PROMISE]` to pending set
+4. Suspense stays in `loading` state until `AsyncChild` also resolves
+5. Only then transitions to `resolved`
+
+This eliminates the waterfall problem: the outer boundary is a single await point for the entire async tree regardless of nesting depth.
+
+---
+
+### `IntersectionObserver` sharing
+
+Creating one `IntersectionObserver` per boundary is expensive at scale. The package should use a **shared root observer** keyed by root element + threshold:
+
+```ts
+const observerPool = new Map<string, IntersectionObserver>()
+
+function getSharedObserver(threshold: number): IntersectionObserver {
+  const key = `root:${threshold}`
+  if (!observerPool.has(key)) {
+    observerPool.set(key, new IntersectionObserver(handleIntersection, { threshold }))
+  }
+  return observerPool.get(key)!
+}
+```
+
+Each boundary registers its element with the shared observer and removes itself on unmount. This keeps per-boundary cost O(1) regardless of how many boundaries exist on the page.
+
+---
+
+## 17. Reactive Re-fetch Contract
+
+### Owner: Suspense intercepts `GEA_ON_PROP_CHANGE`
+
+When a child's reactive props change, the Suspense component **wraps** the child's `GEA_ON_PROP_CHANGE` hook to detect when a new `async created()` cycle begins:
+
+```ts
+const original = child[GEA_ON_PROP_CHANGE]
+child[GEA_ON_PROP_CHANGE] = (key: string, value: unknown) => {
+  original?.(key, value)
+  // After prop update, child may have set a new GEA_CREATED_PROMISE
+  if (child[GEA_CREATED_PROMISE] instanceof Promise) {
+    this.onChildRefetch(child, child[GEA_CREATED_PROMISE])
+  }
+}
+```
+
+`onChildRefetch` drives the `staleWhileRefresh` / `loading` state transition based on current Suspense state.
+
+### Concurrent refresh: cancel + restart
+
+When `staleWhileRefresh=true` and a new prop change arrives before the current refresh completes:
+
+1. `previousAbortController.abort()` — in-flight request gets abort signal
+2. Generation counter incremented — `allSettled` callbacks from old fetch are discarded
+3. New `allSettled` cycle starts with new `GEA_CREATED_PROMISE`
+4. State stays `refreshing` — no flicker, no fallback
+
+The `refreshing → refreshing` transition is now explicit in the state machine (§14).
+
+---
+
+### `prefetch='idle'` vs `trigger='idle'`
+
+| | `trigger='idle'` | `prefetch='idle'` (+ any trigger) |
+|--|----------|---------|
+| Data loading | During idle callback | During idle callback |
+| Content shown | Immediately after data loads | When `trigger` fires |
+| Best for | Low-priority background rendering | Pre-warming + instant render on user action |
+
+Implementation: When `prefetch='idle'`, `requestIdleCallback` pre-runs `async created()` on all children. Results sit in already-resolved `GEA_CREATED_PROMISE` instances. When `trigger` fires, `collectPendingPromises` finds no pending promises → zero-allocation fast path → instant render.
+
+---
+
+## 10. PR Checklist (to be done at the end)
+
+- [ ] All phases in scope implemented
+- [ ] Test coverage ≥ 90% (Phase 1–3)
+- [ ] Benchmarks written and baseline documented
+- [ ] Zero new runtime dependencies
+- [ ] Changeset file created
+- [ ] `PLAN.md` removed or moved to docs
+- [ ] README for `@geajs/suspense` written
+- [ ] Philosophy doc updated (remove "no suspense boundaries" from the list)
+- [ ] PR description links to issue #63
+- [ ] `@geajs/ssr` changeset included (patch — `renderToStringAsync`)
+- [ ] `revealOrder` prop implemented and tested
+- [ ] Deep scan algorithm implemented (stops at nested Suspense boundaries)
+- [ ] Waterfall pattern tested (AsyncParent → AsyncChild)
+- [ ] Zero-allocation fast path verified (no fallback inserted for sync-only subtrees)
+- [ ] Shared `IntersectionObserver` pool implemented
+- [ ] Concurrent refresh (cancel+restart) tested with `staleWhileRefresh=true`
+- [ ] DOM structure uses comment markers (no wrapper elements)
+- [ ] CSS lifecycle classes (`suspense-entering/entered`) documented in README (no `suspense-leaving` — Q32)
