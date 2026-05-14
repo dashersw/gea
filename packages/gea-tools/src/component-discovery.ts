@@ -7,19 +7,33 @@ export interface ComponentInfo {
   description?: string
   props?: string[]
   filePath?: string
+  declarationOffset?: number
+  exportKind?: 'default'
 }
 
 export class ComponentDiscovery {
   private components: Map<string, ComponentInfo> = new Map()
+  private workspaceRoots: string[] = []
+
+  setWorkspaceRoots(roots: string[]): void {
+    this.workspaceRoots = roots.map((root) => this.normalizeFilePath(root))
+  }
 
   scanWorkspace(): void {
-    // This would be called with workspace folders from LSP
-    // For now, we'll discover components on-demand from open files
+    this.components.clear()
+
+    for (const root of this.workspaceRoots) {
+      if (!fs.existsSync(root)) {
+        continue
+      }
+
+      this.scanDirectory(root)
+    }
   }
 
   discoverComponentsInFile(text: string, uri: string): ComponentInfo[] {
     const components: ComponentInfo[] = []
-    const filePath = uri.startsWith('file://') ? uri.substring(7) : uri
+    const filePath = this.normalizeFilePath(uri)
 
     const discovered = new Map<string, ComponentInfo>()
     this.discoverClassComponents(text, filePath, discovered)
@@ -31,22 +45,26 @@ export class ComponentDiscovery {
   }
 
   addComponents(components: ComponentInfo[]): void {
-    for (const comp of components) {
-      // Store by tagName (kebab-case)
-      this.components.set(comp.tagName, comp)
-      // Store by lowercase name
-      this.components.set(comp.name.toLowerCase(), comp)
-      // Store by exact name (PascalCase)
-      this.components.set(comp.name, comp)
+    for (const component of components) {
+      const merged = this.mergeComponent(component)
+      this.storeComponent(merged)
     }
   }
 
   getAllComponents(): ComponentInfo[] {
-    // Use a Set to avoid duplicates (same component stored under multiple keys)
     const uniqueComponents = new Map<string, ComponentInfo>()
-    for (const comp of this.components.values()) {
-      uniqueComponents.set(comp.name, comp)
+    for (const component of this.components.values()) {
+      const key = this.getComponentIdentity(component)
+      const existing = uniqueComponents.get(key)
+
+      if (!existing) {
+        uniqueComponents.set(key, component)
+        continue
+      }
+
+      uniqueComponents.set(key, this.preferRicherComponent(existing, component))
     }
+
     return Array.from(uniqueComponents.values())
   }
 
@@ -58,20 +76,47 @@ export class ComponentDiscovery {
     )
   }
 
+  getBestComponentMatch(tagName: string, fromFilePath?: string): ComponentInfo | undefined {
+    const normalizedFromFile = fromFilePath ? this.normalizeFilePath(fromFilePath) : undefined
+    const matches = this.getAllComponents().filter((component) => {
+      if (!component.filePath || component.exportKind !== 'default') {
+        return false
+      }
+
+      const lowerName = tagName.toLowerCase()
+      return component.name === tagName || component.name.toLowerCase() === lowerName || component.tagName === lowerName
+    })
+
+    if (matches.length === 0) {
+      return undefined
+    }
+
+    matches.sort((left, right) => {
+      const leftScore = this.getComponentDistanceScore(left, normalizedFromFile)
+      const rightScore = this.getComponentDistanceScore(right, normalizedFromFile)
+
+      if (leftScore !== rightScore) {
+        return leftScore - rightScore
+      }
+
+      const leftPath = left.filePath ?? ''
+      const rightPath = right.filePath ?? ''
+      return leftPath.localeCompare(rightPath)
+    })
+
+    return matches[0]
+  }
+
   discoverImportedComponents(text: string, currentUri: string): ComponentInfo[] {
     const components: ComponentInfo[] = []
-    let filePath = currentUri.startsWith('file://') ? currentUri.substring(7) : currentUri
-    if (filePath.startsWith('/') && process.platform !== 'win32') {
-      // Unix path, no transform needed
-    } else if (filePath.match(/^\/[A-Z]:/i)) {
-      filePath = filePath.substring(1)
-    }
+    const filePath = this.normalizeFilePath(currentUri)
     const dir = path.dirname(filePath)
 
     const defaultImportRegex = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g
-    let match
+    let match: RegExpExecArray | null
 
     while ((match = defaultImportRegex.exec(text)) !== null) {
+      const importName = match[1]
       const importPath = match[2]
 
       if (!importPath || (!importPath.startsWith('.') && !importPath.startsWith('/'))) {
@@ -88,20 +133,145 @@ export class ComponentDiscovery {
         const importedText = fs.readFileSync(resolvedPath, 'utf-8')
         const importedComponents = this.discoverComponentsInFile(importedText, `file://${resolvedPath}`)
 
+        const matchedComponent = importedComponents.find((component) => component.name === importName)
+        if (matchedComponent) {
+          components.push(matchedComponent)
+          continue
+        }
+
         if (importedComponents.length > 0) {
           components.push(...importedComponents)
         }
-      } catch (error) {
-        if (error instanceof Error) {
-          if (!error.message.includes('ENOENT')) {
-            console.error(`Error discovering components from ${importPath}:`, error.message)
-          }
+      } catch (error: unknown) {
+        if (error instanceof Error && !error.message.includes('ENOENT')) {
+          console.error(`Error discovering components from ${importPath}:`, error.message)
         }
-        continue
       }
     }
 
     return components
+  }
+
+  toRelativeImportPath(fromFilePath: string, targetFilePath: string): string {
+    const normalizedFromFile = this.normalizeFilePath(fromFilePath)
+    const normalizedTargetFile = this.normalizeFilePath(targetFilePath)
+    const fromDir = path.dirname(normalizedFromFile)
+
+    let relativePath = path.relative(fromDir, normalizedTargetFile).replace(/\\/g, '/')
+    relativePath = relativePath.replace(/\.(?:jsx?|tsx?)$/, '')
+
+    if (relativePath.endsWith('/index')) {
+      relativePath = relativePath.slice(0, -'/index'.length)
+    }
+
+    if (!relativePath.startsWith('.')) {
+      relativePath = `./${relativePath}`
+    }
+
+    return relativePath
+  }
+
+  private scanDirectory(dir: string): void {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name)
+      if (this.shouldIgnorePath(entryPath)) {
+        continue
+      }
+
+      if (entry.isDirectory()) {
+        this.scanDirectory(entryPath)
+        continue
+      }
+
+      if (!this.isSupportedSourceFile(entryPath)) {
+        continue
+      }
+
+      try {
+        const text = fs.readFileSync(entryPath, 'utf-8')
+        const components = this.discoverComponentsInFile(text, `file://${entryPath}`)
+        this.addComponents(components)
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          console.error(`Error scanning ${entryPath}:`, error.message)
+        }
+      }
+    }
+  }
+
+  private shouldIgnorePath(filePath: string): boolean {
+    const normalizedPath = this.normalizeFilePath(filePath)
+    const segments = normalizedPath.split(/[\\/]+/)
+    return segments.some((segment) => ['.git', 'dist', 'node_modules', 'out', 'website'].includes(segment))
+  }
+
+  private isSupportedSourceFile(filePath: string): boolean {
+    return /\.(?:js|jsx|ts|tsx)$/.test(filePath)
+  }
+
+  private getComponentDistanceScore(component: ComponentInfo, fromFilePath?: string): number {
+    if (!fromFilePath || !component.filePath) {
+      return Number.MAX_SAFE_INTEGER
+    }
+
+    const relativePath = this.toRelativeImportPath(fromFilePath, component.filePath)
+    return relativePath.split('/').length
+  }
+
+  private mergeComponent(component: ComponentInfo): ComponentInfo {
+    const existing = component.filePath ? this.findExistingComponent(component) : undefined
+    if (!existing) {
+      return component
+    }
+
+    return this.preferRicherComponent(existing, component)
+  }
+
+  private findExistingComponent(component: ComponentInfo): ComponentInfo | undefined {
+    const existingCandidates = [
+      this.components.get(component.name),
+      this.components.get(component.name.toLowerCase()),
+      this.components.get(component.tagName),
+    ]
+
+    return existingCandidates.find((candidate) => candidate?.filePath === component.filePath)
+  }
+
+  private preferRicherComponent(left: ComponentInfo, right: ComponentInfo): ComponentInfo {
+    const leftScore = this.getComponentRichness(left)
+    const rightScore = this.getComponentRichness(right)
+    return rightScore >= leftScore ? { ...left, ...right } : { ...right, ...left }
+  }
+
+  private getComponentRichness(component: ComponentInfo): number {
+    return [component.description, component.filePath, component.declarationOffset, component.props?.length].filter(
+      (value) => value !== undefined,
+    ).length
+  }
+
+  private storeComponent(component: ComponentInfo): void {
+    this.components.set(component.tagName, component)
+    this.components.set(component.name.toLowerCase(), component)
+    this.components.set(component.name, component)
+  }
+
+  private getComponentIdentity(component: ComponentInfo): string {
+    return `${component.filePath ?? ''}:${component.name}`
+  }
+
+  private normalizeFilePath(uriOrPath: string): string {
+    let filePath = decodeURIComponent(uriOrPath)
+    if (filePath.startsWith('file://')) {
+      filePath = filePath.slice('file://'.length)
+    }
+
+    if (filePath.match(/^\/[A-Z]:/i)) {
+      filePath = filePath.slice(1)
+    }
+
+    return path.normalize(filePath)
   }
 
   private toPascalCase(str: string): string {
@@ -116,6 +286,7 @@ export class ComponentDiscovery {
     let match: RegExpExecArray | null
 
     while ((match = classRegex.exec(text)) !== null) {
+      const isDefaultExport = Boolean(match[1])
       const className = match[2]
       const classStart = match.index
       const classBody = text.slice(classStart)
@@ -128,6 +299,8 @@ export class ComponentDiscovery {
         description,
         props,
         filePath,
+        declarationOffset: classStart,
+        exportKind: isDefaultExport ? 'default' : undefined,
       })
     }
   }
@@ -137,6 +310,7 @@ export class ComponentDiscovery {
     let match: RegExpExecArray | null
 
     while ((match = functionRegex.exec(text)) !== null) {
+      const isDefaultExport = Boolean(match[1])
       const name = match[2]
       const params = match[3]
       const functionStart = match.index
@@ -150,6 +324,8 @@ export class ComponentDiscovery {
         description,
         props,
         filePath,
+        declarationOffset: functionStart,
+        exportKind: isDefaultExport ? 'default' : undefined,
       })
     }
   }
@@ -325,11 +501,9 @@ export class ComponentDiscovery {
   }
 
   private extractDescription(text: string, className: string): string | undefined {
-    // Look for JSDoc comment before the class
     const classIndex = text.indexOf(`class ${className}`)
     if (classIndex === -1) return undefined
 
-    // Look backwards for JSDoc
     const beforeClass = text.substring(Math.max(0, classIndex - 500), classIndex)
     const jsdocMatch = beforeClass.match(/\*\s*([^\n]+)/)
 

@@ -37,6 +37,10 @@ vsce package
 - [ ] Typing inside `<PaymentForm ...>` suggests props discovered from `const { ... } = props`.
 - [ ] Event attribute completion suggests `click`, `input`, `change`, `keydown`, `blur`, and `submit`.
 - [ ] Hovering `TodoItem` shows component details and discovered props.
+- [ ] Go to Definition on an imported JSX component jumps to its declaration.
+- [ ] Quick Fix on an unknown JSX component adds the correct relative default import.
+- [ ] Quick Fix does not add a duplicate import if the component is already imported.
+- [ ] Quick Fix does not appear for HTML tags or built-in Gea Mobile tags.
 - [ ] Hovering an event attribute like `click` shows event help.
 - [ ] Unknown component diagnostics appear for invalid JSX component tags.
 - [ ] Imported components used as JSX tags do not show noisy unused-import diagnostics.
@@ -82,6 +86,24 @@ export default function PaymentForm(props) {
 ```
 
 Confirm `<PaymentForm ...>` offers those props.
+
+### Go to Definition
+
+Use a file that imports `TodoItem` and renders `<TodoItem ... />`.
+
+- Place the cursor on `TodoItem` in JSX.
+- Trigger Go to Definition.
+- Confirm the editor jumps to the `TodoItem` component declaration.
+
+### Auto import Quick Fix
+
+Temporarily remove the `TodoItem` import from a file that renders `<TodoItem ... />`.
+
+- Confirm the extension shows `Unknown component: TodoItem`.
+- Trigger Quick Fix on the diagnostic.
+- Confirm the correct `import TodoItem from '...'` line is inserted.
+- Trigger Quick Fix again and confirm no duplicate import is created.
+- Repeat with built-in tags such as `<view />` and confirm no import Quick Fix is offered.
 
 ## Troubleshooting
 
