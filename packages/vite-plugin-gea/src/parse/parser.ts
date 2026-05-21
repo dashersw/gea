@@ -4,6 +4,9 @@ import type { NodePath } from '../utils/babel-interop.ts'
 
 export interface FunctionalComponentInfo {
   name: string
+  // 'default' for `export default function Foo()` or `const Foo = ...; export default Foo`.
+  // 'named' for `export function Foo()` — the transform preserves the named-export form.
+  kind: 'default' | 'named'
 }
 
 export interface ParseResult {
@@ -93,21 +96,32 @@ export function parseSource(code: string): ParseResult | null {
       }
 
       if (name && returnsJSX) {
-        functionalComponentInfo = { name }
+        functionalComponentInfo = { name, kind: 'default' }
       }
     },
 
     ExportNamedDeclaration(path: NodePath<t.ExportNamedDeclaration>) {
+      // If a class component or default-export functional already won, the
+      // file's "primary" component is set; named functional exports here are
+      // treated as helpers and left to be transformed by the same pass.
+      // Otherwise the first named JSX-returning function becomes the file's
+      // functional component and gets rewritten into a class extending
+      // Component (preserving the `export function Name(...)` API).
       const decl = path.node.declaration
       if (!decl) return
 
-      if (t.isFunctionDeclaration(decl) && decl.id) {
-        throwIfReturnsJSX(decl.id.name, decl.body)
+      const registerNamed = (name: string) => {
+        if (functionalComponentInfo) return
+        functionalComponentInfo = { name, kind: 'named' }
+      }
+
+      if (t.isFunctionDeclaration(decl) && decl.id && nodeReturnsJSX(decl.body)) {
+        registerNamed(decl.id.name)
       } else if (t.isVariableDeclaration(decl)) {
         for (const declarator of decl.declarations) {
           if (!t.isIdentifier(declarator.id) || !declarator.init) continue
           if (t.isArrowFunctionExpression(declarator.init) || t.isFunctionExpression(declarator.init)) {
-            throwIfReturnsJSX(declarator.id.name, declarator.init.body)
+            if (nodeReturnsJSX(declarator.init.body)) registerNamed(declarator.id.name)
           }
         }
       }
@@ -155,15 +169,3 @@ function bodyReturnsJSX(block: t.BlockStatement): boolean {
   return !!ret && nodeReturnsJSX(ret.argument!)
 }
 
-/** Throw a compile error if a named export returns JSX. */
-function throwIfReturnsJSX(name: string, body: t.Node): void {
-  if (nodeReturnsJSX(body)) {
-    const err = new Error(
-      `[gea] Named JSX component export '${name}' is not supported. ` +
-        `Use 'export default' or convert to a class extending Component. ` +
-        `Only one component per file is allowed.`,
-    )
-    ;(err as any).__geaCompileError = true
-    throw err
-  }
-}
