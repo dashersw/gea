@@ -316,13 +316,20 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
     },
     generateBundle(_options, bundle) {
       if (!irOptions?.enabled) return
+      const renderedIds = renderedModuleIds(bundle)
+      const modules = Array.from(irModules.values()).filter((module) => {
+        if (!renderedIds) return true
+        return renderedIds.has(cleanRollupModuleId(module.id)) || renderedIds.has(cleanRollupModuleId(module.file))
+      })
+      const componentIds = new Set(modules.flatMap((module) => module.components))
+      const storeIds = new Set(modules.flatMap((module) => module.stores))
       const irBundle: GeaIrBundleV1 = {
         schema: 'gea-ir',
         version: 1,
         entry: geaIrEntryFromBundle(bundle) ?? geaIrConfiguredEntry(resolvedConfig),
-        modules: Array.from(irModules.values()),
-        components: Array.from(irComponents.values()),
-        stores: Array.from(irStores.values()),
+        modules,
+        components: Array.from(irComponents.values()).filter((component) => componentIds.has(component.id)),
+        stores: Array.from(irStores.values()).filter((store) => storeIds.has(store.id)),
         hostCapabilities: Array.from(hostCapabilities).sort(),
       }
       const source = JSON.stringify(irBundle, null, 2)
@@ -369,7 +376,32 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
   }
 }
 
-type GeaRollupBundle = Record<string, { type: string; fileName?: string; isEntry?: boolean; facadeModuleId?: string | null }>
+type GeaRollupBundle = Record<
+  string,
+  {
+    type: string
+    fileName?: string
+    isEntry?: boolean
+    facadeModuleId?: string | null
+    modules?: Record<string, unknown>
+  }
+>
+
+function renderedModuleIds(bundle: GeaRollupBundle): Set<string> | null {
+  const ids = new Set<string>()
+  for (const item of Object.values(bundle)) {
+    if (item.type !== 'chunk') continue
+    if (item.facadeModuleId) ids.add(cleanRollupModuleId(item.facadeModuleId))
+    if (item.modules && typeof item.modules === 'object') {
+      for (const id of Object.keys(item.modules)) ids.add(cleanRollupModuleId(id))
+    }
+  }
+  return ids.size > 0 ? ids : null
+}
+
+function cleanRollupModuleId(id: string): string {
+  return id.split('?')[0] ?? id
+}
 
 function geaIrEntryFromBundle(bundle: GeaRollupBundle): string | null {
   const entries = Object.values(bundle)
