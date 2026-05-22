@@ -248,6 +248,18 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   fnCtx.directFnComponentParams = parentCtx.directFnComponentParams
   fnCtx.directFnStringProps = parentCtx.directFnStringProps
   fnCtx.directFnNoDisposer = parentCtx.directFnNoDisposer
+  // Share IR template recording with the parent so functional components also
+  // produce an IR template record. Without this, `emit-core.ts` skips the
+  // `irTemplates.push(...)` because the function's `fnCtx.currentIrComponent`
+  // is unset, and `buildModuleIr` can't find a template record for the function
+  // component name in `rewritten`, so the component is silently dropped from
+  // the IR. Class components don't have this problem because they share the
+  // parent ctx directly.
+  if (parentCtx.irTemplates && fnName) {
+    fnCtx.irTemplates = parentCtx.irTemplates
+    fnCtx.currentIrComponent = fnName
+    fnCtx.currentIrRuntimeBase = 'reactive'
+  }
   if (fnCtx.oneShotProps) {
     fnCtx._inKeyedListRow = true
     fnCtx._rowEventTypes = new Set()

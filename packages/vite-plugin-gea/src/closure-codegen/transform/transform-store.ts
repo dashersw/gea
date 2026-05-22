@@ -33,7 +33,7 @@ export function transformCompiledStoreModule(
     return null
   }
 
-  const imported = findStoreImport(ast)
+  const imported = findStoreImport(ast, moduleId, resolveImportPath)
   if (!imported) return null
   const classDecl = findStoreClass(ast, imported.localName)
   if (!classDecl || !classDecl.id) return null
@@ -435,10 +435,14 @@ function replaceThisExpressions(node: any, replacement: Expression): void {
   }
 }
 
-function findStoreImport(ast: File): { importDecl: ImportDeclaration; localName: string } | null {
+function findStoreImport(
+  ast: File,
+  moduleId: string,
+  resolveImportPath?: ResolveImportPath,
+): { importDecl: ImportDeclaration; localName: string } | null {
   for (const node of ast.program.body) {
     if (!t.isImportDeclaration(node)) continue
-    if (node.source.value !== 'gea' && node.source.value !== '@geajs/core' && node.source.value !== 'gea-embedded') continue
+    if (!storeImportSourceProvidesStore(moduleId, node.source.value, resolveImportPath)) continue
     for (const spec of node.specifiers) {
       if (!t.isImportSpecifier(spec)) continue
       const importedName = t.isIdentifier(spec.imported) ? spec.imported.name : spec.imported.value
@@ -446,6 +450,86 @@ function findStoreImport(ast: File): { importDecl: ImportDeclaration; localName:
     }
   }
   return null
+}
+
+const knownStoreImportSources = new Set(['gea', '@geajs/core', 'gea-embedded'])
+const storeExportCache = new Map<string, boolean>()
+
+function storeImportSourceProvidesStore(
+  moduleId: string,
+  source: unknown,
+  resolveImportPath?: ResolveImportPath,
+): boolean {
+  if (typeof source !== 'string') return false
+  if (knownStoreImportSources.has(source)) return true
+  if (!resolveImportPath) return false
+  const resolved = resolveImportPath(moduleId, source)
+  return !!resolved && moduleExportsStore(resolved, resolveImportPath, new Set())
+}
+
+function moduleExportsStore(file: string, resolveImportPath: ResolveImportPath, seen: Set<string>): boolean {
+  if (seen.has(file)) return false
+  const cached = storeExportCache.get(file)
+  if (cached !== undefined) return cached
+  seen.add(file)
+  if (!existsSync(file)) {
+    storeExportCache.set(file, false)
+    return false
+  }
+
+  let ast: File
+  try {
+    ast = parse(readFileSync(file, 'utf8'), {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx', 'classProperties'],
+      errorRecovery: false,
+    })
+  } catch {
+    storeExportCache.set(file, false)
+    return false
+  }
+
+  for (const node of ast.program.body) {
+    if (t.isExportNamedDeclaration(node)) {
+      if (node.declaration) {
+        if (t.isVariableDeclaration(node.declaration)) {
+          for (const declaration of node.declaration.declarations) {
+            if (t.isIdentifier(declaration.id, { name: 'Store' })) {
+              storeExportCache.set(file, true)
+              return true
+            }
+          }
+        }
+        if (t.isClassDeclaration(node.declaration) && t.isIdentifier(node.declaration.id, { name: 'Store' })) {
+          storeExportCache.set(file, true)
+          return true
+        }
+      }
+      for (const specifier of node.specifiers) {
+        const exportedName = t.isIdentifier(specifier.exported) ? specifier.exported.name : specifier.exported.value
+        if (exportedName !== 'Store') continue
+        if (!node.source || typeof node.source.value !== 'string') {
+          storeExportCache.set(file, true)
+          return true
+        }
+        const resolved = resolveImportPath(file, node.source.value)
+        if (resolved && moduleExportsStore(resolved, resolveImportPath, seen)) {
+          storeExportCache.set(file, true)
+          return true
+        }
+      }
+    }
+    if (t.isExportAllDeclaration(node) && typeof node.source.value === 'string') {
+      const resolved = resolveImportPath(file, node.source.value)
+      if (resolved && moduleExportsStore(resolved, resolveImportPath, seen)) {
+        storeExportCache.set(file, true)
+        return true
+      }
+    }
+  }
+
+  storeExportCache.set(file, false)
+  return false
 }
 
 function findStoreClass(ast: File, storeName: string): ClassDeclaration | null {

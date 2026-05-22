@@ -361,11 +361,68 @@ function expressionObjectFieldsToIr(expr: unknown): { exprObjectFields: GeaIrExp
 
 function slotPayloadToIr(slot: Slot, bindings: Map<string, Expression>): unknown {
   const payload = serializePayload(slot.payload, bindings)
-  if (slot.kind !== 'keyed-list' || !isRecord(payload)) return payload
+  if (!isRecord(payload)) return payload
 
-  const cb = slot.payload?.mapCallback
-  const row = keyedListRowIr(cb)
-  return row ? { ...payload, ...row } : payload
+  if (slot.kind === 'keyed-list') {
+    const cb = slot.payload?.mapCallback
+    const row = keyedListRowIr(cb)
+    return row ? { ...payload, ...row } : payload
+  }
+
+  // Conditional slots: the IR walker stored the consequent/alternate branches
+  // as raw AST nodes. Walk each branch into its own sub-template so downstream
+  // (the cpp direct-mount renderer) can render them without re-parsing the
+  // generated `code` string. `mkFalse` may be null/undefined for the
+  // `cond && <X/>` shorthand — leave alternateTemplate off in that case.
+  if (slot.kind === 'conditional') {
+    const result: Record<string, unknown> = { ...payload }
+    const consequent = jsxNodeToTemplateIr(slot.payload?.mkTrue, bindings)
+    if (consequent) result.consequentTemplate = consequent
+    const alternate = jsxNodeToTemplateIr(slot.payload?.mkFalse, bindings)
+    if (alternate) result.alternateTemplate = alternate
+    return result
+  }
+
+  // Mount slots can carry JSX children (e.g. `<View class="x">{cond ? A : B}</View>`).
+  // The JS-runtime path forwards those as `props.children`; the direct-mount
+  // path can't lower an opaque JSX expression as text, so it would otherwise
+  // drop everything inside. Walk the children into a fragment sub-template
+  // and attach it as `childrenTemplate` so the inliner can splice it in at
+  // the wrapper's `props.children` slot position.
+  if (slot.kind === 'mount') {
+    const children = slot.payload?.children
+    const childrenTemplate = jsxChildrenToTemplateIr(children, bindings)
+    if (childrenTemplate) return { ...payload, childrenTemplate }
+  }
+
+  return payload
+}
+
+function jsxNodeToTemplateIr(node: unknown, bindings: Map<string, Expression>): GeaIrTemplate | null {
+  if (!node) return null
+  if (t.isJSXElement(node) || t.isJSXFragment(node)) {
+    return templateSpecToIr(walkJsxToTemplate(node), bindings)
+  }
+  if (t.isJSXExpressionContainer(node)) {
+    const inner = node.expression
+    if (t.isJSXElement(inner) || t.isJSXFragment(inner)) {
+      return templateSpecToIr(walkJsxToTemplate(inner), bindings)
+    }
+  }
+  return null
+}
+
+function jsxChildrenToTemplateIr(children: unknown, bindings: Map<string, Expression>): GeaIrTemplate | null {
+  if (!Array.isArray(children) || children.length === 0) return null
+  const hasContent = children.some(
+    (c) =>
+      t.isJSXElement(c) ||
+      t.isJSXFragment(c) ||
+      (t.isJSXExpressionContainer(c) && !t.isJSXEmptyExpression(c.expression)),
+  )
+  if (!hasContent) return null
+  const fragment = t.jsxFragment(t.jsxOpeningFragment(), t.jsxClosingFragment(), children as any)
+  return templateSpecToIr(walkJsxToTemplate(fragment), bindings)
 }
 
 function keyedListRowIr(cb: unknown): { itemParam?: string; indexParam?: string; rowTemplate: GeaIrTemplate } | null {
