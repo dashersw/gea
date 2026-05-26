@@ -92,6 +92,11 @@ export interface GeaIrStoreMethod {
 
 export interface GeaIrStoreMethodParam {
   name: string
+  // TS type annotation on the parameter, projected to the same shape vocab the
+  // store-field shapes use. Needed downstream by the C++ lowering pass so it
+  // can avoid demoting string params to number in equality comparisons; see
+  // `cpp-store-method-expressions.ts`'s `lowerBinary`.
+  valueType?: 'string' | 'number' | 'boolean'
 }
 
 export interface GeaIrConstant {
@@ -167,7 +172,8 @@ export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[
     let unsupportedParam = false
     for (const param of member.params) {
       if (t.isIdentifier(param)) {
-        params.push({ name: param.name })
+        const valueType = paramValueType(param)
+        params.push(valueType ? { name: param.name, valueType } : { name: param.name })
       } else {
         unsupportedParam = true
         break
@@ -185,6 +191,16 @@ export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[
     })
   }
   return methods
+}
+
+function paramValueType(param: import('@babel/types').Identifier): 'string' | 'number' | 'boolean' | undefined {
+  const annotation = param.typeAnnotation
+  if (!annotation || !t.isTSTypeAnnotation(annotation)) return undefined
+  const kind = annotation.typeAnnotation
+  if (t.isTSStringKeyword(kind)) return 'string'
+  if (t.isTSNumberKeyword(kind)) return 'number'
+  if (t.isTSBooleanKeyword(kind)) return 'boolean'
+  return undefined
 }
 
 function storeStmtsToIr(statements: unknown[]): GeaIrStoreStmt[] | null {
