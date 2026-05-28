@@ -1,6 +1,7 @@
 import type { ClassDeclaration, Expression } from '@babel/types'
 import { generate, t } from '../utils/babel-interop.ts'
 import { walkJsxToTemplate, type Slot, type TemplateSpec } from './generator.ts'
+import { isJsxOrNullish } from './generator/generator-jsx-helpers.ts'
 import { substituteBindings } from './emit/emit-substitution.ts'
 
 export interface GeaIrBundleV1 {
@@ -424,8 +425,34 @@ function jsxNodeToTemplateIr(node: unknown, bindings: Map<string, Expression>): 
     if (t.isJSXElement(inner) || t.isJSXFragment(inner)) {
       return templateSpecToIr(walkJsxToTemplate(inner), bindings)
     }
+    // Conditional/logical expressions don't materialise as JSX themselves but
+    // are recognised by the JSX walker when they appear inside a JSXExpressionContainer.
+    // Fall through to the wrapping path below so a nested ternary alternate
+    // (e.g. the chain `foldEarlyReturnGuards` produces from multiple `if (cond)
+    // return <X>` guards) still walks into a real sub-template instead of being
+    // dropped.
+    if (isWalkableConditionalExpression(inner)) return wrapAsFragmentTemplate(inner, bindings)
   }
+  if (isWalkableConditionalExpression(node)) return wrapAsFragmentTemplate(node as any, bindings)
   return null
+}
+
+// Mirrors the walker's recognition (walk.ts): `cond ? <A> : <B>`, `cond && <X>`,
+// `cond && xs.map(...)`. Anything else has no JSX shape we can lower into a
+// template branch.
+function isWalkableConditionalExpression(node: unknown): node is Expression {
+  if (t.isConditionalExpression(node)) {
+    return isJsxOrNullish(node.consequent) || isJsxOrNullish(node.alternate)
+  }
+  if (t.isLogicalExpression(node) && node.operator === '&&') {
+    return isJsxOrNullish(node.right)
+  }
+  return false
+}
+
+function wrapAsFragmentTemplate(expression: Expression, bindings: Map<string, Expression>): GeaIrTemplate {
+  const fragment = t.jsxFragment(t.jsxOpeningFragment(), t.jsxClosingFragment(), [t.jsxExpressionContainer(expression)])
+  return templateSpecToIr(walkJsxToTemplate(fragment), bindings)
 }
 
 function jsxChildrenToTemplateIr(children: unknown, bindings: Map<string, Expression>): GeaIrTemplate | null {

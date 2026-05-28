@@ -8,6 +8,7 @@ import { substituteBindings } from './emit-substitution.ts'
 import { buildMapBranchFn } from './emit-map-branch.ts'
 import type { Slot } from '../generator.ts'
 import { eagerTrackSkippedReads } from '../utils/path-helpers.ts'
+import { isJsxOrNullish } from '../generator/generator-jsx-helpers.ts'
 
 export function emitConditionalSlot(slot: Slot, stmts: Statement[], ctx: EmitContext): void {
   const anchorId = t.identifier('anchor' + slot.index)
@@ -71,6 +72,18 @@ function buildBranchFn(branchExpr: any, ctx: EmitContext): Expression {
   if (t.isJSXElement(branchExpr) || t.isJSXFragment(branchExpr)) {
     // Recursive lowering: branch becomes its own template + clone block
     const block = compileJsxToBlock(branchExpr, ctx)
+    return t.arrowFunctionExpression([t.identifier('d')], block)
+  }
+  // Nested conditional alternates (`cond1 ? <A> : cond2 ? <B> : <C>`) or
+  // `cond && <X>` chains — produced by `foldEarlyReturnGuards` from multiple
+  // `if (...) return <JSX>` guards. Wrap in a JSXFragment with an expression
+  // container so `compileJsxToBlock` routes them through the normal slot path
+  // (which re-enters here recursively for each inner ternary level).
+  if (isNestableConditionalExpression(branchExpr)) {
+    const fragment = t.jsxFragment(t.jsxOpeningFragment(), t.jsxClosingFragment(), [
+      t.jsxExpressionContainer(branchExpr as Expression),
+    ])
+    const block = compileJsxToBlock(fragment, ctx)
     return t.arrowFunctionExpression([t.identifier('d')], block)
   }
   // Compiler-emitted hoisted-const IIFE (tagged by foldEarlyReturnGuards).
@@ -145,6 +158,23 @@ function buildBranchFn(branchExpr: any, ctx: EmitContext): Expression {
       t.stringLiteral(''),
     ]),
   )
+}
+
+// Mirrors `isWalkableConditionalExpression` from ir.ts (and the JSX walker's
+// own recognition): a ConditionalExpression or `&&` LogicalExpression that has
+// at least one JSX-or-nullish arm. These are the shapes `foldEarlyReturnGuards`
+// emits from chained `if (cond) return <JSX>` guards; if buildBranchFn doesn't
+// recognise them, every nested level beyond the outermost ternary collapses
+// to the "Generic fallback: empty comment" path above and silently drops the
+// JSX subtree.
+function isNestableConditionalExpression(node: unknown): boolean {
+  if (t.isConditionalExpression(node)) {
+    return isJsxOrNullish(node.consequent) || isJsxOrNullish(node.alternate)
+  }
+  if (t.isLogicalExpression(node) && node.operator === '&&') {
+    return isJsxOrNullish(node.right)
+  }
+  return false
 }
 
 /**
