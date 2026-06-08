@@ -79,7 +79,7 @@ export interface GeaIrStoreField {
 }
 
 export type GeaIrStoreValueShape =
-  | { kind: 'array'; element?: GeaIrStoreValueShape }
+  | { kind: 'array'; element?: GeaIrStoreValueShape; elementTypeName?: string }
   | { kind: 'object'; fields: GeaIrStoreField[] }
   | { kind: 'literal'; valueType: 'string' | 'number' | 'boolean' | 'null' }
 
@@ -154,13 +154,49 @@ export function storeFieldsToIr(classDecl: ClassDeclaration): GeaIrStoreField[] 
   const fields: GeaIrStoreField[] = []
   for (const member of classDecl.body.body) {
     if (!t.isClassProperty(member) || member.static || member.computed || !t.isIdentifier(member.key)) continue
-    fields.push({
+    const field: GeaIrStoreField = {
       name: member.key.name,
       ...(member.value ? { initializer: generate(member.value).code } : {}),
       ...(member.value ? shapeForExpression(member.value) : {}),
-    })
+    }
+    // When the field's storage shape is an array AND the TS type annotation
+    // names a concrete interface element type (`cities: CityState[]`), thread
+    // that interface name onto the array shape. The geatsc-side store lowering
+    // uses it to decide whether the array can reuse geatsc's declared
+    // `__gea_type_<Name>` struct as the C++ element type (instead of
+    // synthesizing a parallel `<Store>_<field>_item` struct).
+    if (field.shape?.kind === 'array') {
+      const elementTypeName = arrayElementTypeNameFromAnnotation(member)
+      if (elementTypeName) field.shape = { ...field.shape, elementTypeName }
+    }
+    fields.push(field)
   }
   return fields
+}
+
+// Read a class property's TS type annotation and, when it is `T[]` /
+// `Array<T>` / `ReadonlyArray<T>` with a single named-type element, return the
+// bare interface/type name `T`. Returns undefined for anonymous element types
+// (`{ x: number }[]`), unions, or any unrecognised shape.
+function arrayElementTypeNameFromAnnotation(member: import('@babel/types').ClassProperty): string | undefined {
+  const annotation = member.typeAnnotation
+  if (!annotation || !t.isTSTypeAnnotation(annotation)) return undefined
+  const typeNode = annotation.typeAnnotation
+  if (t.isTSArrayType(typeNode)) {
+    const element = typeNode.elementType
+    if (t.isTSTypeReference(element) && t.isIdentifier(element.typeName)) return element.typeName.name
+    return undefined
+  }
+  if (t.isTSTypeReference(typeNode) && t.isIdentifier(typeNode.typeName)) {
+    const containerName = typeNode.typeName.name
+    if (containerName !== 'Array' && containerName !== 'ReadonlyArray') return undefined
+    const args = typeNode.typeParameters?.params
+    if (!args || args.length !== 1) return undefined
+    const element = args[0]
+    if (t.isTSTypeReference(element) && t.isIdentifier(element.typeName)) return element.typeName.name
+    return undefined
+  }
+  return undefined
 }
 
 export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[] {
@@ -172,9 +208,15 @@ export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[
     const params: GeaIrStoreMethodParam[] = []
     let unsupportedParam = false
     for (const param of member.params) {
-      if (t.isIdentifier(param)) {
-        const valueType = paramValueType(param)
-        params.push(valueType ? { name: param.name, valueType } : { name: param.name })
+      const assignment = t.isAssignmentPattern(param) ? param : null
+      const identifier = t.isIdentifier(param)
+        ? param
+        : assignment && t.isIdentifier(assignment.left)
+          ? assignment.left
+          : null
+      if (identifier) {
+        const valueType = paramValueType(identifier) ?? (assignment ? paramDefaultValueType(assignment.right) : undefined)
+        params.push(valueType ? { name: identifier.name, valueType } : { name: identifier.name })
       } else {
         unsupportedParam = true
         break
@@ -201,6 +243,13 @@ function paramValueType(param: import('@babel/types').Identifier): 'string' | 'n
   if (t.isTSStringKeyword(kind)) return 'string'
   if (t.isTSNumberKeyword(kind)) return 'number'
   if (t.isTSBooleanKeyword(kind)) return 'boolean'
+  return undefined
+}
+
+function paramDefaultValueType(expr: import('@babel/types').Expression): 'string' | 'number' | 'boolean' | undefined {
+  if (t.isStringLiteral(expr)) return 'string'
+  if (t.isNumericLiteral(expr)) return 'number'
+  if (t.isBooleanLiteral(expr)) return 'boolean'
   return undefined
 }
 
