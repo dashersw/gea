@@ -97,9 +97,21 @@ export interface GeaComponentConstructor<P extends Record<string, unknown> = Rec
 
 export type RouteGuard = () => boolean | string
 
+export interface RouteQueryMode {
+  type: 'query'
+  param: string
+}
+
 export interface RouteGroup {
   children: RouteMap
   guard?: RouteGuard
+  /** Layout component wrapping the children. Receives `page`, `route`, `params`,
+   *  plus `activeKey`/`keys`/`navigate` when `mode` is set. */
+  layout?: GeaComponentConstructor
+  /** Tab-style mode: pick the active child by a query-string param instead of
+   *  by path segment. Children keys become the activeKey values. */
+  mode?: RouteQueryMode
+  /** @deprecated use `layout` instead */
   component?: GeaComponentConstructor
 }
 

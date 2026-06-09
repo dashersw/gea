@@ -150,6 +150,72 @@ describe('createSSRRouterState', () => {
     const state = createSSRRouterState(withComponent)
     assert.equal(state.page, MockComponent)
   })
+
+  it('layoutCount defaults to 0 when layouts missing', () => {
+    const state = createSSRRouterState(mockRouteResult)
+    assert.equal(state.layoutCount, 0)
+  })
+
+  it('getComponentAtDepth returns leaf at depth 0 when no layouts', () => {
+    class Leaf {}
+    const result = { ...mockRouteResult, component: Leaf as any }
+    const state = createSSRRouterState(result)
+    const item = state.getComponentAtDepth(0)
+    assert.ok(item)
+    assert.equal(item!.component, Leaf)
+    assert.equal(item!.cacheKey, null)
+  })
+
+  it('getComponentAtDepth returns layouts at their depth and leaf at the end', () => {
+    class AppShell {}
+    class DashboardLayout {}
+    class Overview {}
+    const result = {
+      ...mockRouteResult,
+      component: Overview as any,
+      layouts: [AppShell, DashboardLayout] as any,
+      queryModes: new Map(),
+    }
+    const state = createSSRRouterState(result)
+    assert.equal(state.layoutCount, 2)
+
+    const depth0 = state.getComponentAtDepth(0)
+    assert.equal(depth0!.component, AppShell)
+    assert.equal(depth0!.props.page, DashboardLayout)
+    assert.equal(depth0!.props.route, mockRouteResult.route)
+
+    const depth1 = state.getComponentAtDepth(1)
+    assert.equal(depth1!.component, DashboardLayout)
+    assert.equal(depth1!.props.page, Overview)
+
+    const depth2 = state.getComponentAtDepth(2)
+    assert.equal(depth2!.component, Overview)
+
+    assert.equal(state.getComponentAtDepth(3), null)
+  })
+
+  it('getComponentAtDepth exposes query-mode props on the layout', () => {
+    class SettingsLayout {}
+    class ProfileSettings {}
+    const result = {
+      ...mockRouteResult,
+      component: ProfileSettings as any,
+      layouts: [SettingsLayout] as any,
+      queryModes: new Map([[0, { activeKey: 'profile', keys: ['profile', 'billing'], param: 'tab' }]]),
+    }
+    const state = createSSRRouterState(result)
+    const item = state.getComponentAtDepth(0)
+    assert.equal(item!.props.activeKey, 'profile')
+    assert.deepEqual(item!.props.keys, ['profile', 'billing'])
+    assert.equal(typeof item!.props.navigate, 'function')
+    assert.equal(item!.cacheKey, 'profile')
+  })
+
+  it('getComponentAtDepth returns null past leaf when nothing matched', () => {
+    const result = { ...mockRouteResult, component: null }
+    const state = createSSRRouterState(result)
+    assert.equal(state.getComponentAtDepth(0), null)
+  })
 })
 
 describe('handleRequest with SSR router context', () => {

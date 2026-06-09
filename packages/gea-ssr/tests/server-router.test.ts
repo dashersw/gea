@@ -232,3 +232,102 @@ describe('createServerRouter — edge cases', () => {
     assert.deepEqual(result.query.tag, ['a', 'b', 'c'])
   })
 })
+
+describe('resolveRoutes — layout chain', () => {
+  class AppShell {}
+  class DashboardLayout {}
+  class SettingsLayout {}
+  class Overview {}
+  class Projects {}
+  class ProfileSettings {}
+  class BillingSettings {}
+  class NotFound {}
+
+  const routes = {
+    '/': {
+      layout: AppShell,
+      children: {
+        '/': '/dashboard',
+        '/dashboard': {
+          layout: DashboardLayout,
+          children: {
+            '/': Overview,
+            '/projects': Projects,
+          },
+        },
+        '/settings': {
+          layout: SettingsLayout,
+          mode: { type: 'query' as const, param: 'tab' },
+          children: {
+            profile: ProfileSettings,
+            billing: BillingSettings,
+          },
+        },
+      },
+    },
+    '*': NotFound,
+  }
+
+  it('collects nested layouts outermost-to-innermost', () => {
+    const result = createServerRouter('http://localhost/dashboard', routes)
+    assert.deepEqual(result.layouts, [AppShell, DashboardLayout])
+    assert.equal(result.component, Overview)
+  })
+
+  it('collects a single layout for a top-level group', () => {
+    const result = createServerRouter('http://localhost/dashboard/projects', routes)
+    assert.deepEqual(result.layouts, [AppShell, DashboardLayout])
+    assert.equal(result.component, Projects)
+  })
+
+  it('returns empty layouts for non-layout routes', () => {
+    const flat = { '/': Overview, '/about': Projects }
+    const result = createServerRouter('http://localhost/about', flat)
+    assert.deepEqual(result.layouts, [])
+    assert.equal(result.queryModes.size, 0)
+    assert.equal(result.component, Projects)
+  })
+
+  it('resolves query-mode child via ?tab=', () => {
+    const result = createServerRouter('http://localhost/settings?tab=billing', routes)
+    assert.deepEqual(result.layouts, [AppShell, SettingsLayout])
+    assert.equal(result.component, BillingSettings)
+    const mode = result.queryModes.get(1)
+    assert.ok(mode)
+    assert.equal(mode!.activeKey, 'billing')
+    assert.deepEqual(mode!.keys, ['profile', 'billing'])
+    assert.equal(mode!.param, 'tab')
+  })
+
+  it('falls back to first query-mode key when param missing', () => {
+    const result = createServerRouter('http://localhost/settings', routes)
+    assert.equal(result.component, ProfileSettings)
+    assert.equal(result.queryModes.get(1)!.activeKey, 'profile')
+  })
+
+  it('falls back to first query-mode key when param value unknown', () => {
+    const result = createServerRouter('http://localhost/settings?tab=bogus', routes)
+    assert.equal(result.component, ProfileSettings)
+    assert.equal(result.queryModes.get(1)!.activeKey, 'profile')
+  })
+
+  it('keeps layout chain when wildcard fires inside nested group', () => {
+    const routesWithInnerWildcard = {
+      '/': {
+        layout: AppShell,
+        children: {
+          '/dashboard': {
+            layout: DashboardLayout,
+            children: {
+              '/': Overview,
+              '*': NotFound,
+            },
+          },
+        },
+      },
+    }
+    const result = createServerRouter('http://localhost/dashboard/missing', routesWithInnerWildcard)
+    assert.equal(result.component, NotFound)
+    assert.deepEqual(result.layouts, [AppShell, DashboardLayout])
+  })
+})
