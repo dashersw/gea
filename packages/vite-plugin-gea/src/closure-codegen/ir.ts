@@ -68,7 +68,32 @@ export interface GeaIrStore {
   runtimeBase: 'compiled' | 'lean'
   fields: GeaIrStoreField[]
   methods?: GeaIrStoreMethod[]
+  getters?: GeaIrStoreGetter[]
   constants?: GeaIrConstant[]
+  sourceSpan?: GeaIrSourceSpan
+}
+
+// A getter (`get x() { ... }`) on a Store. Surfaced into the IR so the embedded
+// target can back a reactive `{this.x.map(...)}` list with a derived array:
+// `deps` are the reactive fields whose change should recompute the list, and
+// `elementTypeName`/`shape` describe the row element type. (Getters are NOT
+// regular fields — geatsc must CALL the getter, not read stored state.)
+export interface GeaIrStoreGetter {
+  name: string
+  // True when the getter yields an array (array literal/spread, an
+  // array-producing call like `.filter`/`.map`/`.slice`, or a `T[]`/`Array<T>`
+  // return annotation). Only array getters can back a reactive list.
+  returnsArray: boolean
+  // The named element type from the return annotation (`get x(): Tile[]` →
+  // 'Tile'); geatsc reuses its declared `__gea_type_<Name>` struct as the C++
+  // element type.
+  elementTypeName?: string
+  shape?: GeaIrStoreValueShape
+  // `this.<field>` reads inside the body — the reactive dependencies that
+  // should re-run the list when they change.
+  deps: string[]
+  body: string
+  ops?: GeaIrStoreStmt[]
   sourceSpan?: GeaIrSourceSpan
 }
 
@@ -181,7 +206,13 @@ export function storeFieldsToIr(classDecl: ClassDeclaration): GeaIrStoreField[] 
 function arrayElementTypeNameFromAnnotation(member: import('@babel/types').ClassProperty): string | undefined {
   const annotation = member.typeAnnotation
   if (!annotation || !t.isTSTypeAnnotation(annotation)) return undefined
-  const typeNode = annotation.typeAnnotation
+  return arrayElementTypeNameFromTSType(annotation.typeAnnotation)
+}
+
+// Given a TS type node, return the bare element interface name for `T[]` /
+// `Array<T>` / `ReadonlyArray<T>` with a single named-type element; undefined
+// for anonymous element types, unions, or non-array types.
+function arrayElementTypeNameFromTSType(typeNode: import('@babel/types').TSType): string | undefined {
   if (t.isTSArrayType(typeNode)) {
     const element = typeNode.elementType
     if (t.isTSTypeReference(element) && t.isIdentifier(element.typeName)) return element.typeName.name
@@ -197,6 +228,232 @@ function arrayElementTypeNameFromAnnotation(member: import('@babel/types').Class
     return undefined
   }
   return undefined
+}
+
+const ARRAY_PRODUCING_METHODS = new Set([
+  'filter',
+  'map',
+  'slice',
+  'concat',
+  'flat',
+  'flatMap',
+  'sort',
+  'toSorted',
+  'reverse',
+  'toReversed',
+])
+
+export function storeGettersToIr(classDecl: ClassDeclaration): GeaIrStoreGetter[] {
+  const getters: GeaIrStoreGetter[] = []
+  // Sibling field shapes, so a getter that derives from an array field
+  // (`this.bricks.filter(...)`) can borrow that field's element shape.
+  const fieldShapeByName = new Map<string, GeaIrStoreValueShape>()
+  for (const field of storeFieldsToIr(classDecl)) {
+    if (field.shape) fieldShapeByName.set(field.name, field.shape)
+  }
+  for (const member of classDecl.body.body) {
+    if (!t.isClassMethod(member) || member.static || member.computed || member.kind !== 'get') continue
+    if (!t.isIdentifier(member.key)) continue
+    const returnType = member.returnType
+    const elementTypeName =
+      returnType && t.isTSTypeAnnotation(returnType)
+        ? arrayElementTypeNameFromTSType(returnType.typeAnnotation)
+        : undefined
+    const deps = collectThisFieldReads(member.body)
+    const elementShape = getterElementShape(member.body, deps, elementTypeName, fieldShapeByName)
+    const returnsArray = !!elementTypeName || !!elementShape || getterBodyReturnsArray(member.body)
+    const shape: GeaIrStoreValueShape | undefined = returnsArray
+      ? {
+          kind: 'array',
+          ...(elementShape ? { element: elementShape } : {}),
+          ...(elementTypeName ? { elementTypeName } : {}),
+        }
+      : undefined
+    const ops = storeStmtsToIr(member.body.body)
+    const getter: GeaIrStoreGetter = {
+      name: member.key.name,
+      returnsArray,
+      deps,
+      body: generate(member.body).code,
+      ...(elementTypeName ? { elementTypeName } : {}),
+      ...(shape ? { shape } : {}),
+      ...(ops ? { ops } : {}),
+      ...(sourceSpan(member) ? { sourceSpan: sourceSpan(member) } : {}),
+    }
+    getters.push(getter)
+  }
+  return getters
+}
+
+// Best-effort element (row) object shape for an array-returning getter. Tries
+// the body first (an array literal, or a `.map(x => ({...}))` object literal),
+// then borrows from a referenced array-of-objects field (`this.bricks.filter`)
+// or any field whose element type name matches the getter's return annotation.
+function getterElementShape(
+  body: unknown,
+  deps: string[],
+  elementTypeName: string | undefined,
+  fieldShapeByName: Map<string, GeaIrStoreValueShape>,
+): GeaIrStoreValueShape | undefined {
+  const arg = topLevelReturnArgument(body)
+  const fromBody = arg ? elementShapeFromArrayExpression(arg, fieldShapeByName) : undefined
+  if (fromBody) return fromBody
+  if (elementTypeName) {
+    for (const shape of fieldShapeByName.values()) {
+      if (shape.kind === 'array' && shape.elementTypeName === elementTypeName && shape.element?.kind === 'object') {
+        return shape.element
+      }
+    }
+  }
+  for (const dep of deps) {
+    const shape = fieldShapeByName.get(dep)
+    if (shape?.kind === 'array' && shape.element?.kind === 'object') return shape.element
+  }
+  return undefined
+}
+
+function elementShapeFromArrayExpression(
+  expr: unknown,
+  fieldShapeByName: Map<string, GeaIrStoreValueShape>,
+): GeaIrStoreValueShape | undefined {
+  if (t.isArrayExpression(expr)) {
+    const first = expr.elements.find((element) => !!element && !t.isSpreadElement(element))
+    if (!first) return undefined
+    const shaped = shapeForExpression(first)
+    return 'shape' in shaped ? shaped.shape : undefined
+  }
+  if (t.isCallExpression(expr) && t.isMemberExpression(expr.callee) && t.isIdentifier(expr.callee.property)) {
+    const method = expr.callee.property.name
+    if (method === 'map') {
+      const objectLiteral = mapCallbackObjectLiteral(expr.arguments[0])
+      if (!objectLiteral) return undefined
+      const shaped = shapeForExpression(objectLiteral)
+      return 'shape' in shaped ? shaped.shape : undefined
+    }
+    // filter/slice/sort/etc. preserve element type → recurse into the receiver.
+    if (ARRAY_PRODUCING_METHODS.has(method)) {
+      return elementShapeFromArrayExpression(expr.callee.object, fieldShapeByName)
+    }
+  }
+  if (t.isMemberExpression(expr) && t.isThisExpression(expr.object) && t.isIdentifier(expr.property)) {
+    const shape = fieldShapeByName.get(expr.property.name)
+    if (shape?.kind === 'array') return shape.element
+  }
+  return undefined
+}
+
+function mapCallbackObjectLiteral(callback: unknown): import('@babel/types').ObjectExpression | undefined {
+  if (!callback || (!t.isArrowFunctionExpression(callback) && !t.isFunctionExpression(callback))) return undefined
+  const body = callback.body
+  if (t.isObjectExpression(body)) return body
+  if (t.isBlockStatement(body)) {
+    for (const statement of body.body) {
+      if (t.isReturnStatement(statement) && statement.argument && t.isObjectExpression(statement.argument)) {
+        return statement.argument
+      }
+    }
+  }
+  return undefined
+}
+
+// First `return` argument that is NOT inside a nested function (so a getter's
+// own return is found, not a `.map`/`.filter` callback's).
+function topLevelReturnArgument(body: unknown): unknown {
+  let result: unknown
+  let done = false
+  const visit = (value: unknown): void => {
+    if (done || !value || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    const node = value as Record<string, unknown>
+    const type = node.type
+    if (type === 'FunctionExpression' || type === 'ArrowFunctionExpression' || type === 'FunctionDeclaration') return
+    if (type === 'ReturnStatement') {
+      result = node.argument
+      done = true
+      return
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'loc' || key === 'start' || key === 'end' || key === 'range') continue
+      visit(node[key])
+    }
+  }
+  visit(body)
+  return result
+}
+
+// True when a getter body's own `return` yields an array. Nested functions
+// (e.g. a `.filter` callback) are skipped so their returns don't count.
+function getterBodyReturnsArray(body: unknown): boolean {
+  let found = false
+  const visit = (value: unknown): void => {
+    if (found || !value || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    const node = value as Record<string, unknown>
+    const type = node.type
+    if (type === 'FunctionExpression' || type === 'ArrowFunctionExpression' || type === 'FunctionDeclaration') return
+    if (type === 'ReturnStatement' && isArrayProducingExpression(node.argument)) {
+      found = true
+      return
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'loc' || key === 'start' || key === 'end' || key === 'range') continue
+      visit(node[key])
+    }
+  }
+  visit(body)
+  return found
+}
+
+function isArrayProducingExpression(expr: unknown): boolean {
+  if (!expr || typeof expr !== 'object') return false
+  const node = expr as Record<string, unknown>
+  if (node.type === 'ArrayExpression') return true
+  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') return isArrayProducingExpression(node.expression)
+  if (node.type === 'CallExpression') {
+    const callee = node.callee as Record<string, unknown> | undefined
+    const property = callee?.property as Record<string, unknown> | undefined
+    if (callee?.type === 'MemberExpression' && property?.type === 'Identifier') {
+      return ARRAY_PRODUCING_METHODS.has(property.name as string)
+    }
+  }
+  return false
+}
+
+// Collect the names of `this.<field>` reads anywhere in a node (deduped). These
+// are the reactive dependencies of a getter — when any changes, a list derived
+// from the getter must recompute.
+function collectThisFieldReads(node: unknown): string[] {
+  const names = new Set<string>()
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    const rec = value as Record<string, unknown>
+    const object = rec.object as Record<string, unknown> | undefined
+    const property = rec.property as Record<string, unknown> | undefined
+    if (
+      rec.type === 'MemberExpression' &&
+      object?.type === 'ThisExpression' &&
+      rec.computed !== true &&
+      property?.type === 'Identifier'
+    ) {
+      names.add(property.name as string)
+    }
+    for (const key of Object.keys(rec)) {
+      if (key === 'loc' || key === 'start' || key === 'end' || key === 'range') continue
+      visit(rec[key])
+    }
+  }
+  visit(node)
+  return [...names]
 }
 
 export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[] {

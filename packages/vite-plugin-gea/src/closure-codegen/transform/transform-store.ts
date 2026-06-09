@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 
 import { COMPILER_RUNTIME_ID } from '../../virtual-modules.ts'
 import { generate, t } from '../../utils/babel-interop.ts'
-import { sourceSpan, storeFieldsToIr, storeIrId, storeMethodsToIr, type GeaIrConstant, type GeaIrStore } from '../ir.ts'
+import { sourceSpan, storeFieldsToIr, storeGettersToIr, storeIrId, storeMethodsToIr, type GeaIrConstant, type GeaIrStore } from '../ir.ts'
 
 export interface StoreTransformResult {
   code: string
@@ -272,6 +272,10 @@ function buildStoreIr(
     runtimeBase,
     fields: storeFieldsToIr(classDecl),
     methods: storeMethodsToIr(classDecl),
+    ...(() => {
+      const getters = storeGettersToIr(classDecl)
+      return getters.length > 0 ? { getters } : {}
+    })(),
     ...(constants.length > 0 ? { constants } : {}),
     ...(sourceSpan(classDecl) ? { sourceSpan: sourceSpan(classDecl) } : {}),
   }
