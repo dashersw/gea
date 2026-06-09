@@ -25,6 +25,25 @@ test.describe('Router v2 (SSR)', () => {
     expect(html).toContain('id="app"')
   })
 
+  test('server renders nested layout chain in HTML (no client mount needed)', async ({ page }) => {
+    // Guards are skipped during SSR, so /dashboard should render
+    // AppShell → DashboardLayout → Overview in the raw HTML response.
+    const response = await page.request.get('/dashboard')
+    const html = await response.text()
+    expect(html).toContain('class="app-shell"')
+    expect(html).toContain('class="dashboard-layout"')
+    expect(html).toContain('class="dashboard-main"')
+    expect(html).toContain('class="overview"')
+  })
+
+  test('server renders query-mode layout with active tab in HTML', async ({ page }) => {
+    const response = await page.request.get('/settings?tab=billing')
+    const html = await response.text()
+    expect(html).toContain('class="app-shell"')
+    expect(html).toContain('class="settings-layout"')
+    expect(html).toContain('Billing')
+  })
+
   test('no console errors after hydration', async ({ page }) => {
     const errors: string[] = []
     page.on('console', (msg) => {

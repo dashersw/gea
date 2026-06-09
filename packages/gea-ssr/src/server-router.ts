@@ -1,6 +1,12 @@
 import type { GeaComponentConstructor, RouteMap } from './types'
 import { isComponentConstructor, isRouteGroup } from './types'
 
+export interface ServerRouteQueryMode {
+  activeKey: string
+  keys: string[]
+  param: string
+}
+
 export interface ServerRouteResult {
   path: string
   route: string
@@ -9,6 +15,10 @@ export interface ServerRouteResult {
   hash: string
   matches: string[]
   component: GeaComponentConstructor | null
+  /** Layout chain from outermost to innermost. */
+  layouts: GeaComponentConstructor[]
+  /** Query-mode metadata keyed by layout depth (index into `layouts`). */
+  queryModes: Map<number, ServerRouteQueryMode>
   guardRedirect: string | null
   isNotFound: boolean
 }
@@ -53,13 +63,22 @@ interface ResolvedRoute {
   component: GeaComponentConstructor | null
   matches: string[]
   guardRedirect: string | null
+  layouts: GeaComponentConstructor[]
+  queryModes: Map<number, ServerRouteQueryMode>
+}
+
+interface ResolveContext {
+  query: Record<string, string | string[]>
+  skipGuards: boolean
 }
 
 function resolveRoutes(
   routes: RouteMap,
   path: string,
+  ctx: ResolveContext,
   parentMatches: string[] = [],
-  skipGuards = false,
+  parentLayouts: GeaComponentConstructor[] = [],
+  parentQueryModes: Map<number, ServerRouteQueryMode> = new Map(),
 ): ResolvedRoute | null {
   for (const [pattern, entry] of Object.entries(routes)) {
     if (pattern === '*') continue
@@ -74,6 +93,8 @@ function resolveRoutes(
           component: null,
           matches: [...parentMatches, pattern],
           guardRedirect: entry,
+          layouts: parentLayouts,
+          queryModes: parentQueryModes,
         }
       }
       continue
@@ -104,7 +125,7 @@ function resolveRoutes(
 
       if (prefixMatch) {
         // Check guard (skip during SSR — guards may use browser-only APIs)
-        if (entry.guard && !skipGuards) {
+        if (entry.guard && !ctx.skipGuards) {
           const guardResult = entry.guard()
           if (guardResult !== true) {
             return {
@@ -113,11 +134,59 @@ function resolveRoutes(
               component: null,
               matches: [...parentMatches, pattern],
               guardRedirect: typeof guardResult === 'string' ? guardResult : null,
+              layouts: parentLayouts,
+              queryModes: parentQueryModes,
             }
           }
         }
+
+        const layout = entry.layout ?? entry.component
+        const layouts = layout ? [...parentLayouts, layout] : parentLayouts
+        const queryModes = new Map(parentQueryModes)
+        const groupMatches = [...parentMatches, pattern]
+
+        // Query-mode group: pick child by `query[param]`, not by path segment.
+        if (entry.mode?.type === 'query') {
+          const childKeys = Object.keys(entry.children)
+          const raw = ctx.query[entry.mode.param]
+          const fromQuery = Array.isArray(raw) ? raw[0] : raw
+          const activeKey = fromQuery && childKeys.includes(fromQuery) ? fromQuery : childKeys[0]
+
+          if (layout) {
+            queryModes.set(layouts.length - 1, {
+              activeKey,
+              keys: childKeys,
+              param: entry.mode.param,
+            })
+          }
+
+          const childEntry = childKeys.length > 0 ? entry.children[activeKey] : undefined
+          if (isComponentConstructor(childEntry as any)) {
+            return {
+              route: pattern,
+              params,
+              component: childEntry as GeaComponentConstructor,
+              matches: [...groupMatches, activeKey],
+              guardRedirect: null,
+              layouts,
+              queryModes,
+            }
+          }
+          // Active key didn't resolve to a component — render the layout with
+          // no leaf so the chain still appears in the HTML.
+          return {
+            route: pattern,
+            params,
+            component: null,
+            matches: groupMatches,
+            guardRedirect: null,
+            layouts,
+            queryModes,
+          }
+        }
+
         const rest = pattern === '/' ? path : '/' + pathParts.slice(patternParts.length).join('/')
-        const childResult = resolveRoutes(entry.children, rest, [...parentMatches, pattern], skipGuards)
+        const childResult = resolveRoutes(entry.children, rest, ctx, groupMatches, layouts, queryModes)
         if (childResult) {
           return { ...childResult, params: { ...params, ...childResult.params } }
         }
@@ -134,6 +203,8 @@ function resolveRoutes(
         component: entry,
         matches: [...parentMatches, pattern],
         guardRedirect: null,
+        layouts: parentLayouts,
+        queryModes: parentQueryModes,
       }
     }
   }
@@ -142,7 +213,15 @@ function resolveRoutes(
   if ('*' in routes) {
     const wildcard = routes['*']
     const component = isComponentConstructor(wildcard) ? wildcard : null
-    return { route: '*', params: {}, component, matches: [...parentMatches, '*'], guardRedirect: null }
+    return {
+      route: '*',
+      params: {},
+      component,
+      matches: [...parentMatches, '*'],
+      guardRedirect: null,
+      layouts: parentLayouts,
+      queryModes: parentQueryModes,
+    }
   }
 
   return null
@@ -154,7 +233,7 @@ export function createServerRouter(url: string, routes: RouteMap, skipGuards = f
   const query = parseQuery(parsed.search)
   const hash = parsed.hash
 
-  const resolved = resolveRoutes(routes, path, [], skipGuards)
+  const resolved = resolveRoutes(routes, path, { query, skipGuards })
 
   return {
     path,
@@ -164,6 +243,8 @@ export function createServerRouter(url: string, routes: RouteMap, skipGuards = f
     hash,
     matches: resolved?.matches ?? [],
     component: resolved?.component ?? null,
+    layouts: resolved?.layouts ?? [],
+    queryModes: resolved?.queryModes ?? new Map(),
     guardRedirect: resolved?.guardRedirect ?? null,
     isNotFound: !resolved || resolved.route === '*',
   }

@@ -1,5 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import type { ServerRouteResult } from './server-router'
+import type { GeaComponentConstructor } from './types'
+import type { ServerRouteResult, ServerRouteQueryMode } from './server-router'
+
+interface RouteHostItem {
+  component: GeaComponentConstructor
+  props: Record<string, unknown>
+  cacheKey: string | null
+}
 
 interface SSRRouterState {
   path: string
@@ -23,7 +30,7 @@ interface SSRRouterState {
   dispose: () => void
   setRoutes: (...args: unknown[]) => void
   observe: (path: unknown, fn: unknown) => () => void
-  getComponentAtDepth: () => null
+  getComponentAtDepth: (depth: number) => RouteHostItem | null
 }
 
 const ssrRouterContext = new AsyncLocalStorage<SSRRouterState>()
@@ -38,6 +45,11 @@ export function runWithSSRRouter<T>(state: object, fn: () => T): T {
 
 export function createSSRRouterState(routeResult: ServerRouteResult): SSRRouterState {
   const noop = () => {}
+  const layouts = routeResult.layouts ?? []
+  const queryModes = routeResult.queryModes ?? new Map<number, ServerRouteQueryMode>()
+  const layoutCount = layouts.length
+  const leaf = routeResult.component
+
   return {
     path: routeResult.path,
     route: routeResult.route,
@@ -47,8 +59,8 @@ export function createSSRRouterState(routeResult: ServerRouteResult): SSRRouterS
     matches: routeResult.matches,
     error: null,
     routeConfig: {},
-    page: routeResult.component,
-    layoutCount: 0,
+    page: leaf,
+    layoutCount,
 
     isActive(p: string): boolean {
       if (p === '/') return routeResult.path === '/'
@@ -73,10 +85,38 @@ export function createSSRRouterState(routeResult: ServerRouteResult): SSRRouterS
     observe(_path: unknown, _fn: unknown) {
       return noop
     },
-    getComponentAtDepth: (() => {
-      return routeResult.component
-        ? { component: routeResult.component, props: { ...routeResult.params }, cacheKey: null }
-        : null
-    }) as any,
+    // Mirror client Router.getComponentAtDepth so RouterView/Outlet mount the
+    // full layout chain during SSR. Layouts at `depth < layoutCount`, leaf at
+    // `depth === layoutCount`.
+    getComponentAtDepth(depth: number): RouteHostItem | null {
+      if (depth < layoutCount) {
+        const layout = layouts[depth]
+        const props: Record<string, unknown> = { ...routeResult.params }
+        props.route = routeResult.route
+
+        const nextDepth = depth + 1
+        if (nextDepth < layoutCount) {
+          props.page = layouts[nextDepth]
+        } else {
+          props.page = leaf
+        }
+
+        let cacheKey: string | null = null
+        const modeInfo = queryModes.get(depth)
+        if (modeInfo) {
+          props.activeKey = modeInfo.activeKey
+          props.keys = modeInfo.keys
+          // Navigation is meaningless during SSR — provide a noop so layouts
+          // that destructure `navigate` don't throw.
+          props.navigate = noop
+          cacheKey = modeInfo.activeKey
+        }
+        return { component: layout, props, cacheKey }
+      }
+      if (depth === layoutCount && leaf) {
+        return { component: leaf, props: { ...routeResult.params }, cacheKey: null }
+      }
+      return null
+    },
   }
 }
