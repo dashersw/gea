@@ -406,6 +406,17 @@ import { Combobox } from '@geajs/ui'
 />
 ```
 
+#### Date Picker
+
+```tsx
+import { DatePicker } from '@geajs/ui'
+
+<DatePicker
+  label="Date of Birth"
+  onValueChange={(details) => console.log(details.valueAsString)}
+/>
+```
+
 #### Collapsible
 
 ```tsx

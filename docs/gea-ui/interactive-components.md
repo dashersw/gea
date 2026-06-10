@@ -641,6 +641,58 @@ ToastStore.loading({ title: 'Loading...', description: 'Please wait.' })
 | `type` | `'success' \| 'error' \| 'info' \| 'loading'` | Toast variant (set automatically by convenience methods) |
 | `duration` | `number` | Auto-dismiss delay in milliseconds (default: 5000) |
 
+## Date Picker
+
+Calendar date selection with day, month, and year views, keyboard navigation, and full accessibility support. Powered by `@zag-js/date-picker`.
+
+```tsx
+import { DatePicker } from '@geajs/ui'
+
+<DatePicker
+  label="Date of Birth"
+  onValueChange={(details) => console.log(details.valueAsString)}
+/>
+```
+
+### Props
+
+| Prop | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `string` | — | Label text above the input |
+| `value` | `DateValue[]` | — | Controlled selected date(s) |
+| `defaultValue` | `DateValue[]` | — | Initial selected date(s) |
+| `focusedValue` | `DateValue` | — | Controlled focused date |
+| `defaultFocusedValue` | `DateValue` | — | Initial focused date |
+| `open` | `boolean` | — | Controlled open state |
+| `defaultOpen` | `boolean` | — | Initial open state |
+| `disabled` | `boolean` | — | Disable the date picker |
+| `readOnly` | `boolean` | — | Make the date picker read-only |
+| `required` | `boolean` | — | Mark as required for form validation |
+| `invalid` | `boolean` | — | Mark the input as invalid |
+| `min` | `DateValue` | — | Minimum selectable date |
+| `max` | `DateValue` | — | Maximum selectable date |
+| `locale` | `string` | `'en-US'` | Locale for formatting |
+| `timeZone` | `string` | `'UTC'` | IANA time zone |
+| `selectionMode` | `'single' \| 'multiple' \| 'range'` | `'single'` | How dates are selected |
+| `closeOnSelect` | `boolean` | `true` | Close the popover after selecting a date |
+| `name` | `string` | — | Name attribute for form submission |
+| `placeholder` | `string` | — | Placeholder text for the input |
+| `inline` | `boolean` | — | Render the calendar inline (no popover) |
+| `startOfWeek` | `number` | — | First day of the week (0 = Sunday) |
+| `fixedWeeks` | `boolean` | — | Always show 6 weeks in the day view |
+| `view` | `'day' \| 'month' \| 'year'` | — | Controlled calendar view |
+| `defaultView` | `'day' \| 'month' \| 'year'` | `'day'` | Initial calendar view |
+| `isDateUnavailable` | `(date: DateValue) => boolean` | — | Mark specific dates as unavailable |
+| `positioning` | `PositioningOptions` | — | Popover positioning options |
+| `format` | `(date: DateValue) => string` | — | Custom date formatting function |
+| `parse` | `(value: string) => DateValue[]` | — | Custom date parsing function |
+| `onValueChange` | `(details: { value: DateValue[], valueAsString: string[] }) => void` | — | Called when the selected date changes |
+| `onOpenChange` | `(details: { open: boolean }) => void` | — | Called when the popover opens or closes |
+| `onViewChange` | `(details: { view: string }) => void` | — | Called when the calendar view changes |
+| `onFocusChange` | `(details: { focusedValue: DateValue, view: string }) => void` | — | Called when the focused date changes |
+
+**Note:** `DateValue` types come from `@internationalized/date`, a peer dependency of `@zag-js/date-picker`.
+
 ## Tree View
 
 A hierarchical tree for displaying nested data. Accepts a Zag tree `collection` for full control over the data structure.
