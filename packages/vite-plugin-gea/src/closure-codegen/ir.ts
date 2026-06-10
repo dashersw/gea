@@ -28,6 +28,17 @@ export interface GeaIrComponent {
   runtimeBase: GeaIrRuntimeBase
   template: GeaIrTemplate
   sourceSpan?: GeaIrSourceSpan
+  // EXPERIMENTAL (ReactiveComponent): present when the component extends
+  // `ReactiveComponent` and holds its own reactive state — the embedded backend
+  // compiles it as a lean component-as-store. Absent for plain `Component`.
+  reactiveState?: GeaIrComponentReactiveState
+}
+
+export interface GeaIrComponentReactiveState {
+  fields: GeaIrStoreField[]
+  methods?: GeaIrStoreMethod[]
+  getters?: GeaIrStoreGetter[]
+  constants?: GeaIrConstant[]
 }
 
 export type GeaIrRuntimeBase =

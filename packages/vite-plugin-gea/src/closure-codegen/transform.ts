@@ -13,7 +13,11 @@ import { extractTemplateJsx, findTemplateMethod } from './generator.ts'
 import {
   componentIrId,
   sourceSpan,
+  storeFieldsToIr,
+  storeGettersToIr,
+  storeMethodsToIr,
   type GeaIrComponent,
+  type GeaIrComponentReactiveState,
   type GeaIrModule,
   type GeaIrRuntimeBase,
 } from './ir.ts'
@@ -79,6 +83,10 @@ export function transformFile(source: string, _filename?: string, options: Trans
   for (const name of options.directClassComponents ?? []) ctx.directClassComponents.add(name)
   ctx.directFactoryComponents = new Set(options.directFactoryComponents)
   const rewritten: string[] = []
+  // EXPERIMENTAL (ReactiveComponent): component class names that opted into
+  // self-reactive-state, captured BEFORE the superclass is rewritten so
+  // buildModuleIr can emit their `reactiveState`.
+  const reactiveComponentNames = new Set<string>()
   let firstClassIdx = -1
 
   // Walk top-level declarations for components (class + function).
@@ -135,6 +143,9 @@ export function transformFile(source: string, _filename?: string, options: Trans
         canUseLeanReactiveComponent(classDecl)
       const hasAfterRenderAsyncHook = hasOwnInstanceMethod(classDecl, 'onAfterRenderAsync')
       const className = (classDecl.id && classDecl.id.name) || '<anonymous>'
+      // Capture the `extends ReactiveComponent` opt-in now — the superclass is
+      // rewritten to a compiled base below, so buildModuleIr can't see it later.
+      if (t.isIdentifier(classDecl.superClass, { name: 'ReactiveComponent' })) reactiveComponentNames.add(className)
       const runtimeBase = runtimeBaseForComponent({
         useStaticCompiledComponent,
         useCompiledComponent,
@@ -196,11 +207,32 @@ export function transformFile(source: string, _filename?: string, options: Trans
       // Clear per-template bindings so they don't leak to the next class
       for (const k of paramBindings) ctx.bindings.delete(k)
 
+      const isReactiveComponent = reactiveComponentNames.has(className)
       const bodyItems = classDecl.body.body
       const templateIdx = bodyItems.indexOf(templateMethod)
-      if (templateIdx >= 0) bodyItems[templateIdx] = method
+      // For a lean ReactiveComponent the template lives only in the IR (the
+      // consumer generates a typed mounted renderer from it); the
+      // `__sym_GEA_CREATE_TEMPLATE` method on the class would be dead code that
+      // references component-base members the lean base-less class doesn't have,
+      // so drop it. `method` was still built above to populate `ctx.irTemplates`.
+      if (templateIdx >= 0) {
+        if (isReactiveComponent) bodyItems.splice(templateIdx, 1)
+        else bodyItems[templateIdx] = method
+      }
       let usesCompiledRuntimeBase = false
-      if (useStaticElementComponent) {
+      if (isReactiveComponent) {
+        // EXPERIMENTAL (component-as-store): strip the base entirely so geatsc
+        // emits a plain, fully-typed class — NO CompiledStore/CompiledComponent
+        // machinery, no `gea_cpp_value` ctor bookkeeping, no Proxy. Reactivity is
+        // supplied by the consumer: reactive fields become typed `Signal<T>`, and
+        // a typed mounted renderer reads the live instance (`self->count`) and
+        // subscribes per field. The auto-emitted `__gea_to_value()` (which would
+        // box the Signal fields) is neutralized downstream. This is the lean,
+        // fully-typed counterpart to a Store — it does NOT inherit the store's
+        // dynamic per-property observer map.
+        classDecl.superClass = null
+        usesCompiledRuntimeBase = false
+      } else if (useStaticElementComponent) {
         ctx.importsNeeded.add('CompiledStaticElementComponent')
         classDecl.superClass = t.identifier('CompiledStaticElementComponent')
         usesCompiledRuntimeBase = true
@@ -257,7 +289,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
     changed: true,
     rewritten,
     importsNeeded: Array.from(ctx.importsNeeded),
-    ir: buildModuleIr(_filename ?? '<unknown>', rewritten, ctx.irTemplates ?? [], ast),
+    ir: buildModuleIr(_filename ?? '<unknown>', rewritten, ctx.irTemplates ?? [], ast, reactiveComponentNames),
   }
 }
 
@@ -279,18 +311,37 @@ function buildModuleIr(
   rewritten: string[],
   templates: NonNullable<ReturnType<typeof createEmitContext>['irTemplates']>,
   ast: File,
+  reactiveComponentNames: Set<string> = new Set(),
 ): { module: GeaIrModule; components: GeaIrComponent[] } {
   const components: GeaIrComponent[] = []
   for (const name of rewritten) {
     const record = templates.find((template) => template.component === name)
     if (!record) continue
     const declaration = findClassDeclarationByName(ast, name)
+    // EXPERIMENTAL (ReactiveComponent): emit the component's own reactive state
+    // (fields/methods/getters) so the embedded backend can treat it as a lean
+    // component-as-store. The superclass was rewritten away, but the
+    // fields/methods/getters are intact, so the store-IR builders still apply.
+    const reactiveState: GeaIrComponentReactiveState | undefined =
+      declaration && reactiveComponentNames.has(name)
+        ? (() => {
+            const fields = storeFieldsToIr(declaration)
+            const methods = storeMethodsToIr(declaration)
+            const getters = storeGettersToIr(declaration)
+            return {
+              fields,
+              ...(methods.length > 0 ? { methods } : {}),
+              ...(getters.length > 0 ? { getters } : {}),
+            }
+          })()
+        : undefined
     components.push({
       id: componentIrId(moduleId, name),
       module: moduleId,
       exportName: name,
       runtimeBase: record.runtimeBase,
       template: record.template,
+      ...(reactiveState ? { reactiveState } : {}),
       ...(declaration ? { sourceSpan: sourceSpan(declaration) } : {}),
     })
   }
