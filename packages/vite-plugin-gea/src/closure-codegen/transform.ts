@@ -216,8 +216,22 @@ export function transformFile(source: string, _filename?: string, options: Trans
       // references component-base members the lean base-less class doesn't have,
       // so drop it. `method` was still built above to populate `ctx.irTemplates`.
       if (templateIdx >= 0) {
-        if (isReactiveComponent) bodyItems.splice(templateIdx, 1)
-        else bodyItems[templateIdx] = method
+        if (isReactiveComponent) {
+          bodyItems.splice(templateIdx, 1)
+          // With template() gone, the emitted JS no longer references the child
+          // components the template mounts — esbuild's TS transpile then strips
+          // their now-unused imports as potentially type-only, so the child
+          // modules never load, never get transformed, and never reach the IR.
+          // Keep one `void <Child>;` value reference per imported mounted child
+          // so the modules still load. Rollup later tree-shakes the statement
+          // (and usually the child module) from the final bundle; generateBundle
+          // closes the IR's componentIds over mount slots to keep the child's
+          // IR entry alive regardless.
+          const keepAlive = mountedComponentKeepAliveStatements(jsx, ast)
+          if (keepAlive.length > 0) ast.program.body.splice(i + 1, 0, ...keepAlive)
+        } else {
+          bodyItems[templateIdx] = method
+        }
       }
       let usesCompiledRuntimeBase = false
       if (isReactiveComponent) {
@@ -290,6 +304,41 @@ export function transformFile(source: string, _filename?: string, options: Trans
     rewritten,
     importsNeeded: Array.from(ctx.importsNeeded),
     ir: buildModuleIr(_filename ?? '<unknown>', rewritten, ctx.irTemplates ?? [], ast, reactiveComponentNames),
+  }
+}
+
+// `void <Child>;` statements for every component the template JSX mounts via
+// an imported identifier. A value reference is the minimal thing that stops
+// esbuild's TS transpile from dropping the import as potentially type-only
+// (which would keep the child module from ever loading). Locally-declared
+// components need no keep-alive — there is no import to lose.
+function mountedComponentKeepAliveStatements(jsx: any, ast: any): any[] {
+  const tags = new Set<string>()
+  collectCapitalizedJsxTags(jsx, tags)
+  if (tags.size === 0) return []
+  const imported = new Set<string>()
+  for (const stmt of ast.program.body) {
+    if (!t.isImportDeclaration(stmt)) continue
+    for (const spec of stmt.specifiers) imported.add(spec.local.name)
+  }
+  return Array.from(tags)
+    .filter((tag) => imported.has(tag))
+    .map((tag) => t.expressionStatement(t.unaryExpression('void', t.identifier(tag))))
+}
+
+function collectCapitalizedJsxTags(node: any, tags: Set<string>): void {
+  if (!node || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const child of node) collectCapitalizedJsxTags(child, tags)
+    return
+  }
+  if (t.isJSXElement(node)) {
+    const name = node.openingElement.name
+    if (t.isJSXIdentifier(name) && /^[A-Z]/.test(name.name)) tags.add(name.name)
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    collectCapitalizedJsxTags(node[key], tags)
   }
 }
 

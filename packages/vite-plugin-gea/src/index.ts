@@ -323,6 +323,28 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
       })
       const componentIds = new Set(modules.flatMap((module) => module.components))
       const storeIds = new Set(modules.flatMap((module) => module.stores))
+      // A lean ReactiveComponent's compiled class drops its template() method
+      // (the template lives only in the IR), so the emitted JS no longer
+      // references the child components that template mounts — rollup
+      // tree-shakes their modules, and the rendered-module filter above would
+      // then drop those children from the IR even though the embedded backend
+      // still mounts them from the parent's template. Close componentIds over
+      // mount-slot references so IR-live children survive tree-shaking.
+      const moduleById = new Map(Array.from(irModules.values()).map((module) => [module.id, module]))
+      const pending = Array.from(componentIds)
+      while (pending.length > 0) {
+        const component = irComponents.get(pending.pop()!)
+        if (!component) continue
+        for (const tag of collectMountTags(component.template.slots)) {
+          for (const candidate of irComponents.values()) {
+            if (candidate.exportName !== tag || componentIds.has(candidate.id)) continue
+            componentIds.add(candidate.id)
+            pending.push(candidate.id)
+            const candidateModule = moduleById.get(candidate.module)
+            if (candidateModule && !modules.includes(candidateModule)) modules.push(candidateModule)
+          }
+        }
+      }
       const irBundle: GeaIrBundleV1 = {
         schema: 'gea-ir',
         version: 1,
@@ -341,6 +363,30 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         this.emitFile({ type: 'asset', fileName: outFile, source })
       }
     },
+  }
+
+  // Component tags mounted anywhere in a template's slots — including templates
+  // nested in slot payloads (conditional consequent/alternate, keyed-list row
+  // templates, forwarded children). Payload `attrs`/`children` hold raw Babel
+  // AST at this point; recursion only follows template-shaped objects (a
+  // `slots` array) so the walk never descends into the AST.
+  function collectMountTags(slots: unknown, tags = new Set<string>(), depth = 0): Set<string> {
+    if (depth > 8 || !Array.isArray(slots)) return tags
+    for (const slot of slots) {
+      if (!slot || typeof slot !== 'object') continue
+      const { kind, payload } = slot as { kind?: unknown; payload?: unknown }
+      if (!payload || typeof payload !== 'object') continue
+      const record = payload as Record<string, unknown>
+      if (kind === 'mount' && typeof record.tag === 'string') tags.add(record.tag)
+      for (const key of Object.keys(record)) {
+        if (key === 'attrs' || key === 'children') continue
+        const value = record[key]
+        if (value && typeof value === 'object' && Array.isArray((value as { slots?: unknown }).slots)) {
+          collectMountTags((value as { slots: unknown }).slots, tags, depth + 1)
+        }
+      }
+    }
+    return tags
   }
 
   function recordComponentIr(moduleId: string, ir: { module: GeaIrModule; components: GeaIrComponent[] }): void {
