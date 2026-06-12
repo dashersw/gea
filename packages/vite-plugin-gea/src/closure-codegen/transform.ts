@@ -220,13 +220,19 @@ export function transformFile(source: string, _filename?: string, options: Trans
           bodyItems.splice(templateIdx, 1)
           // With template() gone, the emitted JS no longer references the child
           // components the template mounts — esbuild's TS transpile then strips
-          // their now-unused imports as potentially type-only, so the child
-          // modules never load, never get transformed, and never reach the IR.
-          // Keep one `void <Child>;` value reference per imported mounted child
-          // so the modules still load. Rollup later tree-shakes the statement
-          // (and usually the child module) from the final bundle; generateBundle
-          // closes the IR's componentIds over mount slots to keep the child's
-          // IR entry alive regardless.
+          // their now-unused imports as potentially type-only (child modules
+          // never load, never reach the IR), and the bundler tree-shakes the
+          // child class + everything it references (a reactive child's class —
+          // which typed parents mount via `make_shared<Class>()` — and the
+          // global store instances its renderer reads through
+          // `__gea_global_*()`). A pure `void <Child>;` reference survives
+          // esbuild but not tree-shaking, so emit ONE side-effectful keep-alive
+          // no treeshaker may drop:
+          //   ;(globalThis.__GEA_IR_KEEP__ ||= []).push(Rail, Panel);
+          // The references transitively keep the whole IR-live subgraph in the
+          // final bundle. The gea-embedded C++ pipeline strips the marker line
+          // before geatsc compiles the bundle; on JS runtimes it's one
+          // harmless array push at module init.
           const keepAlive = mountedComponentKeepAliveStatements(jsx, ast)
           if (keepAlive.length > 0) ast.program.body.splice(i + 1, 0, ...keepAlive)
         } else {
@@ -307,11 +313,15 @@ export function transformFile(source: string, _filename?: string, options: Trans
   }
 }
 
-// `void <Child>;` statements for every component the template JSX mounts via
-// an imported identifier. A value reference is the minimal thing that stops
-// esbuild's TS transpile from dropping the import as potentially type-only
-// (which would keep the child module from ever loading). Locally-declared
-// components need no keep-alive — there is no import to lose.
+// One `(globalThis.__GEA_IR_KEEP__ ||= []).push(<Child>, …)` statement
+// referencing every component the template JSX mounts via an imported
+// identifier. The value references stop esbuild's TS transpile from dropping
+// the imports as potentially type-only (which would keep the child modules
+// from ever loading), and the globalThis property write is a side effect no
+// treeshaker (rollup or rolldown) may remove — so the child classes and the
+// store globals their renderers reference all survive into the final bundle.
+// Locally-declared components need no keep-alive — there is no import to lose
+// and their declarations live in this (kept) module.
 function mountedComponentKeepAliveStatements(jsx: any, ast: any): any[] {
   const tags = new Set<string>()
   collectCapitalizedJsxTags(jsx, tags)
@@ -321,9 +331,21 @@ function mountedComponentKeepAliveStatements(jsx: any, ast: any): any[] {
     if (!t.isImportDeclaration(stmt)) continue
     for (const spec of stmt.specifiers) imported.add(spec.local.name)
   }
-  return Array.from(tags)
-    .filter((tag) => imported.has(tag))
-    .map((tag) => t.expressionStatement(t.unaryExpression('void', t.identifier(tag))))
+  const kept = Array.from(tags).filter((tag) => imported.has(tag))
+  if (kept.length === 0) return []
+  const keepArray = t.assignmentExpression(
+    '||=',
+    t.memberExpression(t.identifier('globalThis'), t.identifier('__GEA_IR_KEEP__')),
+    t.arrayExpression([]),
+  )
+  return [
+    t.expressionStatement(
+      t.callExpression(
+        t.memberExpression(t.parenthesizedExpression(keepArray), t.identifier('push')),
+        kept.map((tag) => t.identifier(tag)),
+      ),
+    ),
+  ]
 }
 
 function collectCapitalizedJsxTags(node: any, tags: Set<string>): void {
@@ -375,7 +397,7 @@ function buildModuleIr(
       declaration && reactiveComponentNames.has(name)
         ? (() => {
             const fields = storeFieldsToIr(declaration)
-            const methods = storeMethodsToIr(declaration)
+            const methods = storeMethodsToIr(declaration, ast)
             const getters = storeGettersToIr(declaration)
             return {
               fields,

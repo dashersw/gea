@@ -9,7 +9,13 @@ import { sourceSpan, storeFieldsToIr, storeGettersToIr, storeIrId, storeMethodsT
 export interface StoreTransformResult {
   code: string
   changed: boolean
+  // First store's IR (back-compat for single-store callers).
   ir?: GeaIrStore
+  // IR for EVERY store class in the module. A module may declare several
+  // `extends Store` classes (maps' index.device.tsx has MapInput + RailState);
+  // all of them must reach the IR or the geatsc backend loses the typed
+  // compiled-store lowering for every store in the module.
+  irs?: GeaIrStore[]
 }
 
 export type ResolveImportPath = (importer: string, source: string) => string | null
@@ -35,41 +41,58 @@ export function transformCompiledStoreModule(
 
   const imported = findStoreImport(ast, moduleId, resolveImportPath)
   if (!imported) return null
-  const classDecl = findStoreClass(ast, imported.localName)
-  if (!classDecl || !classDecl.id) return null
+  const classDecls = findStoreClasses(ast, imported.localName)
+  if (classDecls.length === 0) return null
   const constants = collectImportedLiteralConstants(ast, moduleId, resolveImportPath)
-  const fallbackIr = buildStoreIr(classDecl, moduleId, 'compiled', constants)
+  const fallbackIrs = classDecls.map((classDecl) => buildStoreIr(classDecl, moduleId, 'compiled', constants, ast))
+  const fallback: StoreTransformResult = { code: source, changed: false, ir: fallbackIrs[0], irs: fallbackIrs }
   if (/\b(flushSync|silent|Store\.|new\s+Store\s*\()/.test(source)) {
-    return { code: source, changed: false, ir: fallbackIr }
+    return fallback
   }
-  if (!isCompiledStoreSafeClass(classDecl)) return null
-  if (!hasDefaultNewStore(ast, classDecl.id.name)) {
-    return { code: source, changed: false, ir: fallbackIr }
+  // All-or-nothing across the module's store classes: a partial transform
+  // would have to keep the `Store` import alive for the untransformed class
+  // while rebasing the others, and the IR consumers assume a module's stores
+  // share one runtime mode. Single-class modules keep the legacy "untouched,
+  // no IR" behavior for unsafe classes.
+  if (!classDecls.every((classDecl) => isCompiledStoreSafeClass(classDecl))) {
+    return classDecls.length === 1 ? null : fallback
+  }
+  if (!classDecls.every((classDecl) => hasDefaultNewStore(ast, classDecl.id!.name))) {
+    return fallback
   }
 
-  const leanResult = transformLeanDataSelectedStore(ast, classDecl, imported, moduleId, constants)
-  if (leanResult) return leanResult
+  if (classDecls.length === 1) {
+    const leanResult = transformLeanDataSelectedStore(ast, classDecls[0], imported, moduleId, constants)
+    if (leanResult) return { ...leanResult, irs: leanResult.ir ? [leanResult.ir] : undefined }
+  }
 
-  const storeBase = canUseLeanStore(classDecl) ? 'CompiledLeanStore' : 'CompiledStore'
-  const storeIr = buildStoreIr(classDecl, moduleId, storeBase === 'CompiledLeanStore' ? 'lean' : 'compiled', constants)
+  const storeBases = classDecls.map((classDecl) => (canUseLeanStore(classDecl) ? 'CompiledLeanStore' : 'CompiledStore'))
+  const storeIrs = classDecls.map((classDecl, index) =>
+    buildStoreIr(classDecl, moduleId, storeBases[index] === 'CompiledLeanStore' ? 'lean' : 'compiled', constants, ast),
+  )
 
   removeStoreSpecifier(imported.importDecl, imported.localName)
   ast.program.body = ast.program.body.filter((node) => {
     if (node !== imported.importDecl) return true
     return imported.importDecl.specifiers.length > 0
   })
-  ast.program.body.unshift(
-    t.importDeclaration(
-      [t.importSpecifier(t.identifier(storeBase), t.identifier(storeBase))],
-      t.stringLiteral(COMPILER_RUNTIME_ID),
-    ),
-  )
-  classDecl.superClass = t.identifier(storeBase)
+  for (const storeBase of [...new Set(storeBases)]) {
+    ast.program.body.unshift(
+      t.importDeclaration(
+        [t.importSpecifier(t.identifier(storeBase), t.identifier(storeBase))],
+        t.stringLiteral(COMPILER_RUNTIME_ID),
+      ),
+    )
+  }
+  classDecls.forEach((classDecl, index) => {
+    classDecl.superClass = t.identifier(storeBases[index])
+  })
 
   return {
     code: generate(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } }).code,
     changed: true,
-    ir: storeIr,
+    ir: storeIrs[0],
+    irs: storeIrs,
   }
 }
 
@@ -217,7 +240,7 @@ function transformLeanDataSelectedStore(
   const fields = collectLeanStoreFields(classDecl)
   if (!fields) return null
   if (!isBenchmarkOperationStoreShape(classDecl)) return null
-  const storeIr = buildStoreIr(classDecl, moduleId, 'lean', constants)
+  const storeIr = buildStoreIr(classDecl, moduleId, 'lean', constants, ast)
 
   const methodProps = buildLeanStoreMethods(classDecl)
   if (!methodProps) return null
@@ -263,6 +286,7 @@ function buildStoreIr(
   moduleId: string,
   runtimeBase: 'compiled' | 'lean',
   constants: GeaIrConstant[] = [],
+  moduleAst?: File,
 ): GeaIrStore {
   const className = classDecl.id?.name ?? '<anonymous>'
   return {
@@ -271,7 +295,7 @@ function buildStoreIr(
     className,
     runtimeBase,
     fields: storeFieldsToIr(classDecl),
-    methods: storeMethodsToIr(classDecl),
+    methods: storeMethodsToIr(classDecl, moduleAst),
     ...(() => {
       const getters = storeGettersToIr(classDecl)
       return getters.length > 0 ? { getters } : {}
@@ -536,17 +560,19 @@ function moduleExportsStore(file: string, resolveImportPath: ResolveImportPath, 
   return false
 }
 
-function findStoreClass(ast: File, storeName: string): ClassDeclaration | null {
-  let found: ClassDeclaration | null = null
+// Every top-level `class X extends Store` in the module, declaration order.
+// Classes without an id are skipped (the transform must name them to rebase
+// the superclass and build IR).
+function findStoreClasses(ast: File, storeName: string): ClassDeclaration[] {
+  const found: ClassDeclaration[] = []
   for (const node of ast.program.body) {
     const decl = t.isClassDeclaration(node)
       ? node
       : t.isExportNamedDeclaration(node) && t.isClassDeclaration(node.declaration)
         ? node.declaration
         : null
-    if (!decl || !t.isIdentifier(decl.superClass, { name: storeName })) continue
-    if (found) return null
-    found = decl
+    if (!decl || !decl.id || !t.isIdentifier(decl.superClass, { name: storeName })) continue
+    found.push(decl)
   }
   return found
 }

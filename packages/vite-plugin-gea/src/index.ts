@@ -262,8 +262,20 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         }
 
         const storeResult = transformCompiledStoreModule(transformedCode, cleanId, resolveImportPath)
-        if (storeResult?.ir) recordStoreIr(cleanId, storeResult.ir)
-        if (storeResult?.changed) return { code: storeResult.code, map: null }
+        for (const storeIr of storeResult?.irs ?? (storeResult?.ir ? [storeResult.ir] : [])) {
+          recordStoreIr(cleanId, storeIr)
+        }
+        if (storeResult?.changed) {
+          // A store-only module is done. A MIXED module (maps' index.device.tsx
+          // declares its stores next to the component and the top-level
+          // `mount(...)` call) must continue through the root-mount and
+          // component passes on the store-transformed code, or the component
+          // loses its IR (no mounted renderer) and the mount stays dynamic.
+          const mixedModule = /\bextends\s+(Component|ReactiveComponent)\b|\bmount\s*\(/.test(storeResult.code)
+          if (!mixedModule) return { code: storeResult.code, map: null }
+          transformedCode = storeResult.code
+          changed = true
+        }
 
         const rootMountResult = transformStaticRootMount(transformedCode, cleanId, resolveImportPath)
         if (rootMountResult?.changed) {
@@ -288,6 +300,16 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
       })
       if (result) {
         if (result.ir) recordComponentIr(cleanId, result.ir)
+        // A ReactiveComponent's compiled class must survive into the final
+        // bundle: parents mount it as `make_shared<Class>()`, so the geatsc
+        // C++ backend needs the class definition in the bundle text. Once the
+        // lean transform splices template() out, the class is dead JS to
+        // rollup (the IR renderer does the mounting; the `void <Child>;`
+        // keep-alives are provably pure) — without this it gets tree-shaken
+        // and the typed mount call references a class that no longer exists.
+        if (result.ir?.components.some((component) => component.reactiveState)) {
+          return { code: result.code, map: result.map ?? null, moduleSideEffects: 'no-treeshake' }
+        }
         return result
       }
 
