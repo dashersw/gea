@@ -440,11 +440,12 @@ Class components receive them via `created(props)` and `template(props)`.
 
 ## Documentation
 
-Full documentation: [docs](https://github.com/dashersw/gea/tree/master/docs)
+Full documentation: [docs](https://github.com/dashersw/gea/tree/main/docs)
 
 ## AI-Assisted Development
 
-This repository includes [agent skills](https://github.com/dashersw/gea/tree/master/skills/gea-framework) that teach AI coding assistants how to work with Gea. If you use Cursor, Codex, or a similar AI-enabled editor, it will automatically pick up the skill files and understand Gea's stores, components, JSX conventions, and reactivity model — so you can scaffold and iterate on Gea apps with full AI assistance out of the box.
+This repository includes [agent skills](https://github.com/dashersw/gea/tree/main/.cursor/skills/gea-framework) that teach AI coding assistants how to work with Gea. In compatible environments, this gives your editor the context it needs to understand Gea's stores, components, JSX conventions, and reactivity model so you can scaffold and iterate on Gea apps with much better AI assistance.
+
 
 ## License
 
