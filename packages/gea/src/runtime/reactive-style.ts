@@ -24,3 +24,34 @@ export const reactiveStyle = (
     prev = next
   })
 }
+
+// Typed single-property style binding. Used by the compiler for static-key style
+// objects (e.g. a moving sprite's `{ left, top, backgroundColor }`): each property
+// binds on its own channel with a compile-time-kebabed name, so there is no boxed
+// `next`/`prev` record allocation, no runtime kebab-casing, and tracking is
+// per-property (only the property that actually changed re-applies). The generic
+// `reactiveStyle` above stays for dynamic/spread style objects.
+export const reactiveStyleProp = (
+  el: Element,
+  d: Disposer,
+  root: any,
+  prop: string,
+  pathOrGetter: readonly string[] | (() => unknown),
+): void => {
+  const style = (el as HTMLElement).style
+  let prev: string | undefined
+  bind(d, root, pathOrGetter, (v) => {
+    if (v == null || v === false) {
+      if (prev !== undefined) {
+        style.removeProperty(prop)
+        prev = undefined
+      }
+      return
+    }
+    const next = String(v)
+    if (next !== prev) {
+      style.setProperty(prop, next)
+      prev = next
+    }
+  })
+}

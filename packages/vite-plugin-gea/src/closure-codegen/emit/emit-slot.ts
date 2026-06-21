@@ -186,17 +186,52 @@ export function emitSlot(slot: Slot, stmts: Statement[], ctx: EmitContext): void
         ),
       )
     } else if (slot.kind === 'style') {
-      ctx.importsNeeded.add('reactiveStyle')
-      stmts.push(
-        t.expressionStatement(
-          t.callExpression(t.identifier('reactiveStyle'), [
-            elId,
-            t.identifier('d'),
-            ctx.reactiveRoot,
-            pathOrGetter.value,
-          ]),
-        ),
-      )
+      // Static-key style object (e.g. a moving sprite's `{ left, top, backgroundColor }`):
+      // bind each property on its own typed channel via reactiveStyleProp instead of the
+      // generic reactiveStyle. That avoids a boxed prev/next record allocation + runtime
+      // kebab-casing on every update, and tracks per-property (only the property that
+      // actually changed re-applies). Falls back to reactiveStyle for dynamic/spread style.
+      const styleExpr = slot.expr as Expression
+      const styleProps =
+        t.isObjectExpression(styleExpr) && (styleExpr as any).properties.length > 0
+          ? ((styleExpr as any).properties as any[])
+          : null
+      const allStaticKeys =
+        styleProps !== null &&
+        styleProps.every(
+          (p) => t.isObjectProperty(p) && !p.computed && (t.isIdentifier(p.key) || t.isStringLiteral(p.key)),
+        )
+      if (allStaticKeys) {
+        ctx.importsNeeded.add('reactiveStyleProp')
+        for (const p of styleProps as any[]) {
+          const keyName = t.isIdentifier(p.key) ? p.key.name : p.key.value
+          const kebabKey = String(keyName).replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
+          const valSource = expressionToPathOrGetter(p.value as Expression, ctx)
+          stmts.push(
+            t.expressionStatement(
+              t.callExpression(t.identifier('reactiveStyleProp'), [
+                elId,
+                t.identifier('d'),
+                ctx.reactiveRoot,
+                t.stringLiteral(kebabKey),
+                valSource.value,
+              ]),
+            ),
+          )
+        }
+      } else {
+        ctx.importsNeeded.add('reactiveStyle')
+        stmts.push(
+          t.expressionStatement(
+            t.callExpression(t.identifier('reactiveStyle'), [
+              elId,
+              t.identifier('d'),
+              ctx.reactiveRoot,
+              pathOrGetter.value,
+            ]),
+          ),
+        )
+      }
     } else if (slot.kind === 'value') {
       ctx.importsNeeded.add('reactiveValueRead')
       stmts.push(

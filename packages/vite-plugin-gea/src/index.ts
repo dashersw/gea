@@ -539,6 +539,7 @@ function compilerRuntimeSource(runtimePath: string): string {
   relationalClass,
   relationalClassProp,
   reactiveStyle,
+  reactiveStyleProp,
   reactiveValue,
   reactiveValueRead,
   delegateEvent,
