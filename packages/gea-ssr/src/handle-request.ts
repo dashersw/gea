@@ -73,6 +73,8 @@ export function handleRequest(
               hash: parsedUrl.hash,
               matches: emptyMatches,
               component: null,
+              layouts: [],
+              queryModes: new Map(),
               guardRedirect: null,
               isNotFound: false,
             }
