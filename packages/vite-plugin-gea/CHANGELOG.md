@@ -1,5 +1,44 @@
 # @geajs/vite-plugin
 
+## 1.4.0
+
+### Minor Changes
+
+- [`e449bf2`](https://github.com/dashersw/gea/commit/e449bf295b1fd6f0bddc00ac7ed1e7065159fa00) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (minor)
+  - **ReactiveComponent (component-as-store) producer support**: a class extending `ReactiveComponent` is routed to a lean base-less compiled class (its `template()` lives only in the IR), and the module IR now carries `GeaIrComponent.reactiveState` (fields/methods/getters/constants extracted via the store IR builders) so embedded backends can compile the component as its own fully-typed reactive store.
+
+### Patch Changes
+
+- [`1a2a958`](https://github.com/dashersw/gea/commit/1a2a9582d87967a8262440131bba3cbb78ff43e8) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Closure-codegen nested-conditional alternates**: A chain of `if (cond) return <JSX>` guards lowered by `foldEarlyReturnGuards` into nested ternaries previously dropped every inner alternate at the IR and JS-emit layers — the IR walker only recognized JSX shapes, and `buildBranchFn` fell through to an empty-comment placeholder for any non-JSX branch. Component templates that branched on multiple states then rendered only the outermost arm.
+    - `closure-codegen/ir.ts`: extend `jsxNodeToTemplateIr` to recognize `ConditionalExpression` / `&&` `LogicalExpression` arms with JSX-or-nullish operands, wrap them in a JSXFragment, and walk into a real sub-template instead of returning `null`.
+    - `closure-codegen/emit/emit-conditional.ts`: extend `buildBranchFn` with the same recognition — when a branch expression is a nestable conditional, lift it into a JSXFragment and route through `compileJsxToBlock` so the inner ternary becomes its own template + clone block (and recurses into `buildBranchFn` again for further nesting).
+
+- [`2cb7686`](https://github.com/dashersw/gea/commit/2cb76864373a00f4866d7c14a68c1ff7615edfac) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/core (patch)
+  - **`untrack`**: Return explicitly after the tracking scope so TypeScript control flow and callers see a consistent `T` result.
+
+  ### @geajs/vite-plugin (patch)
+  - **Closure-codegen IR**: Thread emit-time bindings through `templateSpecToIr` and substitute them in slot expressions, keyed-list payload serialization, and embedded JSX so lowered IR matches renamed closure identifiers.
+  - **Store IR**: Add `object` shape for object-literal expressions in `GeaIrStoreExpr`.
+
+- [`a687d50`](https://github.com/dashersw/gea/commit/a687d50fe02b950885be4837dec1576803cdfa99) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Multi-store modules**: `transformCompiledStoreModule` now handles every `extends Store` class in a module (`findStoreClasses` + `irs[]` result) instead of bailing when more than one is declared; the plugin records IR for each store and lets mixed modules (stores + components + `mount()` in one file) continue through the root-mount and component transforms.
+  - **Literal-union param value types**: store-method params annotated with an inline literal union (`mode: 'hours' | 'days'`) or a same-module literal-union alias now carry their primitive `valueType` in the IR, so typed backends keep direct calls instead of falling back to dynamic dispatch.
+
+- [`c260b89`](https://github.com/dashersw/gea/commit/c260b89ec5dc021826bd5f5d1bcb421dcc09c330) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Typed per-property style bindings**: a `style={{ ... }}` binding whose object literal has only static keys (e.g. a moving sprite's `{ left, top, backgroundColor }`) now compiles to one `reactiveStyleProp` call per property instead of the generic `reactiveStyle`. This removes the per-update boxed `prev`/`next` record allocation and runtime kebab-casing, keys are kebab-cased at compile time, and tracking becomes per-property (only the property that actually changed re-applies). Dynamic/spread style objects keep using `reactiveStyle`.
+
+  ### @geajs/core (patch)
+  - **`reactiveStyleProp`**: new typed single-property style binding helper used by the above compiler path. Binds one CSS property to a reactive source with a string-equality guard, no record diffing.
+
+- [`1cdf998`](https://github.com/dashersw/gea/commit/1cdf998de3364971d95078acd2a69d190c7fbf87) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Closure-codegen IR: keyed lists and object-expression slots**: keyed-list map callbacks now lower to IR that includes `itemParam`, `indexParam`, and a `rowTemplate` for the returned JSX. Slots whose expressions are object literals also emit `exprObjectFields` (per-field `name`, generated `expr`, and optional `exprPath`) so downstream consumers can read prop bindings without re-parsing source.
+
+- [`7414e8f`](https://github.com/dashersw/gea/commit/7414e8f001b793e0160019621852329c89d31f33) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Store getters in the IR**: `storeGettersToIr` now emits `get`-accessors that return arrays into `GeaIrStore.getters[]`. Previously every getter was dropped — `storeFieldsToIr` only captured `ClassProperty` members and `storeMethodsToIr` skipped `kind: 'get'` — so a derived `get visible(): T[] { ... }` never reached downstream consumers. Each emitted getter carries `returnsArray`, `elementTypeName` (from the `T[]` / `Array<T>` return annotation), its `this.<field>` reactive dependencies, and a best-effort element shape (inferred from an object-literal `.map` callback or borrowed from a referenced array-of-objects field). Consumed by the geatsc embedded backend to back reactive `{this.getter.map(...)}` lists; inert for the web closure-codegen path.
+    - `closure-codegen/ir.ts`: add the `GeaIrStoreGetter` type, `storeGettersToIr`, and element-shape inference helpers (`getterElementShape`, `getterBodyReturnsArray`, `collectThisFieldReads`, `arrayElementTypeNameFromTSType`).
+    - `closure-codegen/transform/transform-store.ts`: thread `getters` into `buildStoreIr`.
+
 ## 1.3.1
 
 ### Patch Changes
