@@ -1,5 +1,11 @@
 # @geajs/ssr
 
+## 1.0.4
+
+### Patch Changes
+
+- [`79acc51`](https://github.com/dashersw/gea/commit/79acc5191a7e8d58557cd88376623f06bb98b7d3) Thanks [@dashersw](https://github.com/dashersw)! - Fix `@geajs/ssr` build after the layout-chain router update: the no-routes fallback in `handleRequest` now includes `layouts: []` and `queryModes: new Map()` so it satisfies `ServerRouteResult` and `tsup` DTS generation succeeds.
+
 ## 1.0.3
 
 ### Patch Changes
