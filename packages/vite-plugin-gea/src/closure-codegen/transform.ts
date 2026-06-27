@@ -29,6 +29,7 @@ import {
   canUseTinyReactiveComponent,
   extendsComponent,
   isFunctionComponent,
+  nodeContainsThisMember as classBodyReadsThisMember,
   rewriteFnComponent,
 } from './transform/transform-components.ts'
 import { ensureCoreImports, injectTemplateDecls } from './transform/transform-imports.ts'
@@ -252,6 +253,24 @@ export function transformFile(source: string, _filename?: string, options: Trans
         // dynamic per-property observer map.
         classDecl.superClass = null
         usesCompiledRuntimeBase = false
+        // The stripped base (`Component`) carried `el` — the mounted root node.
+        // A ReactiveComponent that reads `this.el` (e.g. a canvas app calling
+        // `this.el.getContext('2d')` in onAfterRender) needs it back as a real,
+        // settable per-instance slot; otherwise geatsc, seeing no `el` member on
+        // the base-less class, constant-folds every `this.el` read to `undefined`
+        // and the component silently never wires up. Re-add `el` (only when used,
+        // and only if the class doesn't already declare it). The typed mount binds
+        // it to the root and runs onAfterRender — see geatsc-plugin-gea
+        // `emitSelfStoreMount`.
+        const declaresEl = classDecl.body.body.some(
+          (member: any) =>
+            (t.isClassProperty(member) || t.isClassMethod(member)) &&
+            !member.computed &&
+            t.isIdentifier(member.key, { name: 'el' }),
+        )
+        if (!declaresEl && classBodyReadsThisMember(classDecl, 'el')) {
+          classDecl.body.body.unshift(t.classProperty(t.identifier('el'), t.nullLiteral()))
+        }
       } else if (useStaticElementComponent) {
         ctx.importsNeeded.add('CompiledStaticElementComponent')
         classDecl.superClass = t.identifier('CompiledStaticElementComponent')
