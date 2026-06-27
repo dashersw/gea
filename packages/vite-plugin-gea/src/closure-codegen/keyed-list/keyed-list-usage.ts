@@ -38,6 +38,7 @@ export function createItemBodyReferencesItemInReactiveGetter(fn: any, itemName: 
     'reactiveBoolAttr',
     'reactiveClass',
     'reactiveStyle',
+    'reactiveStyleProp',
     'reactiveValue',
     'reactiveValueRead',
   ])

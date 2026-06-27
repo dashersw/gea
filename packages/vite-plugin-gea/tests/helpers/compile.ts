@@ -29,7 +29,7 @@ import { reactiveClass } from '../../../gea/src/runtime/reactive-class'
 import { reactiveClassName } from '../../../gea/src/runtime/reactive-class-name'
 import { relationalClass } from '../../../gea/src/runtime/relational-class'
 import { relationalClassProp } from '../../../gea/src/runtime/relational-class-prop'
-import { reactiveStyle } from '../../../gea/src/runtime/reactive-style'
+import { reactiveStyle, reactiveStyleProp } from '../../../gea/src/runtime/reactive-style'
 import { reactiveValue, reactiveValueRead } from '../../../gea/src/runtime/reactive-value'
 import { delegateEvent } from '../../../gea/src/runtime/delegate-event'
 import { delegateEventFast } from '../../../gea/src/runtime/delegate-event-fast'
@@ -82,6 +82,7 @@ export const geaRuntimeForEval: Record<string, unknown> = {
   relationalClass,
   relationalClassProp,
   reactiveStyle,
+  reactiveStyleProp,
   reactiveValue,
   reactiveValueRead,
   reactiveHtml,
