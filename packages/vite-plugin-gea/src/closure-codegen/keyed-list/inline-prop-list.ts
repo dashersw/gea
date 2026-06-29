@@ -869,7 +869,41 @@ export function buildInlinePropKeyedListBlock(options: InlinePropKeyedListOption
     __PATCH__: options.patchEntryArrow,
   })
   replaceByKeyMarker(block, options.relMatches)
+  // Embedded/native target only: the C++ store hub's `observe` notify is
+  // payload-less (it signals "the field changed", not the new value), so the
+  // observer callback's `_value` arg is empty. Re-read the field via
+  // `__kl_resolve()` instead. The web reactive store DOES pass the array as
+  // `_value`, so on web we keep `_value` — re-resolving + copying it on every
+  // notify is a measured perf regression the js-framework-benchmark suite
+  // guards against. Gated on `ctx.embedded` (set only for the geatsc/IR build)
+  // so the two targets emit the form each one needs.
+  if (options.ctx.embedded) rewriteObserveReconcileForEmbedded(block)
   return block
+}
+
+// See the `ctx.embedded` branch in buildInlinePropKeyedListBlock: rewrite the
+// keyed-list observer's `__kl_reconcile(_value, changes)` call (the ONLY call
+// whose first arg is the observe-callback's `_value` param) to re-resolve the
+// field with `__kl_resolve()`. Other `__kl_reconcile`/`__kl_init` calls use
+// different args and are left untouched.
+function rewriteObserveReconcileForEmbedded(node: any): void {
+  if (!node || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const value of node) rewriteObserveReconcileForEmbedded(value)
+    return
+  }
+  if (
+    node.type === 'CallExpression' &&
+    t.isIdentifier(node.callee, { name: '__kl_reconcile' }) &&
+    node.arguments.length >= 1 &&
+    t.isIdentifier(node.arguments[0], { name: '_value' })
+  ) {
+    node.arguments[0] = t.callExpression(t.identifier('__kl_resolve'), [])
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    rewriteObserveReconcileForEmbedded(node[key])
+  }
 }
 
 function isDirectIdKey(expr: Expression): boolean {

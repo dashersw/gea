@@ -103,6 +103,15 @@ export interface EmitContext {
   currentIrComponent?: string
   /** Runtime base selected for the current component. */
   currentIrRuntimeBase?: GeaIrRuntimeBase
+  /**
+   * True when compiling for the embedded/native (geatsc) backend — the IR
+   * build (`GEA_IR_OUT` / `options.ir.enabled`). Lets emit paths pick the form
+   * the embedded runtime needs where it differs from web (e.g. the keyed-list
+   * observer re-resolves the field because the C++ store hub's notify is
+   * payload-less). Unset for web builds and direct `transformFile` test calls,
+   * so web behavior is unchanged.
+   */
+  embedded?: boolean
 }
 
 export interface GeaIrTemplateRecord {

@@ -55,6 +55,8 @@ export interface CompilerContext {
   code: string
   isServe: boolean
   isSSR: boolean
+  /** Compiling for the embedded/native (geatsc/IR) backend. Threaded to transformFile. */
+  embedded?: boolean
   hmrImportSource: string
   isStoreModule: (filePath: string) => boolean
   isComponentModule: (filePath: string) => boolean
@@ -189,6 +191,7 @@ export function transform(ctx: CompilerContext): { code: string; map: any; ir?: 
         directClassComponents: knownClassComponentImports,
         directFactoryComponents: knownFactoryComponentImports,
         enableTinyReactiveComponents: !isServe,
+        embedded: ctx.embedded,
       })
       if (emitted.changed) {
         ir = emitted.ir

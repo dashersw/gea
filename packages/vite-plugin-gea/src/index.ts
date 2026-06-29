@@ -289,6 +289,10 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         code: transformedCode,
         isServe: isServeCommand,
         isSSR,
+        // IR build (GEA_IR_OUT / options.ir) == the embedded/native geatsc
+        // backend; lets emit paths pick embedded-specific forms (e.g. the
+        // keyed-list observer re-resolving the payload-less hub field).
+        embedded: !!irOptions?.enabled,
         hmrImportSource: HMR_RUNTIME_ID,
         isStoreModule,
         isComponentModule,

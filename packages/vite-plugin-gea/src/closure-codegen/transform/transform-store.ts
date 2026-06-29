@@ -45,7 +45,20 @@ export function transformCompiledStoreModule(
   if (classDecls.length === 0) return null
   const constants = collectImportedLiteralConstants(ast, moduleId, resolveImportPath)
   const fallbackIrs = classDecls.map((classDecl) => buildStoreIr(classDecl, moduleId, 'compiled', constants, ast))
-  const fallback: StoreTransformResult = { code: source, changed: false, ir: fallbackIrs[0], irs: fallbackIrs }
+  // The IR carries each store method's ORIGINAL body, which the gea-embedded
+  // backend compiles verbatim — even when this module keeps the legacy
+  // untransformed `extends Store` class. The treeshaker, working only from the
+  // bundled class, can drop a module-local free function the method calls (e.g.
+  // a profiling helper gated behind a disabled flag the bundler folds away),
+  // leaving the IR-emitted method with a call to a now-undefined function. Keep
+  // such free functions alive with a value reference the treeshaker can't remove.
+  const fallbackKeepAlive = storeMethodFreeFunctionKeepAlive(ast, classDecls)
+  const fallback: StoreTransformResult = {
+    code: fallbackKeepAlive ? `${source}${fallbackKeepAlive}` : source,
+    changed: !!fallbackKeepAlive,
+    ir: fallbackIrs[0],
+    irs: fallbackIrs,
+  }
   if (/\b(flushSync|silent|Store\.|new\s+Store\s*\()/.test(source)) {
     return fallback
   }
@@ -352,6 +365,55 @@ function literalConstantsFromFile(file: string, names: Set<string>): GeaIrConsta
     }
   }
   return constants
+}
+
+// Module-local free function names (top-level `function f()` and
+// `export function f()`). These are the declarations the treeshaker may drop if
+// nothing in the bundled module references them as a value.
+function moduleFreeFunctionNames(ast: File): Set<string> {
+  const names = new Set<string>()
+  for (const node of ast.program.body) {
+    if (t.isFunctionDeclaration(node) && node.id) names.add(node.id.name)
+    else if (t.isExportNamedDeclaration(node) && node.declaration && t.isFunctionDeclaration(node.declaration) && node.declaration.id) {
+      names.add(node.declaration.id.name)
+    }
+  }
+  return names
+}
+
+function nodeReferencesIdentifier(node: unknown, name: string): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (Array.isArray(node)) {
+    for (const child of node) if (nodeReferencesIdentifier(child, name)) return true
+    return false
+  }
+  const record = node as Record<string, unknown>
+  if (record.type === 'Identifier' && record.name === name) return true
+  for (const key of Object.keys(record)) {
+    if (key === 'type' || key === 'loc' || key === 'start' || key === 'end' || key === 'leadingComments' || key === 'trailingComments') continue
+    if (nodeReferencesIdentifier(record[key], name)) return true
+  }
+  return false
+}
+
+// One `(globalThis.__GEA_IR_KEEP__ ||= []).push(fn, …)` statement referencing
+// every module-local free function the store class methods call. A value
+// reference no treeshaker may remove keeps the function definition in the
+// bundle, so the IR-driven backend (which emits the method body verbatim) finds
+// the function it calls. The gea-embedded pipeline strips the marker line before
+// compiling; on JS runtimes it is one harmless array push at module init.
+function storeMethodFreeFunctionKeepAlive(ast: File, classDecls: ClassDeclaration[]): string {
+  const freeFns = moduleFreeFunctionNames(ast)
+  if (freeFns.size === 0) return ''
+  const kept: string[] = []
+  for (const name of freeFns) {
+    const referenced = classDecls.some((classDecl) =>
+      classDecl.body.body.some((member) => t.isClassMethod(member) && nodeReferencesIdentifier(member.body, name)),
+    )
+    if (referenced) kept.push(name)
+  }
+  if (kept.length === 0) return ''
+  return `\n;(globalThis.__GEA_IR_KEEP__ ||= []).push(${kept.join(', ')});\n`
 }
 
 function literalConstant(name: string, value: Expression): GeaIrConstant | null {

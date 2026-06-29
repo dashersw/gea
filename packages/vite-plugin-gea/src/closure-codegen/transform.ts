@@ -55,6 +55,8 @@ export interface TransformFileOptions {
   directClassComponents?: Set<string>
   directFactoryComponents?: Set<string>
   enableTinyReactiveComponents?: boolean
+  /** Compiling for the embedded/native (geatsc/IR) backend. See EmitContext.embedded. */
+  embedded?: boolean
 }
 
 export function transformFile(source: string, _filename?: string, options: TransformFileOptions = {}): TransformResult {
@@ -76,6 +78,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
 
   const ctx = createEmitContext()
   ctx.irTemplates = []
+  ctx.embedded = options.embedded
   ctx.directFnComponents = collectDirectFnComponents(ast)
   ctx.directFnComponentParams = collectDirectFnComponentParams(ast, ctx.directFnComponents)
   ctx.directFnStringProps = collectDirectFnStringProps(ast, ctx.directFnComponents)
