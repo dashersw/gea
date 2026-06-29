@@ -1,5 +1,11 @@
 # @geajs/vite-plugin
 
+## 1.4.1
+
+### Patch Changes
+
+- [`4f08be8`](https://github.com/dashersw/gea/commit/4f08be8e763f34ca173f49fed13c81e22b46e3c3) Thanks [@dashersw](https://github.com/dashersw)! - Fix embedded/IR codegen: keyed-list observers re-resolve payload-less store notifies on the native backend while web keeps the existing `_value` path, and store IR keeps module-local helper functions alive through treeshaking.
+
 ## 1.4.0
 
 ### Minor Changes
