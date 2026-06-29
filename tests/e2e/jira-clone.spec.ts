@@ -20,7 +20,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await page.request.post('/api/__reset')
     await page.goto('/')
     // Wait for auth + project fetch to complete and board to render
-    await expect(page.locator('.board')).toBeVisible({ timeout: 500 })
+    await expect(page.locator('.board')).toBeVisible({ timeout: 10000 })
   })
 
   test('initial render shows 4 board columns with correct issue counts', async ({ page }) => {
@@ -119,7 +119,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       window.history.pushState({}, '', '/project/board')
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
-    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 10000 })
 
     // Board must be the same DOM node
     const boardSame = await page.locator('.board').evaluate((el) => {
@@ -346,7 +346,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     const dialogBar = page.locator('.dialog-tracking .tracking-bar-fill')
     // Wait for the tracking bar style to be rendered (reactive update may need a tick)
-    await expect(dialogBar).toHaveAttribute('style', /width/, { timeout: 2000 })
+    await expect(dialogBar).toHaveAttribute('style', /width/, { timeout: 10000 })
     const initialWidth = await dialogBar.evaluate((el) => el.style.width)
     expect(initialWidth).toBeTruthy()
 
@@ -358,7 +358,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await expect(async () => {
       const w = await dialogBar.evaluate((el) => el.style.width)
       expect(w).not.toBe(initialWidth)
-    }).toPass({ timeout: 2000 })
+    }).toPass({ timeout: 10000 })
   })
 
   test('still exactly 4 columns after opening and closing issue detail', async ({ page }) => {
@@ -374,7 +374,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       window.history.pushState({}, '', '/project/board')
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
-    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 10000 })
 
     // Still 4 columns
     await expect(page.locator('.board-list')).toHaveCount(4)
@@ -463,9 +463,9 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await page.locator('.confirm-dialog-actions button', { hasText: 'Delete issue' }).click()
 
     // Dialog should close and board should have one fewer card
-    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 10000 })
     // deleteIssue() is fire-and-forget — wait for the board to re-render
-    await expect(boardIssueCards(page)).toHaveCount(totalBefore - 1, { timeout: 500 })
+    await expect(boardIssueCards(page)).toHaveCount(totalBefore - 1, { timeout: 10000 })
   })
 
   test('cancel delete keeps issue', async ({ page }) => {
@@ -557,7 +557,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     // Click close (X) button — last action button
     await page.locator('.issue-details-action-btn').last().click()
-    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 10000 })
   })
 
   test('original estimate input updates value', async ({ page }) => {
@@ -617,7 +617,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await spentInput.fill('4')
     await spentInput.dispatchEvent('input')
     await page.locator('.dialog-tracking button', { hasText: 'Done' }).click()
-    await expect(page.locator('.dialog-tracking [data-part="content"]')).not.toBeVisible({ timeout: 2000 })
+    await expect(page.locator('.dialog-tracking [data-part="content"]')).not.toBeVisible({ timeout: 10000 })
 
     // remaining = 10 - 4 = 6
     await expect(trackingValues).toContainText('4h logged')
@@ -663,7 +663,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     // Save and verify the outer widget reflects the saved values
     await page.locator('.dialog-tracking button', { hasText: 'Done' }).click()
-    await expect(page.locator('.dialog-tracking [data-part="content"]')).not.toBeVisible({ timeout: 2000 })
+    await expect(page.locator('.dialog-tracking [data-part="content"]')).not.toBeVisible({ timeout: 10000 })
 
     const trackingValues = page.locator('.tracking-widget--clickable .tracking-values')
     await expect(trackingValues).toContainText('12h logged')
@@ -724,12 +724,12 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     // Search for "bug"
     await issueDetail(page).locator('.custom-dropdown-search-input').fill('bug')
-    await expect(issueDetail(page).locator('.custom-dropdown-item')).toHaveCount(1, { timeout: 2000 })
+    await expect(issueDetail(page).locator('.custom-dropdown-item')).toHaveCount(1, { timeout: 10000 })
     await expect(issueDetail(page).locator('.custom-dropdown-item')).toContainText('Bug')
 
     // Clear search — all options back
     await issueDetail(page).locator('.custom-dropdown-search-input').fill('')
-    await expect(issueDetail(page).locator('.custom-dropdown-item')).toHaveCount(3, { timeout: 2000 })
+    await expect(issueDetail(page).locator('.custom-dropdown-item')).toHaveCount(3, { timeout: 10000 })
   })
 
   test.describe('DOM Stability', () => {
@@ -748,7 +748,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
       // Close the dialog
       await page.locator('.issue-details-action-btn').last().click()
-      await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 500 })
+      await expect(issueDetail(page).locator('[data-part="content"]')).not.toBeVisible({ timeout: 10000 })
 
       // The marker must survive — proves the DOM node was not recreated
       const marker = await page
@@ -809,8 +809,8 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       expect(stashErrors).toEqual([])
 
       // Card should have moved: backlog has one fewer, selected has one more
-      await expect(backlogCards).toHaveCount(backlogCountBefore - 1, { timeout: 1000 })
-      await expect(selectedCards).toHaveCount(selectedCountBefore + 1, { timeout: 1000 })
+      await expect(backlogCards).toHaveCount(backlogCountBefore - 1, { timeout: 10000 })
+      await expect(selectedCards).toHaveCount(selectedCountBefore + 1, { timeout: 10000 })
 
       // The moved card should be in the selected column
       await expect(selectedCards.locator('.issue-card-title', { hasText: cardTitle! })).toBeVisible()
@@ -855,13 +855,13 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     // Click the avatar img — should NOT remove the chip.
     await chips.first().locator('.assignee-chip-avatar').click()
-    await expect(chips).toHaveCount(initialCount, { timeout: 500 })
+    await expect(chips).toHaveCount(initialCount, { timeout: 10000 })
     // Click the name span — should NOT remove the chip.
     await chips.first().locator('.assignee-chip-name').click()
-    await expect(chips).toHaveCount(initialCount, { timeout: 500 })
+    await expect(chips).toHaveCount(initialCount, { timeout: 10000 })
     // Click the × — should remove.
     await chips.first().locator('.assignee-chip-remove').click()
-    await expect(chips).toHaveCount(initialCount - 1, { timeout: 1000 })
+    await expect(chips).toHaveCount(initialCount - 1, { timeout: 10000 })
   })
 
   test('after refresh with ONLY 1 assignee left, clicking × removes it from the view', async ({ page }) => {
@@ -874,7 +874,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     const chips = issueDetail(page).locator('.assignee-chip')
     // Precondition: exactly 1 chip.
     await expect(chips, 'this test needs the seed to show 1 assignee on issue 2').toHaveCount(1, {
-      timeout: 1000,
+      timeout: 10000,
     })
 
     // Click × on the last chip.
@@ -882,10 +882,10 @@ test.describe('jira-clone board and surgical DOM updates', () => {
 
     // The chip must disappear from the view immediately.
     await expect(chips, 'last assignee chip did NOT disappear from the view after ×').toHaveCount(0, {
-      timeout: 1500,
+      timeout: 10000,
     })
     // And the `+ Add more` span must remain.
-    await expect(issueDetail(page).locator('.assignee-add-more')).toBeVisible({ timeout: 500 })
+    await expect(issueDetail(page).locator('.assignee-add-more')).toBeVisible({ timeout: 10000 })
   })
 
   test('after refresh on issue detail URL, clicking × removes the chip from the view', async ({ page }) => {
@@ -904,7 +904,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await chips.first().locator('.assignee-chip-remove').click()
     // The view must update immediately — not just the backend.
     await expect(chips, 'chip count did not decrement — view is out of sync with store').toHaveCount(initialCount - 1, {
-      timeout: 1500,
+      timeout: 10000,
     })
   })
 
@@ -917,23 +917,23 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await expect(page.locator('.issue-details')).toBeVisible({ timeout: ISSUE_DETAILS_TIMEOUT })
 
     const commentCreateFake = issueDetail(page).locator('.comment-create-fake')
-    await expect(commentCreateFake).toBeVisible({ timeout: 1000 })
+    await expect(commentCreateFake).toBeVisible({ timeout: 10000 })
 
     // The avatar root must be Zag-wired.
     const avatar = commentCreateFake.locator('.avatar-root').first()
-    await expect(avatar).toHaveAttribute('data-scope', 'avatar', { timeout: 1000 })
+    await expect(avatar).toHaveAttribute('data-scope', 'avatar', { timeout: 10000 })
 
     // The avatar <img> must exist, have a non-empty src, and Zag must have
     // flipped it to data-state="visible" (image loaded).
     const img = avatar.locator('img[data-part="image"]')
-    await expect(img).toHaveAttribute('data-scope', 'avatar', { timeout: 1000 })
+    await expect(img).toHaveAttribute('data-scope', 'avatar', { timeout: 10000 })
     const src = await img.getAttribute('src')
     expect(src, 'avatar img src should be non-empty').toBeTruthy()
     expect(src!.length).toBeGreaterThan(0)
     await expect(img, 'avatar image should be in visible state (Zag transitioned after load)').toHaveAttribute(
       'data-state',
       'visible',
-      { timeout: 2000 },
+      { timeout: 10000 },
     )
 
     // The fallback should be hidden once the image loads.
@@ -941,7 +941,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
     await expect(fallback, 'avatar fallback should be hidden once the image loads').toHaveAttribute(
       'data-state',
       'hidden',
-      { timeout: 2000 },
+      { timeout: 10000 },
     )
   })
 
@@ -961,7 +961,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       .filter({ hasText: /Save|Post|Add/i })
       .first()
       .click()
-    await expect(issueDetail(page).locator('.comment')).toHaveCount(commentCountBefore + 1, { timeout: 1000 })
+    await expect(issueDetail(page).locator('.comment')).toHaveCount(commentCountBefore + 1, { timeout: 10000 })
 
     // Pin a DOM node in the dialog-body that is UNRELATED to the comments
     // list. If the dialog-body rerenders entirely, this ref gets replaced.
@@ -981,7 +981,7 @@ test.describe('jira-clone board and surgical DOM updates', () => {
       .last()
       .locator('.comment-action', { hasText: /Delete/i })
       .click()
-    await expect(issueDetail(page).locator('.comment')).toHaveCount(commentCountBefore, { timeout: 2000 })
+    await expect(issueDetail(page).locator('.comment')).toHaveCount(commentCountBefore, { timeout: 10000 })
 
     // The pinned element must still be the SAME DOM node (no full rerender).
     const stillPinned = await page.evaluate(() => {

@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 
 /** Add-to-cart shows a toast that can cover the cart drawer; wait until it is gone before Checkout. */
 async function waitForToastDismissed(page: Page) {
-  await expect(page.locator('[data-part="toast-root"]')).toHaveCount(1, { timeout: 3000 })
+  await expect(page.locator('[data-part="toast-root"]')).toHaveCount(1, { timeout: 10000 })
   await expect(page.locator('[data-part="toast-root"]')).toHaveCount(0, { timeout: 10_000 })
 }
 

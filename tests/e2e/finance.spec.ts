@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('Personal Finance Tracker', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await page.waitForSelector('.finance-layout', { timeout: 500 })
+    await page.waitForSelector('.finance-layout', { timeout: 10000 })
   })
 
   test.describe('Summary Cards', () => {

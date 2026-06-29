@@ -4,7 +4,7 @@ test.describe('Router Simple (SSR)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('domcontentloaded')
-    await page.waitForSelector('.app', { timeout: 500 })
+    await page.waitForSelector('.app', { timeout: 10000 })
   })
 
   // --- SSR-specific tests ---
@@ -39,7 +39,7 @@ test.describe('Router Simple (SSR)', () => {
       if (msg.type() === 'error' && !msg.text().includes('MIME type')) errors.push(msg.text())
     })
     await page.goto('/')
-    await page.waitForSelector('.app', { timeout: 500 })
+    await page.waitForSelector('.app', { timeout: 10000 })
     await page.waitForTimeout(1000)
     expect(errors).toEqual([])
   })

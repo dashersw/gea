@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('dashboard components', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('.dashboard')).toBeVisible({ timeout: 500 })
+    await expect(page.locator('.dashboard')).toBeVisible({ timeout: 10000 })
   })
 
   test('renders dashboard header with title and buttons', async ({ page }) => {

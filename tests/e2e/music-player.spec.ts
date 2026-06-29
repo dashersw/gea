@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('Music Player', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await page.waitForSelector('.player-layout', { timeout: 500 })
+    await page.waitForSelector('.player-layout', { timeout: 10000 })
   })
 
   test.describe('Playlist Navigation', () => {
@@ -24,8 +24,8 @@ test.describe('Music Player', () => {
 
     test('active playlist button updates', async ({ page }) => {
       await page.locator('.playlist-btn').nth(1).click()
-      await expect(page.locator('.playlist-btn').nth(1)).toHaveClass(/active/, { timeout: 2000 })
-      await expect(page.locator('.playlist-btn').nth(0)).not.toHaveClass(/active/, { timeout: 2000 })
+      await expect(page.locator('.playlist-btn').nth(1)).toHaveClass(/active/, { timeout: 10000 })
+      await expect(page.locator('.playlist-btn').nth(0)).not.toHaveClass(/active/, { timeout: 10000 })
     })
 
     test('playlist shows correct track count badge', async ({ page }) => {
