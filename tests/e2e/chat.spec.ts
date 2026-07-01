@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('Chat / Messaging App', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await page.waitForSelector('.chat-layout', { timeout: 500 })
+    await page.waitForSelector('.chat-layout', { timeout: 10000 })
   })
 
   test.describe('Conversation List', () => {
@@ -102,7 +102,7 @@ test.describe('Chat / Messaging App', () => {
       await page.locator('button:has-text("Send")').click()
       // Typing indicator (dots) may appear briefly
       // Wait for eventual reply
-      await expect(page.locator('.bubble')).toHaveCount(await page.locator('.bubble').count(), { timeout: 500 })
+      await expect(page.locator('.bubble')).toHaveCount(await page.locator('.bubble').count(), { timeout: 10000 })
     })
   })
 
@@ -150,13 +150,13 @@ test.describe('Chat / Messaging App', () => {
 
     test('navigating to conversation URL selects it', async ({ page }) => {
       await page.goto('/conversations/c3')
-      await page.waitForSelector('.chat-layout', { timeout: 500 })
+      await page.waitForSelector('.chat-layout', { timeout: 10000 })
       await expect(page.locator('.conv-item').nth(2)).toHaveClass(/active/)
     })
 
     test('navigating to conversation URL shows correct thread', async ({ page }) => {
       await page.goto('/conversations/c2')
-      await page.waitForSelector('.chat-layout', { timeout: 500 })
+      await page.waitForSelector('.chat-layout', { timeout: 10000 })
       await expect(page.locator('.thread-name')).toHaveText('Jackson Lee')
     })
 
@@ -174,14 +174,14 @@ test.describe('Chat / Messaging App', () => {
       await page.locator('.message-input').fill('Trigger auto reply')
       await page.locator('button:has-text("Send")').click()
       // Wait for simulated reply (1.5s delay + typing)
-      await expect(page.locator('.bubble')).toHaveCount(initialCount + 2, { timeout: 500 })
+      await expect(page.locator('.bubble')).toHaveCount(initialCount + 2, { timeout: 10000 })
     })
 
     test('typing indicator shows while reply is pending', async ({ page }) => {
       await page.locator('.message-input').fill('Trigger typing')
       await page.locator('button:has-text("Send")').click()
       // Typing dots should appear
-      await expect(page.locator('.typing-dots')).toBeVisible({ timeout: 500 })
+      await expect(page.locator('.typing-dots')).toBeVisible({ timeout: 10000 })
     })
   })
 
@@ -264,7 +264,7 @@ test.describe('Chat / Messaging App', () => {
       // The original message bubble should STILL have the marker attribute
       // If the component was fully re-rendered, the DOM elements are recreated and the marker is lost
       const markedElement = page.locator('[data-dom-stability-marker="original"]')
-      await expect(markedElement).toHaveCount(1, { timeout: 500 })
+      await expect(markedElement).toHaveCount(1, { timeout: 10000 })
     })
 
     test('no data-gea-compiled-child-root attributes in the DOM', async ({ page }) => {

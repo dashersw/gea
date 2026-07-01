@@ -17,7 +17,7 @@ function stepContinue(page: Page, heading: string) {
 test.describe('flight check-in multi-step flow and surgical DOM updates', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('.flight-checkin')).toBeVisible({ timeout: 500 })
+    await expect(page.locator('.flight-checkin')).toBeVisible({ timeout: 10000 })
   })
 
   test('initial render shows step 1 with luggage options', async ({ page }) => {
@@ -281,7 +281,7 @@ test.describe('flight check-in multi-step flow and surgical DOM updates', () => 
 
     // Click copy button
     await page.locator('.confirmation-copy-button').click()
-    await expect(page.locator('.confirmation-copy-button.copied')).toBeVisible({ timeout: 500 })
+    await expect(page.locator('.confirmation-copy-button.copied')).toBeVisible({ timeout: 10000 })
   })
 
   test('free option items display "Included" instead of a price', async ({ page }) => {

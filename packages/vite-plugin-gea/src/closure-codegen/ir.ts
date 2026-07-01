@@ -1,4 +1,4 @@
-import type { ClassDeclaration, Expression } from '@babel/types'
+import type { ClassDeclaration, Expression, File, TSType } from '@babel/types'
 import { generate, t } from '../utils/babel-interop.ts'
 import { walkJsxToTemplate, type Slot, type TemplateSpec } from './generator.ts'
 import { isJsxOrNullish } from './generator/generator-jsx-helpers.ts'
@@ -28,6 +28,17 @@ export interface GeaIrComponent {
   runtimeBase: GeaIrRuntimeBase
   template: GeaIrTemplate
   sourceSpan?: GeaIrSourceSpan
+  // EXPERIMENTAL (ReactiveComponent): present when the component extends
+  // `ReactiveComponent` and holds its own reactive state — the embedded backend
+  // compiles it as a lean component-as-store. Absent for plain `Component`.
+  reactiveState?: GeaIrComponentReactiveState
+}
+
+export interface GeaIrComponentReactiveState {
+  fields: GeaIrStoreField[]
+  methods?: GeaIrStoreMethod[]
+  getters?: GeaIrStoreGetter[]
+  constants?: GeaIrConstant[]
 }
 
 export type GeaIrRuntimeBase =
@@ -456,8 +467,9 @@ function collectThisFieldReads(node: unknown): string[] {
   return [...names]
 }
 
-export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[] {
+export function storeMethodsToIr(classDecl: ClassDeclaration, moduleAst?: File): GeaIrStoreMethod[] {
   const methods: GeaIrStoreMethod[] = []
+  const literalUnionAliases = moduleAst ? collectLiteralUnionAliasValueTypes(moduleAst) : undefined
   for (const member of classDecl.body.body) {
     if (!t.isClassMethod(member) || member.static || member.computed || member.kind !== 'method') continue
     if (!t.isIdentifier(member.key)) continue
@@ -472,7 +484,8 @@ export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[
           ? assignment.left
           : null
       if (identifier) {
-        const valueType = paramValueType(identifier) ?? (assignment ? paramDefaultValueType(assignment.right) : undefined)
+        const valueType =
+          paramValueType(identifier, literalUnionAliases) ?? (assignment ? paramDefaultValueType(assignment.right) : undefined)
         params.push(valueType ? { name: identifier.name, valueType } : { name: identifier.name })
       } else {
         unsupportedParam = true
@@ -493,14 +506,62 @@ export function storeMethodsToIr(classDecl: ClassDeclaration): GeaIrStoreMethod[
   return methods
 }
 
-function paramValueType(param: import('@babel/types').Identifier): 'string' | 'number' | 'boolean' | undefined {
+function paramValueType(
+  param: import('@babel/types').Identifier,
+  literalUnionAliases?: Map<string, 'string' | 'number' | 'boolean'>,
+): 'string' | 'number' | 'boolean' | undefined {
   const annotation = param.typeAnnotation
   if (!annotation || !t.isTSTypeAnnotation(annotation)) return undefined
   const kind = annotation.typeAnnotation
   if (t.isTSStringKeyword(kind)) return 'string'
   if (t.isTSNumberKeyword(kind)) return 'number'
   if (t.isTSBooleanKeyword(kind)) return 'boolean'
+  // `mode: 'hours' | 'days'` — a literal union has one primitive value kind.
+  const inlineLiteral = literalUnionValueType(kind)
+  if (inlineLiteral) return inlineLiteral
+  // `mode: ForecastMode` where `export type ForecastMode = 'hours' | 'days'`
+  // lives in the SAME module. The extractor has no checker, so only
+  // same-module aliases resolve; without this the param carries no valueType
+  // and the typed event-handler lowering (directCallArguments) bails to the
+  // boxed record_get_literal path for an otherwise fully-typed store method.
+  if (literalUnionAliases && t.isTSTypeReference(kind) && t.isIdentifier(kind.typeName)) {
+    return literalUnionAliases.get(kind.typeName.name)
+  }
   return undefined
+}
+
+function literalUnionValueType(kind: TSType): 'string' | 'number' | 'boolean' | undefined {
+  if (t.isTSLiteralType(kind)) {
+    if (t.isStringLiteral(kind.literal)) return 'string'
+    if (t.isNumericLiteral(kind.literal)) return 'number'
+    if (t.isBooleanLiteral(kind.literal)) return 'boolean'
+    return undefined
+  }
+  if (t.isTSUnionType(kind)) {
+    let valueType: 'string' | 'number' | 'boolean' | undefined
+    for (const member of kind.types) {
+      const memberType = literalUnionValueType(member)
+      if (!memberType || (valueType && memberType !== valueType)) return undefined
+      valueType = memberType
+    }
+    return valueType
+  }
+  return undefined
+}
+
+function collectLiteralUnionAliasValueTypes(ast: File): Map<string, 'string' | 'number' | 'boolean'> {
+  const aliases = new Map<string, 'string' | 'number' | 'boolean'>()
+  for (const node of ast.program.body) {
+    const alias = t.isTSTypeAliasDeclaration(node)
+      ? node
+      : t.isExportNamedDeclaration(node) && t.isTSTypeAliasDeclaration(node.declaration)
+        ? node.declaration
+        : null
+    if (!alias || !t.isIdentifier(alias.id)) continue
+    const valueType = literalUnionValueType(alias.typeAnnotation)
+    if (valueType) aliases.set(alias.id.name, valueType)
+  }
+  return aliases
 }
 
 function paramDefaultValueType(expr: import('@babel/types').Expression): 'string' | 'number' | 'boolean' | undefined {

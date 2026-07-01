@@ -13,7 +13,11 @@ import { extractTemplateJsx, findTemplateMethod } from './generator.ts'
 import {
   componentIrId,
   sourceSpan,
+  storeFieldsToIr,
+  storeGettersToIr,
+  storeMethodsToIr,
   type GeaIrComponent,
+  type GeaIrComponentReactiveState,
   type GeaIrModule,
   type GeaIrRuntimeBase,
 } from './ir.ts'
@@ -25,6 +29,7 @@ import {
   canUseTinyReactiveComponent,
   extendsComponent,
   isFunctionComponent,
+  nodeContainsThisMember as classBodyReadsThisMember,
   rewriteFnComponent,
 } from './transform/transform-components.ts'
 import { ensureCoreImports, injectTemplateDecls } from './transform/transform-imports.ts'
@@ -50,6 +55,8 @@ export interface TransformFileOptions {
   directClassComponents?: Set<string>
   directFactoryComponents?: Set<string>
   enableTinyReactiveComponents?: boolean
+  /** Compiling for the embedded/native (geatsc/IR) backend. See EmitContext.embedded. */
+  embedded?: boolean
 }
 
 export function transformFile(source: string, _filename?: string, options: TransformFileOptions = {}): TransformResult {
@@ -71,6 +78,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
 
   const ctx = createEmitContext()
   ctx.irTemplates = []
+  ctx.embedded = options.embedded
   ctx.directFnComponents = collectDirectFnComponents(ast)
   ctx.directFnComponentParams = collectDirectFnComponentParams(ast, ctx.directFnComponents)
   ctx.directFnStringProps = collectDirectFnStringProps(ast, ctx.directFnComponents)
@@ -79,6 +87,10 @@ export function transformFile(source: string, _filename?: string, options: Trans
   for (const name of options.directClassComponents ?? []) ctx.directClassComponents.add(name)
   ctx.directFactoryComponents = new Set(options.directFactoryComponents)
   const rewritten: string[] = []
+  // EXPERIMENTAL (ReactiveComponent): component class names that opted into
+  // self-reactive-state, captured BEFORE the superclass is rewritten so
+  // buildModuleIr can emit their `reactiveState`.
+  const reactiveComponentNames = new Set<string>()
   let firstClassIdx = -1
 
   // Walk top-level declarations for components (class + function).
@@ -135,6 +147,9 @@ export function transformFile(source: string, _filename?: string, options: Trans
         canUseLeanReactiveComponent(classDecl)
       const hasAfterRenderAsyncHook = hasOwnInstanceMethod(classDecl, 'onAfterRenderAsync')
       const className = (classDecl.id && classDecl.id.name) || '<anonymous>'
+      // Capture the `extends ReactiveComponent` opt-in now — the superclass is
+      // rewritten to a compiled base below, so buildModuleIr can't see it later.
+      if (t.isIdentifier(classDecl.superClass, { name: 'ReactiveComponent' })) reactiveComponentNames.add(className)
       const runtimeBase = runtimeBaseForComponent({
         useStaticCompiledComponent,
         useCompiledComponent,
@@ -196,11 +211,70 @@ export function transformFile(source: string, _filename?: string, options: Trans
       // Clear per-template bindings so they don't leak to the next class
       for (const k of paramBindings) ctx.bindings.delete(k)
 
+      const isReactiveComponent = reactiveComponentNames.has(className)
       const bodyItems = classDecl.body.body
       const templateIdx = bodyItems.indexOf(templateMethod)
-      if (templateIdx >= 0) bodyItems[templateIdx] = method
+      // For a lean ReactiveComponent the template lives only in the IR (the
+      // consumer generates a typed mounted renderer from it); the
+      // `__sym_GEA_CREATE_TEMPLATE` method on the class would be dead code that
+      // references component-base members the lean base-less class doesn't have,
+      // so drop it. `method` was still built above to populate `ctx.irTemplates`.
+      if (templateIdx >= 0) {
+        if (isReactiveComponent) {
+          bodyItems.splice(templateIdx, 1)
+          // With template() gone, the emitted JS no longer references the child
+          // components the template mounts — esbuild's TS transpile then strips
+          // their now-unused imports as potentially type-only (child modules
+          // never load, never reach the IR), and the bundler tree-shakes the
+          // child class + everything it references (a reactive child's class —
+          // which typed parents mount via `make_shared<Class>()` — and the
+          // global store instances its renderer reads through
+          // `__gea_global_*()`). A pure `void <Child>;` reference survives
+          // esbuild but not tree-shaking, so emit ONE side-effectful keep-alive
+          // no treeshaker may drop:
+          //   ;(globalThis.__GEA_IR_KEEP__ ||= []).push(Rail, Panel);
+          // The references transitively keep the whole IR-live subgraph in the
+          // final bundle. The gea-embedded C++ pipeline strips the marker line
+          // before geatsc compiles the bundle; on JS runtimes it's one
+          // harmless array push at module init.
+          const keepAlive = mountedComponentKeepAliveStatements(jsx, ast)
+          if (keepAlive.length > 0) ast.program.body.splice(i + 1, 0, ...keepAlive)
+        } else {
+          bodyItems[templateIdx] = method
+        }
+      }
       let usesCompiledRuntimeBase = false
-      if (useStaticElementComponent) {
+      if (isReactiveComponent) {
+        // EXPERIMENTAL (component-as-store): strip the base entirely so geatsc
+        // emits a plain, fully-typed class — NO CompiledStore/CompiledComponent
+        // machinery, no `gea_cpp_value` ctor bookkeeping, no Proxy. Reactivity is
+        // supplied by the consumer: reactive fields become typed `Signal<T>`, and
+        // a typed mounted renderer reads the live instance (`self->count`) and
+        // subscribes per field. The auto-emitted `__gea_to_value()` (which would
+        // box the Signal fields) is neutralized downstream. This is the lean,
+        // fully-typed counterpart to a Store — it does NOT inherit the store's
+        // dynamic per-property observer map.
+        classDecl.superClass = null
+        usesCompiledRuntimeBase = false
+        // The stripped base (`Component`) carried `el` — the mounted root node.
+        // A ReactiveComponent that reads `this.el` (e.g. a canvas app calling
+        // `this.el.getContext('2d')` in onAfterRender) needs it back as a real,
+        // settable per-instance slot; otherwise geatsc, seeing no `el` member on
+        // the base-less class, constant-folds every `this.el` read to `undefined`
+        // and the component silently never wires up. Re-add `el` (only when used,
+        // and only if the class doesn't already declare it). The typed mount binds
+        // it to the root and runs onAfterRender — see geatsc-plugin-gea
+        // `emitSelfStoreMount`.
+        const declaresEl = classDecl.body.body.some(
+          (member: any) =>
+            (t.isClassProperty(member) || t.isClassMethod(member)) &&
+            !member.computed &&
+            t.isIdentifier(member.key, { name: 'el' }),
+        )
+        if (!declaresEl && classBodyReadsThisMember(classDecl, 'el')) {
+          classDecl.body.body.unshift(t.classProperty(t.identifier('el'), t.nullLiteral()))
+        }
+      } else if (useStaticElementComponent) {
         ctx.importsNeeded.add('CompiledStaticElementComponent')
         classDecl.superClass = t.identifier('CompiledStaticElementComponent')
         usesCompiledRuntimeBase = true
@@ -257,7 +331,58 @@ export function transformFile(source: string, _filename?: string, options: Trans
     changed: true,
     rewritten,
     importsNeeded: Array.from(ctx.importsNeeded),
-    ir: buildModuleIr(_filename ?? '<unknown>', rewritten, ctx.irTemplates ?? [], ast),
+    ir: buildModuleIr(_filename ?? '<unknown>', rewritten, ctx.irTemplates ?? [], ast, reactiveComponentNames),
+  }
+}
+
+// One `(globalThis.__GEA_IR_KEEP__ ||= []).push(<Child>, …)` statement
+// referencing every component the template JSX mounts via an imported
+// identifier. The value references stop esbuild's TS transpile from dropping
+// the imports as potentially type-only (which would keep the child modules
+// from ever loading), and the globalThis property write is a side effect no
+// treeshaker (rollup or rolldown) may remove — so the child classes and the
+// store globals their renderers reference all survive into the final bundle.
+// Locally-declared components need no keep-alive — there is no import to lose
+// and their declarations live in this (kept) module.
+function mountedComponentKeepAliveStatements(jsx: any, ast: any): any[] {
+  const tags = new Set<string>()
+  collectCapitalizedJsxTags(jsx, tags)
+  if (tags.size === 0) return []
+  const imported = new Set<string>()
+  for (const stmt of ast.program.body) {
+    if (!t.isImportDeclaration(stmt)) continue
+    for (const spec of stmt.specifiers) imported.add(spec.local.name)
+  }
+  const kept = Array.from(tags).filter((tag) => imported.has(tag))
+  if (kept.length === 0) return []
+  const keepArray = t.assignmentExpression(
+    '||=',
+    t.memberExpression(t.identifier('globalThis'), t.identifier('__GEA_IR_KEEP__')),
+    t.arrayExpression([]),
+  )
+  return [
+    t.expressionStatement(
+      t.callExpression(
+        t.memberExpression(t.parenthesizedExpression(keepArray), t.identifier('push')),
+        kept.map((tag) => t.identifier(tag)),
+      ),
+    ),
+  ]
+}
+
+function collectCapitalizedJsxTags(node: any, tags: Set<string>): void {
+  if (!node || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const child of node) collectCapitalizedJsxTags(child, tags)
+    return
+  }
+  if (t.isJSXElement(node)) {
+    const name = node.openingElement.name
+    if (t.isJSXIdentifier(name) && /^[A-Z]/.test(name.name)) tags.add(name.name)
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    collectCapitalizedJsxTags(node[key], tags)
   }
 }
 
@@ -279,18 +404,37 @@ function buildModuleIr(
   rewritten: string[],
   templates: NonNullable<ReturnType<typeof createEmitContext>['irTemplates']>,
   ast: File,
+  reactiveComponentNames: Set<string> = new Set(),
 ): { module: GeaIrModule; components: GeaIrComponent[] } {
   const components: GeaIrComponent[] = []
   for (const name of rewritten) {
     const record = templates.find((template) => template.component === name)
     if (!record) continue
     const declaration = findClassDeclarationByName(ast, name)
+    // EXPERIMENTAL (ReactiveComponent): emit the component's own reactive state
+    // (fields/methods/getters) so the embedded backend can treat it as a lean
+    // component-as-store. The superclass was rewritten away, but the
+    // fields/methods/getters are intact, so the store-IR builders still apply.
+    const reactiveState: GeaIrComponentReactiveState | undefined =
+      declaration && reactiveComponentNames.has(name)
+        ? (() => {
+            const fields = storeFieldsToIr(declaration)
+            const methods = storeMethodsToIr(declaration, ast)
+            const getters = storeGettersToIr(declaration)
+            return {
+              fields,
+              ...(methods.length > 0 ? { methods } : {}),
+              ...(getters.length > 0 ? { getters } : {}),
+            }
+          })()
+        : undefined
     components.push({
       id: componentIrId(moduleId, name),
       module: moduleId,
       exportName: name,
       runtimeBase: record.runtimeBase,
       template: record.template,
+      ...(reactiveState ? { reactiveState } : {}),
       ...(declaration ? { sourceSpan: sourceSpan(declaration) } : {}),
     })
   }

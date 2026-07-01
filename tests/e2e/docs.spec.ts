@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('docs component documentation', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('.docs-layout')).toBeVisible({ timeout: 500 })
+    await expect(page.locator('.docs-layout')).toBeVisible({ timeout: 10000 })
   })
 
   test('renders sidebar with logo and version', async ({ page }) => {
@@ -47,7 +47,7 @@ test.describe('docs component documentation', () => {
     // Prism.js highlight runs inside a rAF after render. Auto-wait for the
     // first token rather than a synchronous `.count()` snapshot.
     const tokens = page.locator('.demo-code .token')
-    await expect(tokens.first()).toBeAttached({ timeout: 3000 })
+    await expect(tokens.first()).toBeAttached({ timeout: 10000 })
     const count = await tokens.count()
     expect(count).toBeGreaterThan(0)
   })

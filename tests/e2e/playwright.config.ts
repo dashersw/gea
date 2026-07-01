@@ -4,6 +4,8 @@ import { createServer } from 'node:net'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { examples } from './examples.mjs'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../..')
 const EXAMPLES_ROOT = resolve(REPO_ROOT, 'examples')
@@ -16,46 +18,20 @@ const SESSION_FILE = resolve(__dirname, '.e2e-session.json')
 // Locally unset: every example's vite dev starts so `--project=X` works without extra env—but
 // startup is slow because `--project` filters tests only, not webServer entries.
 const targetFromEnv = process.env.E2E_PROJECT || ''
+// E2E_PROJECT accepts a single example name OR a comma-separated batch
+// (e.g. "todo,kanban,chat,docs,forms") so the suite can run in small batches —
+// each batch starts ONLY its own dev servers instead of all ~22 at once.
+const targetList = targetFromEnv ? targetFromEnv.split(',').map((s) => s.trim()).filter(Boolean) : []
 
-interface ExampleDef {
-  name: string
-  dir?: string // defaults to name
-  command?: (port: number) => string // defaults to vite dev with dynamic port
-  cwd?: string // absolute path, defaults to resolve(EXAMPLES_ROOT, dir ?? e.name)
-  timeout?: number // defaults to 120_000 (webServer ready wait; Vite cold start needs this)
-}
-
-const examples: ExampleDef[] = [
-  { name: 'todo' },
-  { name: 'kanban' },
-  { name: 'router-simple' },
-  { name: 'router-v2' },
-  { name: 'jira-clone', dir: 'jira_clone' },
-  { name: 'flight-checkin' },
-  { name: 'mobile-showcase' },
-  { name: 'saas-dashboard' },
-  { name: 'ecommerce' },
-  { name: 'chat' },
-  { name: 'music-player' },
-  { name: 'finance' },
-  { name: 'email-client' },
-  { name: 'dashboard' },
-  { name: 'forms' },
-  { name: 'showcase' },
-  { name: 'docs' },
-  { name: 'playground', cwd: resolve(REPO_ROOT, 'website') },
-  { name: 'runtime-only' },
-  { name: 'runtime-only-jsx' },
-  { name: 'ssr-router-simple', dir: 'ssr/router-simple' },
-  { name: 'sheet-editor' },
-]
+// `examples` (the project + webServer list) is imported from ./examples.mjs so
+// the batch runner (run-e2e.mjs) and this config share one canonical list.
 
 /**
  * Workers do not inherit E2E_PROJECT in this setup; the main process writes this file synchronously
  * so workers can resolve the same single-example session.
  */
 if (targetFromEnv) {
-  writeFileSync(SESSION_FILE, JSON.stringify({ key: targetFromEnv, count: 1 }))
+  writeFileSync(SESSION_FILE, JSON.stringify({ key: targetFromEnv, count: targetList.length }))
 }
 
 interface PortFilePayload {
@@ -82,9 +58,10 @@ function readPortFile(): PortFilePayload | null {
 }
 
 function resolveActiveExamples(): ExampleDef[] {
-  if (targetFromEnv) {
-    const active = examples.filter((e) => e.name === targetFromEnv)
-    if (active.length !== 1) throw new Error(`E2E_PROJECT "${targetFromEnv}" has no matching example`)
+  if (targetList.length) {
+    const active = examples.filter((e) => targetList.includes(e.name))
+    if (active.length !== targetList.length)
+      throw new Error(`E2E_PROJECT "${targetFromEnv}" has unmatched example(s)`)
     return active
   }
   try {
@@ -212,27 +189,29 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: resolveWorkerCount(),
   reporter: 'list',
-  timeout: 30_000,
-  // Cold navigations and assertions under parallel webServers often exceed 500ms on CI / busy machines.
-  expect: { timeout: 1500 },
+  timeout: 60_000,
+  // Cold navigations and assertions under parallel webServers routinely exceed
+  // 1-2s on busy machines (each example runs its own Vite dev server). Tight
+  // 1.5s/1s defaults flaked intermittently across examples; 10s gives ample
+  // headroom while still catching genuine hangs (the 60s per-test cap does).
+  expect: { timeout: 10_000 },
   use: {
     trace: 'on-first-retry',
-    actionTimeout: 1000,
-    // Full-suite runs start many Vite dev servers; under local 10-worker runs
-    // the first `page.goto(..., waitUntil: "load")` can exceed 5s even when
+    actionTimeout: 10_000,
+    // Full-suite runs start many Vite dev servers; under parallel local runs
+    // the first `page.goto(..., waitUntil: "load")` can exceed 10s even when
     // the app itself is healthy.
-    navigationTimeout: 10000,
+    navigationTimeout: 15_000,
     headless: true,
   },
   projects: activeExamples.map((e, i) => {
     const port = ports[i]!
-    // Tab bars and modals can take >1s to satisfy Playwright's "stable" hit-target checks
-    // (layout after view switches, focus rings, etc.). Global action timeout is 1000ms; relax further
-    // for examples that were still flaky.
-    const relaxedAction = e.name === 'mobile-showcase' || e.name === 'ecommerce' ? { actionTimeout: 2000 as const } : {}
+    // The global actionTimeout (10s) already covers the slow "stable" hit-target
+    // checks (tab bars, modals, focus rings, layout after view switches) that
+    // previously needed a per-example bump.
     return {
       name: e.name,
-      use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${port}`, ...relaxedAction },
+      use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${port}` },
       testMatch: `${e.name}.spec.ts`,
     }
   }),

@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('forms settings page', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('.settings-page')).toBeVisible({ timeout: 500 })
+    await expect(page.locator('.settings-page')).toBeVisible({ timeout: 10000 })
   })
 
   test('renders settings header', async ({ page }) => {

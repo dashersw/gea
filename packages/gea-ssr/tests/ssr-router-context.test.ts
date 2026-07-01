@@ -97,6 +97,8 @@ describe('createSSRRouterState', () => {
     hash: '#section',
     matches: ['/users/:id'],
     component: null,
+    layouts: [],
+    queryModes: new Map(),
     guardRedirect: null,
     isNotFound: false,
   }
@@ -230,6 +232,8 @@ describe('handleRequest with SSR router context', () => {
       hash: '',
       matches: ['/test-route'],
       component: null,
+      layouts: [],
+      queryModes: new Map(),
       guardRedirect: null,
       isNotFound: false,
     }

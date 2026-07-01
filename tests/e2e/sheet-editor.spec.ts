@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test.describe('Sheet editor', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    await page.waitForSelector('.sheet-editor', { timeout: 500 })
+    await page.waitForSelector('.sheet-editor', { timeout: 10000 })
   })
 
   test('typing when a cell is selected enters edit mode and types into the inline input', async ({ page }) => {

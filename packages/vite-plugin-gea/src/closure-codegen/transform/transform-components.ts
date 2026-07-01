@@ -94,7 +94,7 @@ export function canUseTinyReactiveComponent(classDecl: ClassDeclaration): boolea
   return true
 }
 
-function nodeContainsThisMember(node: any, name: string): boolean {
+export function nodeContainsThisMember(node: any, name: string): boolean {
   if (!node || typeof node !== 'object') return false
   if (
     t.isMemberExpression(node) &&

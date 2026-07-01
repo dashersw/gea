@@ -1,5 +1,22 @@
 # @geajs/core
 
+## 1.4.0
+
+### Patch Changes
+
+- [`2cb7686`](https://github.com/dashersw/gea/commit/2cb76864373a00f4866d7c14a68c1ff7615edfac) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/core (patch)
+  - **`untrack`**: Return explicitly after the tracking scope so TypeScript control flow and callers see a consistent `T` result.
+
+  ### @geajs/vite-plugin (patch)
+  - **Closure-codegen IR**: Thread emit-time bindings through `templateSpecToIr` and substitute them in slot expressions, keyed-list payload serialization, and embedded JSX so lowered IR matches renamed closure identifiers.
+  - **Store IR**: Add `object` shape for object-literal expressions in `GeaIrStoreExpr`.
+
+- [`c260b89`](https://github.com/dashersw/gea/commit/c260b89ec5dc021826bd5f5d1bcb421dcc09c330) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/vite-plugin (patch)
+  - **Typed per-property style bindings**: a `style={{ ... }}` binding whose object literal has only static keys (e.g. a moving sprite's `{ left, top, backgroundColor }`) now compiles to one `reactiveStyleProp` call per property instead of the generic `reactiveStyle`. This removes the per-update boxed `prev`/`next` record allocation and runtime kebab-casing, keys are kebab-cased at compile time, and tracking becomes per-property (only the property that actually changed re-applies). Dynamic/spread style objects keep using `reactiveStyle`.
+
+  ### @geajs/core (patch)
+  - **`reactiveStyleProp`**: new typed single-property style binding helper used by the above compiler path. Binds one CSS property to a reactive source with a string-equality guard, no record diffing.
+
 ## 1.3.0
 
 ### Minor Changes

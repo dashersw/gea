@@ -262,8 +262,20 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         }
 
         const storeResult = transformCompiledStoreModule(transformedCode, cleanId, resolveImportPath)
-        if (storeResult?.ir) recordStoreIr(cleanId, storeResult.ir)
-        if (storeResult?.changed) return { code: storeResult.code, map: null }
+        for (const storeIr of storeResult?.irs ?? (storeResult?.ir ? [storeResult.ir] : [])) {
+          recordStoreIr(cleanId, storeIr)
+        }
+        if (storeResult?.changed) {
+          // A store-only module is done. A MIXED module (maps' index.device.tsx
+          // declares its stores next to the component and the top-level
+          // `mount(...)` call) must continue through the root-mount and
+          // component passes on the store-transformed code, or the component
+          // loses its IR (no mounted renderer) and the mount stays dynamic.
+          const mixedModule = /\bextends\s+(Component|ReactiveComponent)\b|\bmount\s*\(/.test(storeResult.code)
+          if (!mixedModule) return { code: storeResult.code, map: null }
+          transformedCode = storeResult.code
+          changed = true
+        }
 
         const rootMountResult = transformStaticRootMount(transformedCode, cleanId, resolveImportPath)
         if (rootMountResult?.changed) {
@@ -277,6 +289,10 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         code: transformedCode,
         isServe: isServeCommand,
         isSSR,
+        // IR build (GEA_IR_OUT / options.ir) == the embedded/native geatsc
+        // backend; lets emit paths pick embedded-specific forms (e.g. the
+        // keyed-list observer re-resolving the payload-less hub field).
+        embedded: !!irOptions?.enabled,
         hmrImportSource: HMR_RUNTIME_ID,
         isStoreModule,
         isComponentModule,
@@ -288,6 +304,16 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
       })
       if (result) {
         if (result.ir) recordComponentIr(cleanId, result.ir)
+        // A ReactiveComponent's compiled class must survive into the final
+        // bundle: parents mount it as `make_shared<Class>()`, so the geatsc
+        // C++ backend needs the class definition in the bundle text. Once the
+        // lean transform splices template() out, the class is dead JS to
+        // rollup (the IR renderer does the mounting; the `void <Child>;`
+        // keep-alives are provably pure) — without this it gets tree-shaken
+        // and the typed mount call references a class that no longer exists.
+        if (result.ir?.components.some((component) => component.reactiveState)) {
+          return { code: result.code, map: result.map ?? null, moduleSideEffects: 'no-treeshake' }
+        }
         return result
       }
 
@@ -323,6 +349,28 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
       })
       const componentIds = new Set(modules.flatMap((module) => module.components))
       const storeIds = new Set(modules.flatMap((module) => module.stores))
+      // A lean ReactiveComponent's compiled class drops its template() method
+      // (the template lives only in the IR), so the emitted JS no longer
+      // references the child components that template mounts — rollup
+      // tree-shakes their modules, and the rendered-module filter above would
+      // then drop those children from the IR even though the embedded backend
+      // still mounts them from the parent's template. Close componentIds over
+      // mount-slot references so IR-live children survive tree-shaking.
+      const moduleById = new Map(Array.from(irModules.values()).map((module) => [module.id, module]))
+      const pending = Array.from(componentIds)
+      while (pending.length > 0) {
+        const component = irComponents.get(pending.pop()!)
+        if (!component) continue
+        for (const tag of collectMountTags(component.template.slots)) {
+          for (const candidate of irComponents.values()) {
+            if (candidate.exportName !== tag || componentIds.has(candidate.id)) continue
+            componentIds.add(candidate.id)
+            pending.push(candidate.id)
+            const candidateModule = moduleById.get(candidate.module)
+            if (candidateModule && !modules.includes(candidateModule)) modules.push(candidateModule)
+          }
+        }
+      }
       const irBundle: GeaIrBundleV1 = {
         schema: 'gea-ir',
         version: 1,
@@ -341,6 +389,30 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         this.emitFile({ type: 'asset', fileName: outFile, source })
       }
     },
+  }
+
+  // Component tags mounted anywhere in a template's slots — including templates
+  // nested in slot payloads (conditional consequent/alternate, keyed-list row
+  // templates, forwarded children). Payload `attrs`/`children` hold raw Babel
+  // AST at this point; recursion only follows template-shaped objects (a
+  // `slots` array) so the walk never descends into the AST.
+  function collectMountTags(slots: unknown, tags = new Set<string>(), depth = 0): Set<string> {
+    if (depth > 8 || !Array.isArray(slots)) return tags
+    for (const slot of slots) {
+      if (!slot || typeof slot !== 'object') continue
+      const { kind, payload } = slot as { kind?: unknown; payload?: unknown }
+      if (!payload || typeof payload !== 'object') continue
+      const record = payload as Record<string, unknown>
+      if (kind === 'mount' && typeof record.tag === 'string') tags.add(record.tag)
+      for (const key of Object.keys(record)) {
+        if (key === 'attrs' || key === 'children') continue
+        const value = record[key]
+        if (value && typeof value === 'object' && Array.isArray((value as { slots?: unknown }).slots)) {
+          collectMountTags((value as { slots: unknown }).slots, tags, depth + 1)
+        }
+      }
+    }
+    return tags
   }
 
   function recordComponentIr(moduleId: string, ir: { module: GeaIrModule; components: GeaIrComponent[] }): void {
@@ -471,6 +543,7 @@ function compilerRuntimeSource(runtimePath: string): string {
   relationalClass,
   relationalClassProp,
   reactiveStyle,
+  reactiveStyleProp,
   reactiveValue,
   reactiveValueRead,
   delegateEvent,

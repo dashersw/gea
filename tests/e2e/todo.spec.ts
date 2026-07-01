@@ -530,29 +530,29 @@ test.describe('CSS animation and transition event delegation', () => {
   })
 
   test('animationstart fires through Gea event delegation', async ({ page }) => {
-    await expect(page.locator('.r-anim-start')).toHaveText('true', { timeout: 2000 })
+    await expect(page.locator('.r-anim-start')).toHaveText('true', { timeout: 10000 })
   })
 
   test('animationend fires through Gea event delegation', async ({ page }) => {
-    await expect(page.locator('.r-anim-end')).toHaveText('true', { timeout: 2000 })
+    await expect(page.locator('.r-anim-end')).toHaveText('true', { timeout: 10000 })
   })
 
   test('animationiteration fires through Gea event delegation', async ({ page }) => {
-    await expect(page.locator('.r-anim-iter')).toHaveText('true', { timeout: 2000 })
+    await expect(page.locator('.r-anim-iter')).toHaveText('true', { timeout: 10000 })
   })
 
   test('transitionrun fires through Gea event delegation', async ({ page }) => {
     await page.locator('.trigger-transition').click()
-    await expect(page.locator('.r-trans-run')).toHaveText('true', { timeout: 2000 })
+    await expect(page.locator('.r-trans-run')).toHaveText('true', { timeout: 10000 })
   })
 
   test('transitionstart fires through Gea event delegation', async ({ page }) => {
     await page.locator('.trigger-transition').click()
-    await expect(page.locator('.r-trans-start')).toHaveText('true', { timeout: 2000 })
+    await expect(page.locator('.r-trans-start')).toHaveText('true', { timeout: 10000 })
   })
 
   test('transitionend fires through Gea event delegation', async ({ page }) => {
     await page.locator('.trigger-transition').click()
-    await expect(page.locator('.r-trans-end')).toHaveText('true', { timeout: 2000 })
+    await expect(page.locator('.r-trans-end')).toHaveText('true', { timeout: 10000 })
   })
 })

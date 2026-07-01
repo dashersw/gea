@@ -9,7 +9,13 @@ import { sourceSpan, storeFieldsToIr, storeGettersToIr, storeIrId, storeMethodsT
 export interface StoreTransformResult {
   code: string
   changed: boolean
+  // First store's IR (back-compat for single-store callers).
   ir?: GeaIrStore
+  // IR for EVERY store class in the module. A module may declare several
+  // `extends Store` classes (maps' index.device.tsx has MapInput + RailState);
+  // all of them must reach the IR or the geatsc backend loses the typed
+  // compiled-store lowering for every store in the module.
+  irs?: GeaIrStore[]
 }
 
 export type ResolveImportPath = (importer: string, source: string) => string | null
@@ -35,41 +41,71 @@ export function transformCompiledStoreModule(
 
   const imported = findStoreImport(ast, moduleId, resolveImportPath)
   if (!imported) return null
-  const classDecl = findStoreClass(ast, imported.localName)
-  if (!classDecl || !classDecl.id) return null
+  const classDecls = findStoreClasses(ast, imported.localName)
+  if (classDecls.length === 0) return null
   const constants = collectImportedLiteralConstants(ast, moduleId, resolveImportPath)
-  const fallbackIr = buildStoreIr(classDecl, moduleId, 'compiled', constants)
+  const fallbackIrs = classDecls.map((classDecl) => buildStoreIr(classDecl, moduleId, 'compiled', constants, ast))
+  // The IR carries each store method's ORIGINAL body, which the gea-embedded
+  // backend compiles verbatim — even when this module keeps the legacy
+  // untransformed `extends Store` class. The treeshaker, working only from the
+  // bundled class, can drop a module-local free function the method calls (e.g.
+  // a profiling helper gated behind a disabled flag the bundler folds away),
+  // leaving the IR-emitted method with a call to a now-undefined function. Keep
+  // such free functions alive with a value reference the treeshaker can't remove.
+  const fallbackKeepAlive = storeMethodFreeFunctionKeepAlive(ast, classDecls)
+  const fallback: StoreTransformResult = {
+    code: fallbackKeepAlive ? `${source}${fallbackKeepAlive}` : source,
+    changed: !!fallbackKeepAlive,
+    ir: fallbackIrs[0],
+    irs: fallbackIrs,
+  }
   if (/\b(flushSync|silent|Store\.|new\s+Store\s*\()/.test(source)) {
-    return { code: source, changed: false, ir: fallbackIr }
+    return fallback
   }
-  if (!isCompiledStoreSafeClass(classDecl)) return null
-  if (!hasDefaultNewStore(ast, classDecl.id.name)) {
-    return { code: source, changed: false, ir: fallbackIr }
+  // All-or-nothing across the module's store classes: a partial transform
+  // would have to keep the `Store` import alive for the untransformed class
+  // while rebasing the others, and the IR consumers assume a module's stores
+  // share one runtime mode. Single-class modules keep the legacy "untouched,
+  // no IR" behavior for unsafe classes.
+  if (!classDecls.every((classDecl) => isCompiledStoreSafeClass(classDecl))) {
+    return classDecls.length === 1 ? null : fallback
+  }
+  if (!classDecls.every((classDecl) => hasDefaultNewStore(ast, classDecl.id!.name))) {
+    return fallback
   }
 
-  const leanResult = transformLeanDataSelectedStore(ast, classDecl, imported, moduleId, constants)
-  if (leanResult) return leanResult
+  if (classDecls.length === 1) {
+    const leanResult = transformLeanDataSelectedStore(ast, classDecls[0], imported, moduleId, constants)
+    if (leanResult) return { ...leanResult, irs: leanResult.ir ? [leanResult.ir] : undefined }
+  }
 
-  const storeBase = canUseLeanStore(classDecl) ? 'CompiledLeanStore' : 'CompiledStore'
-  const storeIr = buildStoreIr(classDecl, moduleId, storeBase === 'CompiledLeanStore' ? 'lean' : 'compiled', constants)
+  const storeBases = classDecls.map((classDecl) => (canUseLeanStore(classDecl) ? 'CompiledLeanStore' : 'CompiledStore'))
+  const storeIrs = classDecls.map((classDecl, index) =>
+    buildStoreIr(classDecl, moduleId, storeBases[index] === 'CompiledLeanStore' ? 'lean' : 'compiled', constants, ast),
+  )
 
   removeStoreSpecifier(imported.importDecl, imported.localName)
   ast.program.body = ast.program.body.filter((node) => {
     if (node !== imported.importDecl) return true
     return imported.importDecl.specifiers.length > 0
   })
-  ast.program.body.unshift(
-    t.importDeclaration(
-      [t.importSpecifier(t.identifier(storeBase), t.identifier(storeBase))],
-      t.stringLiteral(COMPILER_RUNTIME_ID),
-    ),
-  )
-  classDecl.superClass = t.identifier(storeBase)
+  for (const storeBase of [...new Set(storeBases)]) {
+    ast.program.body.unshift(
+      t.importDeclaration(
+        [t.importSpecifier(t.identifier(storeBase), t.identifier(storeBase))],
+        t.stringLiteral(COMPILER_RUNTIME_ID),
+      ),
+    )
+  }
+  classDecls.forEach((classDecl, index) => {
+    classDecl.superClass = t.identifier(storeBases[index])
+  })
 
   return {
     code: generate(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } }).code,
     changed: true,
-    ir: storeIr,
+    ir: storeIrs[0],
+    irs: storeIrs,
   }
 }
 
@@ -217,7 +253,7 @@ function transformLeanDataSelectedStore(
   const fields = collectLeanStoreFields(classDecl)
   if (!fields) return null
   if (!isBenchmarkOperationStoreShape(classDecl)) return null
-  const storeIr = buildStoreIr(classDecl, moduleId, 'lean', constants)
+  const storeIr = buildStoreIr(classDecl, moduleId, 'lean', constants, ast)
 
   const methodProps = buildLeanStoreMethods(classDecl)
   if (!methodProps) return null
@@ -263,6 +299,7 @@ function buildStoreIr(
   moduleId: string,
   runtimeBase: 'compiled' | 'lean',
   constants: GeaIrConstant[] = [],
+  moduleAst?: File,
 ): GeaIrStore {
   const className = classDecl.id?.name ?? '<anonymous>'
   return {
@@ -271,7 +308,7 @@ function buildStoreIr(
     className,
     runtimeBase,
     fields: storeFieldsToIr(classDecl),
-    methods: storeMethodsToIr(classDecl),
+    methods: storeMethodsToIr(classDecl, moduleAst),
     ...(() => {
       const getters = storeGettersToIr(classDecl)
       return getters.length > 0 ? { getters } : {}
@@ -328,6 +365,55 @@ function literalConstantsFromFile(file: string, names: Set<string>): GeaIrConsta
     }
   }
   return constants
+}
+
+// Module-local free function names (top-level `function f()` and
+// `export function f()`). These are the declarations the treeshaker may drop if
+// nothing in the bundled module references them as a value.
+function moduleFreeFunctionNames(ast: File): Set<string> {
+  const names = new Set<string>()
+  for (const node of ast.program.body) {
+    if (t.isFunctionDeclaration(node) && node.id) names.add(node.id.name)
+    else if (t.isExportNamedDeclaration(node) && node.declaration && t.isFunctionDeclaration(node.declaration) && node.declaration.id) {
+      names.add(node.declaration.id.name)
+    }
+  }
+  return names
+}
+
+function nodeReferencesIdentifier(node: unknown, name: string): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (Array.isArray(node)) {
+    for (const child of node) if (nodeReferencesIdentifier(child, name)) return true
+    return false
+  }
+  const record = node as Record<string, unknown>
+  if (record.type === 'Identifier' && record.name === name) return true
+  for (const key of Object.keys(record)) {
+    if (key === 'type' || key === 'loc' || key === 'start' || key === 'end' || key === 'leadingComments' || key === 'trailingComments') continue
+    if (nodeReferencesIdentifier(record[key], name)) return true
+  }
+  return false
+}
+
+// One `(globalThis.__GEA_IR_KEEP__ ||= []).push(fn, …)` statement referencing
+// every module-local free function the store class methods call. A value
+// reference no treeshaker may remove keeps the function definition in the
+// bundle, so the IR-driven backend (which emits the method body verbatim) finds
+// the function it calls. The gea-embedded pipeline strips the marker line before
+// compiling; on JS runtimes it is one harmless array push at module init.
+function storeMethodFreeFunctionKeepAlive(ast: File, classDecls: ClassDeclaration[]): string {
+  const freeFns = moduleFreeFunctionNames(ast)
+  if (freeFns.size === 0) return ''
+  const kept: string[] = []
+  for (const name of freeFns) {
+    const referenced = classDecls.some((classDecl) =>
+      classDecl.body.body.some((member) => t.isClassMethod(member) && nodeReferencesIdentifier(member.body, name)),
+    )
+    if (referenced) kept.push(name)
+  }
+  if (kept.length === 0) return ''
+  return `\n;(globalThis.__GEA_IR_KEEP__ ||= []).push(${kept.join(', ')});\n`
 }
 
 function literalConstant(name: string, value: Expression): GeaIrConstant | null {
@@ -536,17 +622,19 @@ function moduleExportsStore(file: string, resolveImportPath: ResolveImportPath, 
   return false
 }
 
-function findStoreClass(ast: File, storeName: string): ClassDeclaration | null {
-  let found: ClassDeclaration | null = null
+// Every top-level `class X extends Store` in the module, declaration order.
+// Classes without an id are skipped (the transform must name them to rebase
+// the superclass and build IR).
+function findStoreClasses(ast: File, storeName: string): ClassDeclaration[] {
+  const found: ClassDeclaration[] = []
   for (const node of ast.program.body) {
     const decl = t.isClassDeclaration(node)
       ? node
       : t.isExportNamedDeclaration(node) && t.isClassDeclaration(node.declaration)
         ? node.declaration
         : null
-    if (!decl || !t.isIdentifier(decl.superClass, { name: storeName })) continue
-    if (found) return null
-    found = decl
+    if (!decl || !decl.id || !t.isIdentifier(decl.superClass, { name: storeName })) continue
+    found.push(decl)
   }
   return found
 }
