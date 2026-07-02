@@ -13,7 +13,7 @@ Svelte made "compile the framework away" famous. Gea takes the phrase literally:
 
 ## Compile To Almost Nothing
 
-In a fresh Vite production hello-world build, Gea ships **121 B** of brotli JavaScript. The equivalent Solid build ships 3.6 kb, Svelte ships 8.5 kb, Vue ships 20.7 kb, and React ships 50.8 kb.
+In a fresh Vite production hello-world build, Gea ships **121 B** of brotli JavaScript. The equivalent Solid build ships 3.6 kB, Svelte ships 8.5 kB, Vue ships 20.7 kB, and React ships 50.8 kB.
 
 | Framework | Version | Raw minified JS | Brotli JS | Brotli vs Gea |
 | --- | --- | ---: | ---: | ---: |
@@ -29,7 +29,7 @@ Measured from fresh Vite 8.0.10 production apps, summing JavaScript assets only.
 
 Hello world proves the compiler can disappear. Todo proves the runtime stays lean when the app actually does something.
 
-In an equivalent interactive todo app with reactive state, input handling, filtering, item updates, and identical CSS, Gea ships **4.9 kb** of brotli JavaScript. Solid ships 5.7 kb, Svelte ships 13.7 kb, Vue ships 22.6 kb, and React ships 51.5 kb.
+In an equivalent interactive todo app with reactive state, input handling, filtering, item updates, and identical CSS, Gea ships **4.9 kB** of brotli JavaScript. Solid ships 5.7 kB, Svelte ships 13.7 kB, Vue ships 22.6 kB, and React ships 51.5 kB.
 
 | Framework | Version | Minified JS raw | Minified JS brotli | Total raw JS+CSS | Total brotli JS+CSS |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -117,8 +117,8 @@ Gea is built on the philosophy of the beautifully simple [erste.js](https://gith
 - **Just JavaScript.** No signals, no hooks, no dependency arrays, no new syntax. Classes, functions, objects, and getters — concepts you already know.
 - **No virtual DOM.** The Vite plugin analyzes your JSX at build time and generates targeted DOM patches. Updates touch only the elements that changed.
 - **Proxy-based reactivity.** Mutate state directly — `this.count++` — and the framework handles the rest. The compile-time analysis makes your regular JS fully reactive without you conforming to arbitrary rules.
-- **Near-zero baseline.** A compiled hello-world app is 121 B brotli; an equivalent interactive todo is 4.9 kb brotli JS. Gea starts as your code, not a framework tax.
-- **Pay for routing when you use it.** Router APIs are built in and tree-shakable; a hello-world app with routing is ~7.3 kb gzipped. Zero runtime dependencies.
+- **Near-zero baseline.** A compiled hello-world app is 121 B brotli; an equivalent interactive todo is 4.9 kB brotli JS. Gea starts as your code, not a framework tax.
+- **Pay for routing when you use it.** Router APIs are built in and tree-shakable; a hello-world app with routing is ~7.3 kB gzipped. Zero runtime dependencies.
 - **Familiar JSX.** Write JSX with `class` instead of `className` and lowercase event attributes (`click`, `input`, `change`) instead of `onClick`.
 - **Props that follow JavaScript.** Objects and arrays passed as props are the parent's reactive proxy — the child can mutate them and both update. Primitives are copies, just like function arguments in JS. No `emit`, no `v-model`, no callback wiring.
 - **Class and function components.** Use class components for stateful logic and lifecycle hooks, function components for presentational UI. The Vite plugin converts function components to classes at build time.
@@ -131,7 +131,7 @@ Gea is the fastest compiled UI framework — closer to hand-written vanilla Java
 
 | | Gea | React | Vue |
 | --- | --- | --- | --- |
-| Bundle size | **121 B brotli hello world / 4.9 kb brotli todo JS** | 50.8 kb brotli hello world / 51.5 kb brotli todo JS | 20.7 kb brotli hello world / 22.6 kb brotli todo JS |
+| Bundle size | **121 B brotli hello world / 4.9 kB brotli todo JS** | 50.8 kB brotli hello world / 51.5 kB brotli todo JS | 20.7 kB brotli hello world / 22.6 kB brotli todo JS |
 | What's included | Compiler output + imported Gea features | React + React DOM | Vue runtime |
 | Virtual DOM | No | Yes | Yes |
 | Reactivity | Proxy-based, automatic | Explicit (`setState`, hooks) | Proxy-based (`ref`/`reactive`) |
