@@ -2,11 +2,26 @@ import type { RegisteredFunction } from './functions'
 import type { Catalog } from './catalog'
 import { deletePointer, parsePointer, writePointer } from './pointer'
 import { mountSurface, type Surface, type SurfaceRegistry } from './surface'
-import type { ServerEnvelope, UpdateComponentsPayload, UpdateDataModelPayload } from './types'
+import type {
+  ServerEnvelope,
+  Transport,
+  UpdateComponentsPayload,
+  UpdateDataModelPayload,
+} from './types'
 
 export interface DispatchOptions {
   catalog: Catalog
   functions: Record<string, RegisteredFunction>
+  /** Omit only for surfaces with no actions — firing one then throws. */
+  transport?: Transport
+  /** Injected for determinism in tests; defaults to wall-clock UTC. */
+  now?: () => string
+}
+
+const NO_TRANSPORT: Transport = {
+  sendAction(action) {
+    throw new Error(`A2UI: action "${action.name}" fired but no transport was configured`)
+  },
 }
 
 function requireSurface(registry: SurfaceRegistry, surfaceId: string): Surface {
@@ -27,7 +42,12 @@ function handleUpdateComponents(
   }
   // The whole happy-path buffering rule: nothing renders until `root` exists.
   if (!surface.isMounted && surface.componentDefinitions.has('root')) {
-    mountSurface(surface, opts.catalog, opts.functions)
+    mountSurface(surface, {
+      catalog: opts.catalog,
+      functions: opts.functions,
+      transport: opts.transport ?? NO_TRANSPORT,
+      now: opts.now ?? (() => new Date().toISOString()),
+    })
   }
 }
 

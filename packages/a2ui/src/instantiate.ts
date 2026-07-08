@@ -1,10 +1,12 @@
 import { mount, type Disposer } from '@geajs/core/compiler-runtime'
-import type { ComponentDefinition, ComponentId } from './types'
-import { isTemplateChildList } from './types'
-import type { Catalog } from './catalog'
+import type { Action, ComponentDefinition, ComponentId, Transport } from './types'
+import { isDataBinding, isTemplateChildList } from './types'
+import type { Catalog, PropThunks, WriteFn } from './catalog'
 import type { BindingContext } from './binding'
 import type { RegisteredFunction } from './functions'
-import type { Scope } from './scope'
+import { resolveWriteParts, type Scope } from './scope'
+import { writePointer } from './pointer'
+import { dispatchAction } from './actions'
 
 export interface InstantiateContext {
   definitions: Map<ComponentId, ComponentDefinition>
@@ -12,10 +14,51 @@ export interface InstantiateContext {
   store: Record<string, unknown>
   functions: Record<string, RegisteredFunction>
   disposer: Disposer
+  surfaceId: string
+  transport: Transport
+  /** Injected for determinism in tests. */
+  now: () => string
 }
 
 function bindingContext(ictx: InstantiateContext, scope: Scope): BindingContext {
   return { store: ictx.store, scope, functions: ictx.functions }
+}
+
+/**
+ * Write direction: local, immediate, no network. We resolve WHERE the write
+ * lands; the catalog entry decides WHICH handler prop carries it, because
+ * every input names its change event differently (`onInput`,
+ * `onCheckedChange`, `onValueChange`).
+ */
+function writeFor(
+  definition: ComponentDefinition,
+  ictx: InstantiateContext,
+  scope: Scope,
+): WriteFn | null {
+  if (!isDataBinding(definition.value)) return null
+  const parts = resolveWriteParts(definition.value.path, scope)
+  return (next: unknown) => writePointer(ictx.store, parts, next)
+}
+
+/** Actions are uniform: gea-ui's Button accepts both `click` and `onClick`. */
+function injectAction(
+  definition: ComponentDefinition,
+  ictx: InstantiateContext,
+  props: PropThunks,
+  scope: Scope,
+): void {
+  if (!definition.action) return
+  const action = definition.action as Action
+  const handler = () =>
+    dispatchAction(action, {
+      surfaceId: ictx.surfaceId,
+      sourceComponentId: definition.id,
+      binding: bindingContext(ictx, scope),
+      transport: ictx.transport,
+      now: ictx.now,
+    })
+  props.onClick = () => handler
+  props.click = () => handler
 }
 
 /**
@@ -40,8 +83,8 @@ export function instantiateNode(
   if (!entry) throw new Error(`A2UI: component type "${definition.component}" is not in the catalog`)
 
   const ctx = bindingContext(ictx, scope)
-  // Task 10 replaces `null` with a WriteFn when `value` is a DataBinding.
-  const props = entry.mapProps(definition, ctx, null)
+  const props = entry.mapProps(definition, ctx, writeFor(definition, ictx, scope))
+  injectAction(definition, ictx, props, scope)
 
   const instance = mount(entry.component as never, parent, props as never, ictx.disposer.child())
   const element: Element | null = instance && (instance as { el?: Element | null }).el

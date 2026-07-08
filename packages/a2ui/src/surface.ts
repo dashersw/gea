@@ -1,10 +1,17 @@
 import { Store } from '@geajs/core'
 import { createDisposer, type Disposer } from '@geajs/core/compiler-runtime'
-import type { ComponentDefinition, ComponentId, CreateSurfacePayload } from './types'
+import type { ComponentDefinition, ComponentId, CreateSurfacePayload, Transport } from './types'
 import type { Catalog } from './catalog'
 import type { RegisteredFunction } from './functions'
 import { instantiateNode } from './instantiate'
 import { createRootScope } from './scope'
+
+export interface MountOptions {
+  catalog: Catalog
+  functions: Record<string, RegisteredFunction>
+  transport: Transport
+  now: () => string
+}
 
 export interface Surface {
   surfaceId: string
@@ -47,20 +54,19 @@ export class SurfaceRegistry {
 }
 
 /** The one interpreter walk. Runs once; after this the interpreter is idle. */
-export function mountSurface(
-  surface: Surface,
-  catalog: Catalog,
-  functions: Record<string, RegisteredFunction>,
-): void {
+export function mountSurface(surface: Surface, opts: MountOptions): void {
   surface.rootHostElement.replaceChildren()
   instantiateNode(
     'root',
     {
       definitions: surface.componentDefinitions,
-      catalog,
+      catalog: opts.catalog,
       store: surface.dataModel as unknown as Record<string, unknown>,
-      functions,
+      functions: opts.functions,
       disposer: surface.disposer,
+      surfaceId: surface.surfaceId,
+      transport: opts.transport,
+      now: opts.now,
     },
     surface.rootHostElement,
     createRootScope(),
