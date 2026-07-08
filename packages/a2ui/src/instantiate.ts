@@ -1,11 +1,17 @@
-import { mount, type Disposer } from '@geajs/core/compiler-runtime'
-import type { Action, ComponentDefinition, ComponentId, Transport } from './types'
+import { keyedList, mount, type Disposer, type Entry } from '@geajs/core/compiler-runtime'
+import type {
+  Action,
+  ComponentDefinition,
+  ComponentId,
+  TemplateChildList,
+  Transport,
+} from './types'
 import { isDataBinding, isTemplateChildList } from './types'
 import type { Catalog, PropThunks, WriteFn } from './catalog'
 import type { BindingContext } from './binding'
 import type { RegisteredFunction } from './functions'
-import { resolveWriteParts, type Scope } from './scope'
-import { writePointer } from './pointer'
+import { createCollectionScope, resolveWriteParts, type CollectionScope, type Scope } from './scope'
+import { parsePointer, writePointer } from './pointer'
 import { dispatchAction } from './actions'
 
 export interface InstantiateContext {
@@ -110,7 +116,80 @@ function instantiateChildren(
     return
   }
   if (isTemplateChildList(children)) {
-    // Template lists arrive in Task 11.
-    throw new Error('A2UI: template ChildList is not implemented yet')
+    instantiateTemplateList(children, ictx, host, scope)
   }
+}
+
+/** `item.id` / `item.key` identify a row; index is the last resort. */
+function entryKey(item: any, idx: number): string {
+  return String(item?.id ?? item?.key ?? idx)
+}
+
+/**
+ * A container whose `children` is a template instantiates the template once
+ * per array item, each in its own collection scope.
+ *
+ * `keyedList` takes a CONFIG OBJECT (runtime/keyed-list.ts:48). `cfg.root`
+ * must be the Store — its dirty-bit protocol is what enables the append /
+ * remove / swap fast paths. `createEntry` returns an `Entry`, not a Node.
+ *
+ * Each row's CollectionScope carries a MUTABLE `item` and `index`, rewritten
+ * by `patchEntry`. Relative paths resolve against `scope.item`, so rows stay
+ * correct across reorders without re-reading an index-based pointer.
+ */
+function instantiateTemplateList(
+  template: TemplateChildList,
+  ictx: InstantiateContext,
+  host: Element,
+  parentScope: Scope,
+): void {
+  const basePath = parsePointer(template.path)
+  const anchor = document.createComment('a2ui-list')
+  host.appendChild(anchor)
+
+  const scopes = new WeakMap<Entry, CollectionScope>()
+
+  keyedList({
+    container: host,
+    anchor,
+    disposer: ictx.disposer.child(),
+    root: ictx.store,
+    // Array-path form, NOT the `() => any[]` getter. The getter branch calls
+    // `reconcile(arr)` with no change records, so a same-ref/same-length
+    // mutation (`reverse()`, `sort()`) hits the dirty-scan path and never
+    // moves DOM nodes. The array-path branch subscribes and receives the
+    // store's `reorder` record. `parsePointer` already yields these parts.
+    path: basePath,
+    key: entryKey,
+    createEntry: (item: any, idx: number): Entry => {
+      const rowDisposer = ictx.disposer.child()
+      const scope = createCollectionScope(basePath, idx, item, parentScope)
+      // `mount()` appends into a parent, so give the row a scratch parent and
+      // take the element back out. keyedList inserts it before the anchor.
+      const scratch = document.createElement('div')
+      const element = instantiateNode(
+        template.componentId,
+        { ...ictx, disposer: rowDisposer },
+        scratch,
+        scope,
+      )
+      const entry: Entry = {
+        key: entryKey(item, idx),
+        item,
+        element,
+        disposer: rowDisposer,
+        obs: null as never,
+      }
+      scopes.set(entry, scope)
+      return entry
+    },
+    patchEntry: (entry: Entry, newItem: any, newIdx: number): void => {
+      entry.item = newItem
+      const scope = scopes.get(entry)
+      if (scope) {
+        scope.item = newItem
+        scope.index = newIdx
+      }
+    },
+  })
 }
