@@ -11,7 +11,7 @@ export default defineConfig({
   dts: { build: true },
   target: 'es2022',
   platform: 'browser',
-  external: ['@geajs/core', '@geajs/ui'],
+  external: [/^@geajs\/core/, /^@geajs\/ui/],
   define: { 'import.meta.hot': 'undefined', 'import.meta.url': '""' },
   hash: false,
   fixedExtension: true,
