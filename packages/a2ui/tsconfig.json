@@ -1,0 +1,12 @@
+{
+  "extends": "../gea/tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@geajs/core": ["../gea/src/index.ts"],
+      "@geajs/core/compiler-runtime": ["../gea/src/compiler-runtime.ts"],
+      "@geajs/ui": ["../gea-ui/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
+}
