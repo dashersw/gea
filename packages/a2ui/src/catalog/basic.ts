@@ -5,7 +5,12 @@
 import Button from '@geajs/ui/button'
 import { Card } from '@geajs/ui/card'
 import Checkbox from '@geajs/ui/checkbox'
+import Dialog from '@geajs/ui/dialog'
 import Input from '@geajs/ui/input'
+import Select from '@geajs/ui/select'
+import Separator from '@geajs/ui/separator'
+import Slider from '@geajs/ui/slider'
+import Tabs from '@geajs/ui/tabs'
 import type { ComponentDefinition } from '../types'
 import type { BindingContext } from '../binding'
 import {
@@ -15,9 +20,15 @@ import {
   type PropThunks,
   type WriteFn,
 } from '../catalog'
-import Text from '../components/text'
-import Row from '../components/row'
+import AudioPlayer from '../components/audio-player'
 import Column from '../components/column'
+import DateTimeInput from '../components/date-time-input'
+import Icon from '../components/icon'
+import Image from '../components/image'
+import List from '../components/list'
+import Row from '../components/row'
+import Text from '../components/text'
+import Video from '../components/video'
 
 type MapProps = (def: ComponentDefinition, ctx: BindingContext, write: WriteFn | null) => PropThunks
 
@@ -97,6 +108,33 @@ export function createBasicCatalog(): Catalog {
       return props
     }),
   )
+
+  catalog.set('Image', entry('Image', Image))
+  catalog.set('Icon', entry('Icon', Icon))
+  catalog.set('Video', entry('Video', Video))
+  catalog.set('AudioPlayer', entry('AudioPlayer', AudioPlayer))
+  catalog.set('List', entry('List', List))
+  catalog.set('Divider', entry('Divider', Separator))
+
+  // DateTimeInput is a local leaf, so we own its handler prop: plain `onInput`.
+  catalog.set(
+    'DateTimeInput',
+    entry('DateTimeInput', DateTimeInput, (def, ctx, write) => {
+      const props = resolveProps(def, ctx)
+      if (write) props.onInput = () => (e: Event) => write((e.target as HTMLInputElement).value)
+      return props
+    }),
+  )
+
+  // Registered so the catalog is complete (18 types). Their prop translations
+  // are pass-through: Tabs/Modal/Slider/ChoicePicker have Zag prop shapes that
+  // have NOT been read yet, and Slider/ChoicePicker are input components whose
+  // write-back (onValueChange) is therefore not wired. Follow-up plan required
+  // before these are used in anger — see the README's Scope section.
+  catalog.set('Tabs', entry('Tabs', Tabs))
+  catalog.set('Modal', entry('Modal', Dialog))
+  catalog.set('Slider', entry('Slider', Slider))
+  catalog.set('ChoicePicker', entry('ChoicePicker', Select))
 
   return catalog
 }
