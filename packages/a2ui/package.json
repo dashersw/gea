@@ -1,0 +1,39 @@
+{
+  "name": "@geajs/a2ui",
+  "version": "0.1.0",
+  "description": "A2UI v0.9.1 renderer for Gea",
+  "type": "module",
+  "main": "dist/index.mjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "files": ["dist"],
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "publishConfig": { "access": "public" },
+  "license": "MIT",
+  "scripts": {
+    "build": "tsdown --config-loader unrun",
+    "test": "tsx --conditions source --import ./tests/preload.ts --test tests/*.test.ts",
+    "ts-type-check": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "peerDependencies": {
+    "@geajs/core": "^1.4.0",
+    "@geajs/ui": "^0.2.9"
+  },
+  "devDependencies": {
+    "@geajs/core": "^1.4.0",
+    "@geajs/ui": "^0.2.9",
+    "@geajs/vite-plugin": "^1.4.1",
+    "esbuild": "^0.28.0",
+    "jsdom": "^29.0.0",
+    "tsdown": "^0.21.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

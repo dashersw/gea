@@ -45,6 +45,12 @@ export interface Change {
   /** In-place array-item property update — arix = item index in the parent array. */
   aipu?: boolean
   arix?: number
+  /**
+   * Read by keyed-list's `itemDirtyOnly` fast path. Nothing in the store sets
+   * it today, so that path stays disabled; the field is declared because the
+   * reader exists and `Change` is a public type.
+   */
+  itemDirty?: boolean
   /** Value after change. */
   newValue?: any
   /** Target object that was mutated (proxy or raw). */

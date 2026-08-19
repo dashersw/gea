@@ -1,0 +1,15 @@
+{
+  "extends": "../gea/tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@geajs/core",
+    "paths": {
+      "@geajs/core": ["../gea/src"],
+      "@geajs/core/*": ["../gea/src/*"],
+      "@geajs/ui": ["../gea-ui/src"],
+      "@geajs/ui/*": ["../gea-ui/src/components/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
+}
