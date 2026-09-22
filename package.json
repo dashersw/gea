@@ -67,5 +67,10 @@
     "typescript-eslint": "^8.57.0",
     "vitepress": "^1.6.4",
     "vitepress-plugin-llms": "^1.12.0"
+  },
+  "overrides": {
+    "minimatch": {
+      "brace-expansion": "5.0.9"
+    }
   }
 }
