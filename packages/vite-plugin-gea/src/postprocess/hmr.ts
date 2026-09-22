@@ -74,22 +74,37 @@ export function injectHMR(
       ]),
     ),
   ]
+  acceptBody.push(js`let __patched = false;`)
   for (const cn of componentClassNames) {
     const key = cn === defaultExportClassName ? 'default' : cn
     acceptBody.push(
       t.expressionStatement(
-        t.callExpression(t.identifier('handleComponentUpdate'), [
-          t.memberExpression(importMeta(), t.identifier('url')),
-          t.objectExpression([
-            t.objectProperty(
-              t.identifier('default'),
-              t.memberExpression(t.identifier('__updatedModule'), t.identifier(key)),
-            ),
-          ]),
-        ]),
+        t.assignmentExpression(
+          '=',
+          t.identifier('__patched'),
+          t.logicalExpression(
+            '||',
+            t.callExpression(t.identifier('handleComponentUpdate'), [
+              t.memberExpression(importMeta(), t.identifier('url')),
+              t.objectExpression([
+                t.objectProperty(
+                  t.identifier('default'),
+                  t.memberExpression(t.identifier('__updatedModule'), t.identifier(key)),
+                ),
+              ]),
+            ]),
+            t.identifier('__patched'),
+          ),
+        ),
       ),
     )
   }
+  acceptBody.push(
+    t.ifStatement(
+      t.unaryExpression('!', t.identifier('__patched')),
+      t.expressionStatement(t.callExpression(t.memberExpression(hot(), t.identifier('invalidate')), [])),
+    ),
+  )
   hmrStmts.push(
     t.expressionStatement(
       t.callExpression(t.memberExpression(hot(), t.identifier('accept')), [
