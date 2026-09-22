@@ -107,20 +107,7 @@ function buildCreateEntryArrow(options: KeyedListEntryArrowOptions, itemId: Iden
       t.variableDeclaration('const', [
         t.variableDeclarator(obsId, t.callExpression(t.identifier('createItemObservable'), [itemId])),
       ]),
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          liveItemId,
-          t.conditionalExpression(
-            t.logicalExpression(
-              '&&',
-              t.binaryExpression('!==', itemId, t.nullLiteral()),
-              t.binaryExpression('===', t.unaryExpression('typeof', itemId), t.stringLiteral('object')),
-            ),
-            t.callExpression(t.identifier('createItemProxy'), [obsId]),
-            itemId,
-          ),
-        ),
-      ]),
+      t.variableDeclaration('const', [t.variableDeclarator(liveItemId, obsId)]),
     )
   } else {
     createEntryStmts.push(
@@ -179,20 +166,7 @@ function buildSimpleCreateEntryArrow(
       t.variableDeclaration('const', [
         t.variableDeclarator(obsId, t.callExpression(t.identifier('createItemObservable'), [itemId])),
       ]),
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          liveItemId,
-          t.conditionalExpression(
-            t.logicalExpression(
-              '&&',
-              t.binaryExpression('!==', itemId, t.nullLiteral()),
-              t.binaryExpression('===', t.unaryExpression('typeof', itemId), t.stringLiteral('object')),
-            ),
-            t.callExpression(t.identifier('createItemProxy'), [obsId]),
-            itemId,
-          ),
-        ),
-      ]),
+      t.variableDeclaration('const', [t.variableDeclarator(liveItemId, obsId)]),
     )
   }
 

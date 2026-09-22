@@ -55,8 +55,14 @@ function _hidden<O extends object, V>(target: O, key: symbol, value: V): void {
   Object.defineProperty(target, key, { value, writable: true, configurable: true, enumerable: false })
 }
 
-/** Same shape as `_hidden`: a generic reflection probe, not tied to one type. */
-function _plain<V>(v: V): boolean {
+/**
+ * Browser fallback for the tracked-proxy plain-value v1 contract. The embedded
+ * compiler replaces this exact exported coordinate with its native predicate.
+ * V1 assumes pristine builtins and ordinary Gea values (including Gea-owned,
+ * non-revoked proxies); monkey-patched prototypes and custom/revoked proxies
+ * are outside the contract.
+ */
+export function _plain<V>(v: V): boolean {
   if (!v || typeof v !== 'object') return false
   const p = Object.getPrototypeOf(v)
   return p === Object.prototype || p === null || Array.isArray(v)

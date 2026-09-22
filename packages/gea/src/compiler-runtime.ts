@@ -2,7 +2,24 @@ export { createDisposer, NOOP_DISPOSER } from './runtime/disposer'
 export { scheduleAfterRenderAsync } from './runtime/after-render-async'
 export { CompiledComponent } from './runtime/compiled-component'
 export { CompiledLeanReactiveComponent } from './runtime/compiled-lean-reactive-component'
-export { CompiledLeanStore } from './runtime/compiled-lean-store'
+// The compiler-runtime facade is also the checker-visible authentication
+// surface for the sealed tracked-proxy protocol. Keep protocol participants
+// on the same per-runtime-module export line so the Vite module-graph adapter
+// preserves their canonical symbol identities whenever this runtime module is
+// live; no physical checkout path is part of that authority.
+export {
+  CompiledLeanStore,
+  createLeanProxy,
+  leanObserve,
+  leanObserveDirect,
+  _plain,
+} from './runtime/compiled-lean-store'
+export { trackRead } from './runtime/with-tracking'
+// Checker-visible authority for the disposer-contained apply callback
+// protocol consumed by the native compiler backend. Runtime helpers already
+// reach `bind` through their ordinary imports; this export gives that shared
+// semantic boundary a stable logical coordinate without naming a checkout.
+export { bind } from './runtime/bind'
 export { CompiledReactiveComponent } from './runtime/compiled-reactive-component'
 export { CompiledTinyReactiveComponent } from './runtime/compiled-tiny-reactive-component'
 export { CompiledStaticElementComponent } from './runtime/compiled-static-element-component'
@@ -28,7 +45,7 @@ export { keyedList } from './runtime/keyed-list'
 export { GEA_DOM_ITEM, GEA_DOM_KEY } from './runtime/keyed-list-symbols'
 export { keyedListSimple } from './runtime/keyed-list-simple'
 export { keyedListProp } from './runtime/keyed-list-prop'
-export { createItemObservable, createItemProxy } from './runtime/keyed-list/item-obs'
+export { createItemObservable, createItemProxy, readItem } from './runtime/keyed-list/item-obs'
 export { _rescue } from './runtime/keyed-list/rescue'
 export { GEA_CREATE_TEMPLATE } from './runtime/symbols'
 export { GEA_PARENT_COMPONENT } from './runtime/symbols'

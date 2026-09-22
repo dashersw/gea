@@ -1,10 +1,12 @@
 import type { Plugin, ResolvedConfig } from 'vite'
+import { parse } from '@babel/parser'
 import { transform } from './pipeline.ts'
 import { transformCompiledStoreModule } from './closure-codegen/transform/transform-store.ts'
 import { transformDottedObserveCalls } from './closure-codegen/transform/transform-observe-paths.ts'
 import { transformStaticRootMount } from './closure-codegen/transform/transform-static-root-mount.ts'
 import { minifyGeaSymbolForKeys } from './symbol-key-minify.ts'
-import { dirname, relative, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { dirname, posix, relative, resolve } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { GeaIrBundleV1, GeaIrComponent, GeaIrModule, GeaIrStore } from './closure-codegen/ir.ts'
@@ -59,6 +61,7 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
   const irComponents = new Map<string, GeaIrComponent>()
   const irStores = new Map<string, GeaIrStore>()
   const hostCapabilities = new Set<string>()
+  const staticModuleShapes = new Map<string, StaticModuleShape>()
   // Maps absolute file path → { className, hasDefaultExport }
   const storeRegistry = new Map<string, { className: string; hasDefaultExport: boolean }>()
 
@@ -240,7 +243,10 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
       if (!cleanId.match(/\.(js|jsx|ts|tsx)$/) || cleanId.includes('node_modules')) return null
       let transformedCode = code
       let changed = false
-      if (irOptions?.enabled) recordHostCapabilities(code)
+      if (irOptions?.enabled) {
+        recordHostCapabilities(code)
+        staticModuleShapes.set(cleanId, collectStaticModuleShape(code))
+      }
 
       // Register stores (must happen before pipeline for cross-file tracking)
       if (code.includes('extends Store') || code.includes('new Store(')) {
@@ -340,7 +346,7 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
       const next = minifyGeaSymbolForKeys(code)
       return next === code ? null : { code: next, map: null }
     },
-    generateBundle(_options, bundle) {
+    async generateBundle(_options, bundle) {
       if (!irOptions?.enabled) return
       const renderedIds = renderedModuleIds(bundle)
       const modules = Array.from(irModules.values()).filter((module) => {
@@ -371,12 +377,25 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
           }
         }
       }
+      const liveComponents = Array.from(irComponents.values()).filter((component) => componentIds.has(component.id))
+      const logicalRoutes = await collectLogicalModuleRoutes({
+        entries: entryFacadeModuleIds(bundle),
+        root: resolvedConfig?.root,
+        moduleShapes: staticModuleShapes,
+        resolveModule: async (specifier, importer) => {
+          const resolved = await this.resolve(specifier, importer, { skipSelf: true })
+          return resolved && !resolved.external ? cleanRollupModuleId(resolved.id) : null
+        },
+      })
+      const components = liveComponents.map((component) =>
+        attachRootRendererAuthority(component, logicalRoutes, staticModuleShapes),
+      )
       const irBundle: GeaIrBundleV1 = {
         schema: 'gea-ir',
         version: 1,
         entry: geaIrEntryFromBundle(bundle) ?? geaIrConfiguredEntry(resolvedConfig),
         modules,
-        components: Array.from(irComponents.values()).filter((component) => componentIds.has(component.id)),
+        components,
         stores: Array.from(irStores.values()).filter((store) => storeIds.has(store.id)),
         hostCapabilities: Array.from(hostCapabilities).sort(),
       }
@@ -448,6 +467,162 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
   }
 }
 
+interface StaticModuleShape {
+  readonly specifiers: readonly string[]
+  readonly exportsByLocalName: ReadonlyMap<string, ReadonlySet<string>>
+}
+
+function collectStaticModuleShape(source: string): StaticModuleShape {
+  const specifiers = new Set<string>()
+  const exportsByLocalName = new Map<string, Set<string>>()
+  const addExport = (localName: string, exportName: string): void => {
+    const names = exportsByLocalName.get(localName) ?? new Set<string>()
+    names.add(exportName)
+    exportsByLocalName.set(localName, names)
+  }
+
+  try {
+    const ast = parse(source, {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods'],
+    })
+    for (const statement of ast.program.body) {
+      if (
+        (statement.type === 'ImportDeclaration' ||
+          statement.type === 'ExportNamedDeclaration' ||
+          statement.type === 'ExportAllDeclaration') &&
+        statement.source?.value
+      ) {
+        specifiers.add(statement.source.value)
+      }
+      if (statement.type === 'ExportNamedDeclaration') {
+        const declaration = statement.declaration
+        if (
+          (declaration?.type === 'ClassDeclaration' || declaration?.type === 'FunctionDeclaration') &&
+          declaration.id
+        ) {
+          addExport(declaration.id.name, declaration.id.name)
+        } else if (declaration?.type === 'VariableDeclaration') {
+          for (const declarator of declaration.declarations) {
+            if (declarator.id.type === 'Identifier') addExport(declarator.id.name, declarator.id.name)
+          }
+        }
+        if (!statement.source) {
+          for (const specifier of statement.specifiers) {
+            if (specifier.type !== 'ExportSpecifier') continue
+            const localName = specifier.local.type === 'Identifier' ? specifier.local.name : specifier.local.value
+            const exportName =
+              specifier.exported.type === 'Identifier' ? specifier.exported.name : specifier.exported.value
+            addExport(localName, exportName)
+          }
+        }
+      } else if (statement.type === 'ExportDefaultDeclaration') {
+        const declaration = statement.declaration
+        if ((declaration.type === 'ClassDeclaration' || declaration.type === 'FunctionDeclaration') && declaration.id) {
+          addExport(declaration.id.name, 'default')
+        } else if (declaration.type === 'Identifier') {
+          addExport(declaration.name, 'default')
+        }
+      }
+    }
+  } catch {
+    // The component transform owns syntax diagnostics. An unparseable module
+    // publishes no root-renderer authority, so the downstream protocol remains
+    // fail-closed instead of guessing an identity.
+  }
+
+  return {
+    specifiers: [...specifiers].sort(),
+    exportsByLocalName: new Map(
+      [...exportsByLocalName].map(([localName, exportNames]) => [localName, new Set([...exportNames].sort())]),
+    ),
+  }
+}
+
+/** Logical source coordinates are relative to the project, never to its checkout. */
+async function collectLogicalModuleRoutes(input: {
+  readonly entries: readonly string[]
+  readonly root?: string
+  readonly moduleShapes: ReadonlyMap<string, StaticModuleShape>
+  readonly resolveModule: (specifier: string, importer: string) => Promise<string | null>
+}): Promise<ReadonlyMap<string, ReadonlySet<string>>> {
+  let root = input.root ?? (input.entries[0] ? dirname(input.entries[0]) : '/')
+  if (!input.root) {
+    while (input.entries.some((entry) => relative(root, entry).startsWith('../'))) root = dirname(root)
+  }
+  const routes = new Map<string, Set<string>>()
+  const owners = new Map<string, string>()
+  const pending: string[] = []
+  const add = (moduleId: string, fallback: string | null): void => {
+    moduleId = cleanRollupModuleId(moduleId)
+    if (routes.has(moduleId)) return
+    const local = relative(root, moduleId).replace(/\\/g, '/')
+    // Resolved project identities make aliases converge without collapsing
+    // unrelated modules onto the same package-root or entry-root coordinate.
+    const route = !local.startsWith('../') && !moduleId.startsWith('\0') ? `/${local}` : fallback
+    if (!route) return
+    const owner = owners.get(route)
+    if (owner && owner !== moduleId) throw new Error(`Ambiguous Gea renderer module coordinate: ${route}`)
+    owners.set(route, moduleId)
+    routes.set(moduleId, new Set([route]))
+    pending.push(moduleId)
+  }
+  for (const entry of input.entries) add(entry, `/${relative(root, entry).replace(/\\/g, '/')}`)
+  // Visit each resolved module once: a cyclic import through an alias must not
+  // generate an unbounded family of longer and longer textual routes.
+  while (pending.length > 0) {
+    const moduleId = pending.shift()!
+    const route = [...routes.get(moduleId)!][0]!
+    for (const specifier of input.moduleShapes.get(moduleId)?.specifiers ?? []) {
+      const target = await input.resolveModule(specifier, moduleId)
+      if (!target) continue
+      const relativeImport = specifier.startsWith('./') || specifier.startsWith('../')
+      const fallback = relativeImport
+        ? posix.join(posix.dirname(route), specifier)
+        : specifier.startsWith('/')
+          ? null
+          : `/@modules/${specifier}`
+      add(target, fallback)
+    }
+  }
+  return routes
+}
+
+function attachRootRendererAuthority(
+  component: GeaIrComponent,
+  logicalRoutes: ReadonlyMap<string, ReadonlySet<string>>,
+  moduleShapes: ReadonlyMap<string, StaticModuleShape>,
+): GeaIrComponent {
+  const moduleId = cleanRollupModuleId(component.module)
+  const routes = logicalRoutes.get(moduleId)
+  const exportNames = moduleShapes.get(moduleId)?.exportsByLocalName.get(component.exportName)
+  if (!routes?.size || !exportNames?.size) return component
+
+  const candidates = [...routes].flatMap((moduleSpecifier) =>
+    [...exportNames].map((exportName) => ({ moduleSpecifier, exportName })),
+  )
+  candidates.sort((left, right) => {
+    const leftOwnName = left.exportName === component.exportName ? 0 : 1
+    const rightOwnName = right.exportName === component.exportName ? 0 : 1
+    return (
+      leftOwnName - rightOwnName ||
+      left.moduleSpecifier.length - right.moduleSpecifier.length ||
+      `${left.moduleSpecifier}#${left.exportName}`.localeCompare(`${right.moduleSpecifier}#${right.exportName}`)
+    )
+  })
+  const coordinate = candidates[0]!
+  const digest = createHash('sha256')
+    .update(`${coordinate.moduleSpecifier}\u0000${coordinate.exportName}`)
+    .digest('hex')
+  return {
+    ...component,
+    rootRendererAuthority: {
+      component: coordinate,
+      rendererResourceId: `gea-renderer:v1:${digest}`,
+    },
+  }
+}
+
 type GeaRollupBundle = Record<
   string,
   {
@@ -458,6 +633,13 @@ type GeaRollupBundle = Record<
     modules?: Record<string, unknown>
   }
 >
+
+function entryFacadeModuleIds(bundle: GeaRollupBundle): string[] {
+  return Object.values(bundle)
+    .filter((item) => item.type === 'chunk' && item.isEntry && item.facadeModuleId)
+    .map((item) => cleanRollupModuleId(item.facadeModuleId!))
+    .sort()
+}
 
 function renderedModuleIds(bundle: GeaRollupBundle): Set<string> | null {
   const ids = new Set<string>()
@@ -519,7 +701,58 @@ function compilerRuntimePathFromCoreEntry(entry: string): string | null {
   return null
 }
 
+// Re-derive `virtual:gea-compiler-runtime`'s re-export list from
+// compiler-runtime.ts's OWN per-submodule `export {...} from './runtime/x'`
+// lines, one output line per input line, with each relative specifier
+// rewritten to an absolute path so it resolves correctly regardless of the
+// virtual module's own (nonexistent) location.
+//
+// This exists to match the granularity of the module-graph plugin's
+// dead-re-export pruning (`gea-vite-module-graph-plugin.mjs`'s
+// `pruneDeadReExports`), which drops one `export ... from '<target>'`
+// statement at a time based on whether `<target>` survived Rollup's
+// tree-shaking. The real barrel (compiler-runtime.ts) already re-exports each
+// name (group) from its own submodule file, so pruning there is correctly
+// per-submodule: an app that never touches `conditionalTruthy` gets that one
+// line dropped, while every other line survives untouched.
+//
+// The STATIC fallback below re-exported every name in ONE statement pointing
+// at the barrel file itself (`export { conditionalTruthy, ... } from
+// '<compiler-runtime.ts path>'`). That collapsed the whole list onto a single
+// target: as long as the app used ANY compiler-runtime export, the barrel
+// itself stayed live, so the prune pass could never selectively drop just
+// `conditionalTruthy` -- the entire block was atomic. geatsc would then chase
+// an alias for a name the real barrel had already pruned from its own
+// snapshot, and get back `ts.unknownSymbol`: the `binding-blocker:
+// unresolved-binding-cell` census row this fixes. Reading and rewriting the
+// real file's lines keeps this virtual module byte-for-byte in sync with
+// compiler-runtime.ts's structure automatically, instead of via a
+// hand-maintained duplicate list that could also just drift on its own.
+function compilerRuntimeExportLines(runtimePath: string): string[] | null {
+  if (!runtimePath.endsWith('.ts')) return null // built .mjs bundles inline everything into one physical file already -- no sub-module granularity exists to preserve.
+  let source: string
+  try {
+    source = readFileSync(runtimePath, 'utf8')
+  } catch {
+    return null
+  }
+  const dir = dirname(runtimePath)
+  const lines: string[] = []
+  const EXPORT_FROM_RE = /export\s*\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/g
+  let match: RegExpExecArray | null
+  while ((match = EXPORT_FROM_RE.exec(source))) {
+    const names = match[1]
+    const relativeSpecifier = match[2]
+    const absoluteSpecifier = normalizeImportPath(resolve(dir, relativeSpecifier))
+    lines.push(`export {${names}} from ${JSON.stringify(absoluteSpecifier)}`)
+  }
+  return lines.length > 0 ? lines : null
+}
+
 function compilerRuntimeSource(runtimePath: string): string {
+  const perSubmoduleLines = compilerRuntimeExportLines(runtimePath)
+  if (perSubmoduleLines) return `${perSubmoduleLines.join('\n')}\n`
+
   const path = normalizeImportPath(runtimePath)
   return `export {
   NOOP_DISPOSER,
@@ -562,6 +795,7 @@ function compilerRuntimeSource(runtimePath: string): string {
   GEA_DIRTY_PROPS,
   createItemObservable,
   createItemProxy,
+  readItem,
   _rescue,
   GEA_CREATE_TEMPLATE,
   GEA_PARENT_COMPONENT,

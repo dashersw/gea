@@ -2,57 +2,18 @@ import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { JSDOM } from 'jsdom'
-import { geaPlugin } from '@geajs/vite-plugin'
+import { installDom, flushMicrotasks } from '../helpers/jsdom-setup'
+import {
+  buildEvalPrelude,
+  mergeEvalBindings,
+  loadRuntimeModules,
+} from '../../packages/vite-plugin-gea/tests/helpers/compile'
+import { geaPlugin } from '../../packages/vite-plugin-gea/src/index'
 
 const EXAMPLE_DIR = resolve(import.meta.dirname, '../../examples/tic-tac-toe/src')
 
 function readSource(name: string) {
   return readFileSync(resolve(EXAMPLE_DIR, name), 'utf-8')
-}
-
-function installDom() {
-  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' })
-  const raf = (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0) as unknown as number
-  const caf = (id: number) => clearTimeout(id)
-  dom.window.requestAnimationFrame = raf
-  dom.window.cancelAnimationFrame = caf
-
-  const prev = {
-    window: globalThis.window,
-    document: globalThis.document,
-    HTMLElement: globalThis.HTMLElement,
-    Node: globalThis.Node,
-    NodeFilter: globalThis.NodeFilter,
-    MutationObserver: globalThis.MutationObserver,
-    Event: globalThis.Event,
-    CustomEvent: globalThis.CustomEvent,
-    requestAnimationFrame: globalThis.requestAnimationFrame,
-    cancelAnimationFrame: globalThis.cancelAnimationFrame,
-  }
-
-  Object.assign(globalThis, {
-    window: dom.window,
-    document: dom.window.document,
-    HTMLElement: dom.window.HTMLElement,
-    Node: dom.window.Node,
-    NodeFilter: dom.window.NodeFilter,
-    MutationObserver: dom.window.MutationObserver,
-    Event: dom.window.Event,
-    CustomEvent: dom.window.CustomEvent,
-    requestAnimationFrame: raf,
-    cancelAnimationFrame: caf,
-  })
-
-  return () => {
-    Object.assign(globalThis, prev)
-    dom.window.close()
-  }
-}
-
-async function flushMicrotasks() {
-  await new Promise((r) => setTimeout(r, 0))
-  await new Promise((r) => setTimeout(r, 0))
 }
 
 async function compileSource(source: string, id: string, exportName: string, bindings: Record<string, unknown>) {
@@ -71,7 +32,8 @@ async function compileSource(source: string, id: string, exportName: string, bin
   const stripped = await esbuild.transform(code, { loader: 'ts', target: 'esnext' })
   code = stripped.code
 
-  const compiledSource = `${code
+  bindings = mergeEvalBindings(bindings)
+  const compiledSource = `${buildEvalPrelude()}${code
     .replace(/^import .*;$/gm, '')
     .replace(/^import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
     .replaceAll('import.meta.hot', 'undefined')
@@ -83,15 +45,6 @@ async function compileSource(source: string, id: string, exportName: string, bin
 return ${exportName};`
 
   return new Function(...Object.keys(bindings), compiledSource)(...Object.values(bindings))
-}
-
-async function loadRuntimeModules(seed: string) {
-  const { default: ComponentManager } = await import(`../../packages/gea/src/lib/base/component-manager`)
-  ComponentManager.instance = undefined
-  return Promise.all([
-    import(`../../packages/gea/src/lib/base/component.tsx?${seed}`),
-    import(`../../packages/gea/src/lib/store.ts?${seed}`),
-  ])
 }
 
 function mountApp(App: any) {

@@ -50,6 +50,12 @@ export function createItemObservable<T>(initial: T): ItemObservable<T> {
   return new ItemObs(initial)
 }
 
+/** Read a row's current value, including primitives, while recording its dependency. */
+export function readItem<T>(obs: ItemObservable<T>): T {
+  trackRead(obs as object, 'current')
+  return obs.current
+}
+
 /**
  * A live-reading proxy standing in for `obs.current` — property reads
  * forward to whatever the CURRENT item is (not the item at proxy-creation

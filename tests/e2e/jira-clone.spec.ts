@@ -16,6 +16,14 @@ test.describe('jira-clone board and surgical DOM updates', () => {
   test.describe.configure({ mode: 'serial' })
 
   test.beforeEach(async ({ page }) => {
+    // Exercise real image decoding/load events without depending on the public
+    // seed-image host, which stalls after repeated full-suite navigations.
+    await page.route('https://i.ibb.co/**', (route) =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="blue"/></svg>',
+      }),
+    )
     // Reset mock API state so each test starts from seed data
     await page.request.post('/api/__reset')
     await page.goto('/')

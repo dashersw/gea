@@ -28,6 +28,19 @@ export interface GeaIrComponent {
   runtimeBase: GeaIrRuntimeBase
   template: GeaIrTemplate
   sourceSpan?: GeaIrSourceSpan
+  /**
+   * Checker-facing logical identity plus an opaque renderer resource. The
+   * coordinate is derived from the static module/export graph; neither field
+   * contains an absolute checkout path, source position, generated symbol, or backend
+   * fragment.
+   */
+  rootRendererAuthority?: {
+    component: {
+      moduleSpecifier: string
+      exportName: string
+    }
+    rendererResourceId: string
+  }
   // EXPERIMENTAL (ReactiveComponent): present when the component extends
   // `ReactiveComponent` and holds its own reactive state — the embedded backend
   // compiles it as a lean component-as-store. Absent for plain `Component`.
@@ -41,13 +54,7 @@ export interface GeaIrComponentReactiveState {
   constants?: GeaIrConstant[]
 }
 
-export type GeaIrRuntimeBase =
-  | 'static'
-  | 'static-element'
-  | 'compiled'
-  | 'tiny-reactive'
-  | 'lean-reactive'
-  | 'reactive'
+export type GeaIrRuntimeBase = 'static' | 'static-element' | 'compiled' | 'tiny-reactive' | 'lean-reactive' | 'reactive'
 
 export interface GeaIrTemplate {
   html: string
@@ -425,7 +432,8 @@ function isArrayProducingExpression(expr: unknown): boolean {
   if (!expr || typeof expr !== 'object') return false
   const node = expr as Record<string, unknown>
   if (node.type === 'ArrayExpression') return true
-  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') return isArrayProducingExpression(node.expression)
+  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression')
+    return isArrayProducingExpression(node.expression)
   if (node.type === 'CallExpression') {
     const callee = node.callee as Record<string, unknown> | undefined
     const property = callee?.property as Record<string, unknown> | undefined
@@ -485,7 +493,8 @@ export function storeMethodsToIr(classDecl: ClassDeclaration, moduleAst?: File):
           : null
       if (identifier) {
         const valueType =
-          paramValueType(identifier, literalUnionAliases) ?? (assignment ? paramDefaultValueType(assignment.right) : undefined)
+          paramValueType(identifier, literalUnionAliases) ??
+          (assignment ? paramDefaultValueType(assignment.right) : undefined)
         params.push(valueType ? { name: identifier.name, valueType } : { name: identifier.name })
       } else {
         unsupportedParam = true
@@ -589,7 +598,12 @@ function storeStmtToIr(statement: unknown): GeaIrStoreStmt[] | null {
       if (!t.isIdentifier(declaration.id)) return null
       const init = declaration.init ? storeExprToIr(declaration.init) : undefined
       if (declaration.init && !init) return null
-      declarations.push({ kind: 'var', name: declaration.id.name, mutable: statement.kind !== 'const', ...(init ? { init } : {}) })
+      declarations.push({
+        kind: 'var',
+        name: declaration.id.name,
+        mutable: statement.kind !== 'const',
+        ...(init ? { init } : {}),
+      })
     }
     return declarations
   }
@@ -611,12 +625,28 @@ function storeStmtToIr(statement: unknown): GeaIrStoreStmt[] | null {
     return [{ kind: 'if', test, consequent, ...(alternate ? { alternate } : {}) }]
   }
   if (t.isForStatement(statement)) {
-    const init = statement.init ? storeStmtToIr(t.isVariableDeclaration(statement.init) ? statement.init : t.expressionStatement(statement.init)) : undefined
+    const init = statement.init
+      ? storeStmtToIr(t.isVariableDeclaration(statement.init) ? statement.init : t.expressionStatement(statement.init))
+      : undefined
     const test = statement.test ? storeExprToIr(statement.test) : undefined
     const update = statement.update ? storeExprToIr(statement.update) : undefined
     const body = storeStatementList(statement.body)
-    if ((statement.init && (!init || init.length !== 1)) || (statement.test && !test) || (statement.update && !update) || !body) return null
-    return [{ kind: 'for', ...(init ? { init: init[0] } : {}), ...(test ? { test } : {}), ...(update ? { update } : {}), body }]
+    if (
+      (statement.init && (!init || init.length !== 1)) ||
+      (statement.test && !test) ||
+      (statement.update && !update) ||
+      !body
+    )
+      return null
+    return [
+      {
+        kind: 'for',
+        ...(init ? { init: init[0] } : {}),
+        ...(test ? { test } : {}),
+        ...(update ? { update } : {}),
+        body,
+      },
+    ]
   }
   if (t.isReturnStatement(statement)) {
     const value = statement.argument ? storeExprToIr(statement.argument) : undefined

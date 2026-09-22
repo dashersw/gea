@@ -12,7 +12,7 @@ describe('geaPlugin IR generation and Rollup tree-shaking', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 
-  it('omits component and store IR for modules removed from the final bundle', () => {
+  it('omits component and store IR for modules removed from the final bundle', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'gea-ir-tree-shaking-'))
     dirs.push(dir)
 
@@ -53,8 +53,8 @@ export class UnusedPanel extends Component {
     plugin.transform.call(transformContext, readFileSync(unusedPanel, 'utf8'), unusedPanel)
     plugin.transform.call(transformContext, readFileSync(usedPanel, 'utf8'), usedPanel)
 
-    plugin.generateBundle.call(
-      {},
+    await plugin.generateBundle.call(
+      { resolve: async () => null },
       {},
       {
         'index.js': {
@@ -70,10 +70,7 @@ export class UnusedPanel extends Component {
     )
 
     const ir = JSON.parse(readFileSync(irPath, 'utf8'))
-    assert.deepEqual(
-      ir.modules.map((module: { file: string }) => path.basename(module.file)).sort(),
-      ['UsedPanel.tsx'],
-    )
+    assert.deepEqual(ir.modules.map((module: { file: string }) => path.basename(module.file)).sort(), ['UsedPanel.tsx'])
     assert.deepEqual(
       ir.components.map((component: { exportName: string }) => component.exportName),
       ['UsedPanel'],

@@ -5,7 +5,7 @@
  */
 import { existsSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -23,29 +23,9 @@ if (!existsSync(coreEntry) || !existsSync(compilerRuntimeEntry)) {
 
 const entry = `
 export * from ${JSON.stringify(coreEntry)}
-export {
-  NOOP_DISPOSER,
-  reactiveText,
-  reactiveAttr,
-  reactiveHtml,
-  reactiveBool,
-  reactiveClass,
-  relationalClass,
-  reactiveStyle,
-  reactiveValue,
-  delegateEvent,
-  mount,
-  conditional,
-  keyedList,
-  GEA_DOM_ITEM,
-  GEA_DOM_KEY,
-  createItemObservable,
-  createItemProxy,
-  _rescue,
-  GEA_CREATE_TEMPLATE,
-  GEA_SET_PROPS,
-  GEA_PROXY_RAW,
-} from ${JSON.stringify(compilerRuntimeEntry)}
+// Explicit exports take precedence over overlapping core star exports. Derive
+// this list from the built runtime so new compiler helpers cannot go missing.
+export { ${Object.keys(await import(pathToFileURL(compilerRuntimeEntry).href)).join(', ')} } from ${JSON.stringify(compilerRuntimeEntry)}
 `
 
 await build({

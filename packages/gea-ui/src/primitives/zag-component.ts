@@ -23,6 +23,7 @@ export interface SpreadMap {
 export default class ZagComponent<P = Record<string, unknown>> extends Component<P> {
   declare _machine: VanillaMachine<any> | null
   declare _api: any
+  _machineStarted = false
   // Initialize fields eagerly — under the closure-compiled runtime, `created()`
   // may be called AFTER `[GEA_CREATE_TEMPLATE]`, which references these caches.
   _spreadCleanups: Map<string, SpreadCleanup> = new Map()
@@ -69,7 +70,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
       return origGetById(id) || zagIdMap.get(id) || null
     }) as typeof origGetById
 
-    this._machine.start()
+    this._machineStarted = false
 
     this._api = this.connectApi(this._machine.service)
     this.syncState(this._api)
@@ -215,6 +216,15 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
       }
     }
     this._applyAllSpreads()
+    // Entry actions and effects query Zag part IDs. Start only after the DOM
+    // and ID mappings exist, including images that loaded before mount.
+    if (this._machine && !this._machineStarted) {
+      this._machineStarted = true
+      this._machine.start()
+      this._api = this.connectApi(this._machine.service)
+      this.syncState(this._api)
+      this._applyAllSpreads()
+    }
   }
 
   _cacheArrayContainers() {
@@ -248,6 +258,7 @@ export default class ZagComponent<P = Record<string, unknown>> extends Component
       this._machine = null
     }
     this._api = null
+    this._machineStarted = false
     this._zagIdMap?.clear()
     this._elementCache?.clear()
   }

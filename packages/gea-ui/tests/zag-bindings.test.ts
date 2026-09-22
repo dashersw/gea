@@ -547,3 +547,44 @@ test('Dialog: spread queries preserve nested child Zag subtrees with overlapping
     restoreDom()
   }
 })
+
+test('Avatar: an image loaded before mount is visible and reports its status once', async () => {
+  const restoreDom = installDom()
+  let view: any
+  try {
+    const { ZagComponent } = await loadHarness()
+    const avatar = await import('@zag-js/avatar')
+    const Avatar = await loadRealComponent('avatar.tsx', 'Avatar', ZagComponent, { avatar })
+    // A cached image may complete before Zag attaches its load listener.
+    const prototype = window.HTMLImageElement.prototype
+    Object.defineProperties(prototype, {
+      complete: { configurable: true, get: () => true },
+      naturalWidth: { configurable: true, get: () => 200 },
+      naturalHeight: { configurable: true, get: () => 200 },
+    })
+    const statuses: string[] = []
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    view = new Avatar()
+    view[GEA_SET_PROPS]({
+      src: () => '/cached-avatar.png',
+      name: () => 'Test User',
+      onStatusChange:
+        () =>
+        ({ status }: any) =>
+          statuses.push(status),
+    })
+    view.render(root)
+    await flushMicrotasks()
+    const image = root.querySelector('img')!
+    assert.equal(image.getAttribute('data-state'), 'visible')
+    assert.equal(image.hidden, false)
+    assert.deepEqual(statuses, ['loaded'])
+    view._applyAllSpreads()
+    await flushMicrotasks()
+    assert.deepEqual(statuses, ['loaded'])
+  } finally {
+    view?.dispose()
+    restoreDom()
+  }
+})

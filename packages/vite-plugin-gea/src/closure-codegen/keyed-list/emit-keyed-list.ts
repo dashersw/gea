@@ -1,6 +1,7 @@
 import type { Expression, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
+import { useObservableItem } from './keyed-list-item-reader.ts'
 
 import type { EmitContext } from '../emit/emit-context.ts'
 import { expressionToPathOrGetter } from '../emit/emit-reactive-source.ts'
@@ -55,7 +56,7 @@ export function emitKeyedListSlot(slot: Slot, stmts: Statement[], ctx: EmitConte
 
   if (needsItemProxy) {
     ctx.importsNeeded.add('createItemObservable')
-    ctx.importsNeeded.add('createItemProxy')
+    useObservableItem(createItem, ctx.importsNeeded)
   }
 
   const ciName = '__ki_' + listId

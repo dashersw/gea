@@ -2,7 +2,7 @@ import type { JSX as ReactJSX } from 'react'
 import { h } from './h'
 import type { Component } from './runtime/component'
 
-type GeaComponentConstructor<P = any> = new (...args: any[]) => Component<P>
+type GeaComponentConstructor<P extends Record<string, any> = any> = new (...args: any[]) => Component<P>
 type GeaFunctionComponent<P = any> = (props: P) => any
 
 type BivariantHandler<E extends Event> = {

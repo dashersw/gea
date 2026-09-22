@@ -1,6 +1,7 @@
 import type { Expression, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
+import { useObservableItem } from '../keyed-list/keyed-list-item-reader.ts'
 
 import type { EmitContext } from './emit-context.ts'
 import { compileJsxToBlock } from './emit-core.ts'
@@ -42,7 +43,7 @@ export function buildMapBranchFn(mapExpr: any, ctx: EmitContext): Expression {
     createItemBlock,
   )
   ctx.importsNeeded.add('createItemObservable')
-  ctx.importsNeeded.add('createItemProxy')
+  useObservableItem(createItemFn, ctx.importsNeeded)
   ctx.importsNeeded.add('_rescue')
   ctx.importsNeeded.add('GEA_PROXY_RAW')
   const listId = 'L' + ctx.listCounter++
@@ -98,20 +99,7 @@ export function buildMapBranchFn(mapExpr: any, ctx: EmitContext): Expression {
         t.callExpression(t.identifier('createItemObservable'), [t.identifier(itemParam)]),
       ),
     ]),
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        t.identifier('__li'),
-        t.conditionalExpression(
-          t.logicalExpression(
-            '&&',
-            t.binaryExpression('!==', t.identifier(itemParam), t.nullLiteral()),
-            t.binaryExpression('===', t.unaryExpression('typeof', t.identifier(itemParam)), t.stringLiteral('object')),
-          ),
-          t.callExpression(t.identifier('createItemProxy'), [t.identifier('__obs')]),
-          t.identifier(itemParam),
-        ),
-      ),
-    ]),
+    t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__li'), t.identifier('__obs'))]),
     t.variableDeclaration('const', [
       t.variableDeclarator(
         t.identifier('__el'),

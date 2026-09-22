@@ -44,6 +44,8 @@ export interface Change {
   count?: number
   /** In-place array-item property update — arix = item index in the parent array. */
   aipu?: boolean
+  /** The item carries dirty-property metadata for the keyed-list fast path. */
+  itemDirty?: boolean
   arix?: number
   /** Value after change. */
   newValue?: any

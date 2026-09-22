@@ -42,7 +42,7 @@ import { keyedList, GEA_DOM_ITEM, GEA_DOM_KEY } from '../../../gea/src/runtime/k
 import { keyedListSimple } from '../../../gea/src/runtime/keyed-list-simple'
 import { keyedListProp } from '../../../gea/src/runtime/keyed-list-prop'
 import { _rescue } from '../../../gea/src/runtime/keyed-list/rescue'
-import { createItemObservable, createItemProxy } from '../../../gea/src/runtime/keyed-list/item-obs'
+import { createItemObservable, createItemProxy, readItem } from '../../../gea/src/runtime/keyed-list/item-obs'
 import { GEA_DIRTY, GEA_DIRTY_PROPS } from '../../../gea/src/runtime/dirty-symbols'
 import type { GeaHmrBindings } from './gea-hmr-runtime'
 
@@ -103,6 +103,7 @@ export const geaRuntimeForEval: Record<string, unknown> = {
   _rescue,
   createItemObservable,
   createItemProxy,
+  readItem,
 }
 
 export function buildEvalPrelude(): string {

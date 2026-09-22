@@ -8155,11 +8155,12 @@ class InlineCoordsScan {
         // Handle the case where closest matched a higher element on the
         // same line as an element below/above the coords
         if (closestDx) {
-            if (above && above.bottom > closestRect.top) {
+            let { top, bottom } = closestRect;
+            if (above && above.bottom > (top + top + bottom) / 3) {
                 this.y = above.bottom - 1;
                 return this.scan(positions, getRects);
             }
-            if (below && below.top < closestRect.bottom) {
+            if (below && below.top < (top + bottom + bottom) / 3) {
                 this.y = below.top + 1;
                 return this.scan(positions, getRects);
             }
@@ -9530,8 +9531,8 @@ handlers.beforeinput = (view, event) => {
 const appliedFirefoxHack = /*@__PURE__*/new Set;
 // In Firefox, when cut/copy handlers are added to the document, that
 // somehow avoids a bug where those events aren't fired when the
-// selection is empty. See https://github.com/codemirror/dev/issues/1082
-// and https://bugzilla.mozilla.org/show_bug.cgi?id=995961
+// selection is empty. See issue #1082 and
+// https://bugzilla.mozilla.org/show_bug.cgi?id=995961
 function firefoxCopyCutHack(doc) {
     if (!appliedFirefoxHack.has(doc)) {
         appliedFirefoxHack.add(doc);
@@ -11017,7 +11018,7 @@ const baseTheme$1$1 = /*@__PURE__*/buildTheme("." + baseThemeID, {
         flexShrink: 0,
         display: "block",
         whiteSpace: "pre",
-        wordWrap: "normal", // https://github.com/codemirror/dev/issues/456
+        wordWrap: "normal", // Issue #456
         boxSizing: "border-box",
         minHeight: "100%",
         padding: "4px 0",
@@ -11436,7 +11437,7 @@ class DOMObserver {
     readSelectionRange() {
         let { view } = this;
         // The Selection object is broken in shadow roots in Safari. See
-        // https://github.com/codemirror/dev/issues/414
+        // issue #414
         let selection = getSelection(view.root);
         if (!selection)
             return false;
@@ -12905,7 +12906,7 @@ class EditorView {
     }
     /**
     Create a theme extension. The first argument can be a
-    [`style-mod`](https://github.com/marijnh/style-mod#documentation)
+    [`style-mod`](https://code.haverbeke.berlin/marijn/style-mod#documentation)
     style spec providing the styles for the theme. These will be
     prefixed with a generated class for the style.
     
@@ -12951,7 +12952,7 @@ class EditorView {
 }
 /**
 Facet to add a [style
-module](https://github.com/marijnh/style-mod#documentation) to
+module](https://code.haverbeke.berlin/marijn/style-mod#documentation) to
 an editor view. The view will ensure that the module is
 mounted in its [document
 root](https://codemirror.net/6/docs/ref/#view.EditorView.constructor^config.root).
@@ -19877,6 +19878,8 @@ class Stack {
         if (dPrec)
             this.score += dPrec;
         if (depth == 0) {
+            if (type < parser.minRepeatTerm && this.reducePos < this.pos)
+                this.reducePos = this.pos;
             this.pushState(parser.getGoto(this.state, type, true), this.reducePos);
             // Zero-depth reductions are a special case—they add stuff to
             // the stack without popping anything off.
@@ -19891,7 +19894,10 @@ class Stack {
         // expression and the state that we'll be staying in, which should
         // be moved to `this.state`).
         let base = this.stack.length - ((depth - 1) * 3) - (action & 262144 /* Action.StayFlag */ ? 6 : 0);
-        let start = base ? this.stack[base - 2] : this.p.ranges[0].from, size = this.reducePos - start;
+        let start = base ? this.stack[base - 2] : this.p.ranges[0].from;
+        if (type < parser.minRepeatTerm && start == this.reducePos && this.reducePos < this.pos)
+            this.reducePos = this.pos;
+        let size = this.reducePos - start;
         // This is a kludge to try and detect overly deep left-associative
         // trees, which will not increase the parse stack depth and thus
         // won't be caught by the regular stack-depth limit check.
@@ -19931,16 +19937,12 @@ class Stack {
         if (term == 0 /* Term.Err */ &&
             (!this.stack.length || this.stack[this.stack.length - 1] < this.buffer.length + this.bufferBase)) {
             // Try to omit/merge adjacent error nodes
-            let cur = this, top = this.buffer.length;
-            if (top == 0 && cur.parent) {
-                top = cur.bufferBase - cur.parent.bufferBase;
-                cur = cur.parent;
-            }
-            if (top > 0 && cur.buffer[top - 4] == 0 /* Term.Err */ && cur.buffer[top - 1] > -1) {
+            let top = this.buffer.length;
+            if (top > 0 && this.buffer[top - 4] == 0 /* Term.Err */ && this.buffer[top - 1] > -1) {
                 if (start == end)
                     return;
-                if (cur.buffer[top - 2] >= start) {
-                    cur.buffer[top - 2] = end;
+                if (this.buffer[top - 2] >= start) {
+                    this.buffer[top - 2] = end;
                     return;
                 }
             }
@@ -20039,6 +20041,10 @@ class Stack {
     split() {
         let parent = this;
         let off = parent.buffer.length;
+        // Leave off top error node, if there, because that might be
+        // merged with other nodes.
+        if (off && parent.buffer[off - 4] == 0 /* Term.Err */)
+            off -= 4;
         // Because the top of the buffer (after this.pos) may be mutated
         // to reorder reductions and skipped tokens, and shared buffers
         // should be immutable, this copies any outstanding skipped tokens

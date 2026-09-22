@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { CompiledLeanStore } from '../src/runtime/compiled-lean-store'
+import { _plain, CompiledLeanStore } from '../src/runtime/compiled-lean-store'
 import { CompiledStore } from '../src/runtime/compiled-store'
 
 async function flush() {
@@ -8,6 +8,21 @@ async function flush() {
 }
 
 describe('CompiledLeanStore runtime semantics', () => {
+  it('exports the tracked-proxy plain-value v1 browser fallback', () => {
+    class Nominal {}
+    const raw = { value: 1 }
+    const proxy = new Proxy(raw, {})
+    const nullPrototype = Object.create(null) as Record<string, unknown>
+
+    assert.equal(_plain(raw), true)
+    assert.equal(_plain(proxy), true)
+    assert.equal(_plain(nullPrototype), true)
+    assert.equal(_plain([]), true)
+    assert.equal(_plain(new Nominal()), false)
+    assert.equal(_plain(null), false)
+    assert.equal(_plain('value'), false)
+  })
+
   it('keeps nested array proxies scoped by root prop when a getter aliases an array', async () => {
     class TodoStore extends CompiledLeanStore {
       todos = [{ id: 'a', done: false }]
