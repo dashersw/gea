@@ -124,8 +124,10 @@ describe('injectHMR', () => {
 
       injectHMR(ast, ['App'], 'App', ['./my-store'], new Set())
       const code = codegen(ast)
-      assert.ok(code.includes('./my-store'), 'should accept store dependency')
-      assert.ok(code.includes('invalidate'), 'store imports should trigger invalidation')
+      assert.ok(
+        code.includes("import.meta.hot.accept('./my-store', () => import.meta.hot.invalidate())"),
+        'store imports get an invalidating accept',
+      )
     })
 
     it('rewrites component dep imports with createHotComponentProxy', () => {
@@ -154,7 +156,10 @@ describe('injectHMR', () => {
       injectHMR(ast, ['App'], 'App', ['./child-comp.ts'], new Set(['ChildComp']), 'virtual:gea-hmr', () => false)
       const code = codegen(ast)
       assert.ok(!code.includes('createHotComponentProxy'), 'explicit classifier can disable proxy')
-      assert.ok(code.includes('invalidate'), 'falls back to invalidate-only accept')
+      assert.ok(
+        code.includes("import.meta.hot.accept('./child-comp.ts', () => import.meta.hot.invalidate())"),
+        'falls back to invalidate-only accept',
+      )
     })
   })
 
@@ -234,10 +239,7 @@ describe('injectHMR', () => {
       )
       const code = codegen(ast)
 
-      assert.ok(
-        !code.includes("'../router'") || !code.includes('invalidate'),
-        'should NOT generate hot.accept for ../router with invalidate',
-      )
+      assert.ok(!code.includes("accept('../router'"), 'should NOT generate hot.accept for ../router')
       assert.ok(code.includes('handleComponentUpdate'), 'self-accept should still work')
     })
 
@@ -263,8 +265,8 @@ describe('injectHMR', () => {
       )
       const code = codegen(ast)
 
-      assert.ok(code.includes('./utils'), 'should still accept non-store deps')
-      assert.ok(code.includes('invalidate'), 'non-store deps should invalidate')
+      assert.ok(code.includes("accept('./utils'"), 'should still accept non-store deps')
+      assert.ok(!code.includes("accept('../router'"), 'the skipped dep stays skipped')
     })
 
     it('without shouldSkipDepAccept, all relative deps get hot.accept', () => {
@@ -279,8 +281,77 @@ describe('injectHMR', () => {
       injectHMR(ast, ['Home'], 'Home', ['../router'], new Set(), 'virtual:gea-hmr', () => false)
       const code = codegen(ast)
 
-      assert.ok(code.includes('../router'), 'should accept ../router when no skip predicate')
-      assert.ok(code.includes('invalidate'), 'should invalidate')
+      assert.ok(
+        code.includes("import.meta.hot.accept('../router', () => import.meta.hot.invalidate())"),
+        'should accept ../router when no skip predicate',
+      )
+    })
+  })
+
+  describe('self-accept falls back to invalidate', () => {
+    const acceptBody = (code: string) => {
+      const start = code.indexOf('import.meta.hot.accept(newModule =>')
+      assert.notEqual(start, -1, 'self-accept callback should exist')
+      const next = code.indexOf('import.meta.hot.accept(', start + 1)
+      return next === -1 ? code.slice(start) : code.slice(start, next)
+    }
+
+    it('invalidates when no component instance could be patched', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        export default class App extends Component {
+          template() { return '<div></div>' }
+        }
+      `)
+
+      injectHMR(ast, ['App'], 'App', [], new Set())
+      const body = acceptBody(codegen(ast))
+
+      assert.ok(body.includes('let __patched = false'), 'should track whether anything was patched')
+      assert.match(
+        body,
+        /__patched = handleComponentUpdate\([\s\S]*?\) \|\| __patched/,
+        'should keep the handleComponentUpdate result',
+      )
+      assert.match(body, /if \(!__patched\)\s*import\.meta\.hot\.invalidate\(\)/, 'should invalidate on no-op')
+    })
+
+    it('ORs the result of every class in a multi-component file', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        export default class Home extends Component {
+          template() { return '<div>Home</div>' }
+        }
+        export class About extends Component {
+          template() { return '<div>About</div>' }
+        }
+        export class NotFound extends Component {
+          template() { return '<div>404</div>' }
+        }
+      `)
+
+      injectHMR(ast, ['Home', 'About', 'NotFound'], 'Home', [], new Set())
+      const body = acceptBody(codegen(ast))
+
+      assert.equal(body.match(/\|\| __patched/g)?.length, 3, 'every class contributes to __patched')
+      assert.equal(body.match(/if \(!__patched\)/g)?.length, 1, 'a single guard covers the whole module')
+      assert.ok(body.indexOf('|| __patched') < body.indexOf('if (!__patched)'), 'guard runs after every update')
+    })
+
+    it('keeps the invalidate guard out of the dependency accepts', () => {
+      const ast = parseModule(`
+        import { Component } from '@geajs/core'
+        import { myStore } from './my-store'
+        export default class App extends Component {
+          template() { return '<div></div>' }
+        }
+      `)
+
+      injectHMR(ast, ['App'], 'App', ['./my-store'], new Set())
+      const code = codegen(ast)
+
+      assert.equal(code.match(/__patched/g)?.length, 4, 'declaration, assignment x2, guard')
+      assert.ok(code.includes("import.meta.hot.accept('./my-store'"), 'dep accept is untouched')
     })
   })
 
