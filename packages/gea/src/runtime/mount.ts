@@ -96,7 +96,9 @@ function isClassLike<P>(fn: ComponentCtor<P> | null | undefined): fn is Componen
  */
 function looksLikeComponentInstance<P>(x: object): x is ComponentInstance<P> {
   const probe = x as Record<string, unknown>
-  return typeof probe.render === 'function' && ('el' in probe || 'rendered' in probe || typeof probe.dispose === 'function')
+  return (
+    typeof probe.render === 'function' && ('el' in probe || 'rendered' in probe || typeof probe.dispose === 'function')
+  )
 }
 
 /**

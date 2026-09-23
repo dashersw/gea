@@ -163,7 +163,13 @@ export function keyedListSimple<T>(cfg: SimpleKeyedListConfig<T>): void {
       let structural = false
       for (let i = 0; i < changes.length; i++) {
         const change = changes[i]
-        if (change.type === 'append' || change.type === 'remove' || change.type === 'delete' || change.type === 'reorder' || change.aipu) {
+        if (
+          change.type === 'append' ||
+          change.type === 'remove' ||
+          change.type === 'delete' ||
+          change.type === 'reorder' ||
+          change.aipu
+        ) {
           structural = true
           break
         }

@@ -168,4 +168,3 @@ function bodyReturnsJSX(block: t.BlockStatement): boolean {
   const ret = block.body.find((s): s is t.ReturnStatement => t.isReturnStatement(s) && s.argument != null)
   return !!ret && nodeReturnsJSX(ret.argument!)
 }
-

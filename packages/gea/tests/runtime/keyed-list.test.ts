@@ -353,7 +353,13 @@ describe('keyedList', () => {
           const rescued = _rescue(pending, String(key), issue)
           if (rescued) return rescued
           const d = disposer.child()
-          return { key, item: (issue as any)[GEA_PROXY_RAW] || issue, element: createLi(issue), disposer: d, obs: null as any }
+          return {
+            key,
+            item: (issue as any)[GEA_PROXY_RAW] || issue,
+            element: createLi(issue),
+            disposer: d,
+            obs: null as any,
+          }
         },
         patchEntry: (entry: Entry, issue: Item) => {
           entry.item = (issue as any)[GEA_PROXY_RAW] || issue

@@ -21,7 +21,12 @@ const targetFromEnv = process.env.E2E_PROJECT || ''
 // E2E_PROJECT accepts a single example name OR a comma-separated batch
 // (e.g. "todo,kanban,chat,docs,forms") so the suite can run in small batches —
 // each batch starts ONLY its own dev servers instead of all ~22 at once.
-const targetList = targetFromEnv ? targetFromEnv.split(',').map((s) => s.trim()).filter(Boolean) : []
+const targetList = targetFromEnv
+  ? targetFromEnv
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  : []
 
 // `examples` (the project + webServer list) is imported from ./examples.mjs so
 // the batch runner (run-e2e.mjs) and this config share one canonical list.
@@ -60,8 +65,7 @@ function readPortFile(): PortFilePayload | null {
 function resolveActiveExamples(): ExampleDef[] {
   if (targetList.length) {
     const active = examples.filter((e) => targetList.includes(e.name))
-    if (active.length !== targetList.length)
-      throw new Error(`E2E_PROJECT "${targetFromEnv}" has unmatched example(s)`)
+    if (active.length !== targetList.length) throw new Error(`E2E_PROJECT "${targetFromEnv}" has unmatched example(s)`)
     return active
   }
   try {

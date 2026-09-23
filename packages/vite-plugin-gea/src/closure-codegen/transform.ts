@@ -473,10 +473,18 @@ function buildModuleIr(
 function findClassDeclarationByName(ast: File, name: string): ClassDeclaration | null {
   for (const node of ast.program.body) {
     if (t.isClassDeclaration(node) && node.id?.name === name) return node
-    if (t.isExportDefaultDeclaration(node) && t.isClassDeclaration(node.declaration) && node.declaration.id?.name === name) {
+    if (
+      t.isExportDefaultDeclaration(node) &&
+      t.isClassDeclaration(node.declaration) &&
+      node.declaration.id?.name === name
+    ) {
       return node.declaration
     }
-    if (t.isExportNamedDeclaration(node) && t.isClassDeclaration(node.declaration) && node.declaration.id?.name === name) {
+    if (
+      t.isExportNamedDeclaration(node) &&
+      t.isClassDeclaration(node.declaration) &&
+      node.declaration.id?.name === name
+    ) {
       return node.declaration
     }
   }

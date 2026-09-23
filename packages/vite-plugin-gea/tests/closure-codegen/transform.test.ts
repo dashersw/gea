@@ -44,11 +44,11 @@ export default class App extends Component {
 
     assert.equal(changed, true)
     assert.ok(importsNeeded.includes('scheduleAfterRenderAsync'))
+    assert.match(code, /import \{[^}]*scheduleAfterRenderAsync[^}]*\} from ["']virtual:gea-compiler-runtime["']/)
     assert.match(
       code,
-      /import \{[^}]*scheduleAfterRenderAsync[^}]*\} from ["']virtual:gea-compiler-runtime["']/,
+      /render\(parent, _index\) \{[\s\S]*super\.render\(parent, _index\);[\s\S]*scheduleAfterRenderAsync\(this\);/,
     )
-    assert.match(code, /render\(parent, _index\) \{[\s\S]*super\.render\(parent, _index\);[\s\S]*scheduleAfterRenderAsync\(this\);/)
   })
 
   it('keeps event-only static components on the single-element static base', () => {

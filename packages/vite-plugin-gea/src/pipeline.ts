@@ -81,7 +81,9 @@ function isComponentImportSource(source: string): boolean {
  * before the store module is loaded, so the store can safely import the component
  * classes back without hitting the temporal dead zone.
  */
-export function transform(ctx: CompilerContext): { code: string; map: any; ir?: { module: GeaIrModule; components: GeaIrComponent[] } } | null {
+export function transform(
+  ctx: CompilerContext,
+): { code: string; map: any; ir?: { module: GeaIrModule; components: GeaIrComponent[] } } | null {
   const { sourceFile, code, isServe, hmrImportSource } = ctx
 
   // ── Quick checks ──────────────────────────────────────────────────────

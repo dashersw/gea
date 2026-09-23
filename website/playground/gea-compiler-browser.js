@@ -50377,7 +50377,10 @@ function inferComponentPropsTypes(ast, componentNames) {
     if (usage.unresolvable || usage.siteCount === 0 || usage.attrs.size === 0) continue;
     const members = [...usage.attrs.entries()].map(([attrName, observation]) => {
       const required = observation.seenCount === usage.siteCount;
-      const member = libExports.tsPropertySignature(libExports.identifier(attrName), libExports.tsTypeAnnotation(unionOfTypeStrings(observation.types)));
+      const member = libExports.tsPropertySignature(
+        libExports.identifier(attrName),
+        libExports.tsTypeAnnotation(unionOfTypeStrings(observation.types))
+      );
       member.optional = !required;
       return member;
     });

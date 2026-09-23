@@ -207,9 +207,7 @@ test.describe('Chat / Messaging App', () => {
 
   test.describe('Online Status', () => {
     test('online dot visible for online contacts', async ({ page }) => {
-      const onlineDots = page.locator('.online-dot')
-      const count = await onlineDots.count()
-      expect(count).toBeGreaterThan(0)
+      await expect(page.locator('.online-dot').first()).toBeVisible()
     })
 
     test('thread header shows online status', async ({ page }) => {

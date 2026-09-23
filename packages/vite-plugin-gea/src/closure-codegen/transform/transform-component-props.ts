@@ -106,7 +106,10 @@ export function inferComponentPropsTypes(ast: File, componentNames: Set<string>)
     if (usage.unresolvable || usage.siteCount === 0 || usage.attrs.size === 0) continue
     const members = [...usage.attrs.entries()].map(([attrName, observation]) => {
       const required = observation.seenCount === usage.siteCount
-      const member = t.tsPropertySignature(t.identifier(attrName), t.tsTypeAnnotation(unionOfTypeStrings(observation.types)))
+      const member = t.tsPropertySignature(
+        t.identifier(attrName),
+        t.tsTypeAnnotation(unionOfTypeStrings(observation.types)),
+      )
       member.optional = !required
       return member
     })

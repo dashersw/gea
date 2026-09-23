@@ -4,7 +4,15 @@ import { existsSync, readFileSync } from 'node:fs'
 
 import { COMPILER_RUNTIME_ID } from '../../virtual-modules.ts'
 import { generate, t } from '../../utils/babel-interop.ts'
-import { sourceSpan, storeFieldsToIr, storeGettersToIr, storeIrId, storeMethodsToIr, type GeaIrConstant, type GeaIrStore } from '../ir.ts'
+import {
+  sourceSpan,
+  storeFieldsToIr,
+  storeGettersToIr,
+  storeIrId,
+  storeMethodsToIr,
+  type GeaIrConstant,
+  type GeaIrStore,
+} from '../ir.ts'
 
 export interface StoreTransformResult {
   code: string
@@ -374,7 +382,12 @@ function moduleFreeFunctionNames(ast: File): Set<string> {
   const names = new Set<string>()
   for (const node of ast.program.body) {
     if (t.isFunctionDeclaration(node) && node.id) names.add(node.id.name)
-    else if (t.isExportNamedDeclaration(node) && node.declaration && t.isFunctionDeclaration(node.declaration) && node.declaration.id) {
+    else if (
+      t.isExportNamedDeclaration(node) &&
+      node.declaration &&
+      t.isFunctionDeclaration(node.declaration) &&
+      node.declaration.id
+    ) {
       names.add(node.declaration.id.name)
     }
   }
@@ -390,7 +403,15 @@ function nodeReferencesIdentifier(node: unknown, name: string): boolean {
   const record = node as Record<string, unknown>
   if (record.type === 'Identifier' && record.name === name) return true
   for (const key of Object.keys(record)) {
-    if (key === 'type' || key === 'loc' || key === 'start' || key === 'end' || key === 'leadingComments' || key === 'trailingComments') continue
+    if (
+      key === 'type' ||
+      key === 'loc' ||
+      key === 'start' ||
+      key === 'end' ||
+      key === 'leadingComments' ||
+      key === 'trailingComments'
+    )
+      continue
     if (nodeReferencesIdentifier(record[key], name)) return true
   }
   return false

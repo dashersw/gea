@@ -95,7 +95,10 @@ new App().render(root)
     assert.doesNotMatch(result.code, /import App/)
     assert.doesNotMatch(result.code, /new App/)
     assert.match(result.code, /root\.appendChild\(__gea_root0_create\(\)\)/)
-    assert.deepEqual(watched.filter((file) => file === appPath), [appPath])
+    assert.deepEqual(
+      watched.filter((file) => file === appPath),
+      [appPath],
+    )
     assert.equal(existsSync(appPath), true)
   })
 })

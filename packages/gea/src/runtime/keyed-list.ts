@@ -36,7 +36,6 @@ import { GEA_PROXY_RAW } from './symbols'
 import { lis } from './keyed-list/lis'
 import type { Entry } from './keyed-list/types'
 import { _consumeClaim, _defer, _deferBulk, _markClaimable, _trackLive } from './keyed-list/rescue'
-import { GEA_DOM_ITEM, GEA_DOM_KEY } from './keyed-list-symbols'
 
 /** Unwrap a proxy value to its raw target. */
 // A top-level FUNCTION DECLARATION, not a `const` holding an arrow: an
