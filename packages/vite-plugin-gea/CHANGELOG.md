@@ -1,5 +1,14 @@
 # @geajs/vite-plugin
 
+## 1.4.2
+
+### Patch Changes
+
+- [#99](https://github.com/dashersw/gea/pull/99) [`16d818c`](https://github.com/dashersw/gea/commit/16d818ca1ab1e408f812888dcbe286f83d830e23) Thanks [@puskuruk](https://github.com/puskuruk)! - ### @geajs/vite-plugin (patch)
+  - **Component edits no longer vanish when nothing can be hot-patched**: the injected `import.meta.hot.accept` callback discarded `handleComponentUpdate`'s return value, which is `false` when a class has no live registered instances (a static component, or one not currently mounted). Vite counted the module as handled, so the edit produced neither a patch nor a reload. The callback now invalidates when no class was patched, handing the update to the module's importers and degrading to a full reload.
+
+- [`068e52d`](https://github.com/dashersw/gea/commit/068e52d8596d585014b60560427144eee1f29892) Thanks [@dashersw](https://github.com/dashersw)! - Preserve native runtime contracts and per-module tree shaking while fixing scoped prop writes, keyed-list updates, stable renderer identities, and mounted Zag initialization. Ship the core TypeScript source so native consumers can compile typed runtime modules from the published package.
+
 ## 1.4.1
 
 ### Patch Changes

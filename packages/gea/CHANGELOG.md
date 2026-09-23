@@ -1,5 +1,17 @@
 # @geajs/core
 
+## 1.4.2
+
+### Patch Changes
+
+- [`c4643e1`](https://github.com/dashersw/gea/commit/c4643e1ee28e0f1f521e9a106b64daff5d54aa33) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/core (patch)
+  - **`delegateClick` handlers are now disposer-contained**: the previously-unused `disposer` parameter registers a single teardown per call that clears every stashed handler when the owning component disposes. Additive and backward-compatible — the signature is unchanged, callers passing no disposer keep the historical persist-until-GC behavior, and a noop disposer skips the registration entirely. Bounding handler lifetime to the owner matters under refcounted ownership (the native build), where an uncleared stash would keep the component alive through its own DOM (component → element → handler → component), and it makes the storage's lifetime containment explicit for the geatsc compiler.
+
+- [`394273d`](https://github.com/dashersw/gea/commit/394273d6e706ebc65552473b3109b9302e7a0092) Thanks [@dashersw](https://github.com/dashersw)! - ### @geajs/core (patch)
+  - **Fix event `currentTarget` shadowing regression**: `delegateEvent` decided between the `currentTarget`-shadowing slot and the fast no-shadow slot with `!pairs[i][2]`, which treated a plain 2-element `[el, handler]` pair (shadowing default) the same as the compiler's 3-element fast marker `[el, handler, false]`. As a result `event.currentTarget` was left as the document instead of the matched element. The runtime now distinguishes the two by pair length (a native numeric compare), restoring shadowing while keeping the check geatsc-native.
+
+- [`068e52d`](https://github.com/dashersw/gea/commit/068e52d8596d585014b60560427144eee1f29892) Thanks [@dashersw](https://github.com/dashersw)! - Preserve native runtime contracts and per-module tree shaking while fixing scoped prop writes, keyed-list updates, stable renderer identities, and mounted Zag initialization. Ship the core TypeScript source so native consumers can compile typed runtime modules from the published package.
+
 ## 1.4.0
 
 ### Patch Changes

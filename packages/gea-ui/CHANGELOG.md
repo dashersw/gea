@@ -1,5 +1,11 @@
 # @geajs/ui
 
+## 0.2.10
+
+### Patch Changes
+
+- [`068e52d`](https://github.com/dashersw/gea/commit/068e52d8596d585014b60560427144eee1f29892) Thanks [@dashersw](https://github.com/dashersw)! - Preserve native runtime contracts and per-module tree shaking while fixing scoped prop writes, keyed-list updates, stable renderer identities, and mounted Zag initialization. Ship the core TypeScript source so native consumers can compile typed runtime modules from the published package.
+
 ## 0.2.4
 
 ### Patch Changes
