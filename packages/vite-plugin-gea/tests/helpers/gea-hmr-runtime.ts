@@ -5,6 +5,7 @@
  * Not the browser bundle; keep behavior aligned with `packages/vite-plugin-gea/src/index.ts`.
  */
 import { createDisposer } from '../../../gea/src/runtime/disposer'
+import { GEA_STATIC_NODES } from '../../../gea/src/runtime/compiled-static-symbols'
 import { GEA_CREATED_CALLED, GEA_DISPOSER } from '../../../gea/src/runtime/internal-symbols'
 import { GEA_DOM_COMPONENT, GEA_ELEMENT } from '../../../gea/src/runtime/symbols'
 
@@ -94,22 +95,36 @@ export function unregisterComponentInstance(className: string, instance: any): v
   }
 }
 
+function moveAppendedBefore(parent: Node, tail: Node | null, nextSibling: Node | null): void {
+  if (!nextSibling || nextSibling.parentNode !== parent) return
+  let first = tail ? tail.nextSibling : parent.firstChild
+  while (first && first !== nextSibling) {
+    const node = first
+    first = node.nextSibling
+    parent.insertBefore(node, nextSibling)
+  }
+}
+
 function reRenderComponent(instance: any): void {
-  const el = ((instance && instance[GEA_ELEMENT]) || instance?.el) as Element | null | undefined
+  const roots = instance?.[GEA_STATIC_NODES] as Node[] | undefined
+  const el = (roots ? roots[roots.length - 1] : instance?.[GEA_ELEMENT] || instance?.el) as Node | null | undefined
   if (!el || !el.parentNode) return
   const parent = el.parentNode
+  const nextSibling = el.nextSibling
   const props = Object.assign({}, instance.props)
   instance.dispose()
   instance[GEA_DISPOSER] = createDisposer()
   instance[GEA_CREATED_CALLED] = true
   instance.props = props
   instance.rendered = false
+  const tail = parent.lastChild
   instance.render(parent)
+  moveAppendedBefore(parent, tail, nextSibling)
   const newEl = ((instance && instance[GEA_ELEMENT]) || instance?.el) as { [k: symbol]: any } | null
   if (newEl) newEl[GEA_DOM_COMPONENT] = instance
 }
 
-export function handleComponentUpdate(_moduleId: string, newModule: any): boolean {
+export function handleComponentUpdate(_moduleId: string, newModule: any): boolean | null {
   const ComponentClass: any = newModule.default || newModule
   if (!ComponentClass || typeof ComponentClass !== 'function') return false
   return rebindInstancesToNewClass(ComponentClass)
@@ -120,12 +135,18 @@ export function handleComponentUpdate(_moduleId: string, newModule: any): boolea
  * (The plugin’s Vite `handleComponentUpdate` is module-shaped; class-shaped updates are
  * what multi-export files need in tests.)
  */
-export function rebindClassInstancesToNewPrototype(className: string, NewClass: any): boolean {
+export function rebindClassInstancesToNewPrototype(className: string, NewClass: any): boolean | null {
   if (typeof NewClass !== 'function' || !className) return false
   const instSet = componentInstances.get(className)
   if (!instSet || instSet.size === 0) return false
   const newProto = NewClass.prototype
-  for (const instance of instSet) {
+  const instances = Array.from(instSet)
+  const newBase = Object.getPrototypeOf(newProto)
+  for (const instance of instances) {
+    const oldProto = Object.getPrototypeOf(instance)
+    if (!oldProto || Object.getPrototypeOf(oldProto) !== newBase) return null
+  }
+  for (const instance of instances) {
     try {
       try {
         Object.setPrototypeOf(instance, newProto)
@@ -140,7 +161,7 @@ export function rebindClassInstancesToNewPrototype(className: string, NewClass: 
   return true
 }
 
-function rebindInstancesToNewClass(ComponentClass: any): boolean {
+function rebindInstancesToNewClass(ComponentClass: any): boolean | null {
   const className: string = ComponentClass.name
   if (!className) return false
   return rebindClassInstancesToNewPrototype(className, ComponentClass)

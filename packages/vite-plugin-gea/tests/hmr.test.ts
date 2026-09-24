@@ -310,10 +310,14 @@ describe('injectHMR', () => {
       assert.ok(body.includes('let __patched = false'), 'should track whether anything was patched')
       assert.match(
         body,
-        /__patched = handleComponentUpdate\([\s\S]*?\) \|\| __patched/,
+        /const __result = handleComponentUpdate\([\s\S]*?__patched = __result === true \|\| __patched/,
         'should keep the handleComponentUpdate result',
       )
-      assert.match(body, /if \(!__patched\)\s*import\.meta\.hot\.invalidate\(\)/, 'should invalidate on no-op')
+      assert.match(
+        body,
+        /if \(__incompatible \|\| !__patched\)\s*import\.meta\.hot\.invalidate\(\)/,
+        'should invalidate on no-op',
+      )
     })
 
     it('ORs the result of every class in a multi-component file', () => {
@@ -334,8 +338,20 @@ describe('injectHMR', () => {
       const body = acceptBody(codegen(ast))
 
       assert.equal(body.match(/\|\| __patched/g)?.length, 3, 'every class contributes to __patched')
-      assert.equal(body.match(/if \(!__patched\)/g)?.length, 1, 'a single guard covers the whole module')
-      assert.ok(body.indexOf('|| __patched') < body.indexOf('if (!__patched)'), 'guard runs after every update')
+      assert.equal(
+        body.match(/__result === null \|\| __incompatible/g)?.length,
+        3,
+        'any incompatible class requires invalidation',
+      )
+      assert.equal(
+        body.match(/if \(__incompatible \|\| !__patched\)/g)?.length,
+        1,
+        'a single guard covers the whole module',
+      )
+      assert.ok(
+        body.indexOf('|| __patched') < body.indexOf('if (__incompatible || !__patched)'),
+        'guard runs after every update',
+      )
     })
 
     it('keeps the invalidate guard out of the dependency accepts', () => {

@@ -55,24 +55,10 @@ describe('HMR: unpatchable self-accept falls back to invalidate', { concurrency:
     }
   `
 
-  it('invalidates when a mounted static component registers no instance', async () => {
+  it('invalidates when a component module has no mounted instance to patch', async () => {
     const url = 'file:///virtual/Banner.tsx'
-    const Banner = await compileJsxComponentForHmr(
-      staticSource('v1'),
-      '/virtual/Banner.tsx',
-      url,
-      'Banner',
-      {},
-      hmrBindings,
-    )
+    await compileJsxComponentForHmr(staticSource('v1'), '/virtual/Banner.tsx', url, 'Banner', {}, hmrBindings)
     assert.ok(selfAccept, 'module should self-accept')
-
-    const root = document.createElement('div')
-    document.body.appendChild(root)
-    const banner = new Banner()
-    banner.render(root)
-    await flushMicrotasks()
-    assert.equal(root.querySelector('.banner')?.textContent, 'v1')
 
     const BannerV2 = await compileJsxComponentForHmr(
       staticSource('v2'),
@@ -85,12 +71,11 @@ describe('HMR: unpatchable self-accept falls back to invalidate', { concurrency:
     assert.equal(
       hmrBindings.handleComponentUpdate(url, { default: BannerV2 }),
       false,
-      'a static component has no registered instance to patch',
+      'nothing was rendered, so there is no instance to patch',
     )
 
     selfAccept!({ default: BannerV2 })
     assert.equal(invalidations, 1, 'the unpatchable update must be handed back to Vite')
-    banner.dispose()
   })
 
   it('does not invalidate when a live instance is patched, and renders the new template', async () => {
