@@ -66,6 +66,7 @@ Backed by Zag.js state machines — full keyboard navigation, ARIA attributes, a
 | [Menu](interactive-components.md#menu) | Dropdown menu with typeahead |
 | [Select](interactive-components.md#select) | Dropdown select with keyboard navigation |
 | [Combobox](interactive-components.md#combobox) | Searchable dropdown |
+| [Date Picker](interactive-components.md#date-picker) | Calendar date selection with day, month, and year views |
 | [Switch](interactive-components.md#switch) | Toggle switch |
 | [Checkbox](interactive-components.md#checkbox) | Checkbox with indeterminate support |
 | [Radio Group](interactive-components.md#radio-group) | Radio button group |
