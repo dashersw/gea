@@ -39,6 +39,44 @@ describe('static component bases call created() on first render', () => {
   })
   afterEach(() => teardown())
 
+  it('disposes roots from every render while el tracks only the latest render', () => {
+    let template: Node
+    class RepeatedRender extends CompiledStaticComponent {
+      [GEA_STATIC_TEMPLATE](): Node {
+        return template
+      }
+    }
+    const firstParent = document.createElement('div')
+    const secondParent = document.createElement('div')
+    const sibling = document.createElement('aside')
+    firstParent.append(sibling)
+    const instance = new RepeatedRender()
+    template = document.createElement('h1')
+    instance.render(firstParent)
+    assert.equal(instance.el, template)
+
+    template = document.createDocumentFragment()
+    const lastElement = document.createElement('span')
+    template.appendChild(document.createTextNode('fragment'))
+    template.appendChild(lastElement)
+    template.appendChild(document.createComment('tail'))
+    instance.render(secondParent)
+    assert.equal(instance.el, lastElement)
+
+    template = document.createTextNode('text only')
+    instance.render(firstParent)
+    assert.equal(instance.el, null)
+    template = document.createDocumentFragment()
+    instance.render(secondParent)
+    assert.equal(instance.el, null)
+
+    instance.dispose()
+    assert.deepEqual(Array.from(firstParent.childNodes), [sibling])
+    assert.equal(secondParent.childNodes.length, 0)
+    assert.equal(instance.el, null)
+    assert.doesNotThrow(() => instance.dispose())
+  })
+
   for (const [name, Ctor] of [
     ['CompiledStaticComponent', Banner],
     ['CompiledStaticElementComponent', Badge],

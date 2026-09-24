@@ -29,9 +29,10 @@ export class CompiledStaticComponent {
     }
     const node = this[GEA_STATIC_TEMPLATE](this[GEA_DISPOSER])
     // Appending a fragment empties it, so capture its roots before insertion.
-    this[GEA_STATIC_NODES] = node.nodeType === 11 ? Array.from(node.childNodes) : [node]
+    const roots = node.nodeType === 11 ? Array.from(node.childNodes) : [node]
+    this[GEA_STATIC_NODES].push(...roots)
     this[GEA_STATIC_ELEMENT] = null
-    for (const root of this[GEA_STATIC_NODES]) {
+    for (const root of roots) {
       if (root.nodeType === 1) this[GEA_STATIC_ELEMENT] = root as HTMLElement
     }
     parent.appendChild(node)
