@@ -283,7 +283,11 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
           changed = true
         }
 
-        const rootMountResult = transformStaticRootMount(transformedCode, cleanId, resolveImportPath)
+        // Inlining removes the mounted instance that component HMR patches.
+        // Keep the component boundary in dev; retain this optimization for builds.
+        const rootMountResult = isServeCommand
+          ? null
+          : transformStaticRootMount(transformedCode, cleanId, resolveImportPath)
         if (rootMountResult?.changed) {
           for (const file of rootMountResult.watchFiles ?? []) this.addWatchFile?.(file)
           return { code: rootMountResult.code, map: null }
