@@ -59,6 +59,7 @@ export function reconcile(oldC, newC) {
 
 export const HMR_RUNTIME_SOURCE = `
 var GEA_ELEMENT = Symbol.for('gea.el');
+var GEA_STATIC_NODES = Symbol.for('gea.static.nodes');
 var GEA_RENDERED = Symbol.for('gea.r');
 var GEA_CLEANUP_BINDINGS = Symbol.for('gea.component.cleanupBindings');
 var GEA_TEARDOWN_SELF_LISTENERS = Symbol.for('gea.component.teardownSelfListeners');
@@ -164,13 +165,25 @@ export function unregisterComponentInstance(className, instance) {
   }
 }
 
+function moveAppendedBefore(parent, tail, nextSibling) {
+  if (!nextSibling || nextSibling.parentNode !== parent) return;
+  var first = tail ? tail.nextSibling : parent.firstChild;
+  while (first && first !== nextSibling) {
+    var node = first;
+    first = node.nextSibling;
+    parent.insertBefore(node, nextSibling);
+  }
+}
+
 function reRenderComponent(instance) {
-  var oldEl = instance && (instance[GEA_ELEMENT] || instance.el);
+  var roots = instance && instance[GEA_STATIC_NODES];
+  var oldEl = roots ? roots[roots.length - 1] : instance && (instance[GEA_ELEMENT] || instance.el);
   if (!oldEl) return;
   var parent = oldEl.parentElement;
   if (!parent) return;
-  var index = Array.prototype.indexOf.call(parent.children, oldEl);
-  var props = Object.assign({}, instance.props);
+  var nextSibling = oldEl.nextSibling;
+  // Preserve live prop getters supplied by the parent.
+  var props = instance.props;
   var __stateSnapshot = {};
   var __ownKeys = Object.getOwnPropertyNames(instance);
   for (var __ki = 0; __ki < __ownKeys.length; __ki++) {
@@ -180,6 +193,10 @@ function reRenderComponent(instance) {
     if (__desc && (__desc.get || __desc.set)) continue;
     try { __stateSnapshot[__k] = instance[__k]; } catch(e) {}
   }
+  // Compiled templates own subscriptions, event handlers and nested components
+  // through their base-class disposer. Reuse the emptied disposer on re-render.
+  var base = Object.getPrototypeOf(Object.getPrototypeOf(instance));
+  if (base && typeof base.dispose === 'function') base.dispose.call(instance);
   instance[GEA_RENDERED] = false;
   if (typeof instance[GEA_CLEANUP_BINDINGS] === 'function') instance[GEA_CLEANUP_BINDINGS]();
   if (typeof instance[GEA_TEARDOWN_SELF_LISTENERS] === 'function') instance[GEA_TEARDOWN_SELF_LISTENERS]();
@@ -202,12 +219,15 @@ function reRenderComponent(instance) {
   if (!instance.__bindingRemovers) instance.__bindingRemovers = [];
   if (!instance[GEA_SELF_LISTENERS]) instance[GEA_SELF_LISTENERS] = [];
   if (!instance[GEA_CHILD_COMPONENTS]) instance[GEA_CHILD_COMPONENTS] = [];
-  instance.render(parent, index);
+  var tail = parent.lastChild;
+  instance.render(parent);
+  moveAppendedBefore(parent, tail, nextSibling);
   if (typeof instance.createdHooks === 'function') {
     instance.createdHooks(instance.props);
   }
 }
 
+// true: patched; false: no registered instances; null: incompatible runtime base.
 export function handleComponentUpdate(moduleId, newModule) {
   var ComponentClass = newModule.default || newModule;
   if (!ComponentClass || typeof ComponentClass !== 'function') return false;
@@ -217,9 +237,16 @@ export function handleComponentUpdate(moduleId, newModule) {
   if (!instances || instances.size === 0) return false;
   var newProto = ComponentClass.prototype;
   var instancesArray = Array.from(instances);
+  var newBase = Object.getPrototypeOf(newProto);
+  // Check every instance before changing methods, prototypes, or DOM. A new
+  // runtime base needs constructor initialization that prototype patching skips.
+  for (var i = 0; i < instancesArray.length; i++) {
+    var oldProto = Object.getPrototypeOf(instancesArray[i]);
+    if (!oldProto || Object.getPrototypeOf(oldProto) !== newBase) return null;
+  }
   instancesArray.forEach(function(instance) {
     try {
-      Object.getOwnPropertyNames(newProto).forEach(function(name) {
+      Reflect.ownKeys(newProto).forEach(function(name) {
         if (name === 'constructor') return;
         var descriptor = Object.getOwnPropertyDescriptor(newProto, name);
         if (!descriptor) return;
