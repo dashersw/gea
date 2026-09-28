@@ -67,8 +67,13 @@ export function samePathParts(a?: string[], b?: string[]): boolean {
 
 export function isClassConstructorValue(fn: unknown): boolean {
   if (typeof fn !== 'function') return false
+  // The dev HMR component proxy must report its own `prototype` as writable,
+  // so test the class it forwards to: `prototype.constructor`.
+  const proto = (fn as { prototype?: { constructor?: { prototype?: unknown } } }).prototype
+  const owner = proto?.constructor
+  const ctor = typeof owner === 'function' && owner.prototype === proto ? owner : fn
   try {
-    const d = Object.getOwnPropertyDescriptor(fn, 'prototype')
+    const d = Object.getOwnPropertyDescriptor(ctor, 'prototype')
     return !!(d && d.writable === false)
   } catch {
     return true

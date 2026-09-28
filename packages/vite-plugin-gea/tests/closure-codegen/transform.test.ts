@@ -232,6 +232,19 @@ export default class Card extends Component {
     assert.doesNotMatch(code, /get type\(\)\s*\{\s*return this\.props\.type/)
   })
 
+  it('constructs known class components directly inside function components', () => {
+    const src = `import Button from './Button'
+export default function Toolbar() {
+  return <div class="toolbar"><Button>Save</Button></div>
+}`
+    const { code } = transformFile(src, '/virtual/Toolbar.tsx', {
+      directClassComponents: new Set(['Button']),
+    })
+
+    assert.match(code, /const __c\d+ = new Button\(\)/)
+    assert.doesNotMatch(code, /mount\(/)
+  })
+
   it('adds import if @geajs/core was never imported', () => {
     const src = `class App extends Component {
   template() { return <div/> }

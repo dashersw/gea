@@ -63,6 +63,11 @@ describe('SSR helper behavior', () => {
       false,
     )
   })
+  it('isClassConstructorValue returns false for a function whose prototype was replaced', () => {
+    function Legacy() {}
+    Legacy.prototype = { greet() {} }
+    assert.equal(ssr.isClassConstructorValue(Legacy), false)
+  })
   it('isClassConstructorValue returns false for non-function values', () => {
     assert.equal(ssr.isClassConstructorValue(42), false)
     assert.equal(ssr.isClassConstructorValue(null), false)
