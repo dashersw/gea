@@ -280,6 +280,9 @@ export function emitSlot(slot: Slot, stmts: Statement[], ctx: EmitContext): void
 function canUseScalarTextHelper(expr: Expression): boolean {
   if (containsJsx(expr)) return false
   if (isChildrenExpression(expr)) return false
+  // Any prop can carry a DOM node (`<Layout header={<Title />} />`), so prop
+  // reads need reactiveText's node insertion, not a String() text write.
+  if (isPropsRead(expr)) return false
   if (
     t.isIdentifier(expr) ||
     t.isMemberExpression(expr) ||
@@ -291,9 +294,8 @@ function canUseScalarTextHelper(expr: Expression): boolean {
   ) {
     return true
   }
-  if (t.isBinaryExpression(expr)) {
-    return canUseScalarTextHelper(expr.left as Expression) && canUseScalarTextHelper(expr.right as Expression)
-  }
+  // Binary operators always yield a primitive, even when an operand is a prop.
+  if (t.isBinaryExpression(expr)) return true
   if (t.isLogicalExpression(expr)) {
     return canUseScalarTextHelper(expr.left as Expression) && canUseScalarTextHelper(expr.right as Expression)
   }
@@ -316,6 +318,21 @@ function isChildrenExpression(expr: Expression): boolean {
     return isChildrenExpression(expr.expression as Expression)
   }
   return false
+}
+
+/** `this.props.x…` in class components, `props.x…` in function components (param is always renamed to `props`). */
+function isPropsRead(expr: Expression): boolean {
+  if (t.isTSAsExpression(expr) || t.isTSTypeAssertion(expr) || t.isTSNonNullExpression(expr)) {
+    return isPropsRead(expr.expression as Expression)
+  }
+  let node: Expression = expr
+  while (t.isMemberExpression(node)) {
+    if (t.isThisExpression(node.object) && !node.computed && t.isIdentifier(node.property, { name: 'props' })) {
+      return true
+    }
+    node = node.object as Expression
+  }
+  return t.isIdentifier(node, { name: 'props' })
 }
 
 function isStringClassExpression(expr: Expression): boolean {
