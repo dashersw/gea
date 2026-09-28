@@ -1,6 +1,7 @@
-import type { JSXElement, JSXFragment } from '@babel/types'
+import type { JSXElement, JSXFragment, JSXMemberExpression } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
+import { compilerError } from '../../utils/compile-error.ts'
 
 import {
   canOmitAttrQuotes,
@@ -194,8 +195,20 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
   ): string {
     const opening = el.openingElement
     const name = opening.name
-    if (!t.isJSXIdentifier(name)) {
-      throw new Error(`generator: non-identifier JSX tags not yet supported: ${JSON.stringify(name)}`)
+    if (t.isJSXNamespacedName(name)) {
+      throw compilerError(
+        `Namespaced JSX tags like <${name.namespace.name}:${name.name.name}> are not supported.`,
+        name,
+        `Use the tag without the namespace: <${name.name.name}>.`,
+      )
+    }
+    if (t.isJSXMemberExpression(name)) {
+      const tag = jsxMemberTagName(name)
+      throw compilerError(
+        `Member-expression JSX tags like <${tag}> are not supported.`,
+        name,
+        `Import the component and use it by name: import { ${name.property.name} } from '…', then <${name.property.name} />.`,
+      )
     }
     const tagName = name.name
     // Component tag (capitalized) → mount slot, emit <!--mount N--> placeholder.
@@ -465,6 +478,11 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
 
   const html = emitNode(root, [], [], true, null)
   return { html, slots }
+}
+
+function jsxMemberTagName(name: JSXMemberExpression): string {
+  const object = t.isJSXMemberExpression(name.object) ? jsxMemberTagName(name.object) : name.object.name
+  return `${object}.${name.property.name}`
 }
 
 function normalizeMultilineJsxText(value: string): string {

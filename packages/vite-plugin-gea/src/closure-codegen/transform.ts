@@ -43,6 +43,8 @@ import { extractPrecedingStatements, foldEarlyReturnGuards } from './transform/t
 export interface TransformResult {
   code: string
   map?: any
+  /** Babel's decoded source map, only with `sourceMaps: true`. */
+  decodedMap?: { mappings: number[][][] }
   /** true if any component class was rewritten */
   changed: boolean
   /** names of Component subclasses that were rewritten (diagnostics) */
@@ -62,6 +64,11 @@ export interface TransformFileOptions {
   enableTinyReactiveComponents?: boolean
   /** Compiling for the embedded/native (geatsc/IR) backend. See EmitContext.embedded. */
   embedded?: boolean
+  /**
+   * Also return `decodedMap`. The pipeline only asks for it after the emitted
+   * code failed to parse, to point the error at the user's source.
+   */
+  sourceMaps?: boolean
 }
 
 export function transformFile(source: string, _filename?: string, options: TransformFileOptions = {}): TransformResult {
@@ -345,10 +352,16 @@ export function transformFile(source: string, _filename?: string, options: Trans
   injectTemplateDecls(ast, firstClassIdx, ctx.templateDecls)
   ensureCoreImports(ast, ctx.importsNeeded)
 
-  const out = generate(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } })
+  const out = generate(ast, {
+    retainLines: false,
+    compact: false,
+    jsescOption: { minimal: true },
+    ...(options.sourceMaps ? { sourceMaps: true, sourceFileName: _filename ?? 'source' } : {}),
+  })
   return {
     code: out.code,
     map: (out as any).map,
+    decodedMap: options.sourceMaps ? (out as any).decodedMap : undefined,
     changed: true,
     rewritten,
     importsNeeded: Array.from(ctx.importsNeeded),
