@@ -15,7 +15,8 @@
  *        │
  *        ▼
  * ┌──────────────┐
- * │  Preprocess   │  Functional-to-class conversion (if needed)
+ * │  Preprocess   │  Arrow components → function declarations,
+ * │               │  functional-to-class conversion (if needed)
  * └──────┬───────┘
  *        │
  *        ▼
@@ -44,6 +45,7 @@
 import { generate, traverse, t } from './utils/babel-interop.ts'
 import { parseSource } from './parse/parser.ts'
 import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
+import { normalizeArrowComponents } from './preprocess/arrow-components.ts'
 import { transformFile, type TransformResult } from './closure-codegen/transform.ts'
 import { injectHMR } from './postprocess/hmr.ts'
 import { compilerError, isGeaCompileError, type GeaCompileError } from './utils/compile-error.ts'
@@ -97,9 +99,22 @@ export function transform(
   // ── Parse ─────────────────────────────────────────────────────────────
   let sourceParsed = false
   try {
-    const parsed = parseSource(code)
+    let parsed = parseSource(code)
     if (!parsed) return null
     sourceParsed = true
+
+    // ── Preprocess: arrow components → function declarations ──────────
+    // transformFile only compiles `function` components. Rewrite arrow
+    // components first so every later phase (metadata, functional → class,
+    // codegen) works on the same source. `retainLines` keeps the line numbers
+    // of compile errors pointing at the user's file.
+    let source = code
+    if (parsed.hasJSX && normalizeArrowComponents(parsed.ast, sourceFile)) {
+      source = generate(parsed.ast, { retainLines: true }).code
+      parsed = parseSource(source)
+      if (!parsed) return null
+    }
+
     const { functionalComponentInfo, hasJSX } = parsed
     let { ast, imports } = parsed
     let { componentClassNames } = parsed
@@ -201,7 +216,7 @@ export function transform(
         enableTinyReactiveComponents: !isServe,
         embedded: ctx.embedded,
       }
-      const emitted = transformFile(code, sourceFile, transformOptions)
+      const emitted = transformFile(source, sourceFile, transformOptions)
       if (emitted.changed) {
         ir = emitted.ir
         // Re-parse the transformed code so the downstream passes (HMR, __geaTagName
@@ -211,7 +226,7 @@ export function transform(
           reparsed = parseSource(emitted.code)
         } catch (error) {
           throw invalidEmitError(error, () =>
-            transformFile(code, sourceFile, { ...transformOptions, sourceMaps: true }),
+            transformFile(source, sourceFile, { ...transformOptions, sourceMaps: true }),
           )
         }
         if (reparsed) {
