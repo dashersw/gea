@@ -1,0 +1,98 @@
+name: Bug report
+description: Something in Gea is broken
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A small repro we can run is the fastest way to a fix.
+
+  - type: input
+    id: core-version
+    attributes:
+      label: '@geajs/core version'
+      placeholder: '1.4.3'
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: '@geajs/vite-plugin version'
+      placeholder: '1.4.3'
+    validations:
+      required: true
+
+  - type: input
+    id: other-packages
+    attributes:
+      label: Other Gea packages
+      description: '@geajs/ui, @geajs/ssr, @geajs/mobile or create-gea, with versions, if you use them.'
+      placeholder: '@geajs/ui 0.2.10'
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - Dev server
+        - Production build
+        - SSR
+        - Tests (Vitest, jsdom, etc.)
+        - Website playground
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest component that shows the bug. If it needs more than one file, paste the main one here and link the rest below.
+      render: tsx
+    validations:
+      required: true
+
+  - type: input
+    id: repro-link
+    attributes:
+      label: Reproduction link
+      description: A StackBlitz or repo, if the bug needs more than one file.
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happens?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors and warnings
+      description: From the browser console and the terminal. Include any `[gea-plugin]` warnings, since some compile failures only show up there.
+      render: shell
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, Node version, OS and package manager.
+      placeholder: 'Chrome 140, Node 24, macOS, pnpm 10'
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I tried the latest versions of `@geajs/core` and `@geajs/vite-plugin`.
+          required: true
+        - label: I searched the existing issues.
+          required: true
