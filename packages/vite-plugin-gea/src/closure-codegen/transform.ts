@@ -28,6 +28,7 @@ import {
   canUseStaticCompiledComponent,
   canUseTinyReactiveComponent,
   extendsComponent,
+  fnHasInstanceLocals,
   isFunctionComponent,
   nodeContainsThisMember as classBodyReadsThisMember,
   rewriteFnComponent,
@@ -639,7 +640,9 @@ function buildAfterRenderAsyncRenderMethod(): any {
 export function collectDirectFnComponents(ast: File): Set<string> {
   const candidates = new Set<string>()
   for (const node of ast.program.body) {
-    if (t.isFunctionDeclaration(node) && node.id && isFunctionComponent(node)) candidates.add(node.id.name)
+    if (t.isFunctionDeclaration(node) && node.id && isFunctionComponent(node) && !fnHasInstanceLocals(node)) {
+      candidates.add(node.id.name)
+    }
   }
   if (candidates.size === 0) return candidates
 

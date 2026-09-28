@@ -9,9 +9,16 @@ import type {
   VariableDeclarator,
 } from '@babel/types'
 
-import { t } from '../../utils/babel-interop.ts'
+import { t, traverse } from '../../utils/babel-interop.ts'
 
-import { collectBindings, compileJsxToBlock, createEmitContext, substituteBindings, type EmitContext } from '../emit.ts'
+import {
+  collectBindings,
+  compileJsxToBlock,
+  createEmitContext,
+  initializerNeedsLocal,
+  substituteBindings,
+  type EmitContext,
+} from '../emit.ts'
 import { extractTemplateJsx, findTemplateMethod } from '../generator.ts'
 
 export function extendsComponent(classDecl: ClassDeclaration): boolean {
@@ -225,6 +232,67 @@ export function isFunctionComponent(fn: any): boolean {
 }
 
 /**
+ * True if the body keeps a per-instance local (see `initializerNeedsLocal`),
+ * e.g. `const store = new CounterStore()`. Reads of such a local must stay
+ * reactive, so the component can't be compiled as a one-shot direct factory.
+ */
+export function fnHasInstanceLocals(fn: any): boolean {
+  for (const stmt of fn.body?.body ?? []) {
+    if (t.isReturnStatement(stmt)) break
+    if (t.isVariableDeclaration(stmt) && stmt.declarations.some((d) => d.init && initializerNeedsLocal(d.init))) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Function components have no local state yet: the body runs once per
+ * instance and reads of its locals are inlined into the JSX, so a reassigned
+ * `let` can never reach the DOM (and used to compile to `0++`). Fail the build
+ * with a pointer to the supported alternatives instead.
+ */
+function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statement[]): void {
+  const mutable = new Set<string>()
+  for (const stmt of preceding) {
+    if (!t.isVariableDeclaration(stmt) || stmt.kind === 'const') continue
+    for (const decl of stmt.declarations) {
+      for (const name of Object.keys(t.getBindingIdentifiers(decl.id))) mutable.add(name)
+    }
+  }
+  if (mutable.size === 0) return
+
+  let name = ''
+  let write: any = null
+  const fn = t.cloneNode(fnDecl, true)
+  traverse(t.file(t.program([t.isStatement(fn) ? fn : t.expressionStatement(fn)])), {
+    Function(path) {
+      path.stop()
+      for (const local of mutable) {
+        const violation = path.scope.getOwnBinding(local)?.constantViolations[0]
+        if (violation) {
+          name = local
+          write = violation.node
+          return
+        }
+      }
+    },
+  })
+  if (!write) return
+
+  const start = write.loc?.start
+  const at = start ? ` on line ${start.line}` : ''
+  const error = new Error(
+    `[gea] Function component \`${fnName || '<anonymous>'}\` reassigns \`${name}\`${at}. ` +
+      `Function components have no local state yet, so the new value would never render. ` +
+      `Keep \`${name}\` in a Store or a class component.`,
+  ) as Error & { __geaCompileError: boolean; loc?: { line: number; column: number } }
+  error.__geaCompileError = true
+  if (start) error.loc = { line: start.line, column: start.column }
+  throw error
+}
+
+/**
  * Rewrite a function component body so it becomes a `(props, d) => Element`
  * usable by the new runtime's `mount()` (mount calls it with the disposer).
  *
@@ -246,8 +314,10 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   if (!ret.argument || !(t.isJSXElement(ret.argument) || t.isJSXFragment(ret.argument))) return
   const jsxRoot = ret.argument
 
-  const fnCtx = createEmitContext(t.identifier('props'))
   const fnName = t.isIdentifier(fnDecl.id) ? fnDecl.id.name : ''
+  assertNoReassignedLocals(fnDecl, fnName, body.slice(0, returnIdx))
+
+  const fnCtx = createEmitContext(t.identifier('props'))
   fnCtx.oneShotProps = parentCtx.directFnComponents?.has(fnName) === true
   const directParams = fnCtx.oneShotProps ? parentCtx.directFnComponentParams?.get(fnName) : undefined
   // Share the tpl/list counters with the parent so hoisted _tplN names don't collide
@@ -322,10 +392,13 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
     precedingRaw.push(s)
   }
   // collectBindings is imported from emit.ts. Props locals stay real
-  // variables, so they must not be inlined as bindings.
+  // variables, so they must not be inlined as bindings. Locals that construct
+  // objects or write state stay real variables too, created once per instance;
+  // inlining them would re-run the initializer on each read.
   collectBindings(
     precedingRaw.filter((s) => !propsLocals.includes(s)),
     fnCtx.bindings,
+    initializerNeedsLocal,
   )
 
   const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx)

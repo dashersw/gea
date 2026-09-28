@@ -1,5 +1,5 @@
 export type { DirectFnComponentParams, EmitContext } from './emit/emit-context.ts'
-export { collectBindings, createEmitContext } from './emit/emit-context.ts'
+export { collectBindings, createEmitContext, initializerNeedsLocal } from './emit/emit-context.ts'
 export { substituteBindings } from './emit/emit-substitution.ts'
 export { emitTemplateCloneExpression, emitTemplateDecl } from './emit/template-decl.ts'
 export { compileJsxToBlock } from './emit/emit-core.ts'

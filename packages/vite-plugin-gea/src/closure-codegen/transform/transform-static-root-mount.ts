@@ -22,7 +22,12 @@ import {
 import { extractTemplateJsx, findTemplateMethod } from '../generator.ts'
 import { extractPrecedingStatements, foldEarlyReturnGuards } from './transform-template-methods.ts'
 import { collectDirectFnComponentParams, collectDirectFnComponents, collectDirectFnStringProps } from '../transform.ts'
-import { canUseStaticCompiledComponent, rewriteFnComponent } from './transform-components.ts'
+import {
+  canUseStaticCompiledComponent,
+  fnHasInstanceLocals,
+  isFunctionComponent,
+  rewriteFnComponent,
+} from './transform-components.ts'
 import { ensureCoreImports } from './transform-imports.ts'
 
 interface MountPattern {
@@ -198,6 +203,16 @@ function createStaticTemplateFactory(
   if (templateMethod) foldEarlyReturnGuards(templateMethod)
   const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null
   if (!jsx || !isBuiltinElementRoot(jsx)) return null
+
+  // Local function components that hold per-instance state are kept out of
+  // the direct set and need a real mount, which the static factory lacks.
+  if (
+    ast.program.body.some(
+      (stmt) => t.isFunctionDeclaration(stmt) && isFunctionComponent(stmt) && fnHasInstanceLocals(stmt),
+    )
+  ) {
+    return null
+  }
 
   const ctx = createEmitContext()
   const watchFiles = new Set<string>()
@@ -405,7 +420,14 @@ function compileImportedStaticFunction(
   rewritten.id = t.identifier(imported.localName)
   ctx.directFnComponents?.add(imported.localName)
   ctx.directFnComponentParams?.set(imported.localName, imported.params)
-  rewriteFnComponent(rewritten, ctx)
+  try {
+    rewriteFnComponent(rewritten, ctx)
+  } catch (error: any) {
+    // Leave compile errors to the imported file's own transform, which
+    // reports them against the right file.
+    if (error?.__geaCompileError) return null
+    throw error
+  }
   if (nodeContainsIdentifier(rewritten.body, 'd') && !disposerUseIsOnlyEventDelegation(rewritten.body)) return null
   const factoryName = getZeroArgFactoryAlias(rewritten)
   if (factoryName) return { factoryName }
