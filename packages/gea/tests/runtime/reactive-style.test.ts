@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { Store } from '../../src/store'
 import { createDisposer } from '../../src/runtime/disposer'
-import { reactiveStyle } from '../../src/runtime/reactive-style'
+import { reactiveStyle, reactiveStyleProp } from '../../src/runtime/reactive-style'
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
@@ -55,5 +55,100 @@ describe('reactiveStyle – getter mode', () => {
     s.sz = 20
     await flush()
     assert.equal(el.style.getPropertyValue('font-size'), '20px')
+  })
+})
+
+describe('reactiveStyle – units and strings (#110)', () => {
+  it('adds px to numbers except 0, unitless and custom properties', async () => {
+    const s = new Store({ h: 120 }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, () => ({ height: s.h, margin: 0, opacity: 0.5, zIndex: 2, '--gap': 4 }))
+    assert.equal(el.style.height, '120px')
+    assert.equal(el.style.margin, '0px')
+    assert.equal(el.style.opacity, '0.5')
+    assert.equal(el.style.zIndex, '2')
+    assert.equal(el.style.getPropertyValue('--gap'), '4')
+    s.h = 60
+    await flush()
+    assert.equal(el.style.height, '60px')
+  })
+  it('applies a string as cssText and clears it on null/false', async () => {
+    const s = new Store({ st: 'height: 10px; color: red' as unknown }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, ['st'])
+    await flush()
+    assert.equal(el.style.height, '10px')
+    assert.equal(el.style.color, 'red')
+    s.st = 'height: 20px'
+    await flush()
+    assert.equal(el.style.height, '20px')
+    assert.equal(el.style.color, '')
+    s.st = null
+    await flush()
+    assert.equal(el.getAttribute('style') ?? '', '')
+    s.st = 'width: 5px'
+    await flush()
+    s.st = false
+    await flush()
+    assert.equal(el.style.width, '')
+  })
+  it('switches between string and object values', async () => {
+    const s = new Store({ st: 'height: 10px; color: red' as unknown }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, ['st'])
+    await flush()
+    s.st = { width: 30 }
+    await flush()
+    assert.equal(el.style.width, '30px')
+    assert.equal(el.style.height, '')
+    assert.equal(el.style.color, '')
+    s.st = 'color: blue'
+    await flush()
+    assert.equal(el.style.color, 'blue')
+    assert.equal(el.style.width, '')
+    s.st = { width: 40 }
+    await flush()
+    assert.equal(el.style.width, '40px')
+    assert.equal(el.style.color, '')
+  })
+})
+
+describe('reactiveStyleProp – units (#110)', () => {
+  it('adds px to static and reactive numbers', async () => {
+    const s = new Store({ h: 120 }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyleProp(el, d, s, 'width', () => 50)
+    reactiveStyleProp(el, d, s, 'height', ['h'])
+    await flush()
+    assert.equal(el.style.width, '50px')
+    assert.equal(el.style.height, '120px')
+    s.h = 60
+    await flush()
+    assert.equal(el.style.height, '60px')
+  })
+  it('leaves 0, unitless, vendor-prefixed unitless and custom properties alone', () => {
+    const s = new Store({}) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyleProp(el, d, s, 'margin', () => 0)
+    reactiveStyleProp(el, d, s, 'opacity', () => 0.5)
+    reactiveStyleProp(el, d, s, 'z-index', () => 2)
+    reactiveStyleProp(el, d, s, 'line-height', () => 1.5)
+    reactiveStyleProp(el, d, s, 'font-weight', () => 500)
+    reactiveStyleProp(el, d, s, 'order', () => 3)
+    reactiveStyleProp(el, d, s, '-webkit-line-clamp', () => 2)
+    reactiveStyleProp(el, d, s, '--size', () => 8)
+    assert.equal(el.style.margin, '0px')
+    assert.equal(el.style.opacity, '0.5')
+    assert.equal(el.style.zIndex, '2')
+    assert.equal(el.style.lineHeight, '1.5')
+    assert.equal(el.style.fontWeight, '500')
+    assert.equal(el.style.order, '3')
+    assert.equal(el.style.getPropertyValue('-webkit-line-clamp'), '2')
+    assert.equal(el.style.getPropertyValue('--size'), '8')
   })
 })

@@ -7,6 +7,8 @@
  * .join('') over an array of h() results works as expected (string concat),
  * enabling patterns like `items.map(it => <li>...</li>).join('')`.
  */
+import { styleValue } from './runtime/style-value'
+
 type Props = Record<string, any> | null
 
 const _VOID_ELS = new Set([
@@ -50,7 +52,7 @@ export function h(tag: any, props: Props, ...rest: any[]): string {
         const style = Object.keys(v)
           .map((sk) => {
             const dashed = sk.replace(/([A-Z])/g, '-$1').toLowerCase()
-            return `${dashed}:${v[sk]}`
+            return `${dashed}:${styleValue(dashed, v[sk])}`
           })
           .join(';')
         html += ` style="${_escapeAttr(style)}"`
