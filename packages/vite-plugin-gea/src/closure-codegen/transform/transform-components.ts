@@ -1,4 +1,13 @@
-import type { ClassDeclaration, Statement } from '@babel/types'
+import type {
+  ClassDeclaration,
+  Expression,
+  Identifier,
+  ObjectPattern,
+  ObjectProperty,
+  Statement,
+  VariableDeclaration,
+  VariableDeclarator,
+} from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
 
@@ -271,7 +280,9 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   // `const { draft, onAdd } = props` because that captures the thunk
   // results once. Instead populate ctx.bindings so every identifier
   // reference in JSX expressions substitutes to `props.<name>` (which
-  // hits the live thunk on each read).
+  // hits the live thunk on each read). `const { … } = props` in the body
+  // goes through the same path below.
+  const propsLocals: Statement[] = []
   if (directParams) {
     fnDecl.params = directParams.locals.map((name) => t.identifier(name))
     fnCtx.oneShotPropLocals = new Set(directParams.locals)
@@ -282,12 +293,7 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
       )
     }
   } else if (fnDecl.params.length >= 1 && t.isObjectPattern(fnDecl.params[0])) {
-    const objPat = fnDecl.params[0] as any
-    for (const prop of objPat.properties) {
-      if (!t.isObjectProperty(prop) || !t.isIdentifier(prop.key)) continue
-      const local = t.isIdentifier(prop.value) ? prop.value.name : prop.key.name
-      fnCtx.bindings.set(local, t.memberExpression(t.identifier('props'), t.identifier(prop.key.name)))
-    }
+    propsLocals.push(...bindPropsPattern(fnDecl.params[0], 'let', fnCtx.bindings))
     fnDecl.params[0] = t.identifier('props')
   } else if (fnDecl.params.length === 0) {
     fnDecl.params.push(t.identifier('props'))
@@ -298,19 +304,28 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   // Collect bindings from preceding `const X = expr` declarations so reactive
   // getters substitute X transitively (X → its RHS → further bindings).
   // Must happen BEFORE compileJsxToBlock so the JSX walker sees the bindings.
-  const precedingRaw: Statement[] = []
+  const precedingRaw: Statement[] = [...propsLocals]
   for (let i = 0; i < returnIdx; i++) {
     const s = body[i]
-    if (t.isVariableDeclaration(s)) {
-      const allFromProps = s.declarations.every(
-        (d) => t.isObjectPattern(d.id) && t.isIdentifier((d as any).init, { name: 'props' }),
-      )
-      if (allFromProps) continue
+    if (t.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
+      const others = s.declarations.filter((decl) => !isPropsDestructure(decl))
+      for (const decl of s.declarations) {
+        if (!isPropsDestructure(decl)) continue
+        const locals = bindPropsPattern(decl.id as ObjectPattern, s.kind, fnCtx.bindings)
+        precedingRaw.push(...locals)
+        propsLocals.push(...locals)
+      }
+      if (others.length > 0) precedingRaw.push(t.variableDeclaration(s.kind, others))
+      continue
     }
     precedingRaw.push(s)
   }
-  // collectBindings is imported from emit.ts
-  collectBindings(precedingRaw, fnCtx.bindings)
+  // collectBindings is imported from emit.ts. Props locals stay real
+  // variables, so they must not be inlined as bindings.
+  collectBindings(
+    precedingRaw.filter((s) => !propsLocals.includes(s)),
+    fnCtx.bindings,
+  )
 
   const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx)
   if (
@@ -343,4 +358,107 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   }
 
   fnDecl.body.body = newBody
+}
+
+function isPropsDestructure(decl: VariableDeclarator): boolean {
+  return t.isObjectPattern(decl.id) && t.isIdentifier(decl.init, { name: 'props' })
+}
+
+/**
+ * Bind a props destructuring pattern so every name reads through `props` on
+ * each access instead of capturing the value once:
+ *   `{ title }`       → title = props.title
+ *   `{ class: cls }`  → cls = props.class
+ *   `{ size = 'md' }` → size = props.size === undefined ? 'md' : props.size
+ *   `{ ...rest }`     → a real local whose getters read through to `props`
+ * Returns the statements that must stay in the body as real locals. Nested
+ * patterns stay a plain destructure of `props`, as does the whole pattern when
+ * a computed key makes the rest element's excluded keys unknown.
+ */
+function bindPropsPattern(
+  pattern: ObjectPattern,
+  kind: VariableDeclaration['kind'],
+  bindings: Map<string, Expression>,
+): Statement[] {
+  const rest = pattern.properties.find((prop) => t.isRestElement(prop))
+  const keys: string[] = []
+  for (const prop of pattern.properties) {
+    if (t.isRestElement(prop)) continue
+    const key = staticPropKey(prop)
+    if (key !== null) keys.push(key)
+    else if (rest) return [t.variableDeclaration(kind, [t.variableDeclarator(pattern, t.identifier('props'))])]
+  }
+
+  const locals: Statement[] = []
+  const nested: ObjectProperty[] = []
+  for (const prop of pattern.properties) {
+    if (t.isRestElement(prop)) continue
+    const key = staticPropKey(prop)
+    const value = prop.value
+    if (key === null || !(t.isIdentifier(value) || (t.isAssignmentPattern(value) && t.isIdentifier(value.left)))) {
+      nested.push(prop)
+      continue
+    }
+    const read = () =>
+      t.isValidIdentifier(key, false)
+        ? t.memberExpression(t.identifier('props'), t.identifier(key))
+        : t.memberExpression(t.identifier('props'), t.stringLiteral(key), true)
+    if (t.isIdentifier(value)) {
+      bindings.set(value.name, read())
+    } else {
+      bindings.set(
+        (value.left as Identifier).name,
+        t.conditionalExpression(
+          t.binaryExpression('===', read(), t.identifier('undefined')),
+          t.cloneNode(value.right, true),
+          read(),
+        ),
+      )
+    }
+  }
+  if (nested.length > 0) {
+    locals.push(t.variableDeclaration(kind, [t.variableDeclarator(t.objectPattern(nested), t.identifier('props'))]))
+  }
+
+  if (rest && t.isIdentifier(rest.argument)) {
+    // Same shape as the direct factory props object in emit-mount.ts: one
+    // enumerable getter per remaining prop, so reads stay live.
+    const restId = t.identifier(rest.argument.name)
+    const keyId = t.identifier('__restKey')
+    const define = t.expressionStatement(
+      t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('defineProperty')), [
+        t.cloneNode(restId),
+        t.cloneNode(keyId),
+        t.objectExpression([
+          t.objectProperty(t.identifier('enumerable'), t.booleanLiteral(true)),
+          t.objectProperty(t.identifier('configurable'), t.booleanLiteral(true)),
+          t.objectProperty(
+            t.identifier('get'),
+            t.arrowFunctionExpression([], t.memberExpression(t.identifier('props'), t.cloneNode(keyId), true)),
+          ),
+        ]),
+      ]),
+    )
+    const excluded = keys.map((key) => t.binaryExpression('!==', t.cloneNode(keyId), t.stringLiteral(key)))
+    const test = excluded.reduce<Expression | null>(
+      (acc, cur) => (acc ? t.logicalExpression('&&', acc, cur) : cur),
+      null,
+    )
+    locals.push(
+      t.variableDeclaration(kind, [t.variableDeclarator(restId, t.objectExpression([]))]),
+      t.forInStatement(
+        t.variableDeclaration('const', [t.variableDeclarator(keyId)]),
+        t.identifier('props'),
+        test ? t.ifStatement(test, define) : define,
+      ),
+    )
+  }
+  return locals
+}
+
+function staticPropKey(prop: ObjectProperty): string | null {
+  if (!prop.computed && t.isIdentifier(prop.key)) return prop.key.name
+  if (t.isStringLiteral(prop.key)) return prop.key.value
+  if (t.isNumericLiteral(prop.key)) return String(prop.key.value)
+  return null
 }
