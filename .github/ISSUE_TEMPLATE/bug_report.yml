@@ -19,6 +19,7 @@ body:
     id: plugin-version
     attributes:
       label: '@geajs/vite-plugin version'
+      description: Write "not used" if you load Gea in the browser without a build step.
       placeholder: '1.4.3'
     validations:
       required: true
@@ -40,6 +41,7 @@ body:
         - Production build
         - SSR
         - Tests (Vitest, jsdom, etc.)
+        - Browser, no build step
         - Website playground
     validations:
       required: true
@@ -92,7 +94,7 @@ body:
     attributes:
       label: Before submitting
       options:
-        - label: I tried the latest versions of `@geajs/core` and `@geajs/vite-plugin`.
+        - label: I tried the latest versions of the Gea packages I use.
           required: true
         - label: I searched the existing issues.
           required: true
