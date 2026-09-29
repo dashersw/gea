@@ -380,6 +380,98 @@ new App().render(document.getElementById('app'))
     assert.match(result.code, /Hello\(\)/)
   })
 
+  it('reuses imports the entry already has instead of copying them (#134)', () => {
+    const main = `import App from './App'
+import store from './store'
+import Home from './Home'
+import { a } from './utils'
+store.load()
+new App().render(document.getElementById('app'))
+`
+    const root = fixture({
+      'store.ts': `import { Store } from '@geajs/core'
+class TodoStore extends Store {
+  todos: string[] = []
+}
+export default new TodoStore()
+`,
+      'Home.tsx': `import { Component } from '@geajs/core'
+export default class Home extends Component {
+  template() { return <p>home</p> }
+}`,
+      'utils.ts': `export const a = 'a'
+export const b = 'b'
+`,
+      'App.tsx': `import { Component } from '@geajs/core'
+import store from './store'
+import Home from './Home'
+import { a, b } from './utils'
+export default class App extends Component {
+  template() { return <main class="count">{store.todos.length}{a}{b}<Home /></main> }
+}`,
+      'main.ts': main,
+    })
+
+    const result = transformStaticRootMount(main, join(root, 'main.ts'), resolveImportPath)
+
+    assert.ok(result?.changed)
+    assert.doesNotMatch(result.code, /new App/)
+    assert.equal(result.code.match(/import store from/g)?.length, 1)
+    assert.equal(result.code.match(/import Home from/g)?.length, 1)
+    assert.match(result.code, /import \{ a \} from '\.\/utils'/)
+    assert.match(result.code, /import \{ b \} from "\.\/utils\.ts"/)
+    assert.match(result.code, /new Home\(/)
+    assert.match(result.code, /store\.load\(\);\ndocument\.getElementById\('app'\)\.appendChild\(__gea_root0_create\(/)
+  })
+
+  it('skips the mount when the entry binds a copied import name to something else (#134)', () => {
+    const entries = [
+      `import store from './other'\nstore.load()\n`,
+      `import { store } from './store'\nstore.load()\n`,
+      `import type store from './store'\nconst s: typeof store = null!\n`,
+      `const store = { load() {} }\nstore.load()\n`,
+    ]
+    for (const entry of entries) {
+      const main = `import App from './App'\n${entry}new App().render(document.getElementById('app'))\n`
+      const root = fixture({
+        'store.ts': `export const store = { todos: [] }
+export default store
+`,
+        'other.ts': `export default { load() {} }
+`,
+        'App.tsx': `import { Component } from '@geajs/core'
+import store from './store'
+export default class App extends Component {
+  template() { return <main>{store.todos.length}</main> }
+}`,
+        'main.ts': main,
+      })
+
+      assert.equal(transformStaticRootMount(main, join(root, 'main.ts'), resolveImportPath), null, entry)
+    }
+  })
+
+  it('skips the mount when an inlined function child has the name of an entry import (#134)', () => {
+    const main = `import App from './App'
+import { Hello } from './Hello'
+console.log(Hello)
+new App().render(document.getElementById('app'))
+`
+    const root = fixture({
+      'Hello.tsx': `export function Hello() {
+  return <button onClick={() => console.log('x')}>Hello</button>
+}`,
+      'App.tsx': `import { Component } from '@geajs/core'
+import { Hello } from './Hello'
+export default class App extends Component {
+  template() { return <div><Hello /></div> }
+}`,
+      'main.ts': main,
+    })
+
+    assert.equal(transformStaticRootMount(main, join(root, 'main.ts'), resolveImportPath), null)
+  })
+
   it('skips root component modules with top-level effects', () => {
     const root = fixture({
       'App.tsx': `import { Component } from '@geajs/core'

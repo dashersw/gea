@@ -1,4 +1,5 @@
 import { parse } from '@babel/parser'
+import type { Scope } from '@babel/traverse'
 import type {
   ClassDeclaration,
   Expression,
@@ -103,7 +104,9 @@ export function transformStaticRootMount(
     createAppendStatement(pattern.parent, factory),
   )
   removeDefaultImport(ast, pattern.appImport)
-  insertDeclarationsAfterImports(ast, factory.imports)
+  const copiedImports = importsMissingFromEntry(ast, filePath, factory, resolveImportPath)
+  if (!copiedImports) return null
+  insertDeclarationsAfterImports(ast, copiedImports)
   insertDeclarationsAfterImports(ast, factory.declarations)
   ensureCoreImports(ast, factory.importsNeeded)
 
@@ -325,6 +328,78 @@ function collectCopiedImports(
     imports.push(copy)
   }
   return imports
+}
+
+/**
+ * The copied imports and declarations land in the entry's module scope. A
+ * copied import the entry already has (same name, same export of the same
+ * module) is dropped. Any other name the entry already binds would be declared
+ * twice, so the mount is left as it is.
+ */
+function importsMissingFromEntry(
+  ast: File,
+  entryPath: string,
+  factory: StaticTemplateFactory,
+  resolveImportPath: (importer: string, source: string) => string | null,
+): ImportDeclaration[] | null {
+  let scope: Scope | undefined
+  traverse(ast, {
+    Program(path) {
+      scope = path.scope
+      path.stop()
+    },
+  })
+  if (!scope) return null
+
+  for (const decl of factory.declarations) {
+    for (const name of Object.keys(t.getOuterBindingIdentifiers(decl))) {
+      if (scope.hasOwnBinding(name)) return null
+    }
+  }
+
+  const imports: ImportDeclaration[] = []
+  for (const copy of factory.imports) {
+    const specifiers: ImportDeclaration['specifiers'] = []
+    for (const spec of copy.specifiers) {
+      const binding = scope.getOwnBinding(spec.local.name)
+      if (!binding) {
+        specifiers.push(spec)
+        continue
+      }
+      const entryImport = binding.path.parent
+      if (
+        !t.isImportDeclaration(entryImport) ||
+        entryImport.importKind === 'type' ||
+        specifierIsTypeOnly(binding.path.node) ||
+        importedBindingName(binding.path.node) !== importedBindingName(spec) ||
+        !isSameModule(entryPath, entryImport.source.value, copy.source.value, resolveImportPath)
+      ) {
+        return null
+      }
+    }
+    if (copy.specifiers.length > 0 && specifiers.length === 0) continue
+    copy.specifiers = specifiers
+    imports.push(copy)
+  }
+  return imports
+}
+
+function importedBindingName(spec: t.Node): string | null {
+  if (t.isImportNamespaceSpecifier(spec)) return '*'
+  return getImportedExportName(spec)
+}
+
+// Both sources are relative to the entry: copied relative sources were rewritten to it.
+function isSameModule(
+  entryPath: string,
+  a: string,
+  b: string,
+  resolveImportPath: (importer: string, source: string) => string | null,
+): boolean {
+  if (a === b) return true
+  if (!a.startsWith('.') || !b.startsWith('.')) return false
+  const resolved = resolveImportPath(entryPath, a)
+  return resolved !== null && resolved === resolveImportPath(entryPath, b)
 }
 
 function toRelativeImportSource(fromFile: string, targetFile: string): string {
