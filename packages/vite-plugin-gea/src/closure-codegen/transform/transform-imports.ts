@@ -2,6 +2,7 @@ import type { File, ImportDeclaration, ImportSpecifier, Statement } from '@babel
 
 import { t } from '../../utils/babel-interop.ts'
 import { COMPILER_RUNTIME_ID } from '../../virtual-modules.ts'
+import { isPropJsxHelperDecl, PROP_JSX_HELPER, propJsxHelperDecl } from '../emit/prop-jsx-helper.ts'
 
 export function injectTemplateDecls(ast: File, firstClassIdx: number, decls: Statement[]): void {
   if (decls.length === 0) return
@@ -44,5 +45,15 @@ function ensureNamedImports(ast: File, source: string, required: Iterable<string
 }
 
 export function ensureCoreImports(ast: File, helpers: Set<string>): void {
+  if (helpers.has(PROP_JSX_HELPER)) {
+    const body = ast.program.body
+    if (!body.some(isPropJsxHelperDecl)) {
+      let at = 0
+      while (at < body.length && t.isImportDeclaration(body[at])) at++
+      body.splice(at, 0, propJsxHelperDecl())
+    }
+    helpers = new Set(helpers)
+    helpers.delete(PROP_JSX_HELPER)
+  }
   ensureNamedImports(ast, COMPILER_RUNTIME_ID, helpers)
 }

@@ -1,4 +1,4 @@
-import type { Expression, Identifier, Statement } from '@babel/types'
+import type { Expression, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
 
@@ -7,6 +7,7 @@ import { compileJsxToBlock } from './emit-core.ts'
 import { substituteBindings } from './emit-substitution.ts'
 import { containsJsx, lowerJsxInExpression } from './emit-jsx-lowering.ts'
 import { buildMapBranchFn } from './emit-map-branch.ts'
+import { PROP_JSX_HELPER } from './prop-jsx-helper.ts'
 import type { Slot } from '../generator.ts'
 
 export function emitMountSlot(slot: Slot, stmts: Statement[], ctx: EmitContext): void {
@@ -336,38 +337,86 @@ function memoizedThunk(block: any): Expression {
  *
  * Every read re-runs the expression, so a condition like `cond ? <A /> : 'b'`
  * stays tracked by whoever reads the prop. Each JSX site the expression
- * evaluates directly builds its Node once and hands back that same Node
- * afterwards, so re-reading doesn't construct (and leak) another `<A />`:
+ * evaluates directly builds its Node once while a read selects it and is
+ * disposed by the first read that doesn't (see `PROP_JSX_HELPER`):
  *
- *   (() => { let __m0; return () => cond ? __m0 ?? (__m0 = <A block>) : 'b' })()
+ *   (() => {
+ *     const __j = __geaPropJsx(d, 1, false);
+ *     const __v = (d) => cond ? __j.site(0, (d) => { <A block> }) : 'b';
+ *     return () => __j.read(__v);
+ *   })()
  *
- * JSX inside a nested function (`(x) => <Row x={x} />`) depends on that
- * function's arguments, so it can't be memoized per site. A named prop whose
- * only JSX is of that kind keeps a memo of its whole value, so repeat reads
- * don't rebuild what the function returned; `children` stays live.
+ * JSX inside a nested function (`xs.map((x) => <Row x={x} />)`) is built again
+ * on every read. In `children` each read's JSX gets its own disposer, disposed
+ * once the slot drops its nodes. A named prop with such JSX keeps a memo of its
+ * whole value instead, as before, and so does a `children` function that the
+ * read hands out (`(x) => <Row x={x} />`), which can build JSX after the read.
  */
 function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean): Expression {
-  const sites: Identifier[] = []
-  const value = lowerJsxInExpression(expr, ctx, (built) => {
-    const id = t.identifier('__m' + sites.length)
-    sites.push(id)
-    return t.logicalExpression('??', id, t.assignmentExpression('=', t.cloneNode(id), built))
-  }) as Expression
-  const thunk = t.arrowFunctionExpression([], value)
-  if (sites.length === 0) {
-    return !isChildren && containsJsx(expr) ? memoizedThunk(t.blockStatement([t.returnStatement(value)])) : thunk
+  const nested = nestedFunctionJsx(expr)
+  if (nested !== 'none' && !isChildren) {
+    return memoizedThunk(t.blockStatement([t.returnStatement(lowerJsxInExpression(expr, ctx))]))
   }
+  let sites = 0
+  const value = lowerJsxInExpression(expr, ctx, (built: any) =>
+    t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier('site')), [
+      t.numericLiteral(sites++),
+      t.arrowFunctionExpression([t.identifier('d')], built.callee.body),
+    ]),
+  ) as Expression
+  const perRead = nested === 'called'
+  if (sites === 0 && !perRead) return t.arrowFunctionExpression([], value)
+  ctx.importsNeeded.add(PROP_JSX_HELPER)
+  if (perRead) ctx.importsNeeded.add('createDisposer')
   const outer = t.arrowFunctionExpression(
     [],
     t.blockStatement([
-      t.variableDeclaration(
-        'let',
-        sites.map((id) => t.variableDeclarator(t.cloneNode(id))),
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier('__j'),
+          t.callExpression(t.identifier(PROP_JSX_HELPER), [
+            t.identifier('d'),
+            t.numericLiteral(sites),
+            t.booleanLiteral(perRead),
+          ]),
+        ),
+      ]),
+      t.variableDeclaration('const', [
+        t.variableDeclarator(t.identifier('__v'), t.arrowFunctionExpression([t.identifier('d')], value)),
+      ]),
+      t.returnStatement(
+        t.arrowFunctionExpression(
+          [],
+          t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier('read')), [t.identifier('__v')]),
+        ),
       ),
-      t.returnStatement(thunk),
     ]),
   )
   return t.callExpression(outer, [])
+}
+
+/**
+ * Whether an expression has JSX inside a nested function, and whether each
+ * such function runs during the read: `called` when every one is an argument
+ * of a call (`xs.map((x) => <Row />)`), `escaping` when one is a value the
+ * read hands out (`(x) => <Row x={x} />`).
+ */
+function nestedFunctionJsx(expr: any): 'none' | 'called' | 'escaping' {
+  let found: 'none' | 'called' | 'escaping' = 'none'
+  const visit = (node: any, isArgument: boolean): void => {
+    if (!node || typeof node !== 'object' || found === 'escaping') return
+    if (t.isJSXElement(node) || t.isJSXFragment(node)) return
+    if (t.isFunction(node) && containsJsx(node)) found = isArgument ? 'called' : 'escaping'
+    const isCall = t.isCallExpression(node) || t.isOptionalCallExpression(node) || t.isNewExpression(node)
+    for (const k of Object.keys(node)) {
+      if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
+      const v = node[k]
+      if (Array.isArray(v)) for (const x of v) visit(x, isCall && k === 'arguments')
+      else visit(v, false)
+    }
+  }
+  visit(expr, false)
+  return found
 }
 
 /**
