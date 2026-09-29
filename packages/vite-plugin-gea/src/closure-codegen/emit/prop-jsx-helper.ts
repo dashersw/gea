@@ -20,11 +20,11 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  *   selected again, as an in-template conditional does. The site's root is
  *   an element, so disposing it before the reader swaps it out is safe.
  * - `read(fn)` runs one read. With `perRead`, JSX that nested functions build
- *   (`xs.map((x) => <Row />)`) gets a disposer per read, tagged onto the
- *   nodes the read returns. The slot that shows them disposes it when it
- *   drops them (see `reactiveText`); a read whose nodes aren't in the DOM by
- *   the next read, like the child's first read when it installs its props,
- *   is disposed then.
+ *   (`xs.map((x) => <Row />)`) gets a disposer per read. The nodes the read
+ *   returns are tagged with a `{ d, nodes }` record, and the slot that shows
+ *   them disposes it once it has dropped all of them (see `reactiveText`). A
+ *   read none of whose nodes is attached by the next read, like the child's
+ *   first read when it installs its props, is disposed then.
  */
 const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   const owner = Symbol.for('gea.jsx.owner')
@@ -56,14 +56,15 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
         }
       }
       if (perRead) {
-        shown = shown.filter((s) => s.nodes.some((n) => n[owner] === s.d && n.parentNode) || (s.d.dispose(), false))
+        shown = shown.filter((s) => s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false))
         const nodes = (Array.isArray(v) ? v : [v]).filter(
           (n) => n != null && typeof n.nodeType === 'number' && !built.includes(n),
         )
         if (nodes.length === 0) own.dispose()
         else {
-          for (const n of nodes) n[owner] = own
-          shown.push({ d: own, nodes })
+          const rec = { d: own, nodes }
+          for (const n of nodes) n[owner] = rec
+          shown.push(rec)
         }
       }
       return v

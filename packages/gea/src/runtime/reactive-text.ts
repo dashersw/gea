@@ -3,15 +3,21 @@ import { bind } from './bind'
 import { patch } from './patch'
 
 // A prop thunk tags the nodes a nested function built for one read
-// (`.map((r) => <Row />)` in `children`) with the disposer that owns them.
-// The slot showing them disposes it once it drops them or is torn down.
+// (`.map((r) => <Row />)` in `children`) with a record of that read's
+// disposer and nodes. A slot that drops one of them disposes the record once
+// none of its nodes is attached any more, so siblings it still shows keep
+// their bindings. A slot that is torn down disposes it right away.
 const JSX_OWNER = Symbol.for('gea.jsx.owner')
 
-function release(n: Node): void {
-  const owner = (n as any)[JSX_OWNER] as Disposer | undefined
+type JsxOwner = { d: Disposer; nodes: Node[] }
+
+function release(n: Node, force = false): void {
+  const owner = (n as any)[JSX_OWNER] as JsxOwner | undefined
   if (!owner) return
-  ;(n as any)[JSX_OWNER] = undefined
-  owner.dispose()
+  const owns = (m: Node): boolean => (m as any)[JSX_OWNER] === owner
+  if (!force && owner.nodes.some((m) => owns(m) && m.parentNode)) return
+  for (const m of owner.nodes) if (owns(m)) (m as any)[JSX_OWNER] = undefined
+  owner.d.dispose()
 }
 
 export function reactiveTextValue(
@@ -42,8 +48,8 @@ export function reactiveText(
     if (releasesOnDispose || !(n as any)[JSX_OWNER]) return
     releasesOnDispose = true
     d.add(() => {
-      if (liveChildren) for (const c of liveChildren) release(c)
-      release(live)
+      if (liveChildren) for (const c of liveChildren) release(c, true)
+      release(live, true)
     })
   }
   bind(d, root, pathOrGetter, (v) => {
@@ -77,9 +83,11 @@ export function reactiveText(
       liveChildren = nodes
       return
     }
-    // Scalar value arriving after an array — clear the array first.
+    // Scalar value arriving after an array — clear the array first, keeping
+    // a node that is shown next.
     if (liveChildren) {
       for (const n of liveChildren) {
+        if (n === v) continue
         if (n.parentNode) n.parentNode.removeChild(n)
         release(n)
       }

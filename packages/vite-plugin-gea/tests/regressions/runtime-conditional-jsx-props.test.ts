@@ -38,6 +38,17 @@ const PARTS = `
   export class Panel extends Component {
     template({ children }: any) { return <div class="panel">{ui.open && <p>{children}</p>}</div> }
   }
+  // Keeps the first children it gets and shows all of them or only the first.
+  const kept = new WeakMap()
+  export class Pick extends Component {
+    kids() {
+      if (!kept.has(this)) kept.set(this, this.props.children)
+      return kept.get(this)
+    }
+    template() {
+      return <div class="pick">{ui.open ? this.kids() : ui.loggedIn ? this.kids().slice(0, 1) : this.kids()[0]}</div>
+    }
+  }
   export function FnCard({ children }: any) { return <div class="card">{children}</div> }
   export function FnHeader({ header }: any) { return <div class="header">{header}</div> }
 `
@@ -92,7 +103,19 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
       template() { return <main>${appBody}</main> }
     }
   `
-  const names = ['Title', 'Profile', 'Card', 'Header', 'Outer', 'ReactiveCard', 'Panel', 'FnCard', 'FnHeader', 'App']
+  const names = [
+    'Title',
+    'Profile',
+    'Card',
+    'Header',
+    'Outer',
+    'ReactiveCard',
+    'Panel',
+    'Pick',
+    'FnCard',
+    'FnHeader',
+    'App',
+  ]
   let App: new () => Mountable
   if (factories.length > 0) {
     // The Vite pipeline calls imported function components directly instead of
@@ -323,6 +346,33 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     assert.equal(h.root.querySelector('.card')?.textContent, 'A')
     assert.equal(h.counter.p - h.counter.pd, 1)
     h.dispose()
+  })
+
+  it('keeps nested JSX live while the slot still shows part of it', async () => {
+    const h = await mountApp(
+      `<Pick>{ui.fancy ? ui.ids.map((id: string) => <Profile name={ui.byId[id].name} />) : 'none'}</Pick>`,
+      'pick',
+    )
+    const pick = () => [...h.root.querySelectorAll('.pick i')].map((i) => i.textContent).join('')
+    assert.equal(pick(), 'AB')
+    h.ui.open = false
+    h.flush()
+    assert.equal(pick(), 'A')
+    h.ui.byId = { a: { name: 'A2' }, b: { name: 'B' } }
+    h.flush()
+    assert.equal(pick(), 'A2')
+    // From the array to its first node alone.
+    h.ui.open = true
+    h.flush()
+    h.ui.loggedIn = false
+    h.ui.open = false
+    h.flush()
+    assert.equal(pick(), 'A2')
+    h.ui.byId = { a: { name: 'A3' }, b: { name: 'B' } }
+    h.flush()
+    assert.equal(pick(), 'A3')
+    h.dispose()
+    assert.equal(h.counter.p - h.counter.pd, 0)
   })
 
   it('keeps a JSX site shown when an array around it re-renders', async () => {
