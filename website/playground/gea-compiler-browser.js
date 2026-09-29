@@ -45247,18 +45247,10 @@ function isNestableConditionalExpression(node) {
   return false;
 }
 
-function buildCreateTemplateMethod(jsxRoot, ctx, preceding, templateSymbol = "GEA_CREATE_TEMPLATE") {
-  if (preceding && preceding.length > 0) collectBindings(preceding, ctx.bindings);
+function buildCreateTemplateMethod(jsxRoot, ctx, preceding = [], templateSymbol = "GEA_CREATE_TEMPLATE", propsLocals = []) {
+  bindTemplateLocals(preceding, ctx, propsLocals);
   const jsxBlock = compileJsxToBlock(jsxRoot, ctx);
-  const keptPreceding = (preceding ?? []).filter((s) => {
-    if (libExports.isReturnStatement(s) || libExports.isThrowStatement(s)) return false;
-    if (libExports.isVariableDeclaration(s)) {
-      const allPatterns = s.declarations.every((d) => libExports.isObjectPattern(d.id) || libExports.isArrayPattern(d.id));
-      if (allPatterns) return false;
-    }
-    return true;
-  }).map((s) => substituteBindings(s, ctx.bindings)).map((s) => lowerJsxInStatement(s, ctx));
-  const stmts = keptPreceding.concat(jsxBlock.body);
+  const stmts = keptTemplateStatements(preceding, ctx, propsLocals).concat(jsxBlock.body);
   return libExports.classMethod(
     "method",
     libExports.identifier(templateSymbol),
@@ -45267,6 +45259,25 @@ function buildCreateTemplateMethod(jsxRoot, ctx, preceding, templateSymbol = "GE
     true,
     false
   );
+}
+function bindTemplateLocals(preceding, ctx, propsLocals = []) {
+  collectBindings(
+    preceding.filter((s) => !propsLocals.includes(s)),
+    ctx.bindings,
+    initializerNeedsLocal
+  );
+}
+function keptTemplateStatements(preceding, ctx, propsLocals = []) {
+  return preceding.filter((s) => {
+    if (libExports.isReturnStatement(s) || libExports.isThrowStatement(s)) return false;
+    if (libExports.isVariableDeclaration(s) && !propsLocals.includes(s)) {
+      const inlined = s.declarations.every(
+        (d) => (libExports.isObjectPattern(d.id) || libExports.isArrayPattern(d.id)) && !(d.init && initializerNeedsLocal(d.init))
+      );
+      if (inlined) return false;
+    }
+    return true;
+  }).map((s) => substituteBindings(s, ctx.bindings)).map((s) => lowerJsxInStatement(s, ctx));
 }
 function lowerJsxInStatement(stmt, ctx) {
   if (!stmt) return stmt;
@@ -50501,6 +50512,25 @@ function fnHasConditionalRoot(fn) {
   return body.slice(0, returnIdx).some((stmt) => findJsxReturn(stmt) !== null);
 }
 function assertNoReassignedLocals(fnDecl, fnName, preceding) {
+  const found = findReassignedLocal(fnDecl, preceding);
+  if (!found) return;
+  throw compilerError(
+    `Function component \`${fnName || "<anonymous>"}\` reassigns \`${found.name}\`.`,
+    found.write,
+    `Function components have no local state yet, so the new value would never render. Keep \`${found.name}\` in a Store or a class component.`
+  );
+}
+function assertNoReassignedTemplateLocals(templateMethod, className, preceding) {
+  const params = templateMethod.params;
+  const found = findReassignedLocal(libExports.functionExpression(null, params, templateMethod.body), preceding);
+  if (!found) return;
+  throw compilerError(
+    `Class component \`${className}\` reassigns \`${found.name}\` in template().`,
+    found.write,
+    `template() runs once per instance, so the new value would never render. Make \`${found.name}\` a class field and write \`this.${found.name}\` instead, or keep it in a Store.`
+  );
+}
+function findReassignedLocal(fnDecl, preceding) {
   const mutable = /* @__PURE__ */ new Set();
   for (const stmt of preceding) {
     if (!libExports.isVariableDeclaration(stmt) || stmt.kind === "const") continue;
@@ -50508,7 +50538,7 @@ function assertNoReassignedLocals(fnDecl, fnName, preceding) {
       for (const name2 of Object.keys(libExports.getBindingIdentifiers(decl.id))) mutable.add(name2);
     }
   }
-  if (mutable.size === 0) return;
+  if (mutable.size === 0) return null;
   let name = "";
   let write = null;
   const fn = libExports.cloneNode(fnDecl, true);
@@ -50525,12 +50555,7 @@ function assertNoReassignedLocals(fnDecl, fnName, preceding) {
       }
     }
   });
-  if (!write) return;
-  throw compilerError(
-    `Function component \`${fnName || "<anonymous>"}\` reassigns \`${name}\`.`,
-    write,
-    `Function components have no local state yet, so the new value would never render. Keep \`${name}\` in a Store or a class component.`
-  );
+  return write ? { name, write } : null;
 }
 function findJsxReturn(node) {
   if (!node || typeof node !== "object") return null;
@@ -50625,22 +50650,8 @@ function rewriteFnComponent(fnDecl, parentCtx) {
   fnDecl.body.body = newBody;
 }
 function bindFnLocals(stmts, bindings) {
-  const kept = [];
   const propsLocals = [];
-  for (const s of stmts) {
-    if (libExports.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
-      const others = s.declarations.filter((decl) => !isPropsDestructure(decl));
-      for (const decl of s.declarations) {
-        if (!isPropsDestructure(decl)) continue;
-        const locals = bindPropsPattern(decl.id, s.kind, bindings);
-        kept.push(...locals);
-        propsLocals.push(...locals);
-      }
-      if (others.length > 0) kept.push(libExports.variableDeclaration(s.kind, others));
-      continue;
-    }
-    kept.push(s);
-  }
+  const kept = bindPropsDestructures(stmts, (init) => libExports.isIdentifier(init, { name: "props" }), bindings, propsLocals);
   collectBindings(
     kept.filter((s) => !propsLocals.includes(s)),
     bindings,
@@ -50657,44 +50668,62 @@ function propsParam(param, fnName) {
     "Name the parameter (`props`) or destructure it (`{ label }`)."
   );
 }
-function isPropsDestructure(decl) {
-  return libExports.isObjectPattern(decl.id) && libExports.isIdentifier(decl.init, { name: "props" });
+function bindPropsDestructures(stmts, isProps, bindings, propsLocals, base) {
+  const isPropsDestructure = (decl) => libExports.isObjectPattern(decl.id) && isProps(withoutTypes(decl.init));
+  const out = [];
+  for (const s of stmts) {
+    if (!libExports.isVariableDeclaration(s) || !s.declarations.some(isPropsDestructure)) {
+      out.push(s);
+      continue;
+    }
+    for (const decl of s.declarations) {
+      if (!isPropsDestructure(decl)) continue;
+      const locals = bindPropsPattern(decl.id, s.kind, bindings, base);
+      out.push(...locals);
+      propsLocals.push(...locals);
+    }
+    const others = s.declarations.filter((decl) => !isPropsDestructure(decl));
+    if (others.length > 0) out.push(libExports.variableDeclaration(s.kind, others));
+  }
+  return out;
 }
-function bindPropsPattern(pattern, kind, bindings) {
+function bindPropsPattern(pattern, kind, bindings, base = libExports.identifier("props")) {
   const rest = pattern.properties.find((prop) => libExports.isRestElement(prop));
   const keys = [];
   for (const prop of pattern.properties) {
     if (libExports.isRestElement(prop)) continue;
     const key = staticPropKey(prop);
     if (key !== null) keys.push(key);
-    else if (rest) return [libExports.variableDeclaration(kind, [libExports.variableDeclarator(pattern, libExports.identifier("props"))])];
+    else if (rest)
+      return [declareLocal(libExports.variableDeclaration(kind, [libExports.variableDeclarator(pattern, libExports.cloneNode(base))]), bindings)];
   }
   const locals = [];
-  const nested = [];
+  const unbound = [];
   for (const prop of pattern.properties) {
     if (libExports.isRestElement(prop)) continue;
     const key = staticPropKey(prop);
-    const value = prop.value;
-    if (key === null || !(libExports.isIdentifier(value) || libExports.isAssignmentPattern(value) && libExports.isIdentifier(value.left))) {
-      nested.push(prop);
+    const target = libExports.isAssignmentPattern(prop.value) ? prop.value.left : prop.value;
+    const onceDefault = libExports.isObjectPattern(target) && libExports.isAssignmentPattern(prop.value) && (initializerNeedsLocal(prop.value.right) || containsCall(prop.value.right));
+    if (key === null || onceDefault || !(libExports.isIdentifier(target) || libExports.isObjectPattern(target))) {
+      unbound.push(prop);
       continue;
     }
-    const read = () => libExports.isValidIdentifier(key, false) ? libExports.memberExpression(libExports.identifier("props"), libExports.identifier(key)) : libExports.memberExpression(libExports.identifier("props"), libExports.stringLiteral(key), true);
-    if (libExports.isIdentifier(value)) {
-      bindings.set(value.name, read());
-    } else {
-      bindings.set(
-        value.left.name,
-        libExports.conditionalExpression(
-          libExports.binaryExpression("===", read(), libExports.identifier("undefined")),
-          libExports.cloneNode(value.right, true),
-          read()
-        )
-      );
-    }
+    const read = () => libExports.isValidIdentifier(key, false) ? libExports.memberExpression(libExports.cloneNode(base), libExports.identifier(key)) : libExports.memberExpression(libExports.cloneNode(base), libExports.stringLiteral(key), true);
+    const value = libExports.isAssignmentPattern(prop.value) ? libExports.conditionalExpression(
+      libExports.binaryExpression("===", read(), libExports.identifier("undefined")),
+      libExports.cloneNode(prop.value.right, true),
+      read()
+    ) : read();
+    if (libExports.isIdentifier(target)) bindings.set(target.name, value);
+    else locals.push(...bindPropsPattern(target, kind, bindings, value));
   }
-  if (nested.length > 0) {
-    locals.push(libExports.variableDeclaration(kind, [libExports.variableDeclarator(libExports.objectPattern(nested), libExports.identifier("props"))]));
+  if (unbound.length > 0) {
+    locals.push(
+      declareLocal(
+        libExports.variableDeclaration(kind, [libExports.variableDeclarator(libExports.objectPattern(unbound), libExports.cloneNode(base))]),
+        bindings
+      )
+    );
   }
   if (rest && libExports.isIdentifier(rest.argument)) {
     const restId = libExports.identifier(rest.argument.name);
@@ -50708,7 +50737,7 @@ function bindPropsPattern(pattern, kind, bindings) {
           libExports.objectProperty(libExports.identifier("configurable"), libExports.booleanLiteral(true)),
           libExports.objectProperty(
             libExports.identifier("get"),
-            libExports.arrowFunctionExpression([], libExports.memberExpression(libExports.identifier("props"), libExports.cloneNode(keyId), true))
+            libExports.arrowFunctionExpression([], libExports.memberExpression(libExports.cloneNode(base), libExports.cloneNode(keyId), true))
           )
         ])
       ])
@@ -50719,15 +50748,36 @@ function bindPropsPattern(pattern, kind, bindings) {
       null
     );
     locals.push(
-      libExports.variableDeclaration(kind, [libExports.variableDeclarator(restId, libExports.objectExpression([]))]),
+      declareLocal(libExports.variableDeclaration(kind, [libExports.variableDeclarator(restId, libExports.objectExpression([]))]), bindings),
       libExports.forInStatement(
         libExports.variableDeclaration("const", [libExports.variableDeclarator(keyId)]),
-        libExports.identifier("props"),
+        libExports.cloneNode(base),
         test ? libExports.ifStatement(test, define) : define
       )
     );
   }
   return locals;
+}
+function containsCall(node) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isCallExpression(node) || libExports.isOptionalCallExpression(node) || libExports.isTaggedTemplateExpression(node)) return true;
+  if (libExports.isFunction(node)) return false;
+  if (Array.isArray(node)) return node.some(containsCall);
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || key === "start" || key === "end" || key === "type") continue;
+    if (containsCall(node[key])) return true;
+  }
+  return false;
+}
+function withoutTypes(expr) {
+  while (libExports.isTSAsExpression(expr) || libExports.isTSSatisfiesExpression(expr) || libExports.isTSNonNullExpression(expr) || libExports.isTSTypeAssertion(expr) || libExports.isParenthesizedExpression(expr)) {
+    expr = expr.expression;
+  }
+  return expr;
+}
+function declareLocal(decl, bindings) {
+  for (const name of Object.keys(libExports.getBindingIdentifiers(decl))) bindings.delete(name);
+  return decl;
 }
 function staticPropKey(prop) {
   if (!prop.computed && libExports.isIdentifier(prop.key)) return prop.key.name;
@@ -51020,10 +51070,19 @@ function transformFile(source, _filename, options = {}) {
       if (libExports.isIdentifier(templateParam)) {
         ctx.bindings.set(templateParam.name, libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")));
       }
-      const preceding = extractPrecedingStatements(templateMethod);
+      const templateBody = extractPrecedingStatements(templateMethod);
+      assertNoReassignedTemplateLocals(templateMethod, className, templateBody);
+      const propsLocals = [];
+      const preceding = bindPropsDestructures(
+        templateBody,
+        (init) => libExports.isMemberExpression(init) && !init.computed && libExports.isThisExpression(init.object) && libExports.isIdentifier(init.property, { name: "props" }) || libExports.isIdentifier(templateParam) && libExports.isIdentifier(init, { name: templateParam.name }),
+        ctx.bindings,
+        propsLocals,
+        libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props"))
+      );
       const templateSymbol = useStaticCompiledComponent ? "GEA_STATIC_TEMPLATE" : "GEA_CREATE_TEMPLATE";
       ctx.importsNeeded.add(templateSymbol);
-      const method = buildCreateTemplateMethod(jsx, ctx, preceding, templateSymbol);
+      const method = buildCreateTemplateMethod(jsx, ctx, preceding, templateSymbol, propsLocals);
       const useStaticElementComponent = useStaticCompiledComponent && isStaticBuiltinElementRoot(jsx) && !nodeContainsIdentifier(method.body, "d");
       if (useStaticElementComponent && ctx.irTemplates) {
         for (const template of ctx.irTemplates) {

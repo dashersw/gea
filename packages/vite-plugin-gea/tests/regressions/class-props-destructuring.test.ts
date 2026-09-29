@@ -147,17 +147,23 @@ describe('class template() this.props destructuring (#144)', { concurrency: fals
     }
   })
 
-  it('renders a nested pattern', async () => {
+  // Live since #142
+  it('renders and updates a nested pattern', async () => {
     const restore = installDom()
     let view: any
     try {
       const app = await renderApp(
         badge('const { user: { first } } = this.props', '<i>{first}</i>'),
-        `<Badge user={{ first: 'Ada' }} />`,
-        '',
+        `<Badge user={this.user} />`,
+        `user = { first: 'Ada' }`,
       )
       view = app.view
-      assert.equal(app.root.querySelector('i')!.outerHTML, '<i>Ada</i>')
+      const i = app.root.querySelector('i')!
+      assert.equal(i.outerHTML, '<i>Ada</i>')
+
+      view.user = { first: 'Grace' }
+      await flushMicrotasks()
+      assert.equal(i.textContent, 'Grace')
     } finally {
       view?.dispose()
       restore()

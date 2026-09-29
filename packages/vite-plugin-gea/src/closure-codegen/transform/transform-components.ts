@@ -617,10 +617,13 @@ export function bindPropsDestructures(
  *   `{ title }`       → title = props.title
  *   `{ class: cls }`  → cls = props.class
  *   `{ size = 'md' }` → size = props.size === undefined ? 'md' : props.size
+ *   `{ user: { first } }` → first = props.user.first, with `props.user` as the
+ *                         base of the nested pattern (its default applied)
  *   `{ ...rest }`     → a real local whose getters read through to `props`
- * Returns the statements that must stay in the body as real locals. Nested
- * patterns stay a plain destructure of `props`, as does the whole pattern when
- * a computed key makes the rest element's excluded keys unknown.
+ * Returns the statements that must stay in the body as real locals. Array
+ * patterns, computed keys and nested defaults with a `new` or a call stay a
+ * plain destructure of their base, as does the whole pattern when a computed
+ * key makes the rest element's excluded keys unknown.
  */
 export function bindPropsPattern(
   pattern: ObjectPattern,
@@ -639,36 +642,38 @@ export function bindPropsPattern(
   }
 
   const locals: Statement[] = []
-  const nested: ObjectProperty[] = []
+  const unbound: ObjectProperty[] = []
   for (const prop of pattern.properties) {
     if (t.isRestElement(prop)) continue
     const key = staticPropKey(prop)
-    const value = prop.value
-    if (key === null || !(t.isIdentifier(value) || (t.isAssignmentPattern(value) && t.isIdentifier(value.left)))) {
-      nested.push(prop)
+    const target = t.isAssignmentPattern(prop.value) ? prop.value.left : prop.value
+    // A nested default with effects (`= new Guest()`, `= getGuest()`) runs once, as a real local
+    const onceDefault =
+      t.isObjectPattern(target) &&
+      t.isAssignmentPattern(prop.value) &&
+      (initializerNeedsLocal(prop.value.right) || containsCall(prop.value.right))
+    if (key === null || onceDefault || !(t.isIdentifier(target) || t.isObjectPattern(target))) {
+      unbound.push(prop)
       continue
     }
     const read = () =>
       t.isValidIdentifier(key, false)
         ? t.memberExpression(t.cloneNode(base), t.identifier(key))
         : t.memberExpression(t.cloneNode(base), t.stringLiteral(key), true)
-    if (t.isIdentifier(value)) {
-      bindings.set(value.name, read())
-    } else {
-      bindings.set(
-        (value.left as Identifier).name,
-        t.conditionalExpression(
+    const value = t.isAssignmentPattern(prop.value)
+      ? t.conditionalExpression(
           t.binaryExpression('===', read(), t.identifier('undefined')),
-          t.cloneNode(value.right, true),
+          t.cloneNode(prop.value.right, true),
           read(),
-        ),
-      )
-    }
+        )
+      : read()
+    if (t.isIdentifier(target)) bindings.set(target.name, value)
+    else locals.push(...bindPropsPattern(target, kind, bindings, value))
   }
-  if (nested.length > 0) {
+  if (unbound.length > 0) {
     locals.push(
       declareLocal(
-        t.variableDeclaration(kind, [t.variableDeclarator(t.objectPattern(nested), t.cloneNode(base))]),
+        t.variableDeclaration(kind, [t.variableDeclarator(t.objectPattern(unbound), t.cloneNode(base))]),
         bindings,
       ),
     )
@@ -708,6 +713,19 @@ export function bindPropsPattern(
     )
   }
   return locals
+}
+
+/** A call outside a nested function, which may have effects. */
+function containsCall(node: any): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node) || t.isTaggedTemplateExpression(node)) return true
+  if (t.isFunction(node)) return false
+  if (Array.isArray(node)) return node.some(containsCall)
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    if (containsCall(node[key])) return true
+  }
+  return false
 }
 
 /** `props as Props`, `props!` and `(props)` all read `props`. */
