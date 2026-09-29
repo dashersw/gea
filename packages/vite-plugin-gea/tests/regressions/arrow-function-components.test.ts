@@ -285,6 +285,7 @@ describe('normalizeArrowComponents', () => {
       export let Mutable = function () { return <p /> }
       export const Shadowed = function Inner() { const Shadowed = 1; return <p>{Inner}{Shadowed}</p> }
       export const Reassigned = function Inner() { Inner = 1; return <p /> }
+      export const SameReassigned = function SameReassigned() { SameReassigned = 1; return <p /> }
     `,
       { sourceType: 'module', plugins: ['jsx', 'typescript'] },
     )

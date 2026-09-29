@@ -105,14 +105,15 @@ function functionExpressionToDeclaration(name: string, fn: t.FunctionExpression)
   // Carries over loc, comments, type parameters and the return type annotation.
   t.inherits(decl, fn)
   if (!isFunctionComponent(decl)) return null
-  if (fn.id && fn.id.name !== name && !renameSelfReferences(fn, name)) return null
+  if (fn.id && !renameSelfReferences(fn, name)) return null
   return decl
 }
 
 /**
  * Renames the references to a named function expression's own name to `name`.
- * Returns false, renaming nothing, if `name` is bound where one of them sits
- * or the body assigns to the function's name.
+ * Returns false, renaming nothing, if another binding of `name` is in scope
+ * where one of them sits, or if the body assigns to the function's name: that
+ * name is read-only, while a declaration's name can be reassigned.
  */
 function renameSelfReferences(fn: t.FunctionExpression, name: string): boolean {
   // A throwaway file gives the function fresh paths and scopes, unaffected by
@@ -127,7 +128,12 @@ function renameSelfReferences(fn: t.FunctionExpression, name: string): boolean {
   const binding = fnPath.scope.getOwnBinding(fn.id!.name)
   // A parameter of the same name shadows the function's name everywhere.
   if (binding?.kind !== 'local') return true
-  if (!binding.constant || binding.referencePaths.some((ref) => ref.scope.getBinding(name))) return false
+  if (!binding.constant) return false
+  for (const ref of binding.referencePaths) {
+    const target = ref.scope.getBinding(name)
+    // When the names match, `name` resolves to this binding itself.
+    if (target && target !== binding) return false
+  }
   for (const ref of binding.referencePaths) (ref.node as t.Identifier | t.JSXIdentifier).name = name
   return true
 }
