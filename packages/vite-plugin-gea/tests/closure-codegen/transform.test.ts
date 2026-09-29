@@ -211,7 +211,7 @@ export default class App extends Component {
 }`
     const { code } = transformFile(src)
     assert.match(code, /mount\(/)
-    assert.match(code, /reactiveTextValue\(/)
+    assert.match(code, /reactiveText\(t0, d, props, \(\) => props\.count\)/)
     assert.doesNotMatch(code, /const __n0 = Note\(\{/)
   })
 

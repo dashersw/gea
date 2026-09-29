@@ -166,6 +166,7 @@ export async function transformGeaSourceToEvalBody(source: string, id: string): 
     .replace(/export default class\s+/g, 'class ')
     .replace(/export default function\s+/g, 'function ')
     .replace(/export class\s+/g, 'class ')
+    .replace(/export function\s+/g, 'function ')
     .replace(/^export type\s+[^;]+;?\s*$/gm, '')
     .replace(/export\s*\{[^}]*\}\s*;?/g, '')
 }
