@@ -21,6 +21,7 @@ import {
   type EmitContext,
 } from '../emit.ts'
 import { extractTemplateJsx, findTemplateMethod } from '../generator.ts'
+import { foldConditionalReturn, isConditionalJsxRoot } from './transform-template-methods.ts'
 
 export function extendsComponent(classDecl: ClassDeclaration): boolean {
   const sc = classDecl.superClass
@@ -217,7 +218,10 @@ function nodeContainsIdentifier(node: any, name: string): boolean {
   return false
 }
 
-/** True if the function body returns a JSX expression (PascalCase name + JSX return). */
+/**
+ * True if the function body returns a JSX expression (PascalCase name + JSX
+ * return), or picks one with a condition (`c ? <A/> : <B/>`, `c && <A/>`).
+ */
 export function isFunctionComponent(fn: any): boolean {
   if (!fn.id || !t.isIdentifier(fn.id)) return false
   const name = fn.id.name
@@ -225,11 +229,13 @@ export function isFunctionComponent(fn: any): boolean {
   // Look for a return <JSX/> in the body
   if (!fn.body || !t.isBlockStatement(fn.body)) return false
   for (const stmt of fn.body.body) {
-    if (t.isReturnStatement(stmt) && stmt.argument) {
-      if (t.isJSXElement(stmt.argument) || t.isJSXFragment(stmt.argument)) return true
-    }
+    if (t.isReturnStatement(stmt) && isJsxRoot(stmt.argument)) return true
   }
   return false
+}
+
+function isJsxRoot(node: any): boolean {
+  return t.isJSXElement(node) || t.isJSXFragment(node) || isConditionalJsxRoot(node)
 }
 
 /**
@@ -245,6 +251,19 @@ export function fnHasInstanceLocals(fn: any): boolean {
     }
   }
   return false
+}
+
+/**
+ * True if the body picks its root with a condition, which `rewriteFnComponent`
+ * folds into a `conditional()` reading `props`. A one-shot direct factory has
+ * no `props`, so such a component has to be mounted.
+ */
+export function fnHasConditionalRoot(fn: any): boolean {
+  const body: Statement[] = fn.body?.body ?? []
+  const returnIdx = body.findIndex((s) => t.isReturnStatement(s))
+  if (returnIdx < 0) return false
+  if (isConditionalJsxRoot((body[returnIdx] as any).argument)) return true
+  return body.slice(0, returnIdx).some((stmt) => findJsxReturn(stmt) !== null)
 }
 
 /**
@@ -289,6 +308,26 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
   )
 }
 
+/** A `return` of JSX inside `node`, not counting nested functions. */
+function findJsxReturn(node: any): any {
+  if (!node || typeof node !== 'object') return null
+  if (t.isFunction(node)) return null
+  if (t.isReturnStatement(node)) return isJsxRoot(node.argument) ? node : null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findJsxReturn(child)
+      if (found) return found
+    }
+    return null
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    const found = findJsxReturn(node[key])
+    if (found) return found
+  }
+  return null
+}
+
 /**
  * Rewrite a function component body so it becomes a `(props, d) => Element`
  * usable by the new runtime's `mount()` (mount calls it with the disposer).
@@ -299,20 +338,16 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
  */
 export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   const body = fnDecl.body.body as Statement[]
-  let returnIdx = -1
-  for (let i = 0; i < body.length; i++) {
-    if (t.isReturnStatement(body[i])) {
-      returnIdx = i
-      break
-    }
-  }
-  if (returnIdx < 0) return
-  const ret = body[returnIdx] as any
-  if (!ret.argument || !(t.isJSXElement(ret.argument) || t.isJSXFragment(ret.argument))) return
-  const jsxRoot = ret.argument
+  let returnIdx = body.findIndex((s) => t.isReturnStatement(s))
+  if (returnIdx < 0 || !isJsxRoot((body[returnIdx] as any).argument)) return
 
   const fnName = t.isIdentifier(fnDecl.id) ? fnDecl.id.name : ''
+  // Checked before folding, which moves locals declared after a guard into
+  // the guard's branch.
   assertNoReassignedLocals(fnDecl, fnName, body.slice(0, returnIdx))
+  foldConditionalReturn(body)
+  returnIdx = body.findIndex((s) => t.isReturnStatement(s))
+  const jsxRoot = (body[returnIdx] as any).argument
 
   const fnCtx = createEmitContext(t.identifier('props'))
   fnCtx.oneShotProps = parentCtx.directFnComponents?.has(fnName) === true
@@ -372,31 +407,9 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   // Collect bindings from preceding `const X = expr` declarations so reactive
   // getters substitute X transitively (X → its RHS → further bindings).
   // Must happen BEFORE compileJsxToBlock so the JSX walker sees the bindings.
-  const precedingRaw: Statement[] = [...propsLocals]
-  for (let i = 0; i < returnIdx; i++) {
-    const s = body[i]
-    if (t.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
-      const others = s.declarations.filter((decl) => !isPropsDestructure(decl))
-      for (const decl of s.declarations) {
-        if (!isPropsDestructure(decl)) continue
-        const locals = bindPropsPattern(decl.id as ObjectPattern, s.kind, fnCtx.bindings)
-        precedingRaw.push(...locals)
-        propsLocals.push(...locals)
-      }
-      if (others.length > 0) precedingRaw.push(t.variableDeclaration(s.kind, others))
-      continue
-    }
-    precedingRaw.push(s)
-  }
-  // collectBindings is imported from emit.ts. Props locals stay real
-  // variables, so they must not be inlined as bindings. Locals that construct
-  // objects or write state stay real variables too, created once per instance;
-  // inlining them would re-run the initializer on each read.
-  collectBindings(
-    precedingRaw.filter((s) => !propsLocals.includes(s)),
-    fnCtx.bindings,
-    initializerNeedsLocal,
-  )
+  // A guard's branch binds the locals folded into it the same way.
+  const precedingRaw: Statement[] = [...propsLocals, ...bindFnLocals(body.slice(0, returnIdx), fnCtx.bindings)]
+  fnCtx.bindBranchLocals = bindFnLocals
 
   const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx)
   if (
@@ -429,6 +442,40 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   }
 
   fnDecl.body.body = newBody
+}
+
+/**
+ * Bind the locals a function component declares before its JSX so reads
+ * inline through to `props`, and return the statements that stay in the
+ * body. `const { … } = props` binds as in `bindPropsPattern`.
+ */
+function bindFnLocals(stmts: Statement[], bindings: Map<string, Expression>): Statement[] {
+  const kept: Statement[] = []
+  const propsLocals: Statement[] = []
+  for (const s of stmts) {
+    if (t.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
+      const others = s.declarations.filter((decl) => !isPropsDestructure(decl))
+      for (const decl of s.declarations) {
+        if (!isPropsDestructure(decl)) continue
+        const locals = bindPropsPattern(decl.id as ObjectPattern, s.kind, bindings)
+        kept.push(...locals)
+        propsLocals.push(...locals)
+      }
+      if (others.length > 0) kept.push(t.variableDeclaration(s.kind, others))
+      continue
+    }
+    kept.push(s)
+  }
+  // Props locals stay real variables, so they must not be inlined as
+  // bindings. Locals that construct objects or write state stay real
+  // variables too, created once per instance (or per render of a guard's
+  // branch); inlining them would re-run the initializer on each read.
+  collectBindings(
+    kept.filter((s) => !propsLocals.includes(s)),
+    bindings,
+    initializerNeedsLocal,
+  )
+  return kept
 }
 
 function isPropsDestructure(decl: VariableDeclarator): boolean {

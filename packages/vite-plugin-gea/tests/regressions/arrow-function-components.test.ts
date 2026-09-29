@@ -177,6 +177,15 @@ describe('normalizeArrowComponents', () => {
     assert.match(out, /export function Block\(\{\s*a\s*\}\) \{\s*const b = a \+ 1;\s*return <p>\{b\}<\/p>;\s*\}/)
   })
 
+  it('rewrites arrows that pick their root with a condition (#124)', () => {
+    const out = normalize(`
+      export const Cond = (p) => p.a ? <a /> : <b />
+      export const And = (p) => p.a && <a />
+    `)
+    assert.match(out, /export function Cond\(p\) \{\s*return p\.a \? <a \/> : <b \/>;\s*\}/)
+    assert.match(out, /export function And\(p\) \{\s*return p\.a && <a \/>;\s*\}/)
+  })
+
   it('names an anonymous default export after the file, avoiding clashes', () => {
     assert.match(
       normalize(`export default (p) => <p />`, '/src/default-arrow.tsx'),
@@ -205,7 +214,6 @@ describe('normalizeArrowComponents', () => {
     const ast = parse(
       `
       export const lower = () => <p />
-      export const Cond = (p) => p.a ? <a /> : <b />
       export const NotJsx = () => 1
       export let Mutable = () => <p />
       export const UsesThis = () => <p>{this.x}</p>

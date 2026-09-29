@@ -45075,6 +45075,7 @@ function isJsxOrNullish(n) {
   if (libExports.isJSXElement(n) || libExports.isJSXFragment(n)) return true;
   if (libExports.isNullLiteral(n)) return true;
   if (libExports.isIdentifier(n, { name: "undefined" })) return true;
+  if (libExports.isCallExpression(n) && n.callee.__geaHoistedIIFE) return true;
   return false;
 }
 function isMapWithJsxBody(n) {
@@ -45179,16 +45180,21 @@ function buildBranchFn(branchExpr, ctx) {
     const block = branchExpr.callee.body;
     const last = block.body[block.body.length - 1];
     if (last && libExports.isReturnStatement(last) && last.argument && (libExports.isJSXElement(last.argument) || libExports.isJSXFragment(last.argument))) {
-      const hoisted = block.body.slice(0, -1).map((s) => substituteBindings(s, ctx.bindings));
+      const stmts = block.body.slice(0, -1);
+      const hoisted = ctx.bindBranchLocals ? [] : stmts.map((s) => substituteBindings(s, ctx.bindings));
       const saved = new Map(ctx.bindings);
-      collectBindings(hoisted, ctx.bindings);
       let inner;
+      let kept = null;
       try {
+        if (ctx.bindBranchLocals) kept = ctx.bindBranchLocals(stmts, ctx.bindings);
+        else collectBindings(hoisted, ctx.bindings);
         inner = compileJsxToBlock(last.argument, ctx);
+        if (kept) kept = kept.map((s) => substituteBindings(s, ctx.bindings));
       } finally {
         ctx.bindings.clear();
         for (const [k, v] of saved) ctx.bindings.set(k, v);
       }
+      if (kept) return libExports.arrowFunctionExpression([libExports.identifier("d")], libExports.blockStatement([...kept, ...inner.body]));
       const keptHoisted = hoisted.filter((s) => !libExports.isVariableDeclaration(s));
       const combined = libExports.blockStatement([...keptHoisted, ...inner.body]);
       return libExports.arrowFunctionExpression([libExports.identifier("d")], combined);
@@ -50121,6 +50127,140 @@ function emitWalkAlias(name, existing, stmts) {
   stmts.push(libExports.variableDeclaration("const", [libExports.variableDeclarator(libExports.identifier(name), libExports.identifier(existing))]));
 }
 
+function extractPrecedingStatements(templateMethod) {
+  const out = [];
+  for (const stmt of templateMethod.body.body) {
+    if (libExports.isReturnStatement(stmt)) break;
+    out.push(stmt);
+  }
+  return out;
+}
+function isJsx(node) {
+  return libExports.isJSXElement(node) || libExports.isJSXFragment(node);
+}
+function isConditionalJsxRoot(node) {
+  if (libExports.isLogicalExpression(node, { operator: "&&" })) return isJsx(node.right) || isConditionalJsxRoot(node.right);
+  if (!libExports.isConditionalExpression(node)) return false;
+  const arms = [node.consequent, node.alternate];
+  const isNullish = (arm) => libExports.isNullLiteral(arm) || libExports.isIdentifier(arm, { name: "undefined" });
+  return arms.every((arm) => isJsx(arm) || isNullish(arm) || isConditionalJsxRoot(arm)) && !arms.every(isNullish);
+}
+function foldConditionalReturn(body) {
+  const finalIdx = body.findIndex((s) => libExports.isReturnStatement(s));
+  if (finalIdx < 0) return;
+  const final = body[finalIdx];
+  let result = branchRoot(final.argument);
+  let firstGuardIdx = finalIdx;
+  let pending = [];
+  for (let i = finalIdx - 1; i >= 0; i--) {
+    const stmt = body[i];
+    const guard = guardBranch(stmt);
+    if (guard) {
+      result = libExports.conditionalExpression(guard.test, guard.branch, withLocals(pending, result));
+      firstGuardIdx = i;
+      pending = [];
+      continue;
+    }
+    if (libExports.isFunctionDeclaration(stmt) || containsReturn(stmt)) break;
+    pending.unshift(stmt);
+  }
+  if (firstGuardIdx === finalIdx) final.argument = result;
+  else body.splice(firstGuardIdx, finalIdx - firstGuardIdx + 1, libExports.returnStatement(wrapInFragment(result)));
+}
+function guardBranch(stmt) {
+  if (!libExports.isIfStatement(stmt) || stmt.alternate) return null;
+  const stmts = libExports.isBlockStatement(stmt.consequent) ? stmt.consequent.body : [stmt.consequent];
+  const ret = stmts[stmts.length - 1];
+  if (!libExports.isReturnStatement(ret) || !(isJsx(ret.argument) || isConditionalJsxRoot(ret.argument))) return null;
+  const locals = stmts.slice(0, -1);
+  const unsafe = (s) => libExports.isFunctionDeclaration(s) || containsReturn(s) || libExports.isVariableDeclaration(s) && s.kind !== "const";
+  if (locals.some(unsafe)) return null;
+  return { test: stmt.test, branch: withLocals(locals, branchRoot(ret.argument)) };
+}
+function withLocals(stmts, root) {
+  if (stmts.length === 0) return root;
+  const arrow = libExports.arrowFunctionExpression([], libExports.blockStatement([...stmts, libExports.returnStatement(branchRoot(root))]));
+  arrow.__geaHoistedIIFE = true;
+  return libExports.callExpression(arrow, []);
+}
+function branchRoot(expr) {
+  return isJsx(expr) ? expr : wrapInFragment(expr);
+}
+function containsReturn(node) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isFunction(node)) return false;
+  if (libExports.isReturnStatement(node)) return true;
+  if (Array.isArray(node)) return node.some(containsReturn);
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || key === "start" || key === "end" || key === "type") continue;
+    if (containsReturn(node[key])) return true;
+  }
+  return false;
+}
+function onlyStatement(stmt) {
+  return libExports.isBlockStatement(stmt) && stmt.body.length === 1 ? stmt.body[0] : stmt;
+}
+function wrapInFragment(expr) {
+  return libExports.jsxFragment(libExports.jsxOpeningFragment(), libExports.jsxClosingFragment(), [libExports.jsxExpressionContainer(expr)]);
+}
+function foldEarlyReturnGuards(body) {
+  let finalIdx = -1;
+  for (let i = body.length - 1; i >= 0; i--) {
+    const s = body[i];
+    if (libExports.isReturnStatement(s) && s.argument && (libExports.isJSXElement(s.argument) || libExports.isJSXFragment(s.argument))) {
+      finalIdx = i;
+      break;
+    }
+  }
+  if (finalIdx < 0) return;
+  let anyGuardIdx = -1;
+  for (let i = finalIdx - 1; i >= 0; i--) {
+    if (isEarlyReturnGuard(body[i])) {
+      anyGuardIdx = i;
+      break;
+    }
+  }
+  let scanIdx = finalIdx - 1;
+  const hoistedStmts = [];
+  if (anyGuardIdx >= 0) {
+    while (scanIdx > anyGuardIdx) {
+      const s = body[scanIdx];
+      if (libExports.isVariableDeclaration(s) || libExports.isExpressionStatement(s)) {
+        hoistedStmts.unshift(s);
+        scanIdx--;
+        continue;
+      }
+      break;
+    }
+  }
+  let mainExpr = body[finalIdx].argument;
+  if (hoistedStmts.length > 0) {
+    const block = libExports.blockStatement([...hoistedStmts, libExports.returnStatement(mainExpr)]);
+    const arrow = libExports.arrowFunctionExpression([], block);
+    arrow.__geaHoistedIIFE = true;
+    mainExpr = libExports.callExpression(arrow, []);
+  }
+  let result = mainExpr;
+  let firstGuardIdx = finalIdx;
+  for (let i = scanIdx; i >= 0; i--) {
+    const s = body[i];
+    if (isEarlyReturnGuard(s)) {
+      const ret = onlyStatement(s.consequent);
+      result = libExports.conditionalExpression(s.test, ret.argument, result);
+      firstGuardIdx = i;
+      continue;
+    }
+    break;
+  }
+  if (firstGuardIdx === finalIdx && hoistedStmts.length === 0) return;
+  body.splice(firstGuardIdx, finalIdx - firstGuardIdx + 1, libExports.returnStatement(wrapInFragment(result)));
+}
+function isEarlyReturnGuard(s) {
+  if (!libExports.isIfStatement(s) || s.alternate) return false;
+  const ret = onlyStatement(s.consequent);
+  return libExports.isReturnStatement(ret) && isJsx(ret.argument);
+}
+
 function extendsComponent(classDecl) {
   const sc = classDecl.superClass;
   if (!sc) return false;
@@ -50290,11 +50430,12 @@ function isFunctionComponent(fn) {
   if (!name || name[0] !== name[0].toUpperCase()) return false;
   if (!fn.body || !libExports.isBlockStatement(fn.body)) return false;
   for (const stmt of fn.body.body) {
-    if (libExports.isReturnStatement(stmt) && stmt.argument) {
-      if (libExports.isJSXElement(stmt.argument) || libExports.isJSXFragment(stmt.argument)) return true;
-    }
+    if (libExports.isReturnStatement(stmt) && isJsxRoot(stmt.argument)) return true;
   }
   return false;
+}
+function isJsxRoot(node) {
+  return libExports.isJSXElement(node) || libExports.isJSXFragment(node) || isConditionalJsxRoot(node);
 }
 function fnHasInstanceLocals(fn) {
   for (const stmt of fn.body?.body ?? []) {
@@ -50304,6 +50445,13 @@ function fnHasInstanceLocals(fn) {
     }
   }
   return false;
+}
+function fnHasConditionalRoot(fn) {
+  const body = fn.body?.body ?? [];
+  const returnIdx = body.findIndex((s) => libExports.isReturnStatement(s));
+  if (returnIdx < 0) return false;
+  if (isConditionalJsxRoot(body[returnIdx].argument)) return true;
+  return body.slice(0, returnIdx).some((stmt) => findJsxReturn(stmt) !== null);
 }
 function assertNoReassignedLocals(fnDecl, fnName, preceding) {
   const mutable = /* @__PURE__ */ new Set();
@@ -50337,21 +50485,33 @@ function assertNoReassignedLocals(fnDecl, fnName, preceding) {
     `Function components have no local state yet, so the new value would never render. Keep \`${name}\` in a Store or a class component.`
   );
 }
+function findJsxReturn(node) {
+  if (!node || typeof node !== "object") return null;
+  if (libExports.isFunction(node)) return null;
+  if (libExports.isReturnStatement(node)) return isJsxRoot(node.argument) ? node : null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findJsxReturn(child);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || key === "start" || key === "end" || key === "type") continue;
+    const found = findJsxReturn(node[key]);
+    if (found) return found;
+  }
+  return null;
+}
 function rewriteFnComponent(fnDecl, parentCtx) {
   const body = fnDecl.body.body;
-  let returnIdx = -1;
-  for (let i = 0; i < body.length; i++) {
-    if (libExports.isReturnStatement(body[i])) {
-      returnIdx = i;
-      break;
-    }
-  }
-  if (returnIdx < 0) return;
-  const ret = body[returnIdx];
-  if (!ret.argument || !(libExports.isJSXElement(ret.argument) || libExports.isJSXFragment(ret.argument))) return;
-  const jsxRoot = ret.argument;
+  let returnIdx = body.findIndex((s) => libExports.isReturnStatement(s));
+  if (returnIdx < 0 || !isJsxRoot(body[returnIdx].argument)) return;
   const fnName = libExports.isIdentifier(fnDecl.id) ? fnDecl.id.name : "";
   assertNoReassignedLocals(fnDecl, fnName, body.slice(0, returnIdx));
+  foldConditionalReturn(body);
+  returnIdx = body.findIndex((s) => libExports.isReturnStatement(s));
+  const jsxRoot = body[returnIdx].argument;
   const fnCtx = createEmitContext(libExports.identifier("props"));
   fnCtx.oneShotProps = parentCtx.directFnComponents?.has(fnName) === true;
   const directParams = fnCtx.oneShotProps ? parentCtx.directFnComponentParams?.get(fnName) : void 0;
@@ -50390,27 +50550,8 @@ function rewriteFnComponent(fnDecl, parentCtx) {
   } else if (!libExports.isIdentifier(fnDecl.params[0], { name: "props" })) {
     fnDecl.params[0] = libExports.identifier("props");
   }
-  const precedingRaw = [...propsLocals];
-  for (let i = 0; i < returnIdx; i++) {
-    const s = body[i];
-    if (libExports.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
-      const others = s.declarations.filter((decl) => !isPropsDestructure(decl));
-      for (const decl of s.declarations) {
-        if (!isPropsDestructure(decl)) continue;
-        const locals = bindPropsPattern(decl.id, s.kind, fnCtx.bindings);
-        precedingRaw.push(...locals);
-        propsLocals.push(...locals);
-      }
-      if (others.length > 0) precedingRaw.push(libExports.variableDeclaration(s.kind, others));
-      continue;
-    }
-    precedingRaw.push(s);
-  }
-  collectBindings(
-    precedingRaw.filter((s) => !propsLocals.includes(s)),
-    fnCtx.bindings,
-    initializerNeedsLocal
-  );
+  const precedingRaw = [...propsLocals, ...bindFnLocals(body.slice(0, returnIdx), fnCtx.bindings)];
+  fnCtx.bindBranchLocals = bindFnLocals;
   const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx);
   if (fnCtx.oneShotProps && fnName && ((fnCtx._rowEventTypes?.size ?? 0) > 0 || (fnCtx._rowFastEventTypes?.size ?? 0) > 0)) {
     const directFnEventTypes = parentCtx.directFnEventTypes ?? (parentCtx.directFnEventTypes = /* @__PURE__ */ new Map());
@@ -50435,6 +50576,30 @@ function rewriteFnComponent(fnDecl, parentCtx) {
     else fnDecl.params[1] = libExports.identifier("d");
   }
   fnDecl.body.body = newBody;
+}
+function bindFnLocals(stmts, bindings) {
+  const kept = [];
+  const propsLocals = [];
+  for (const s of stmts) {
+    if (libExports.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
+      const others = s.declarations.filter((decl) => !isPropsDestructure(decl));
+      for (const decl of s.declarations) {
+        if (!isPropsDestructure(decl)) continue;
+        const locals = bindPropsPattern(decl.id, s.kind, bindings);
+        kept.push(...locals);
+        propsLocals.push(...locals);
+      }
+      if (others.length > 0) kept.push(libExports.variableDeclaration(s.kind, others));
+      continue;
+    }
+    kept.push(s);
+  }
+  collectBindings(
+    kept.filter((s) => !propsLocals.includes(s)),
+    bindings,
+    initializerNeedsLocal
+  );
+  return kept;
 }
 function isPropsDestructure(decl) {
   return libExports.isObjectPattern(decl.id) && libExports.isIdentifier(decl.init, { name: "props" });
@@ -50696,70 +50861,6 @@ function ensureCoreImports(ast, helpers) {
   ensureNamedImports(ast, COMPILER_RUNTIME_ID, helpers);
 }
 
-function extractPrecedingStatements(templateMethod) {
-  const out = [];
-  for (const stmt of templateMethod.body.body) {
-    if (libExports.isReturnStatement(stmt)) break;
-    out.push(stmt);
-  }
-  return out;
-}
-function foldEarlyReturnGuards(templateMethod) {
-  const body = templateMethod.body.body;
-  let finalIdx = -1;
-  for (let i = body.length - 1; i >= 0; i--) {
-    const s = body[i];
-    if (libExports.isReturnStatement(s) && s.argument && (libExports.isJSXElement(s.argument) || libExports.isJSXFragment(s.argument))) {
-      finalIdx = i;
-      break;
-    }
-  }
-  if (finalIdx < 0) return;
-  let anyGuardIdx = -1;
-  for (let i = finalIdx - 1; i >= 0; i--) {
-    const s = body[i];
-    if (libExports.isIfStatement(s) && !s.alternate && s.consequent && (libExports.isReturnStatement(s.consequent) && s.consequent.argument && (libExports.isJSXElement(s.consequent.argument) || libExports.isJSXFragment(s.consequent.argument)) || libExports.isBlockStatement(s.consequent) && s.consequent.body.length === 1 && libExports.isReturnStatement(s.consequent.body[0]) && s.consequent.body[0].argument && (libExports.isJSXElement(s.consequent.body[0].argument) || libExports.isJSXFragment(s.consequent.body[0].argument)))) {
-      anyGuardIdx = i;
-      break;
-    }
-  }
-  let scanIdx = finalIdx - 1;
-  const hoistedStmts = [];
-  if (anyGuardIdx >= 0) {
-    while (scanIdx > anyGuardIdx) {
-      const s = body[scanIdx];
-      if (libExports.isVariableDeclaration(s) || libExports.isExpressionStatement(s)) {
-        hoistedStmts.unshift(s);
-        scanIdx--;
-        continue;
-      }
-      break;
-    }
-  }
-  let mainExpr = body[finalIdx].argument;
-  if (hoistedStmts.length > 0) {
-    const block = libExports.blockStatement([...hoistedStmts, libExports.returnStatement(mainExpr)]);
-    const arrow = libExports.arrowFunctionExpression([], block);
-    arrow.__geaHoistedIIFE = true;
-    mainExpr = libExports.callExpression(arrow, []);
-  }
-  let result = mainExpr;
-  let firstGuardIdx = finalIdx;
-  for (let i = scanIdx; i >= 0; i--) {
-    const s = body[i];
-    if (libExports.isIfStatement(s) && !s.alternate && s.consequent && (libExports.isReturnStatement(s.consequent) && s.consequent.argument && (libExports.isJSXElement(s.consequent.argument) || libExports.isJSXFragment(s.consequent.argument)) || libExports.isBlockStatement(s.consequent) && s.consequent.body.length === 1 && libExports.isReturnStatement(s.consequent.body[0]) && s.consequent.body[0].argument && (libExports.isJSXElement(s.consequent.body[0].argument) || libExports.isJSXFragment(s.consequent.body[0].argument)))) {
-      const ret = libExports.isReturnStatement(s.consequent) ? s.consequent : s.consequent.body[0];
-      result = libExports.conditionalExpression(s.test, ret.argument, result);
-      firstGuardIdx = i;
-      continue;
-    }
-    break;
-  }
-  if (firstGuardIdx === finalIdx && hoistedStmts.length === 0) return;
-  const frag = libExports.jsxFragment(libExports.jsxOpeningFragment(), libExports.jsxClosingFragment(), [libExports.jsxExpressionContainer(result)]);
-  body.splice(firstGuardIdx, finalIdx - firstGuardIdx + 1, libExports.returnStatement(frag));
-}
-
 function transformFile(source, _filename, options = {}) {
   if (!source.includes("<") || !source.includes(">")) {
     return { code: source, changed: false, rewritten: [], importsNeeded: [] };
@@ -50812,7 +50913,7 @@ function transformFile(source, _filename, options = {}) {
         }
       }
       const templateMethod = findTemplateMethod(classDecl);
-      if (templateMethod) foldEarlyReturnGuards(templateMethod);
+      if (templateMethod) foldEarlyReturnGuards(templateMethod.body.body);
       const methodsWithJsx = [];
       for (const m of classDecl.body.body) {
         if (!libExports.isClassMethod(m) || m.computed || m.static) continue;
@@ -51135,7 +51236,7 @@ function buildAfterRenderAsyncRenderMethod() {
 function collectDirectFnComponents(ast) {
   const candidates = /* @__PURE__ */ new Set();
   for (const node of ast.program.body) {
-    if (libExports.isFunctionDeclaration(node) && node.id && isFunctionComponent(node) && !fnHasInstanceLocals(node)) {
+    if (libExports.isFunctionDeclaration(node) && node.id && isFunctionComponent(node) && !fnHasInstanceLocals(node) && !fnHasConditionalRoot(node)) {
       candidates.add(node.id.name);
     }
   }

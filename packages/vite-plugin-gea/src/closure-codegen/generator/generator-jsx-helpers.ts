@@ -7,6 +7,9 @@ export function isJsxOrNullish(n: any): boolean {
   if (t.isJSXElement(n) || t.isJSXFragment(n)) return true
   if (t.isNullLiteral(n)) return true
   if (t.isIdentifier(n, { name: 'undefined' })) return true
+  // A guard's branch with its locals, `(() => { …; return <jsx/> })()`, from
+  // `foldConditionalReturn`. Both arms of a ternary can be one.
+  if (t.isCallExpression(n) && (n.callee as any).__geaHoistedIIFE) return true
   return false
 }
 
