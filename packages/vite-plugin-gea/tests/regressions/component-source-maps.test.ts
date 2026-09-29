@@ -180,7 +180,9 @@ describe('component source maps point at the user file (#131)', () => {
       plugins: [geaPlugin()],
       resolve: { alias: [{ find: '@geajs/core', replacement: path.join(packagesDir, 'gea/src') }] },
       build: { write: false, sourcemap: true },
-      server: { middlewareMode: true, hmr: false, ws: false },
+      // No watcher: it can report the files just written as changed, which
+      // invalidates the modules and drops the maps the SSR test reads.
+      server: { middlewareMode: true, hmr: false, ws: false, watch: null },
     }
   }
 
@@ -216,17 +218,25 @@ export default class Thrower extends Component {
 `,
       }),
     )
+    // tsx turns on Node's own source maps, which may already map the frame
+    // through the module's inline map; Vite would then map it a second time.
+    // With them off, only Vite maps the frame. ssrRewriteStacktrace is what
+    // ssrFixStacktrace applies, without relying on overwriting `error.stack`,
+    // which doesn't stick on some Node versions.
+    const sourceMapsEnabled = process.sourceMapsEnabled
+    process.setSourceMapsEnabled(false)
     try {
       const mod = await server.ssrLoadModule('/src/Thrower.tsx')
       assert.throws(
         () => mod.default.prototype.fail.call({}),
         (error: Error) => {
-          server.ssrFixStacktrace(error)
-          assert.match(error.stack!, /\bat .*fail \(.*[/\\]src[/\\]Thrower\.tsx:9:11\)/, error.stack)
+          const stack = server.ssrRewriteStacktrace(error.stack!)
+          assert.match(stack, /\bat .*fail \(.*[/\\]src[/\\]Thrower\.tsx:9:11\)/, stack)
           return true
         },
       )
     } finally {
+      process.setSourceMapsEnabled(sourceMapsEnabled)
       await server.close()
     }
   })
