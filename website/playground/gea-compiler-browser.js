@@ -51312,12 +51312,14 @@ function transformFile(source, _filename, options = {}) {
         if (bodyContainsJsx(m.body)) methodsWithJsx.push(m);
       }
       if (!templateMethod && methodsWithJsx.length === 0) continue;
-      if (templateMethod && !extendsComponent(classDecl) && !extendsKnownComponent(classDecl, ctx)) continue;
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null;
       if (templateMethod && !jsx) {
-        if (bodyContainsJsx(templateMethod.body)) throw nonJsxTemplateError(classDecl, templateMethod);
+        if (classDecl.superClass && bodyContainsJsx(templateMethod.body)) {
+          throw nonJsxTemplateError(classDecl, templateMethod);
+        }
         continue;
       }
+      if (templateMethod && !extendsComponent(classDecl)) continue;
       if (templateMethod?.decorators?.length) {
         throw compilerError(
           `Decorators on \`template()\` are not supported.`,
@@ -51591,9 +51593,6 @@ function applyPropsTypeArgument(classDecl, className, componentPropsShapes, comp
   const emptyPropsType = libExports.tsTypeLiteral([]);
   if (!classPropsReadsAreCovered(classDecl, emptyPropsType)) return;
   classDecl.superTypeParameters = libExports.tsTypeParameterInstantiation([emptyPropsType]);
-}
-function extendsKnownComponent(classDecl, ctx) {
-  return libExports.isIdentifier(classDecl.superClass) && ctx.directClassComponents?.has(classDecl.superClass.name) === true;
 }
 function nonJsxTemplateError(classDecl, templateMethod) {
   const className = classDecl.id?.name ?? "<anonymous>";
