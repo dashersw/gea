@@ -613,11 +613,12 @@ The Gea compiler throws clear, descriptive errors at build time for JSX patterns
 
 | Pattern | Error message | Suggested fix |
 | --- | --- | --- |
-| `<div {...props} />` | `Spread attributes (<Tag {...expr} />) are not supported. Destructure props and pass them individually.` | Extract needed props and pass them as individual attributes. |
 | `<MyComp />` (without import) | `Component <MyComp> is used in JSX but not found in imports.` | Add an `import MyComp from './my-comp'` statement. |
 | `{() => <div />}` (function as child) | `Bare function expressions as JSX children are not supported. Use a named render prop attribute instead.` | Pass the function as a named prop: `renderItem={() => <div />}`. |
 | `export function Foo() { return <div /> }` | `Named function/const exports that return JSX are not supported. Use export default.` | Change to `export default function Foo()`. |
 | `<>{items.map(x => <Item key={x.id} />)}</>` | `Fragments (<>...</>) are not supported as the root of a .map() item.` | Wrap in a single root element: `<div>...</div>`. |
+
+Spreading onto a component tag (`<Comp {...props} />`) is not supported yet, and it raises no error: the compiler drops the spread, so the component receives none of those props ([#198](https://github.com/dashersw/gea/issues/198)). Pass the props individually.
 
 ---
 

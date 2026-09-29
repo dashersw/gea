@@ -31,6 +31,7 @@ import { relationalClass } from '../../../gea/src/runtime/relational-class'
 import { relationalClassProp } from '../../../gea/src/runtime/relational-class-prop'
 import { reactiveStyle, reactiveStyleProp } from '../../../gea/src/runtime/reactive-style'
 import { reactiveValue, reactiveValueRead } from '../../../gea/src/runtime/reactive-value'
+import { reactiveSpread, spreadAttrs } from '../../../gea/src/runtime/reactive-spread'
 import { delegateEvent } from '../../../gea/src/runtime/delegate-event'
 import { delegateEventFast } from '../../../gea/src/runtime/delegate-event-fast'
 import { delegateClick, ensureClickDelegate } from '../../../gea/src/runtime/delegate-click'
@@ -85,6 +86,8 @@ export const geaRuntimeForEval: Record<string, unknown> = {
   reactiveStyleProp,
   reactiveValue,
   reactiveValueRead,
+  reactiveSpread,
+  spreadAttrs,
   reactiveHtml,
   delegateEvent,
   delegateEventFast,

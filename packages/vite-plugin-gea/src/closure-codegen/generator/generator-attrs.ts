@@ -36,7 +36,7 @@ export function classifyAttrKind(name: string): Slot['kind'] {
   return 'attr'
 }
 
-const BOOL_ATTRS = new Set([
+export const BOOL_ATTRS = new Set([
   'disabled',
   'checked',
   'readonly',

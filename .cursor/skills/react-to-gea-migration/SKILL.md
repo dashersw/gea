@@ -78,7 +78,7 @@ Compare both apps side-by-side, pixel by pixel. Fix visual discrepancies by insp
 | `onClick={fn}` | `click={fn}` |
 | `onChange={fn}` (on input) | `input={fn}` (for text) or `change={fn}` (for checkbox/select) |
 | `onKeyDown={fn}` | `keydown={fn}` |
-| `<div {...props} />` | Not supported — destructure and pass props individually (compile error) |
+| `<div {...props} />` | Works on HTML elements. On a component tag (`<Comp {...props} />`), pass props individually |
 | `dangerouslySetInnerHTML={{ __html: html }}` | Use `onAfterRender` with `el.innerHTML` |
 | `children` | `children` prop (works the same) |
 | Render props `renderContent={modal => <Foo />}` | Supported — render props compile to component instantiation |

@@ -420,11 +420,12 @@ The Gea compiler throws clear errors for JSX patterns it cannot compile. These a
 
 | Pattern | Error | Fix |
 | --- | --- | --- |
-| `<div {...props} />` | Spread attributes not supported | Destructure and pass props individually |
 | `<{DynamicTag} />` | Dynamic component tags not supported | Use conditional rendering (`{isA ? <A /> : <B />}`) |
 | `{() => <div />}` | Function-as-child not supported | Use render props with named attributes instead |
 | `export function Foo() { return <div /> }` | Named JSX component exports not supported | Use `export default function` |
 | `<>{items.map(...)}</>` | Fragments as `.map()` item roots not supported | Wrap each item in a single root element |
+
+Spreading onto a component tag (`<Comp {...props} />`) is not supported yet, and it raises no error: the compiler drops the spread, so the component receives none of those props ([#198](https://github.com/dashersw/gea/issues/198)). Pass the props individually.
 
 ## Rendering
 

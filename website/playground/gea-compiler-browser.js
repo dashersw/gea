@@ -46128,7 +46128,8 @@ function createItemBodyReferencesItemInReactiveGetter(fn, itemName) {
     "reactiveStyle",
     "reactiveStyleProp",
     "reactiveValue",
-    "reactiveValueRead"
+    "reactiveValueRead",
+    "reactiveSpread"
   ]);
   let found = false;
   const walkExpr = (e) => {
@@ -46167,6 +46168,7 @@ function extractPatchRowFromBlock(block, itemName, idxParam) {
 function detectAndStripRelationalClass(jsxEl, itemName, ctx) {
   const open = jsxEl.openingElement;
   if (!open || !Array.isArray(open.attributes)) return [];
+  if (open.attributes.some((attr) => libExports.isJSXSpreadAttribute(attr))) return [];
   const matches = [];
   const keep = [];
   for (const attr of open.attributes) {
@@ -48664,7 +48666,22 @@ function walkJsxToTemplate(root, options = {}) {
       return `<!--${slot.index}-->`;
     }
     let html2 = "<" + tagName;
-    for (const attr of opening.attributes) {
+    let lastSpread = -1;
+    for (let i = 0; i < opening.attributes.length; i++) {
+      if (libExports.isJSXSpreadAttribute(opening.attributes[i])) lastSpread = i;
+    }
+    if (lastSpread >= 0) {
+      slots.push({
+        index: nextSlot++,
+        walk: walk.slice(),
+        walkKinds: walkKinds.slice(),
+        kind: "spread",
+        ...spreadSlotSources(opening.attributes, lastSpread, tagName)
+      });
+    }
+    for (let attrIndex = 0; attrIndex < opening.attributes.length; attrIndex++) {
+      const attr = opening.attributes[attrIndex];
+      if (attrIndex < lastSpread && foldsIntoSpread(attr, tagName)) continue;
       if (libExports.isJSXAttribute(attr)) {
         const rawAttrName = libExports.isJSXIdentifier(attr.name) ? attr.name.name : "";
         const attrName = normalizeAttrName(rawAttrName);
@@ -48855,6 +48872,60 @@ function walkJsxToTemplate(root, options = {}) {
   }
   const html = emitNode(root, [], [], true, null);
   return { html, slots };
+}
+const NOT_SPREAD_ATTRIBUTES = /* @__PURE__ */ new Set(["children", "key", "ref", "dangerouslySetInnerHTML"]);
+const SPREAD_ANIMATION_ELEMENTS = /* @__PURE__ */ new Set([
+  "animate",
+  "set",
+  "animatemotion",
+  "animatetransform"
+]);
+const SPREAD_ANIMATION_ATTRIBUTES = /* @__PURE__ */ new Set(["attributename", "to", "from", "by", "values"]);
+function foldsIntoSpread(attr, tagName) {
+  if (libExports.isJSXSpreadAttribute(attr)) return true;
+  if (!libExports.isJSXIdentifier(attr.name) || NOT_SPREAD_ATTRIBUTES.has(attr.name.name)) return false;
+  const name = attr.name.name.toLowerCase();
+  if (name === "srcdoc") return false;
+  if (SPREAD_ANIMATION_ELEMENTS.has(tagName.toLowerCase()) && SPREAD_ANIMATION_ATTRIBUTES.has(name)) return false;
+  return attr.value == null || libExports.isStringLiteral(attr.value) || libExports.isJSXExpressionContainer(attr.value);
+}
+function spreadSlotSources(attrs, lastSpread, tagName) {
+  const sources = [];
+  const explicit = [];
+  let group = null;
+  for (let i = 0; i <= lastSpread; i++) {
+    const attr = attrs[i];
+    if (libExports.isJSXSpreadAttribute(attr)) {
+      sources.push(attr.argument);
+      group = null;
+      continue;
+    }
+    if (!foldsIntoSpread(attr, tagName)) continue;
+    const name = attr.name.name;
+    const value = attr.value;
+    const expr = !value ? libExports.booleanLiteral(true) : libExports.isJSXExpressionContainer(value) ? libExports.isJSXEmptyExpression(value.expression) ? libExports.identifier("undefined") : value.expression : value;
+    if (!group) {
+      group = [];
+      explicit.push(sources.length);
+      sources.push(libExports.objectExpression(group));
+    }
+    const key = libExports.isValidIdentifier(name) ? libExports.identifier(name) : libExports.stringLiteral(name);
+    group.push(libExports.objectProperty(key, expr));
+  }
+  const skip = [];
+  for (let i = lastSpread + 1; i < attrs.length; i++) {
+    const attr = attrs[i];
+    if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
+    const name = spreadAttrName(attr.name.name);
+    if (name !== null && !skip.includes(name)) skip.push(name);
+  }
+  return { expr: libExports.arrayExpression(sources), payload: { skip, explicit } };
+}
+function spreadAttrName(name) {
+  if (NOT_SPREAD_ATTRIBUTES.has(name)) return null;
+  if (/^on./i.test(name)) return "on:" + name.slice(2).toLowerCase();
+  if (classifyAttrKind(name) === "event") return "on:" + normalizeEventAttrName(name);
+  return normalizeAttrName(name);
 }
 function jsxMemberTagName(name) {
   const object = libExports.isJSXMemberExpression(name.object) ? jsxMemberTagName(name.object) : name.object.name;
@@ -49082,6 +49153,10 @@ function emitSlot(slot, stmts, ctx) {
     }
     return;
   }
+  if (slot.kind === "spread") {
+    emitSpreadSlot(slot, stmts, ctx);
+    return;
+  }
   if (slot.kind === "ref") {
     const elId = libExports.identifier("el" + slot.index);
     const target = substituteBindings(slot.expr, ctx.bindings);
@@ -49107,6 +49182,46 @@ function emitSlot(slot, stmts, ctx) {
     return;
   }
   throw new Error(`emit: unsupported slot kind '${slot.kind}'`);
+}
+function emitSpreadSlot(slot, stmts, ctx) {
+  const elId = libExports.identifier("el" + slot.index);
+  const sources = slot.expr;
+  if (libExports.isArrayExpression(sources)) {
+    for (const i of slot.payload.explicit) {
+      const group = sources.elements[i];
+      if (!libExports.isObjectExpression(group)) continue;
+      for (const prop of group.properties) {
+        if (!libExports.isObjectProperty(prop) || !isThisMethod(prop.value)) continue;
+        const name = libExports.isIdentifier(prop.key) ? prop.key.name : libExports.isStringLiteral(prop.key) ? prop.key.value : "";
+        if (classifyAttrKind(name) !== "event") continue;
+        const ev = libExports.identifier("e");
+        prop.value = libExports.arrowFunctionExpression([ev], libExports.callExpression(prop.value, [ev]));
+      }
+    }
+  }
+  const skipNames = slot.payload.skip;
+  const skip = skipNames.length > 0 ? libExports.arrayExpression(skipNames.map((n) => libExports.stringLiteral(n))) : libExports.nullLiteral();
+  if (ctx.oneShotProps) {
+    ctx.importsNeeded.add("spreadAttrs");
+    stmts.push(libExports.expressionStatement(libExports.callExpression(libExports.identifier("spreadAttrs"), [elId, skip, sources])));
+    return;
+  }
+  const pathOrGetter = expressionToPathOrGetter(sources, ctx);
+  ctx.importsNeeded.add("reactiveSpread");
+  stmts.push(
+    libExports.expressionStatement(
+      libExports.callExpression(libExports.identifier("reactiveSpread"), [
+        elId,
+        libExports.identifier("d"),
+        ctx.reactiveRoot,
+        skip,
+        pathOrGetter.value
+      ])
+    )
+  );
+}
+function isThisMethod(expr) {
+  return libExports.isMemberExpression(expr) && libExports.isThisExpression(expr.object) && !expr.computed;
 }
 function canUseScalarTextHelper(expr) {
   if (containsJsx(expr)) return false;
@@ -50095,7 +50210,7 @@ function emitWalkCapture(slot, stmts, skipEventWalks = false, walkCache) {
   let name;
   if (slot.kind === "text") name = "marker" + slot.index;
   else if (slot.kind === "event") name = "evt" + slot.index;
-  else if (slot.kind === "attr" || slot.kind === "bool" || slot.kind === "class" || slot.kind === "style" || slot.kind === "value" || slot.kind === "ref" || slot.kind === "html")
+  else if (slot.kind === "attr" || slot.kind === "bool" || slot.kind === "class" || slot.kind === "style" || slot.kind === "value" || slot.kind === "ref" || slot.kind === "html" || slot.kind === "spread")
     name = "el" + slot.index;
   else if (slot.kind === "direct-fn" && slot.payload?.appendOnly) {
     if (slot.payload.appendOnly.position !== 0) return;
