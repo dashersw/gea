@@ -25,6 +25,7 @@ import {
 import {
   assertNoReassignedTemplateLocals,
   bindPropsDestructures,
+  bindPropsPattern,
   bodyContainsJsx,
   canSkipComponentStoreProxy,
   canUseLeanReactiveComponent,
@@ -216,20 +217,18 @@ export function transformFile(source: string, _filename?: string, options: Trans
       const templateParam = t.isAssignmentPattern(templateMethod.params[0])
         ? templateMethod.params[0].left
         : templateMethod.params[0]
-      // `template({ count, user })` param destructure → bindings to this.props.<name>
-      if (t.isObjectPattern(templateParam)) {
-        for (const prop of templateParam.properties as any[]) {
-          if (!t.isObjectProperty(prop) || !t.isIdentifier(prop.key)) continue
-          const local = t.isIdentifier(prop.value) ? prop.value.name : prop.key.name
-          ctx.bindings.set(
-            local,
-            t.memberExpression(
-              t.memberExpression(t.thisExpression(), t.identifier('props')),
-              t.identifier(prop.key.name),
-            ),
+      // A `template({ … })` parameter pattern binds like a function component's
+      // props parameter, with `this.props` as the source. The locals it still
+      // needs (a `...rest` object) go at the top of the method, since the
+      // compiled method takes `d` in its place.
+      const paramLocals = t.isObjectPattern(templateParam)
+        ? bindPropsPattern(
+            templateParam,
+            'let',
+            ctx.bindings,
+            t.memberExpression(t.thisExpression(), t.identifier('props')),
           )
-        }
-      }
+        : []
       // `template(props)` plain parameter → bind `props` → this.props
       if (t.isIdentifier(templateParam)) {
         ctx.bindings.set(templateParam.name, t.memberExpression(t.thisExpression(), t.identifier('props')))
@@ -238,20 +237,23 @@ export function transformFile(source: string, _filename?: string, options: Trans
       const templateBody = extractPrecedingStatements(templateMethod)
       assertNoReassignedTemplateLocals(templateMethod, className, templateBody)
       // `const { … } = this.props` in the body, or `= props` for a `template(props)`
-      // parameter, binds like a function component's props
-      const propsLocals: Statement[] = []
-      const preceding = bindPropsDestructures(
-        templateBody,
-        (init) =>
-          (t.isMemberExpression(init) &&
-            !init.computed &&
-            t.isThisExpression(init.object) &&
-            t.isIdentifier(init.property, { name: 'props' })) ||
-          (t.isIdentifier(templateParam) && t.isIdentifier(init, { name: templateParam.name })),
-        ctx.bindings,
-        propsLocals,
-        t.memberExpression(t.thisExpression(), t.identifier('props')),
-      )
+      // parameter, binds the same way
+      const propsLocals: Statement[] = [...paramLocals]
+      const preceding = [
+        ...paramLocals,
+        ...bindPropsDestructures(
+          templateBody,
+          (init) =>
+            (t.isMemberExpression(init) &&
+              !init.computed &&
+              t.isThisExpression(init.object) &&
+              t.isIdentifier(init.property, { name: 'props' })) ||
+            (t.isIdentifier(templateParam) && t.isIdentifier(init, { name: templateParam.name })),
+          ctx.bindings,
+          propsLocals,
+          t.memberExpression(t.thisExpression(), t.identifier('props')),
+        ),
+      ]
       const templateSymbol = useStaticCompiledComponent ? 'GEA_STATIC_TEMPLATE' : 'GEA_CREATE_TEMPLATE'
       ctx.importsNeeded.add(templateSymbol)
       const method = buildCreateTemplateMethod(jsx, ctx, preceding, templateSymbol, propsLocals)
