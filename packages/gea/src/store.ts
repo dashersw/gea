@@ -11,6 +11,7 @@
 import { GEA_PROXY_RAW, GEA_STORE_ROOT } from './runtime/symbols'
 import { GEA_OBSERVE_DIRECT } from './runtime/internal-symbols'
 import { trackRead } from './runtime/with-tracking'
+import { isClassConstructorValue } from './runtime/class-constructor'
 export { GEA_DIRTY, GEA_DIRTY_PROPS } from './runtime/dirty-symbols'
 import { GEA_DIRTY as _DIRTY, GEA_DIRTY_PROPS as _DIRTY_PROPS } from './runtime/dirty-symbols'
 
@@ -63,21 +64,6 @@ export function samePathParts(a?: string[], b?: string[]): boolean {
   if (len !== b.length) return false
   for (let i = 0; i < len; i++) if (a[i] !== b[i]) return false
   return true
-}
-
-export function isClassConstructorValue(fn: unknown): boolean {
-  if (typeof fn !== 'function') return false
-  // The dev HMR component proxy must report its own `prototype` as writable,
-  // so test the class it forwards to: `prototype.constructor`.
-  try {
-    const proto = (fn as { prototype?: { constructor?: { prototype?: unknown } } }).prototype
-    const owner = proto?.constructor
-    const ctor = typeof owner === 'function' && owner.prototype === proto ? owner : fn
-    const d = Object.getOwnPropertyDescriptor(ctor, 'prototype')
-    return !!(d && d.writable === false)
-  } catch {
-    return true
-  }
 }
 
 /**

@@ -2,6 +2,7 @@ import { GEA_PROXY_RAW, GEA_STORE_ROOT } from './symbols'
 import { GEA_OBSERVE_DIRECT } from './internal-symbols'
 import { GEA_DIRTY, GEA_DIRTY_PROPS } from './dirty-symbols'
 import { trackRead } from './with-tracking'
+import { isClassConstructorValue } from './class-constructor'
 import type { Change } from '../store'
 
 /**
@@ -287,7 +288,10 @@ export class CompiledStore<S extends Record<string, any> = Record<string, any>> 
         if (typeof prop === 'symbol') return (target as Record<symbol, unknown>)[prop]
         trackRead(receiver ?? target, prop)
         const value = target[prop as keyof S]
-        if (typeof value === 'function') return (value as (...args: unknown[]) => unknown).bind(receiver)
+        if (typeof value === 'function') {
+          if (isClassConstructorValue(value)) return value
+          return (value as (...args: unknown[]) => unknown).bind(receiver)
+        }
         return _isPlain(value) ? _wrapNested(target, state, value, prop) : value
       },
       set(target: S, prop: string | symbol, value: unknown) {

@@ -6,14 +6,8 @@ import { Store, getRootProxyHandlerFactoryForSSR, setRootProxyHandlerFactoryForS
 import { GEA_ROOT_PROXY_HANDLER_FACTORY } from './runtime/internal-symbols'
 
 export { resetUidCounter, setUidProvider, clearUidProvider } from './uid'
-export {
-  findPropertyDescriptor,
-  isClassConstructorValue,
-  samePathParts,
-  rootGetValue,
-  rootSetValue,
-  rootDeleteProperty,
-} from './store'
+export { isClassConstructorValue } from './runtime/class-constructor'
+export { findPropertyDescriptor, samePathParts, rootGetValue, rootSetValue, rootDeleteProperty } from './store'
 export { GEA_ROOT_PROXY_HANDLER_FACTORY }
 
 export type RootProxyHandlerFactory = () => ProxyHandler<any>
