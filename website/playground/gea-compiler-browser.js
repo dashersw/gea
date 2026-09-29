@@ -48676,12 +48676,12 @@ function walkJsxToTemplate(root, options = {}) {
         walk: walk.slice(),
         walkKinds: walkKinds.slice(),
         kind: "spread",
-        ...spreadSlotSources(opening.attributes, lastSpread)
+        ...spreadSlotSources(opening.attributes, lastSpread, tagName)
       });
     }
     for (let attrIndex = 0; attrIndex < opening.attributes.length; attrIndex++) {
       const attr = opening.attributes[attrIndex];
-      if (attrIndex < lastSpread && foldsIntoSpread(attr)) continue;
+      if (attrIndex < lastSpread && foldsIntoSpread(attr, tagName)) continue;
       if (libExports.isJSXAttribute(attr)) {
         const rawAttrName = libExports.isJSXIdentifier(attr.name) ? attr.name.name : "";
         const attrName = normalizeAttrName(rawAttrName);
@@ -48874,13 +48874,22 @@ function walkJsxToTemplate(root, options = {}) {
   return { html, slots };
 }
 const NOT_SPREAD_ATTRIBUTES = /* @__PURE__ */ new Set(["children", "key", "ref", "dangerouslySetInnerHTML"]);
-function foldsIntoSpread(attr) {
+const SPREAD_ANIMATION_ELEMENTS = /* @__PURE__ */ new Set([
+  "animate",
+  "set",
+  "animatemotion",
+  "animatetransform"
+]);
+const SPREAD_ANIMATION_ATTRIBUTES = /* @__PURE__ */ new Set(["attributename", "to", "from", "by", "values"]);
+function foldsIntoSpread(attr, tagName) {
   if (libExports.isJSXSpreadAttribute(attr)) return true;
   if (!libExports.isJSXIdentifier(attr.name) || NOT_SPREAD_ATTRIBUTES.has(attr.name.name)) return false;
-  if (attr.name.name.toLowerCase() === "srcdoc") return false;
+  const name = attr.name.name.toLowerCase();
+  if (name === "srcdoc") return false;
+  if (SPREAD_ANIMATION_ELEMENTS.has(tagName.toLowerCase()) && SPREAD_ANIMATION_ATTRIBUTES.has(name)) return false;
   return attr.value == null || libExports.isStringLiteral(attr.value) || libExports.isJSXExpressionContainer(attr.value);
 }
-function spreadSlotSources(attrs, lastSpread) {
+function spreadSlotSources(attrs, lastSpread, tagName) {
   const sources = [];
   const explicit = [];
   let group = null;
@@ -48891,7 +48900,7 @@ function spreadSlotSources(attrs, lastSpread) {
       group = null;
       continue;
     }
-    if (!foldsIntoSpread(attr)) continue;
+    if (!foldsIntoSpread(attr, tagName)) continue;
     const name = attr.name.name;
     const value = attr.value;
     const expr = !value ? libExports.booleanLiteral(true) : libExports.isJSXExpressionContainer(value) ? libExports.isJSXEmptyExpression(value.expression) ? libExports.identifier("undefined") : value.expression : value;
