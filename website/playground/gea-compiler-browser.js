@@ -50605,6 +50605,7 @@ function rewriteFnComponent(fnDecl, parentCtx) {
     fnCtx._rowFastEventTypes = /* @__PURE__ */ new Set();
   }
   const propsLocals = [];
+  if (!directParams) renameOwnPropsBindings(fnDecl);
   if (directParams) {
     fnDecl.params = directParams.locals.map((name) => libExports.identifier(name));
     fnCtx.oneShotPropLocals = new Set(directParams.locals);
@@ -50658,6 +50659,16 @@ function bindFnLocals(stmts, bindings) {
     initializerNeedsLocal
   );
   return kept;
+}
+function renameOwnPropsBindings(fnDecl) {
+  const param = libExports.isAssignmentPattern(fnDecl.params[0]) ? fnDecl.params[0].left : fnDecl.params[0];
+  const kept = libExports.isIdentifier(param, { name: "props" }) ? param : null;
+  traverse$1(libExports.file(libExports.program([libExports.isStatement(fnDecl) ? fnDecl : libExports.expressionStatement(fnDecl)])), {
+    Scope(path) {
+      const binding = path.scope.getOwnBinding("props");
+      if (binding && binding.identifier !== kept) path.scope.rename("props");
+    }
+  });
 }
 function propsParam(param, fnName) {
   const target = libExports.isAssignmentPattern(param) ? param.left : param;
@@ -51054,32 +51065,28 @@ function transformFile(source, _filename, options = {}) {
         continue;
       }
       const templateParam = libExports.isAssignmentPattern(templateMethod.params[0]) ? templateMethod.params[0].left : templateMethod.params[0];
-      if (libExports.isObjectPattern(templateParam)) {
-        for (const prop of templateParam.properties) {
-          if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
-          const local = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
-          ctx.bindings.set(
-            local,
-            libExports.memberExpression(
-              libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")),
-              libExports.identifier(prop.key.name)
-            )
-          );
-        }
-      }
+      const paramLocals = libExports.isObjectPattern(templateParam) ? bindPropsPattern(
+        templateParam,
+        "let",
+        ctx.bindings,
+        libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props"))
+      ) : [];
       if (libExports.isIdentifier(templateParam)) {
         ctx.bindings.set(templateParam.name, libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")));
       }
       const templateBody = extractPrecedingStatements(templateMethod);
       assertNoReassignedTemplateLocals(templateMethod, className, templateBody);
-      const propsLocals = [];
-      const preceding = bindPropsDestructures(
-        templateBody,
-        (init) => libExports.isMemberExpression(init) && !init.computed && libExports.isThisExpression(init.object) && libExports.isIdentifier(init.property, { name: "props" }) || libExports.isIdentifier(templateParam) && libExports.isIdentifier(init, { name: templateParam.name }),
-        ctx.bindings,
-        propsLocals,
-        libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props"))
-      );
+      const propsLocals = [...paramLocals];
+      const preceding = [
+        ...paramLocals,
+        ...bindPropsDestructures(
+          templateBody,
+          (init) => libExports.isMemberExpression(init) && !init.computed && libExports.isThisExpression(init.object) && libExports.isIdentifier(init.property, { name: "props" }) || libExports.isIdentifier(templateParam) && libExports.isIdentifier(init, { name: templateParam.name }),
+          ctx.bindings,
+          propsLocals,
+          libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props"))
+        )
+      ];
       const templateSymbol = useStaticCompiledComponent ? "GEA_STATIC_TEMPLATE" : "GEA_CREATE_TEMPLATE";
       ctx.importsNeeded.add(templateSymbol);
       const method = buildCreateTemplateMethod(jsx, ctx, preceding, templateSymbol, propsLocals);
