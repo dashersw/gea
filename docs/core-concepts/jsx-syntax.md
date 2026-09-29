@@ -39,6 +39,17 @@ const handleInput = e => {
 }
 ```
 
+## Spread Attributes
+
+Spread an object onto an HTML element to set several attributes at once:
+
+```jsx
+const { children, ...rest } = this.props
+return <button class="btn" {...rest}>{children}</button>
+```
+
+Keys are applied in source order: a spread overrides the attributes written before it, and attributes written after it override the spread. The spread stays live. When the object changes, changed keys are written and keys that are gone are removed. `on*` keys (and bare event names like `click`) become event handlers. `class`, `style`, `value`, `visible` and boolean attributes work as they do when written directly. `children`, `key`, `ref` and `dangerouslySetInnerHTML` are ignored.
+
 ## Differences from React
 
 | Feature | Gea | React |
@@ -151,7 +162,7 @@ The compiler throws clear errors at build time for these patterns:
 
 | Pattern | Fix |
 | --- | --- |
-| `<div {...props} />` | Destructure and pass props individually |
+| `<Comp {...props} />` (spread on a component tag) | Destructure and pass props individually |
 | Dynamic tag names | Use conditional rendering instead |
 | `{() => <div />}` (function as child) | Use named render prop attributes |
 | `export function Foo() { return <div /> }` | Use `export default function` |

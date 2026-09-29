@@ -1,4 +1,14 @@
-import type { JSXElement, JSXFragment, JSXMemberExpression } from '@babel/types'
+import type {
+  Expression,
+  JSXAttribute,
+  JSXElement,
+  JSXFragment,
+  JSXIdentifier,
+  JSXMemberExpression,
+  JSXSpreadAttribute,
+  ObjectProperty,
+  StringLiteral,
+} from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
 import { compilerError } from '../../utils/compile-error.ts'
@@ -232,7 +242,25 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
     }
     // Plain HTML element
     let html = '<' + tagName
-    for (const attr of opening.attributes) {
+    // `{...obj}`: one slot applies the spreads at runtime, together with the
+    // attributes written before the last spread, which a spread can override.
+    // The ones after it always win, so they stay ordinary attributes.
+    let lastSpread = -1
+    for (let i = 0; i < opening.attributes.length; i++) {
+      if (t.isJSXSpreadAttribute(opening.attributes[i])) lastSpread = i
+    }
+    if (lastSpread >= 0) {
+      slots.push({
+        index: nextSlot++,
+        walk: walk.slice(),
+        walkKinds: walkKinds.slice(),
+        kind: 'spread',
+        ...spreadSlotSources(opening.attributes, lastSpread),
+      })
+    }
+    for (let attrIndex = 0; attrIndex < opening.attributes.length; attrIndex++) {
+      const attr = opening.attributes[attrIndex]
+      if (attrIndex < lastSpread && foldsIntoSpread(attr)) continue
       if (t.isJSXAttribute(attr)) {
         const rawAttrName = t.isJSXIdentifier(attr.name) ? attr.name.name : ''
         const attrName = normalizeAttrName(rawAttrName)
@@ -265,7 +293,6 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
           })
         }
       }
-      // JSXSpreadAttribute — skip for now, add later
     }
     if (opening.selfClosing) {
       // HTML doesn't allow self-closing syntax for non-void elements — the
@@ -482,6 +509,73 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
 
   const html = emitNode(root, [], [], true, null)
   return { html, slots }
+}
+
+/** JSX attribute names that are not attributes of the element: a spread
+ * never sets them, so they are compiled the same with or without one. */
+const NOT_SPREAD_ATTRIBUTES = new Set(['children', 'key', 'ref', 'dangerouslySetInnerHTML'])
+
+/** Whether an attribute before the last spread is applied by the spread slot. */
+function foldsIntoSpread(attr: JSXAttribute | JSXSpreadAttribute): boolean {
+  if (t.isJSXSpreadAttribute(attr)) return true
+  if (!t.isJSXIdentifier(attr.name) || NOT_SPREAD_ATTRIBUTES.has(attr.name.name)) return false
+  return attr.value == null || t.isStringLiteral(attr.value) || t.isJSXExpressionContainer(attr.value)
+}
+
+/**
+ * The spread slot's sources in source order, `[{ class: 'x' }, rest, …]`: each
+ * spread argument, with the attributes between spreads grouped into object
+ * literals. `explicit` indexes those literals. `skip` names the attributes after
+ * the last spread the way the runtime names spread keys, so a spread doesn't
+ * write over them.
+ */
+function spreadSlotSources(
+  attrs: Array<JSXAttribute | JSXSpreadAttribute>,
+  lastSpread: number,
+): Pick<Slot, 'expr' | 'payload'> {
+  const sources: Expression[] = []
+  const explicit: number[] = []
+  let group: ObjectProperty[] | null = null
+  for (let i = 0; i <= lastSpread; i++) {
+    const attr = attrs[i]
+    if (t.isJSXSpreadAttribute(attr)) {
+      sources.push(attr.argument)
+      group = null
+      continue
+    }
+    if (!foldsIntoSpread(attr)) continue
+    const name = (attr.name as JSXIdentifier).name
+    const value = attr.value
+    const expr: Expression = !value
+      ? t.booleanLiteral(true)
+      : t.isJSXExpressionContainer(value)
+        ? t.isJSXEmptyExpression(value.expression)
+          ? t.identifier('undefined')
+          : value.expression
+        : (value as StringLiteral)
+    if (!group) {
+      group = []
+      explicit.push(sources.length)
+      sources.push(t.objectExpression(group))
+    }
+    const key = t.isValidIdentifier(name) ? t.identifier(name) : t.stringLiteral(name)
+    group.push(t.objectProperty(key, expr))
+  }
+  const skip: string[] = []
+  for (let i = lastSpread + 1; i < attrs.length; i++) {
+    const attr = attrs[i]
+    if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
+    const name = spreadAttrName(attr.name.name)
+    if (name !== null && !skip.includes(name)) skip.push(name)
+  }
+  return { expr: t.arrayExpression(sources), payload: { skip, explicit } }
+}
+
+/** The runtime's `spreadKeyName`: how a spread names the attribute a JSX name sets. */
+export function spreadAttrName(name: string): string | null {
+  if (NOT_SPREAD_ATTRIBUTES.has(name)) return null
+  if (classifyAttrKind(name) === 'event') return 'on:' + normalizeEventAttrName(name)
+  return normalizeAttrName(name)
 }
 
 function jsxMemberTagName(name: JSXMemberExpression): string {

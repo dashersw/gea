@@ -146,12 +146,18 @@ export function reactiveStyle(
   root: object,
   pathOrGetter: readonly string[] | (() => unknown),
 ): void {
+  bind(d, root, pathOrGetter, styleWriter(el))
+}
+
+/** The write step of `reactiveStyle`: applies each value it is called with,
+ * diffed against the previous one. Spread attributes reuse it per element. */
+export function styleWriter(el: Element): (v: unknown) => void {
   let prev: Decls = new Map()
   // Last string value, or null when the value was not a string.
   let prevText: string | null = null
   const style = (el as HTMLElement).style
   const write = keepsDecls(el.ownerDocument) ? applyDecls : writeDecls
-  bind(d, root, pathOrGetter, (v) => {
+  return (v) => {
     // A string is a declaration list, diffed per property like an object.
     const text = typeof v === 'string' ? v : null
     if (text !== null && text === prevText) return
@@ -159,7 +165,7 @@ export function reactiveStyle(
     const next = text !== null ? parseStyleText(text) : objectDecls(v)
     write(style, prev, next)
     prev = next
-  })
+  }
 }
 
 // Typed single-property style binding. Used by the compiler for static-key style

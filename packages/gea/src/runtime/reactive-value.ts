@@ -9,14 +9,18 @@ export function reactiveValueRead(
   root: any,
   pathOrGetter: readonly string[] | (() => unknown),
 ): void {
+  bind(d, root, pathOrGetter, valueWriter(el))
+}
+
+/** The write step of `reactiveValueRead`. Spread attributes reuse it per element. */
+export function valueWriter(el: InputLike): (v: unknown) => void {
   let controlled = false
-  const apply = (v: unknown): void => {
+  return (v) => {
     if (v === undefined && !controlled) return
     controlled = true
     const s = v == null ? '' : String(v)
     if (el.value !== s) el.value = s
   }
-  bind(d, root, pathOrGetter, apply)
 }
 
 export function reactiveValue(

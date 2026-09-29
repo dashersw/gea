@@ -2155,21 +2155,17 @@ export default class VideoPlayer extends Component {
 
 The element is assigned after render, so it's available in `onAfterRender()` and event handlers. For the component's root element, use `this.el` instead.
 
-### 17. Spread attributes are not supported
+### 17. Spread attributes work on HTML elements, not on components
 
-React's `<div {...props} />` pattern does not compile in Gea. Destructure the props you need and pass them individually:
+React's `<button {...rest} />` pattern works on HTML elements. Keys apply in source order, stay live, and `on*` keys become event handlers:
 
 ```tsx
-// React
-const Button = ({ className, ...rest }) => <button className={className} {...rest} />
-
-// Gea — destructure explicitly
-export default function Button({ class: cls, disabled, click, children }) {
-  return <button class={cls} disabled={disabled} click={click}>{children}</button>
+export default function Button({ class: cls, children, ...rest }) {
+  return <button class={cls} {...rest}>{children}</button>
 }
 ```
 
-The compiler throws a clear error at build time if spread attributes are used.
+Spreading onto a component tag (`<Child {...props} />`) is not supported yet. Pass those props individually.
 
 ### 18. Function-as-child is not supported
 

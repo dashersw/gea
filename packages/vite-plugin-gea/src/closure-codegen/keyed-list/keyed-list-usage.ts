@@ -41,6 +41,7 @@ export function createItemBodyReferencesItemInReactiveGetter(fn: any, itemName: 
     'reactiveStyleProp',
     'reactiveValue',
     'reactiveValueRead',
+    'reactiveSpread',
   ])
   let found = false
   const walkExpr = (e: any): void => {

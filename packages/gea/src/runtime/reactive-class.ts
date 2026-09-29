@@ -18,8 +18,14 @@ export function reactiveClass(
   root: object,
   pathOrGetter: readonly string[] | (() => unknown),
 ): void {
+  bind(d, root, pathOrGetter, classWriter(el))
+}
+
+/** The write step of `reactiveClass`: applies each value it is called with,
+ * diffed against the previous one. Spread attributes reuse it per element. */
+export function classWriter(el: Element): (v: unknown) => void {
   let prev: string | Set<string> | null = null
-  bind(d, root, pathOrGetter, (v) => {
+  return (v) => {
     // Single-token fast path: null/false/empty or whitespace-free string.
     // `text` carries the narrowed string in its own `string` slot so `indexOf`
     // has an exact string receiver; calling it on `v` — declared `unknown` —
@@ -63,5 +69,5 @@ export function reactiveClass(
     }
     if (next.size === 0 && !el.hasAttribute('class')) el.setAttribute('class', '')
     prev = next
-  })
+  }
 }

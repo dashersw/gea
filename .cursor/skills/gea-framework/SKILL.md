@@ -420,7 +420,7 @@ The Gea compiler throws clear errors for JSX patterns it cannot compile. These a
 
 | Pattern | Error | Fix |
 | --- | --- | --- |
-| `<div {...props} />` | Spread attributes not supported | Destructure and pass props individually |
+| `<Comp {...props} />` | Spread on component tags not supported | Destructure and pass props individually |
 | `<{DynamicTag} />` | Dynamic component tags not supported | Use conditional rendering (`{isA ? <A /> : <B />}`) |
 | `{() => <div />}` | Function-as-child not supported | Use render props with named attributes instead |
 | `export function Foo() { return <div /> }` | Named JSX component exports not supported | Use `export default function` |

@@ -43,6 +43,9 @@ export interface RelationalClassMatch {
 export function detectAndStripRelationalClass(jsxEl: any, itemName: string, ctx: EmitContext): RelationalClassMatch[] {
   const open = jsxEl.openingElement
   if (!open || !Array.isArray(open.attributes)) return []
+  // A spread writes `class` itself, merged in source order with the class
+  // attribute. Toggling the class from the list scope would fight that.
+  if (open.attributes.some((attr: any) => t.isJSXSpreadAttribute(attr))) return []
   const matches: RelationalClassMatch[] = []
   const keep: any[] = []
   for (const attr of open.attributes) {

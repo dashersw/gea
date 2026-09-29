@@ -35,6 +35,7 @@ export interface Slot {
     | 'conditional'
     | 'keyed-list'
     | 'html'
+    | 'spread'
   /** Kind-specific payload (e.g., attribute name, event type). */
   payload?: any
   /** The JSX expression tree for the reactive value (for dependency analysis). */

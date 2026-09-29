@@ -174,7 +174,8 @@ export function emitWalkCapture(
     slot.kind === 'style' ||
     slot.kind === 'value' ||
     slot.kind === 'ref' ||
-    slot.kind === 'html'
+    slot.kind === 'html' ||
+    slot.kind === 'spread'
   )
     name = 'el' + slot.index
   else if (slot.kind === 'direct-fn' && slot.payload?.appendOnly) {
