@@ -18,7 +18,11 @@
  * - `class`/`className`, `style`, `value` and `visible` write the way their
  *   own helpers do, boolean attributes toggle, and the rest are attributes.
  * - `children`, `key`, `ref` and `dangerouslySetInnerHTML` are not attributes
- *   and are skipped.
+ *   and are skipped, as are keys that are not valid attribute names.
+ *
+ * The spread object, not the template, picks the attribute names, so every
+ * value written as a plain attribute goes through `sanitizeAttr`, which
+ * checks the value of a URL attribute.
  */
 
 import type { Disposer } from './disposer'
@@ -27,6 +31,7 @@ import { ensureDelegate } from './delegate-dispatch'
 import { classWriter } from './reactive-class'
 import { styleWriter } from './reactive-style'
 import { valueWriter } from './reactive-value'
+import { sanitizeAttr } from '../xss'
 
 type Write = (v: unknown) => void
 
@@ -113,15 +118,27 @@ export const SPREAD_BOOL_ATTRS: ReadonlySet<string> = new Set([
 
 const NOT_ATTRIBUTES = new Set(['children', 'key', 'ref', 'dangerouslySetInnerHTML'])
 
+// A valid attribute name (the XML Name production, as React checks it).
+// `setAttribute` throws on other names, and an HTML serializer would write
+// them out unchanged.
+const ATTRIBUTE_NAME_START =
+  ':A-Z_a-z\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD'
+const ATTRIBUTE_NAME = new RegExp(
+  '^[' + ATTRIBUTE_NAME_START + '][' + ATTRIBUTE_NAME_START + '\\-.0-9\\u00B7\\u0300-\\u036F\\u203F-\\u2040]*$',
+)
+
 /**
  * The name a spread key is applied under: `on:<event type>` for an event,
  * `class` and `for` for `className` and `htmlFor`, the key itself otherwise,
  * or null for a key that is not an attribute. The compiler names the
  * attributes it skips the same way.
+ *
+ * An `on*` key is an event in any letter case: `setAttribute` lowercases an
+ * HTML attribute name, so `ONCLICK` must not reach it.
  */
 export function spreadKeyName(key: string): string | null {
-  if (NOT_ATTRIBUTES.has(key)) return null
-  if (key.length > 2 && key.startsWith('on')) return 'on:' + key.slice(2).toLowerCase()
+  if (NOT_ATTRIBUTES.has(key) || !ATTRIBUTE_NAME.test(key)) return null
+  if (/^on./i.test(key)) return 'on:' + key.slice(2).toLowerCase()
   if (SPREAD_EVENT_NAMES.has(key)) return 'on:' + key
   if (key === 'className') return 'class'
   if (key === 'htmlFor') return 'for'
@@ -210,7 +227,13 @@ function write(el: Element, state: SpreadState, name: string, v: unknown): void 
   }
   // A function is a callback prop passed through, not an attribute value.
   if (v == null || typeof v === 'function') el.removeAttribute(name)
-  else el.setAttribute(name, String(v))
+  else el.setAttribute(name, sanitizeAttr(localName(name), v))
+}
+
+/** `xlink:href` → `href`: `sanitizeAttr` knows URL attributes by local name. */
+function localName(name: string): string {
+  const colon = name.indexOf(':')
+  return colon === -1 ? name : name.slice(colon + 1)
 }
 
 function clear(el: Element, state: SpreadState, name: string): void {

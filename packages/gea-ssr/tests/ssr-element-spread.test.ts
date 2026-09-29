@@ -30,6 +30,28 @@ class Spread extends Component {
   }
 }
 
+// Keys a spread object may hold that must not reach the HTML as written.
+class Filtered extends Component {
+  attrs = {
+    'x><b id="added"></b><p q': 'v',
+    'bad name': 'v',
+    ONCLICK: 'x',
+    OnMouseOver: 'y',
+    href: 'javascript:void(0)',
+    formaction: ' JavaScript:void(0)',
+    'xlink:href': 'javascript:void(0)',
+    title: 't',
+  };
+  [GEA_CREATE_TEMPLATE](d: any): Node {
+    const root = document.createElement('div')
+    const a = document.createElement('a')
+    a.id = 'filtered'
+    reactiveSpread(a, d, this, null, () => [this.attrs])
+    root.append(a)
+    return root
+  }
+}
+
 // Serialized attribute values in document order, and the DOM a browser-like
 // parser builds back from the HTML.
 const serialized = (html: string, name: string): string[] =>
@@ -54,5 +76,26 @@ describe('SSR element spread', () => {
     const html = renderToString(Spread)
     assert.match(reparse(html).querySelector('#spread')!.getAttribute('style')!, /color:\s*red !important/)
     assert.doesNotMatch(html, /onclick/i)
+  })
+
+  it('skips invalid attribute names and writes on* keys of any case nowhere', () => {
+    const html = renderToString(Filtered)
+    const doc = reparse(html)
+    assert.equal(doc.querySelector('#added'), null)
+    assert.equal(doc.querySelectorAll('p').length, 0)
+    const a = doc.querySelector('#filtered')!
+    assert.deepEqual(
+      [...a.getAttributeNames()].filter((n) => n !== 'id' && n !== 'href' && n !== 'formaction' && n !== 'xlink:href'),
+      ['title'],
+    )
+    assert.doesNotMatch(html, /onclick|onmouseover/i)
+  })
+
+  it('writes URL attribute values through sanitizeAttr', () => {
+    const a = reparse(renderToString(Filtered)).querySelector('#filtered')!
+    assert.equal(a.getAttribute('href'), '')
+    assert.equal(a.getAttribute('formaction'), '')
+    assert.equal(a.getAttribute('xlink:href'), '')
+    assert.equal(a.getAttribute('title'), 't')
   })
 })

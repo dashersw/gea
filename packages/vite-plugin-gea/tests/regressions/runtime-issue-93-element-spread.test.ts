@@ -374,6 +374,101 @@ describe('element spread attributes (#93)', { concurrency: false }, () => {
     app.dispose()
   })
 
+  it('skips spread keys that are not valid attribute names', async () => {
+    const { root, app } = await mount(
+      `
+        import { Component } from '@geajs/core'
+        export class App extends Component {
+          o = { 'bad name': 'a', 'x>y': 'b', '1st': 'c', '': 'd', title: 't', 'data-ok': 'e' }
+          template() {
+            return <div><p {...this.o}>kept</p></div>
+          }
+          add() {
+            this.o = { ...this.o, 'still bad': 'f', lang: 'en' }
+          }
+        }
+      `,
+      'InvalidNames',
+    )
+    assert.equal(root.querySelector('p')?.outerHTML, '<p title="t" data-ok="e">kept</p>')
+    app.add()
+    await flushMicrotasks()
+    assert.equal(root.querySelector('p')?.outerHTML, '<p title="t" data-ok="e" lang="en">kept</p>')
+    app.dispose()
+  })
+
+  it('treats on* keys in any letter case as handlers, never as attributes', async () => {
+    const log: string[] = []
+    const { root, app } = await mount(
+      `
+        import { Component } from '@geajs/core'
+        export class App extends Component {
+          strings = { ONCLICK: 'x', OnMouseDown: 'y', onClick: 'z', title: 't' }
+          fns = { ONCLICK: () => log.push('upper'), OnMouseDown: () => log.push('mixed') }
+          template() {
+            return (
+              <div>
+                <p id="strings" {...this.strings}>s</p>
+                <p id="fns" {...this.fns}>f</p>
+              </div>
+            )
+          }
+        }
+      `,
+      'OnAnyCase',
+      { log },
+    )
+    assert.equal(root.querySelector('#strings')?.outerHTML, '<p id="strings" title="t">s</p>')
+    assert.equal(root.querySelector('#fns')?.outerHTML, '<p id="fns">f</p>')
+    click(root.querySelector('#strings'))
+    const fns = root.querySelector('#fns')!
+    click(fns)
+    fns.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    assert.deepEqual(log, ['upper', 'mixed'])
+    app.dispose()
+  })
+
+  it('writes URL attribute values from a spread through sanitizeAttr', async () => {
+    const { root, app } = await mount(
+      `
+        import { Component } from '@geajs/core'
+        export class App extends Component {
+          blocked = { href: 'javascript:void(0)', src: ' JavaScript:void(0)', action: 'vbscript:x', 'xlink:href': 'javascript:void(0)' }
+          button = { formaction: 'javascript:void(0)', type: 'submit' }
+          allowed = { href: '/docs', src: 'data:image/png;base64,AAAA', title: 'javascript:void(0)' }
+          url = 'javascript:void(0)'
+          template() {
+            return (
+              <form>
+                <a id="blocked" {...this.blocked}>b</a>
+                <button {...this.button}>go</button>
+                <a id="allowed" {...this.allowed}>a</a>
+                <a id="before" href={this.url} {...this.button}>c</a>
+              </form>
+            )
+          }
+          swap() {
+            this.allowed = { ...this.allowed, href: 'javascript:void(1)' }
+          }
+        }
+      `,
+      'UrlValues',
+    )
+    const blocked = root.querySelector('#blocked')!
+    for (const name of ['href', 'src', 'action', 'xlink:href']) assert.equal(blocked.getAttribute(name), '', name)
+    assert.equal(root.querySelector('button')?.getAttribute('formaction'), '')
+    assert.equal(root.querySelector('button')?.getAttribute('type'), 'submit')
+    const allowed = root.querySelector('#allowed')!
+    assert.equal(allowed.getAttribute('href'), '/docs')
+    assert.equal(allowed.getAttribute('src'), 'data:image/png;base64,AAAA')
+    assert.equal(allowed.getAttribute('title'), 'javascript:void(0)', 'only URL attributes are filtered')
+    assert.equal(root.querySelector('#before')?.getAttribute('href'), '', 'an attribute before the spread is applied by it')
+    app.swap()
+    await flushMicrotasks()
+    assert.equal(allowed.getAttribute('href'), '', 'an update is filtered too')
+    app.dispose()
+  })
+
   it('works in keyed-list rows', async () => {
     const { root, app } = await mount(
       `
