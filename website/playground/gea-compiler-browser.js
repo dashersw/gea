@@ -51275,6 +51275,7 @@ function transformFile(source, _filename, options = {}) {
   const localComponentNames = collectLocalClassComponents(ast);
   ctx.directClassComponents = new Set(localComponentNames);
   for (const name of options.directClassComponents ?? []) ctx.directClassComponents.add(name);
+  const geaImports = collectGeaImports(ast);
   ctx.directFactoryComponents = new Set(options.directFactoryComponents);
   const componentPropsShapes = inferComponentPropsTypes(ast, localComponentNames);
   const componentsUsedAsJsx = collectComponentsUsedAsJsx(ast, localComponentNames);
@@ -51314,7 +51315,7 @@ function transformFile(source, _filename, options = {}) {
       if (!templateMethod && methodsWithJsx.length === 0) continue;
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null;
       if (templateMethod && !jsx) {
-        if (classDecl.superClass && bodyContainsJsx(templateMethod.body)) {
+        if (bodyContainsJsx(templateMethod.body) && extendsGeaComponent(classDecl, ctx, geaImports)) {
           throw nonJsxTemplateError(classDecl, templateMethod);
         }
         continue;
@@ -51593,6 +51594,21 @@ function applyPropsTypeArgument(classDecl, className, componentPropsShapes, comp
   const emptyPropsType = libExports.tsTypeLiteral([]);
   if (!classPropsReadsAreCovered(classDecl, emptyPropsType)) return;
   classDecl.superTypeParameters = libExports.tsTypeParameterInstantiation([emptyPropsType]);
+}
+function extendsGeaComponent(classDecl, ctx, geaImports) {
+  const base = classDecl.superClass;
+  if (libExports.isIdentifier(base)) {
+    return base.name === "Component" || geaImports.has(base.name) || ctx.directClassComponents?.has(base.name) === true;
+  }
+  return libExports.isMemberExpression(base) && libExports.isIdentifier(base.object) && geaImports.has(base.object.name);
+}
+function collectGeaImports(ast) {
+  const names = /* @__PURE__ */ new Set();
+  for (const stmt of ast.program.body) {
+    if (!libExports.isImportDeclaration(stmt) || !stmt.source.value.startsWith("@geajs/")) continue;
+    for (const spec of stmt.specifiers) names.add(spec.local.name);
+  }
+  return names;
 }
 function nonJsxTemplateError(classDecl, templateMethod) {
   const className = classDecl.id?.name ?? "<anonymous>";
