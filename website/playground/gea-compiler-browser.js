@@ -51509,6 +51509,13 @@ function normalizeArrowComponents(ast, filename) {
       changed = true;
       continue;
     }
+    if (libExports.isExportDefaultDeclaration(stmt) && libExports.isFunctionDeclaration(stmt.declaration) && !stmt.declaration.id) {
+      const fn = stmt.declaration;
+      fn.id = libExports.identifier(defaultComponentName(ast, filename));
+      if (isFunctionComponent(fn)) changed = true;
+      else fn.id = null;
+      continue;
+    }
     const exported = libExports.isExportNamedDeclaration(stmt);
     const decl = exported ? stmt.declaration : stmt;
     if (!libExports.isVariableDeclaration(decl) || decl.kind !== "const") continue;
@@ -51521,7 +51528,7 @@ function normalizeArrowComponents(ast, filename) {
       pending = [];
     };
     for (const declarator of decl.declarations) {
-      const fn = libExports.isIdentifier(declarator.id) && libExports.isArrowFunctionExpression(declarator.init) ? arrowToFunctionDeclaration(declarator.id.name, declarator.init) : null;
+      const fn = libExports.isIdentifier(declarator.id) ? toFunctionDeclaration(declarator.id.name, declarator.init) : null;
       if (!fn) {
         pending.push(declarator);
         continue;
@@ -51538,12 +51545,42 @@ function normalizeArrowComponents(ast, filename) {
   }
   return changed;
 }
+function toFunctionDeclaration(name, init) {
+  if (libExports.isArrowFunctionExpression(init)) return arrowToFunctionDeclaration(name, init);
+  if (libExports.isFunctionExpression(init)) return functionExpressionToDeclaration(name, init);
+  return null;
+}
 function arrowToFunctionDeclaration(name, arrow) {
   if (readsFunctionScopedBinding(arrow.params) || readsFunctionScopedBinding(arrow.body)) return null;
   const body = libExports.isBlockStatement(arrow.body) ? arrow.body : libExports.blockStatement([libExports.returnStatement(arrow.body)]);
   const fn = libExports.functionDeclaration(libExports.identifier(name), arrow.params, body, false, arrow.async);
   libExports.inherits(fn, arrow);
   return isFunctionComponent(fn) ? fn : null;
+}
+function functionExpressionToDeclaration(name, fn) {
+  const decl = libExports.functionDeclaration(libExports.identifier(name), fn.params, fn.body, fn.generator, fn.async);
+  libExports.inherits(decl, fn);
+  if (!isFunctionComponent(decl)) return null;
+  if (fn.id && !renameSelfReferences(fn, name)) return null;
+  return decl;
+}
+function renameSelfReferences(fn, name) {
+  let fnPath;
+  traverse$1(libExports.file(libExports.program([libExports.expressionStatement(fn)])), {
+    FunctionExpression(path) {
+      fnPath = path;
+      path.stop();
+    }
+  });
+  const binding = fnPath.scope.getOwnBinding(fn.id.name);
+  if (binding?.kind !== "local") return true;
+  if (!binding.constant) return false;
+  for (const ref of binding.referencePaths) {
+    const target = ref.scope.getBinding(name);
+    if (target && target !== binding) return false;
+  }
+  for (const ref of binding.referencePaths) ref.node.name = name;
+  return true;
 }
 function readsFunctionScopedBinding(node, parent, grandparent) {
   if (!node || typeof node !== "object") return false;
