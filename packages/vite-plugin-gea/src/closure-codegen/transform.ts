@@ -106,6 +106,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
   const localComponentNames = collectLocalClassComponents(ast)
   ctx.directClassComponents = new Set(localComponentNames)
   for (const name of options.directClassComponents ?? []) ctx.directClassComponents.add(name)
+  const geaImports = collectGeaImports(ast)
   ctx.directFactoryComponents = new Set(options.directFactoryComponents)
   // Best-effort props shape per locally-declared component, derived from its
   // JSX call sites in this module — see transform-component-props.ts. Used
@@ -170,7 +171,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
       if (templateMethod && !jsx) {
         // Checked before extendsComponent, which only recognizes a subclass of
         // another component (imported, aliased) by a template() it can compile.
-        if (classDecl.superClass && bodyContainsJsx(templateMethod.body)) {
+        if (bodyContainsJsx(templateMethod.body) && extendsGeaComponent(classDecl, ctx, geaImports)) {
           throw nonJsxTemplateError(classDecl, templateMethod)
         }
         continue
@@ -639,6 +640,35 @@ function applyPropsTypeArgument(
   const emptyPropsType = t.tsTypeLiteral([])
   if (!classPropsReadsAreCovered(classDecl, emptyPropsType)) return
   classDecl.superTypeParameters = t.tsTypeParameterInstantiation([emptyPropsType])
+}
+
+/**
+ * Whether the class is a Gea component whatever its `template()` returns: it
+ * extends `Component`, a class imported from `@geajs/*` (or reached through
+ * one, as in `gea.Component`), or a component declared in this module or
+ * imported from a component module. Any other base, such as `HTMLElement` or
+ * a plain class, may use JSX for the HTML strings core's jsx-runtime returns.
+ */
+function extendsGeaComponent(
+  classDecl: ClassDeclaration,
+  ctx: ReturnType<typeof createEmitContext>,
+  geaImports: Set<string>,
+): boolean {
+  const base = classDecl.superClass
+  if (t.isIdentifier(base)) {
+    return base.name === 'Component' || geaImports.has(base.name) || ctx.directClassComponents?.has(base.name) === true
+  }
+  return t.isMemberExpression(base) && t.isIdentifier(base.object) && geaImports.has(base.object.name)
+}
+
+/** Local names bound by imports from `@geajs/*`. */
+function collectGeaImports(ast: File): Set<string> {
+  const names = new Set<string>()
+  for (const stmt of ast.program.body) {
+    if (!t.isImportDeclaration(stmt) || !stmt.source.value.startsWith('@geajs/')) continue
+    for (const spec of stmt.specifiers) names.add(spec.local.name)
+  }
+  return names
 }
 
 /**

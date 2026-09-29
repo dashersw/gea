@@ -150,9 +150,12 @@ export default createPage('home')
 // Lookalikes of the cases above that compile today and must keep compiling.
 // Pick and Toggle are function components with a conditional root: #124
 // compiles those, so the class template() check must not reach them. Neither
-// may Badge, which has no base class. A spread on an element compiles since #219.
+// may Badge, which has no base class, or Card, Hello, Tip and Tile, whose bases
+// aren't components: core's jsx-runtime turns their JSX into HTML strings. A
+// spread on an element compiles since #219.
 const STILL_SUPPORTED_APP = `import { Component } from '@geajs/core'
 import Pick from './Pick'
+import Shape from './Shape'
 
 function Toggle(props: { on?: boolean }) {
   return props.on ? <b>on</b> : <i>off</i>
@@ -179,6 +182,41 @@ class Title extends Component {
 export class Badge {
   template(on: boolean) {
     return on ? <b>on</b> : <i>off</i>
+  }
+}
+
+class Plain {
+  big = true
+}
+
+export class Card extends Plain {
+  template() {
+    return this.big ? <b>big</b> : <i>small</i>
+  }
+}
+
+export class Hello extends HTMLElement {
+  template() {
+    const msg = <span>hello</span>
+    return msg
+  }
+}
+
+function sized(Base: typeof Plain) {
+  return class extends Base {
+    size = 1
+  }
+}
+
+export class Tip extends sized(Plain) {
+  template() {
+    return this.size ? <b>tip</b> : <i>tip</i>
+  }
+}
+
+export class Tile extends Shape {
+  template() {
+    return this.big ? <b>tile</b> : <i>tile</i>
   }
 }
 
@@ -565,33 +603,42 @@ export default class App extends Component {
     assert.match(errors[0].message, /or use a class field such as ref=\{this\.input\}\./)
   })
 
-  // Including bases the compiler can't see into: an alias, a package's component.
+  // Every kind of Gea base: in this file, from a component module, an alias,
+  // a namespace, a package's component.
   it('also rejects a ternary template() in a subclass of a component', () => {
-    for (const base of [
-      `class Base extends Component {\n  template() {\n    return <div>base</div>\n  }\n}`,
-      `import { Component as Base } from '@geajs/core'`,
-      `import { View as Base } from '@geajs/mobile'`,
-    ]) {
+    const baseModule = `import { Component } from '@geajs/core'\n\nexport default class Base extends Component {\n  template() {\n    return <div>base</div>\n  }\n}\n`
+    for (const [header, base, files] of [
+      [`class Base extends Component {\n  template() {\n    return <div>base</div>\n  }\n}`, 'Base', {}],
+      [`import Base from './Base'`, 'Base', { 'Base.tsx': baseModule }],
+      [`import { Component as Base } from '@geajs/core'`, 'Base', {}],
+      [`import * as gea from '@geajs/core'`, 'gea.Component', {}],
+      [`import { View } from '@geajs/mobile'`, 'View', {}],
+    ] as const) {
       const { errors } = compileForBrowser({
+        ...files,
         'App.tsx': `import { Component } from '@geajs/core'
-${base}
+${header}
 
-export default class App extends Base {
+export default class App extends ${base} {
   template() {
     return this.props.on ? <b>on</b> : <i>off</i>
   }
 }
 `,
       })
-      assert.equal(errors.length, 1, `${base}: ${JSON.stringify(errors)}`)
+      assert.equal(errors.length, 1, `${header}: ${JSON.stringify(errors)}`)
       assert.match(errors[0].message, /`App\.template\(\)` must return a single JSX element or fragment\./)
     }
   })
 
-  it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs, element spreads, conditional function components and base-less classes', async () => {
+  it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs, element spreads, conditional function components and classes that are not components', async () => {
     const { config } = project(STILL_SUPPORTED_APP, {
       'src/Pick.tsx': `export default function Pick(props: { on?: boolean }) {
   return props.on ? <b>on</b> : <i>off</i>
+}
+`,
+      'src/Shape.ts': `export default class Shape {
+  big = true
 }
 `,
     })
