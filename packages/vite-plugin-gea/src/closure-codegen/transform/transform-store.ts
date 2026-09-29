@@ -28,6 +28,50 @@ export interface StoreTransformResult {
 
 export type ResolveImportPath = (importer: string, source: string) => string | null
 
+function hasUnsafeStorePattern(ast: File, storeLocalName: string): boolean {
+  let unsafe = false
+
+  function walk(node: any) {
+    if (!node || typeof node !== 'object' || unsafe) return
+
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child)
+      return
+    }
+
+    if (t.isIdentifier(node) && (node.name === 'flushSync' || node.name === 'silent')) {
+      unsafe = true
+      return
+    }
+
+    if (
+      (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+      t.isIdentifier(node.object, { name: storeLocalName })
+    ) {
+      unsafe = true
+      return
+    }
+
+    if (
+      t.isNewExpression(node) &&
+      t.isIdentifier(node.callee, { name: storeLocalName })
+    ) {
+      unsafe = true
+      return
+    }
+
+    for (const key of Object.keys(node)) {
+      if (key === 'loc' || key === 'start' || key === 'end' || key === 'type' || key === 'comments' || key === 'leadingComments' || key === 'trailingComments') {
+        continue
+      }
+      walk(node[key])
+    }
+  }
+
+  walk(ast.program)
+  return unsafe
+}
+
 export function transformCompiledStoreModule(
   source: string,
   moduleId = '<unknown>',
@@ -67,7 +111,7 @@ export function transformCompiledStoreModule(
     ir: fallbackIrs[0],
     irs: fallbackIrs,
   }
-  if (/\b(flushSync|silent|Store\.|new\s+Store\s*\()/.test(source)) {
+  if (hasUnsafeStorePattern(ast, imported.localName)) {
     return fallback
   }
   // All-or-nothing across the module's store classes: a partial transform
