@@ -11,6 +11,12 @@ const UNITLESS = new Set(
   ).split(' '),
 )
 
+/** CSS property name for a style object key: camelCase is hyphenated, but a
+ * custom property (`--*`) is case-sensitive and keeps its exact spelling. */
+export function styleProp(key: string): string {
+  return key.startsWith('--') ? key : key.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
+}
+
 /** Serialize a style value for the kebab-case property `prop`: finite non-zero
  * numbers get `px` unless the property is unitless or a custom property. */
 export function styleValue(prop: string, v: unknown): string {

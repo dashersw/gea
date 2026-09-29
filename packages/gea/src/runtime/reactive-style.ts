@@ -1,13 +1,9 @@
 import type { Disposer } from './disposer'
 import { bind } from './bind'
-import { styleValue } from './style-value'
+import { styleProp, styleValue } from './style-value'
 
 /** Property → [value, priority], in the order they apply. */
 type Decls = Map<string, [string, string]>
-
-function kebab(k: string): string {
-  return k.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
-}
 
 function addDecl(out: Decls, decl: string): void {
   const colon = decl.indexOf(':')
@@ -68,7 +64,7 @@ function objectDecls(v: unknown): Decls {
     for (const k in v as Record<string, unknown>) {
       const val = (v as Record<string, unknown>)[k]
       if (val != null && val !== false) {
-        const prop = kebab(k)
+        const prop = styleProp(k)
         out.set(prop, [styleValue(prop, val), ''])
       }
     }

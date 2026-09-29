@@ -68,6 +68,23 @@ describe('h — style object', () => {
     assert.ok(s.includes('z-index:2;'))
     assert.ok(s.includes('--gap:4"'))
   })
+  it('custom properties keep their exact spelling (#127)', () => {
+    assert.equal(
+      h('div', { style: { '--myColor': 'red', backgroundColor: 'var(--myColor)' } }),
+      '<div style="--myColor:red;background-color:var(--myColor)"></div>',
+    )
+  })
+  it('skips null, undefined and false values and keeps 0 (#128)', () => {
+    assert.equal(
+      h('div', { style: { display: 'flex', '--gap': undefined, gap: 'var(--gap, 8px)', color: null, width: false } }),
+      '<div style="display:flex;gap:var(--gap, 8px)"></div>',
+    )
+    assert.equal(h('div', { style: { '--n': null, margin: 0 } }), '<div style="margin:0"></div>')
+  })
+  it('renders no style attribute when nothing is left (#128)', () => {
+    assert.equal(h('div', { style: {} }), '<div></div>')
+    assert.equal(h('div', { style: { color: null, '--x': undefined, width: false } }), '<div></div>')
+  })
 })
 
 describe('h — children mixing', () => {
