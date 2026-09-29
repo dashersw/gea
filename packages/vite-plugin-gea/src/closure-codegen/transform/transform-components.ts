@@ -10,6 +10,7 @@ import type {
 } from '@babel/types'
 
 import { t, traverse } from '../../utils/babel-interop.ts'
+import { compilerError } from '../../utils/compile-error.ts'
 
 import {
   collectBindings,
@@ -280,16 +281,12 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
   })
   if (!write) return
 
-  const start = write.loc?.start
-  const at = start ? ` on line ${start.line}` : ''
-  const error = new Error(
-    `[gea] Function component \`${fnName || '<anonymous>'}\` reassigns \`${name}\`${at}. ` +
-      `Function components have no local state yet, so the new value would never render. ` +
+  throw compilerError(
+    `Function component \`${fnName || '<anonymous>'}\` reassigns \`${name}\`.`,
+    write,
+    `Function components have no local state yet, so the new value would never render. ` +
       `Keep \`${name}\` in a Store or a class component.`,
-  ) as Error & { __geaCompileError: boolean; loc?: { line: number; column: number } }
-  error.__geaCompileError = true
-  if (start) error.loc = { line: start.line, column: start.column }
-  throw error
+  )
 }
 
 /**

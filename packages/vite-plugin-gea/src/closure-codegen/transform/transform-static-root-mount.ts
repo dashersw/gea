@@ -420,14 +420,7 @@ function compileImportedStaticFunction(
   rewritten.id = t.identifier(imported.localName)
   ctx.directFnComponents?.add(imported.localName)
   ctx.directFnComponentParams?.set(imported.localName, imported.params)
-  try {
-    rewriteFnComponent(rewritten, ctx)
-  } catch (error: any) {
-    // Leave compile errors to the imported file's own transform, which
-    // reports them against the right file.
-    if (error?.__geaCompileError) return null
-    throw error
-  }
+  rewriteFnComponent(rewritten, ctx)
   if (nodeContainsIdentifier(rewritten.body, 'd') && !disposerUseIsOnlyEventDelegation(rewritten.body)) return null
   const factoryName = getZeroArgFactoryAlias(rewritten)
   if (factoryName) return { factoryName }
