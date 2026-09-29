@@ -48571,7 +48571,9 @@ function walkJsxToTemplate(root, options = {}) {
     }
     if (libExports.isJSXFragment(node)) {
       const children = node.children;
-      const kept = children.filter((c) => !(libExports.isJSXText(c) && c.value.trim() === ""));
+      const kept = children.filter(
+        (c) => !(libExports.isJSXText(c) && c.value.trim() === "") && !(libExports.isJSXExpressionContainer(c) && libExports.isJSXEmptyExpression(c.expression))
+      );
       let out = "";
       let childIdx = 0;
       let elemIdx = 0;
