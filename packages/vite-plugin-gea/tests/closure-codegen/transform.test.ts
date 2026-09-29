@@ -215,6 +215,22 @@ export default class App extends Component {
     assert.doesNotMatch(code, /const __n0 = Note\(\{/)
   })
 
+  it('preserves namespaces for direct function component attributes', () => {
+    const src = `import { Component } from '@geajs/core'
+function Icon({ href, lang }) {
+  return <svg><use xlink:href={href} /><text xml:lang={lang}>x</text></svg>
+}
+export default class App extends Component {
+  template() {
+    return <Icon href="#star" lang="en" />
+  }
+}`
+    const { code } = transformFile(src)
+
+    assert.match(code, /setAttributeNS\("http:\/\/www\.w3\.org\/1999\/xlink", "xlink:href"/)
+    assert.match(code, /setAttributeNS\("http:\/\/www\.w3\.org\/XML\/1998\/namespace", "xml:lang"/)
+  })
+
   it('keeps direct function child prop getters lexical when they read this.props', () => {
     const src = `import { Component } from '@geajs/core'
 import Icon from './Icon.tsx'

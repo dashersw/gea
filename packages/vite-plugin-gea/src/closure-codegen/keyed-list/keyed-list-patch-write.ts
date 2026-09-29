@@ -104,12 +104,7 @@ function buildPatchStatement(
   }
   return t.blockStatement([
     t.variableDeclaration('const', [t.variableDeclarator(n, lazyCacheExpr)]),
-    t.expressionStatement(
-      t.callExpression(t.memberExpression(n, t.identifier('setAttribute')), [
-        args[3] as any,
-        t.callExpression(t.identifier('String'), [buildItemAccess(t.identifier('item'), itemPath)]),
-      ]),
-    ),
+    buildAttributeWrite(n, args[3] as any, buildItemAccess(t.identifier('item'), itemPath)),
   ])
 }
 
@@ -151,13 +146,32 @@ function buildInitStatement(kind: PatchKind, args: any[], initNodeExpr: Expressi
     ])
   }
   return t.blockStatement([
-    t.expressionStatement(
-      t.callExpression(t.memberExpression(initNodeExpr, t.identifier('setAttribute')), [
-        args[3] as any,
-        t.callExpression(t.identifier('String'), [buildItemAccess(itemParam, itemPath)]),
-      ]),
-    ),
+    buildAttributeWrite(initNodeExpr, args[3] as any, buildItemAccess(itemParam, itemPath)),
   ])
+}
+
+
+function buildAttributeWrite(node: Expression, name: Expression, value: Expression): Statement {
+  const attrName = t.isStringLiteral(name) ? name.value : ''
+  const ns =
+    attrName.startsWith('xlink:')
+      ? { uri: 'http://www.w3.org/1999/xlink', local: attrName.slice('xlink:'.length) }
+      : attrName.startsWith('xml:')
+        ? { uri: 'http://www.w3.org/XML/1998/namespace', local: attrName.slice('xml:'.length) }
+        : null
+  const set = t.expressionStatement(
+    t.callExpression(t.memberExpression(t.cloneNode(node), t.identifier(ns ? 'setAttributeNS' : 'setAttribute')), [
+      ...(ns ? [t.stringLiteral(ns.uri)] : []),
+      t.cloneNode(name),
+      t.callExpression(t.identifier('String'), [t.cloneNode(value)]),
+    ]),
+  )
+  const remove = t.expressionStatement(
+    t.callExpression(t.memberExpression(t.cloneNode(node), t.identifier(ns ? 'removeAttributeNS' : 'removeAttribute')), [
+      ...(ns ? [t.stringLiteral(ns.uri), t.stringLiteral(ns.local)] : [t.cloneNode(name)]),
+    ]),
+  )
+  return t.ifStatement(t.binaryExpression('==', t.cloneNode(value), t.nullLiteral()), remove, set)
 }
 
 function textValueExpression(value: Expression): Expression {

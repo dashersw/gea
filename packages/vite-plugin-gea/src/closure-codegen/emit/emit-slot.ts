@@ -373,6 +373,14 @@ function emitTextWrite(textId: Expression, expr: Expression, slotIndex: number, 
   ])
 }
 
+function attrNamespace(attrName: string): { uri: string; local: string } | null {
+  if (attrName.startsWith('xlink:'))
+    return { uri: 'http://www.w3.org/1999/xlink', local: attrName.slice('xlink:'.length) }
+  if (attrName.startsWith('xml:'))
+    return { uri: 'http://www.w3.org/XML/1998/namespace', local: attrName.slice('xml:'.length) }
+  return null
+}
+
 function emitAttrWrite(
   elId: Expression,
   attrName: string,
@@ -380,28 +388,33 @@ function emitAttrWrite(
   slotIndex: number,
   ctx: EmitContext,
 ): Statement[] {
+  const ns = attrNamespace(attrName)
+  const setAttr = (value: Expression) =>
+    t.expressionStatement(
+      t.callExpression(t.memberExpression(elId, t.identifier(ns ? 'setAttributeNS' : 'setAttribute')), [
+        ...(ns ? [t.stringLiteral(ns.uri)] : []),
+        t.stringLiteral(attrName),
+        value,
+      ]),
+    )
+  const removeAttr = () =>
+    t.expressionStatement(
+      t.callExpression(t.memberExpression(elId, t.identifier(ns ? 'removeAttributeNS' : 'removeAttribute')), [
+        ...(ns ? [t.stringLiteral(ns.uri), t.stringLiteral(ns.local)] : [t.stringLiteral(attrName)]),
+      ]),
+    )
   if (isOneShotStringPropLocal(expr, ctx)) {
-    const attrTarget =
-      attrName === 'id'
-        ? t.memberExpression(elId, t.identifier('id'))
-        : t.memberExpression(elId, t.identifier('setAttribute'))
-    if (attrName === 'id') return [t.expressionStatement(t.assignmentExpression('=', attrTarget, expr))]
-    return [t.expressionStatement(t.callExpression(attrTarget, [t.stringLiteral(attrName), expr]))]
+    if (attrName === 'id')
+      return [t.expressionStatement(t.assignmentExpression('=', t.memberExpression(elId, t.identifier('id')), expr))]
+    return [setAttr(expr)]
   }
   const value = t.identifier('__v' + slotIndex)
   return [
     t.variableDeclaration('const', [t.variableDeclarator(value, expr)]),
     t.ifStatement(
       t.binaryExpression('==', t.cloneNode(value), t.nullLiteral()),
-      t.expressionStatement(
-        t.callExpression(t.memberExpression(elId, t.identifier('removeAttribute')), [t.stringLiteral(attrName)]),
-      ),
-      t.expressionStatement(
-        t.callExpression(t.memberExpression(elId, t.identifier('setAttribute')), [
-          t.stringLiteral(attrName),
-          t.callExpression(t.identifier('String'), [t.cloneNode(value)]),
-        ]),
-      ),
+      removeAttr(),
+      setAttr(t.callExpression(t.identifier('String'), [t.cloneNode(value)])),
     ),
   ]
 }
