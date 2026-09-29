@@ -584,6 +584,8 @@ describe('element spread names match the compiler (#93)', () => {
       'onClick',
       'onMouseDown',
       'onDoubleClick',
+      'ONCLICK',
+      'OnMouseDown',
       'className',
       'class',
       'htmlFor',

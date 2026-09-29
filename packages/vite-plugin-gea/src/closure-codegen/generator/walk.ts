@@ -571,9 +571,12 @@ function spreadSlotSources(
   return { expr: t.arrayExpression(sources), payload: { skip, explicit } }
 }
 
-/** The runtime's `spreadKeyName`: how a spread names the attribute a JSX name sets. */
+/** The runtime's `spreadKeyName`: how a spread names the attribute a JSX name sets.
+ * A spread's `on*` key is an event in any letter case, so `ONCLICK` after a
+ * spread skips the spread's `onClick`. */
 export function spreadAttrName(name: string): string | null {
   if (NOT_SPREAD_ATTRIBUTES.has(name)) return null
+  if (/^on./i.test(name)) return 'on:' + name.slice(2).toLowerCase()
   if (classifyAttrKind(name) === 'event') return 'on:' + normalizeEventAttrName(name)
   return normalizeAttrName(name)
 }
