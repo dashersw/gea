@@ -1,5 +1,6 @@
 import type { Disposer } from './disposer'
 import { bind } from './bind'
+import { styleValue } from './style-value'
 
 function kebab(k: string): string {
   return k.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
@@ -12,13 +13,29 @@ export function reactiveStyle(
   pathOrGetter: readonly string[] | (() => unknown),
 ): void {
   let prev: Record<string, string> = {}
+  // Last string applied via cssText, or null when the value was not a string.
+  let prevText: string | null = null
   const style = (el as HTMLElement).style
   bind(d, root, pathOrGetter, (v) => {
+    // A string is a full declaration list, applied like a static `style="…"`.
+    if (typeof v === 'string') {
+      if (v !== prevText) style.cssText = v
+      prevText = v
+      prev = {}
+      return
+    }
+    if (prevText !== null) {
+      style.cssText = ''
+      prevText = null
+    }
     const next: Record<string, string> = {}
     if (v && typeof v === 'object') {
       for (const k in v as Record<string, unknown>) {
         const val = (v as Record<string, unknown>)[k]
-        if (val != null && val !== false) next[kebab(k)] = String(val)
+        if (val != null && val !== false) {
+          const prop = kebab(k)
+          next[prop] = styleValue(prop, val)
+        }
       }
     }
     for (const k in prev) if (!(k in next)) style.removeProperty(k)
@@ -50,7 +67,7 @@ export function reactiveStyleProp(
       }
       return
     }
-    const next = String(v)
+    const next = styleValue(prop, v)
     if (next !== prev) {
       style.setProperty(prop, next)
       prev = next
