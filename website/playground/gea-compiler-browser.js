@@ -50906,6 +50906,7 @@ function transformFile(source, _filename, options = {}) {
     }
     if (classDecl) {
       if (firstClassIdx < 0) firstClassIdx = i;
+      ctx.bindings.clear();
       ctx.classGetters.clear();
       for (const m of classDecl.body.body) {
         if (libExports.isClassMethod(m) && m.kind === "get" && libExports.isIdentifier(m.key) && !m.computed && !m.static) {
@@ -50948,7 +50949,6 @@ function transformFile(source, _filename, options = {}) {
         ctx.currentIrRuntimeBase = void 0;
         continue;
       }
-      const paramBindings = [];
       if (templateMethod.params.length >= 1 && libExports.isObjectPattern(templateMethod.params[0])) {
         for (const prop of templateMethod.params[0].properties) {
           if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
@@ -50960,13 +50960,10 @@ function transformFile(source, _filename, options = {}) {
               libExports.identifier(prop.key.name)
             )
           );
-          paramBindings.push(local);
         }
       }
-      let plainPropsParamName = null;
       if (templateMethod.params.length >= 1 && libExports.isIdentifier(templateMethod.params[0])) {
-        plainPropsParamName = templateMethod.params[0].name;
-        ctx.bindings.set(plainPropsParamName, libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")));
+        ctx.bindings.set(templateMethod.params[0].name, libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")));
       }
       const preceding = extractPrecedingStatements(templateMethod);
       const templateSymbol = useStaticCompiledComponent ? "GEA_STATIC_TEMPLATE" : "GEA_CREATE_TEMPLATE";
@@ -50979,8 +50976,6 @@ function transformFile(source, _filename, options = {}) {
         }
       }
       if (useStaticElementComponent) method.params = [];
-      if (plainPropsParamName) ctx.bindings.delete(plainPropsParamName);
-      for (const k of paramBindings) ctx.bindings.delete(k);
       const isReactiveComponent = reactiveComponentNames.has(className);
       const bodyItems = classDecl.body.body;
       const templateIdx = bodyItems.indexOf(templateMethod);
