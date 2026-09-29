@@ -54,6 +54,14 @@ export function bodyContainsJsx(node: any): boolean {
   return false
 }
 
+/** Does the class, a member or a member's parameter carry a decorator? */
+export function classHasDecorators(classDecl: ClassDeclaration): boolean {
+  if (classDecl.decorators?.length) return true
+  return (classDecl.body.body as any[]).some(
+    (member) => member.decorators?.length || member.params?.some((param: any) => param.decorators?.length),
+  )
+}
+
 export function canSkipComponentStoreProxy(classDecl: ClassDeclaration): boolean {
   if (!t.isIdentifier(classDecl.superClass, { name: 'Component' })) return false
   for (const member of classDecl.body.body as any[]) {

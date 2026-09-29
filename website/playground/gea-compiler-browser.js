@@ -44387,11 +44387,19 @@ var libExports = requireLib$5();
 const traverse$1 = typeof babelTraverse.default === "function" ? babelTraverse.default : babelTraverse;
 const generate$1 = typeof babelGenerator.default === "function" ? babelGenerator.default : babelGenerator;
 
+const SOURCE_PARSER_PLUGINS = [
+  "typescript",
+  "jsx",
+  "decorators-legacy",
+  "classProperties",
+  "classPrivateProperties",
+  "classPrivateMethods"
+];
+function parseModule(code) {
+  return libExports$1.parse(code, { sourceType: "module", plugins: SOURCE_PARSER_PLUGINS });
+}
 function parseSource$1(code) {
-  const ast = libExports$1.parse(code, {
-    sourceType: "module",
-    plugins: ["jsx", "typescript", "decorators-legacy", "classProperties"]
-  });
+  const ast = parseModule(code);
   let componentClassName = null;
   const componentClassNames = [];
   let functionalComponentInfo = null;
@@ -44496,6 +44504,16 @@ function nodeReturnsJSX(node) {
 function bodyReturnsJSX(block) {
   const ret = block.body.find((s) => libExports.isReturnStatement(s) && s.argument != null);
   return !!ret && nodeReturnsJSX(ret.argument);
+}
+
+function compilerError(message, node, hint) {
+  const err = new Error(hint ? `${message}
+${hint}` : message);
+  err.__geaCompileError = true;
+  if (hint) err.hint = hint;
+  const start = node?.loc?.start;
+  if (start) err.loc = { line: start.line, column: start.column };
+  return err;
 }
 
 function createEmitContext(reactiveRoot) {
@@ -48486,16 +48504,6 @@ function normalizeEventAttrName(name) {
   return toGeaEventType(name);
 }
 
-function compilerError(message, node, hint) {
-  const err = new Error(hint ? `${message}
-${hint}` : message);
-  err.__geaCompileError = true;
-  if (hint) err.hint = hint;
-  const start = node?.loc?.start;
-  if (start) err.loc = { line: start.line, column: start.column };
-  return err;
-}
-
 const OPTIONAL_TABLE_END_TAGS = /* @__PURE__ */ new Set(["colgroup", "thead", "tbody", "tfoot", "tr", "td", "th"]);
 const TERMINAL_CLOSE_UNSAFE_TAGS = /* @__PURE__ */ new Set([
   "script",
@@ -50904,16 +50912,7 @@ function transformFile(source, _filename, options = {}) {
   if (!source.includes("<") || !source.includes(">")) {
     return { code: source, changed: false, rewritten: [], importsNeeded: [] };
   }
-  let ast;
-  try {
-    ast = libExports$1.parse(source, {
-      sourceType: "module",
-      plugins: ["typescript", "jsx", "classProperties", "classPrivateProperties", "classPrivateMethods"],
-      errorRecovery: false
-    });
-  } catch {
-    return { code: source, changed: false, rewritten: [], importsNeeded: [] };
-  }
+  const ast = parseModule(source);
   const ctx = createEmitContext();
   ctx.irTemplates = [];
   ctx.embedded = options.embedded;
@@ -50964,6 +50963,13 @@ function transformFile(source, _filename, options = {}) {
       if (templateMethod && !extendsComponent(classDecl)) continue;
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null;
       if (templateMethod && !jsx) continue;
+      if (templateMethod?.decorators?.length) {
+        throw compilerError(
+          `Decorators on \`template()\` are not supported.`,
+          templateMethod.decorators[0],
+          `The compiler replaces \`template()\` with DOM code, so the decorator would never run. Decorate another method instead.`
+        );
+      }
       const useStaticCompiledComponent = canUseStaticCompiledComponent(classDecl);
       const useCompiledComponent = !useStaticCompiledComponent && canSkipComponentStoreProxy(classDecl);
       const useTinyReactiveComponent = options.enableTinyReactiveComponents !== false && !useStaticCompiledComponent && !useCompiledComponent && canUseTinyReactiveComponent(classDecl);
