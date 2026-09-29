@@ -254,6 +254,10 @@ function createStaticTemplateFactory(
   const fnDecls: Statement[] = []
   for (const stmt of ast.program.body) {
     if (!t.isFunctionDeclaration(stmt) || !stmt.id || !ctx.directFnComponents.has(stmt.id.name)) continue
+    // Only the direct functions are copied into the mount file. One that still
+    // names a binding left behind, like `<Card>` used with children, would
+    // throw a ReferenceError there.
+    if (nodeContainsAnyIdentifier(stmt.body, blockedRootBindings)) return null
     rewriteFnComponent(stmt, ctx)
     const alias = getZeroArgFactoryAlias(stmt)
     if (alias) {

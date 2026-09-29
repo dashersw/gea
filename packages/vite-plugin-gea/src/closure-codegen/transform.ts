@@ -27,9 +27,11 @@ import {
   canUseLeanReactiveComponent,
   canUseStaticCompiledComponent,
   canUseTinyReactiveComponent,
+  collectModuleBindings,
   extendsComponent,
   fnHasConditionalRoot,
   fnHasInstanceLocals,
+  fnReadsModuleBinding,
   isFunctionComponent,
   nodeContainsThisMember as classBodyReadsThisMember,
   rewriteFnComponent,
@@ -674,6 +676,17 @@ export function collectDirectFnComponents(ast: File): Set<string> {
 
   for (const name of candidates) {
     if ((counts.get(name) ?? 0) === 0 || disqualified.has(name)) candidates.delete(name)
+  }
+  if (candidates.size === 0) return candidates
+
+  // A direct factory writes each slot once, which is only right for reads of
+  // its own props. One that reads a store or any other module binding goes
+  // through `mount` and keeps reactive bindings.
+  const moduleBindings = collectModuleBindings(ast)
+  for (const node of ast.program.body) {
+    if (t.isFunctionDeclaration(node) && node.id && candidates.has(node.id.name)) {
+      if (fnReadsModuleBinding(node, moduleBindings)) candidates.delete(node.id.name)
+    }
   }
   return candidates
 }
