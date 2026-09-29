@@ -36,6 +36,7 @@ jobs:
               - 'package-lock.json'
               - 'tsconfig*.json'
               - 'tests/e2e/**'
+              - '.github/workflows/e2e-tests.yml'
             examples:
               - 'examples/**'
             shared:
@@ -99,10 +100,10 @@ jobs:
       - name: Find e2e test projects
         id: find
         run: |
-          # Get project names defined in the Playwright config (source of truth)
-          config_projects=$(grep -oP "name:\s*'[^']+'" tests/e2e/playwright.config.ts \
-            | sed "s/name: *'//;s/'$//" \
-            | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          # Get project names from the shared example list the Playwright config
+          # builds its projects from (source of truth)
+          config_projects=$(node --input-type=module -e \
+            "import { exampleNames } from './tests/e2e/examples.mjs'; console.log(JSON.stringify(exampleNames))")
 
           # Get all available spec files, then intersect with config projects
           # This prevents orphan spec files from creating impossible matrix jobs
@@ -111,6 +112,13 @@ jobs:
             | jq -R -s -c 'split("\n") | map(select(. != ""))' \
             | jq -c --argjson cfg "$config_projects" \
               '[.[] | select(. as $s | $cfg | index($s))]')
+
+          # An empty list here means discovery is broken, not that there is
+          # nothing to test. Fail instead of silently skipping every E2E job.
+          if [ "$all_projects" == "[]" ]; then
+            echo "::error::No E2E projects found. Check tests/e2e/examples.mjs and the spec files."
+            exit 1
+          fi
 
           requested='${{ needs.changes.outputs.projects }}'
 
