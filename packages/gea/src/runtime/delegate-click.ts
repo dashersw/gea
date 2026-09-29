@@ -1,3 +1,4 @@
+import { ensureDelegate } from './delegate-dispatch'
 import type { Disposer } from './disposer'
 
 type Handler = (e: Event) => void
@@ -7,32 +8,16 @@ type HandlerPair = [Element, Handler]
 // makes geatsc collect an anonymous record whose field is callable, which it has
 // no representation for ("Anonymous record expando __gc has no Representation
 // for Handler"). Reading and writing through a computed key keeps the property
-// dynamic, so no record shape is inferred for the host Element. `_GDC` (the
-// once-per-document delegate-installed flag) follows the same rule for the
-// same reason — a literal `.__gdc` would pin an anonymous record on Document.
+// dynamic, so no record shape is inferred for the host Element.
 const _GC = '__' + 'gc'
-const _GDC = '__' + 'gdc'
 
-// The per-node handler stash and the per-document flag are dynamic expandos on
-// host objects; `Record<string, ...>` through the computed key is the same
-// sanctioned spelling `compiled-lean-store.ts` uses for its symbol stashes.
+// The per-node handler stash is a dynamic expando on host objects;
+// `Record<string, ...>` through the computed key is the same sanctioned
+// spelling `compiled-lean-store.ts` uses for its symbol stashes.
 type HandlerStash = Record<string, Handler | undefined>
-type FlagStash = Record<string, number | undefined>
 
 export function ensureClickDelegate(root: Element): void {
-  const rt: Document = typeof document !== 'undefined' ? document : (root.ownerDocument as Document)
-  if (!(rt as unknown as FlagStash)[_GDC]) {
-    ;(rt as unknown as FlagStash)[_GDC] = 1
-    rt.addEventListener('click', (e: Event) => {
-      for (let n: Node | null = e.target as Node | null; n && n !== rt; n = n.parentNode) {
-        const h = (n as unknown as HandlerStash)[_GC]
-        if (h !== undefined) {
-          h(e)
-          return
-        }
-      }
-    })
-  }
+  ensureDelegate(root, 'click')
 }
 
 export function delegateClick(root: Element, pairs: HandlerPair[], disposer?: Disposer): void {
