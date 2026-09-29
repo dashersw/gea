@@ -24,6 +24,7 @@ import {
 } from './virtual-modules.ts'
 
 const pluginDir = dirname(fileURLToPath(import.meta.url))
+const CORE_COMPILER_RUNTIME = '@geajs/core/compiler-runtime'
 
 function hasSSREnvironment(ctx: object): boolean {
   if (!('environment' in ctx)) return false
@@ -220,6 +221,16 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
     },
     async load(id) {
       if (id === RESOLVED_COMPILER_RUNTIME_ID) {
+        // Resolve core's own `./compiler-runtime` export the way the app's
+        // `@geajs/core` import is resolved: package exports, aliases, pnpm's
+        // layout and dev pre-bundling all apply, so both share one module graph.
+        // `id` as importer makes externals match the `export *` emitted here,
+        // which re-imports by specifier so Vite serves the pre-bundled copy.
+        const runtime = await this.resolve(CORE_COMPILER_RUNTIME, id, { skipSelf: true })
+        if (runtime && !runtime.external) return compilerRuntimeSource(runtime.id, CORE_COMPILER_RUNTIME)
+
+        // External or unresolvable (library builds that externalize @geajs/core,
+        // core's own build): inline the runtime file next to core or the plugin.
         const resolvedCore = await this.resolve('@geajs/core', undefined, { skipSelf: true })
         const fromCoreEntry = resolvedCore?.id ? compilerRuntimePathFromCoreEntry(resolvedCore.id) : null
         const candidates = [
@@ -720,7 +731,7 @@ function compilerRuntimePathFromCoreEntry(entry: string): string | null {
 // per-submodule: an app that never touches `conditionalTruthy` gets that one
 // line dropped, while every other line survives untouched.
 //
-// The STATIC fallback below re-exported every name in ONE statement pointing
+// The old static fallback re-exported every name in ONE statement pointing
 // at the barrel file itself (`export { conditionalTruthy, ... } from
 // '<compiler-runtime.ts path>'`). That collapsed the whole list onto a single
 // target: as long as the app used ANY compiler-runtime export, the barrel
@@ -753,62 +764,12 @@ function compilerRuntimeExportLines(runtimePath: string): string[] | null {
   return lines.length > 0 ? lines : null
 }
 
-function compilerRuntimeSource(runtimePath: string): string {
-  const perSubmoduleLines = compilerRuntimeExportLines(runtimePath)
+// Only core's source barrel has per-submodule lines to keep; a built bundle
+// (or Vite's pre-bundle of it) is re-exported whole from `specifier`.
+function compilerRuntimeSource(runtimePath: string, specifier = normalizeImportPath(runtimePath)): string {
+  const perSubmoduleLines = compilerRuntimeExportLines(runtimePath.split('?')[0])
   if (perSubmoduleLines) return `${perSubmoduleLines.join('\n')}\n`
-
-  const path = normalizeImportPath(runtimePath)
-  return `export {
-  NOOP_DISPOSER,
-  createDisposer,
-  CompiledComponent,
-  CompiledLeanReactiveComponent,
-  CompiledLeanStore,
-  CompiledReactiveComponent,
-  CompiledTinyReactiveComponent,
-  CompiledStaticElementComponent,
-  CompiledStaticComponent,
-  CompiledStore,
-  reactiveText,
-  reactiveTextValue,
-  reactiveAttr,
-  reactiveHtml,
-  reactiveBool,
-  reactiveBoolAttr,
-  reactiveClass,
-  reactiveClassName,
-  relationalClass,
-  relationalClassProp,
-  reactiveStyle,
-  reactiveStyleProp,
-  reactiveValue,
-  reactiveValueRead,
-  delegateEvent,
-  delegateEventFast,
-  delegateClick,
-  ensureClickDelegate,
-  mount,
-  conditional,
-  conditionalTruthy,
-  keyedList,
-  keyedListSimple,
-  keyedListProp,
-  GEA_DOM_ITEM,
-  GEA_DOM_KEY,
-  GEA_DIRTY,
-  GEA_DIRTY_PROPS,
-  createItemObservable,
-  createItemProxy,
-  readItem,
-  _rescue,
-  GEA_CREATE_TEMPLATE,
-  GEA_PARENT_COMPONENT,
-  GEA_STATIC_TEMPLATE,
-  GEA_OBSERVE_DIRECT,
-  GEA_SET_PROPS,
-  GEA_PROXY_RAW,
-} from ${JSON.stringify(path)}
-`
+  return `export * from ${JSON.stringify(specifier)}\n`
 }
 
 function findComponentDeps(code: string, filePath: string): string[] {
