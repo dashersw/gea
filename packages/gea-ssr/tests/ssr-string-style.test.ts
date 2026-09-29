@@ -64,4 +64,14 @@ describe('SSR string styles', () => {
     assert.doesNotMatch(el.getAttribute('style')!, /color/)
     d.dispose()
   })
+
+  it('keep the case of custom properties in style objects (#127)', () => {
+    const s = new Store({ c: 'blue' }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, () => ({ '--myColor': s.c, fontSize: 12 }))
+    assert.match(el.getAttribute('style')!, /--myColor:\s*blue/)
+    assert.match(el.getAttribute('style')!, /font-size:\s*12px/)
+    d.dispose()
+  })
 })

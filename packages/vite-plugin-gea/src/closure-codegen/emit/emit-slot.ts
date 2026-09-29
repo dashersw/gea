@@ -205,7 +205,10 @@ export function emitSlot(slot: Slot, stmts: Statement[], ctx: EmitContext): void
         ctx.importsNeeded.add('reactiveStyleProp')
         for (const p of styleProps as any[]) {
           const keyName = t.isIdentifier(p.key) ? p.key.name : p.key.value
-          const kebabKey = String(keyName).replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
+          // Custom properties (`--*`) are case-sensitive: keep them as written.
+          const kebabKey = String(keyName).startsWith('--')
+            ? String(keyName)
+            : String(keyName).replace(/[A-Z]/g, (m) => '-' + m.toLowerCase())
           const valSource = expressionToPathOrGetter(p.value as Expression, ctx)
           stmts.push(
             t.expressionStatement(

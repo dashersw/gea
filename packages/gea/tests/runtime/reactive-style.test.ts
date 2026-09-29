@@ -266,6 +266,25 @@ describe('reactiveStyle – string styles only touch their own properties (#126)
   })
 })
 
+describe('reactiveStyle – custom properties (#127)', () => {
+  it('keeps the exact spelling of camelCase custom properties', async () => {
+    const s = new Store({ theme: { '--brandColor': 'blue', color: 'var(--brandColor)' } as Record<string, string> }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, ['theme'])
+    await flush()
+    assert.equal(el.style.getPropertyValue('--brandColor'), 'blue')
+    assert.equal(el.style.getPropertyValue('--brand-color'), '')
+    s.theme = { '--brandColor': 'red' }
+    await flush()
+    assert.equal(el.style.getPropertyValue('--brandColor'), 'red')
+    assert.equal(el.style.color, '')
+    s.theme = {}
+    await flush()
+    assert.equal(el.style.getPropertyValue('--brandColor'), '')
+  })
+})
+
 describe('reactiveStyleProp – units (#110)', () => {
   it('adds px to static and reactive numbers', async () => {
     const s = new Store({ h: 120 }) as any

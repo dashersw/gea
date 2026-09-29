@@ -7,7 +7,7 @@
  * .join('') over an array of h() results works as expected (string concat),
  * enabling patterns like `items.map(it => <li>...</li>).join('')`.
  */
-import { styleValue } from './runtime/style-value'
+import { styleProp, styleValue } from './runtime/style-value'
 
 type Props = Record<string, any> | null
 
@@ -49,13 +49,15 @@ export function h(tag: any, props: Props, ...rest: any[]): string {
       if (k === 'children' || k === 'key' || k === 'ref') continue
       const name = k === 'className' ? 'class' : k === 'htmlFor' ? 'for' : k
       if (k === 'style' && typeof v === 'object') {
+        // Skip empty entries like the compiled style bindings do.
         const style = Object.keys(v)
+          .filter((sk) => v[sk] != null && v[sk] !== false)
           .map((sk) => {
-            const dashed = sk.replace(/([A-Z])/g, '-$1').toLowerCase()
-            return `${dashed}:${styleValue(dashed, v[sk])}`
+            const prop = styleProp(sk)
+            return `${prop}:${styleValue(prop, v[sk])}`
           })
           .join(';')
-        html += ` style="${_escapeAttr(style)}"`
+        if (style) html += ` style="${_escapeAttr(style)}"`
       } else if (typeof v === 'function') {
         // Event handlers have no HTML representation — skip (caller should
         // use the compiler path or wire events separately).
