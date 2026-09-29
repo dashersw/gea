@@ -19,7 +19,8 @@
  *   own helpers do, boolean attributes toggle, and the rest are attributes.
  * - `children`, `key`, `ref` and `dangerouslySetInnerHTML` are not attributes
  *   and are skipped, as are keys that are not valid attribute names and
- *   `srcdoc`, which only the template writes.
+ *   `srcdoc`, which only the template writes. On an SVG animation element,
+ *   `attributeName`, `to`, `from`, `by` and `values` are the template's too.
  * - Nothing is assigned as an element property: a key such as `innerHTML`
  *   is an ordinary attribute.
  *
@@ -43,6 +44,8 @@ interface SpreadState {
   values: Map<string, unknown>
   /** Stateful writers for `class`, `style` and `value`, created on first use. */
   writers: Map<string, Write>
+  /** Whether the element is an SVG animation element. */
+  animation: boolean
 }
 
 // The compiler's EVENT_NAMES (vite-plugin-gea/src/utils/events.ts). A test
@@ -126,6 +129,19 @@ const NOT_ATTRIBUTES = new Set(['children', 'key', 'ref', 'dangerouslySetInnerHT
 // a spread out of the spread, so it still applies.
 const TEMPLATE_ONLY = new Set(['srcdoc'])
 
+// SVG animation elements, and the attributes only their template writes: which
+// attribute is animated, and the values it takes. Both are matched in any
+// letter case (an HTML parser lowercases `animateMotion` outside a browser).
+// Elsewhere these are ordinary attributes, such as `values` on `feColorMatrix`.
+// The compiler's lists (walk.ts), kept equal by a test.
+export const SPREAD_ANIMATION_ELEMENTS: ReadonlySet<string> = new Set([
+  'animate',
+  'set',
+  'animatemotion',
+  'animatetransform',
+])
+export const SPREAD_ANIMATION_ATTRIBUTES: ReadonlySet<string> = new Set(['attributename', 'to', 'from', 'by', 'values'])
+
 // A valid attribute name (the XML Name production, as React checks it).
 // `setAttribute` throws on other names, and an HTML serializer would write
 // them out unchanged.
@@ -164,19 +180,27 @@ export function reactiveSpread(
   skip: readonly string[] | null,
   pathOrGetter: readonly string[] | (() => unknown),
 ): void {
-  const state: SpreadState = { values: new Map(), writers: new Map() }
+  const state = newState(el)
   bind(d, root, pathOrGetter, (sources) => patchSpread(el, state, sources, skip))
 }
 
 /** `reactiveSpread` for sources that never change: apply them once. */
 export function spreadAttrs(el: Element, skip: readonly string[] | null, sources: unknown): void {
-  patchSpread(el, { values: new Map(), writers: new Map() }, sources, skip)
+  patchSpread(el, newState(el), sources, skip)
+}
+
+function newState(el: Element): SpreadState {
+  return {
+    values: new Map(),
+    writers: new Map(),
+    animation: SPREAD_ANIMATION_ELEMENTS.has(el.localName.toLowerCase()),
+  }
 }
 
 function patchSpread(el: Element, state: SpreadState, sources: unknown, skip: readonly string[] | null): void {
   const next = new Map<string, unknown>()
   if (Array.isArray(sources)) {
-    for (let i = 0; i < sources.length; i++) collect(next, sources[i], skip)
+    for (let i = 0; i < sources.length; i++) collect(next, sources[i], skip, state.animation)
   }
   const prev = state.values
   for (const name of prev.keys()) {
@@ -191,7 +215,7 @@ function patchSpread(el: Element, state: SpreadState, sources: unknown, skip: re
   state.values = next
 }
 
-function collect(out: Map<string, unknown>, source: unknown, skip: readonly string[] | null): void {
+function collect(out: Map<string, unknown>, source: unknown, skip: readonly string[] | null, animation: boolean): void {
   if (source === null || typeof source !== 'object') return
   const obj = source as Record<string, unknown>
   // Own keys only, as JSX spread copies them (`Object.assign`): an inherited
@@ -199,6 +223,7 @@ function collect(out: Map<string, unknown>, source: unknown, skip: readonly stri
   for (const key of Object.keys(obj)) {
     const name = spreadKeyName(key)
     if (name === null || (skip !== null && skip.indexOf(name) !== -1)) continue
+    if (animation && SPREAD_ANIMATION_ATTRIBUTES.has(name.toLowerCase())) continue
     out.set(name, obj[key])
   }
 }

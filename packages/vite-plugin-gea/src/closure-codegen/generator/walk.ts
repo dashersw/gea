@@ -255,12 +255,12 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
         walk: walk.slice(),
         walkKinds: walkKinds.slice(),
         kind: 'spread',
-        ...spreadSlotSources(opening.attributes, lastSpread),
+        ...spreadSlotSources(opening.attributes, lastSpread, tagName),
       })
     }
     for (let attrIndex = 0; attrIndex < opening.attributes.length; attrIndex++) {
       const attr = opening.attributes[attrIndex]
-      if (attrIndex < lastSpread && foldsIntoSpread(attr)) continue
+      if (attrIndex < lastSpread && foldsIntoSpread(attr, tagName)) continue
       if (t.isJSXAttribute(attr)) {
         const rawAttrName = t.isJSXIdentifier(attr.name) ? attr.name.name : ''
         const attrName = normalizeAttrName(rawAttrName)
@@ -515,13 +515,27 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
  * never sets them, so they are compiled the same with or without one. */
 const NOT_SPREAD_ATTRIBUTES = new Set(['children', 'key', 'ref', 'dangerouslySetInnerHTML'])
 
+/** The runtime's SPREAD_ANIMATION_ELEMENTS and SPREAD_ANIMATION_ATTRIBUTES
+ * (reactive-spread.ts), kept equal by a test: on these SVG elements a spread
+ * never writes these attributes. */
+export const SPREAD_ANIMATION_ELEMENTS: ReadonlySet<string> = new Set([
+  'animate',
+  'set',
+  'animatemotion',
+  'animatetransform',
+])
+export const SPREAD_ANIMATION_ATTRIBUTES: ReadonlySet<string> = new Set(['attributename', 'to', 'from', 'by', 'values'])
+
 /** Whether an attribute before the last spread is applied by the spread slot. */
-function foldsIntoSpread(attr: JSXAttribute | JSXSpreadAttribute): boolean {
+function foldsIntoSpread(attr: JSXAttribute | JSXSpreadAttribute, tagName: string): boolean {
   if (t.isJSXSpreadAttribute(attr)) return true
   if (!t.isJSXIdentifier(attr.name) || NOT_SPREAD_ATTRIBUTES.has(attr.name.name)) return false
-  // A spread never writes `srcdoc`, so one written before it stays a normal
-  // attribute rather than a spread source.
-  if (attr.name.name.toLowerCase() === 'srcdoc') return false
+  // A spread never writes `srcdoc`, nor an SVG animation element's animation
+  // attributes, so one written before it stays a normal attribute rather than
+  // a spread source.
+  const name = attr.name.name.toLowerCase()
+  if (name === 'srcdoc') return false
+  if (SPREAD_ANIMATION_ELEMENTS.has(tagName.toLowerCase()) && SPREAD_ANIMATION_ATTRIBUTES.has(name)) return false
   return attr.value == null || t.isStringLiteral(attr.value) || t.isJSXExpressionContainer(attr.value)
 }
 
@@ -535,6 +549,7 @@ function foldsIntoSpread(attr: JSXAttribute | JSXSpreadAttribute): boolean {
 function spreadSlotSources(
   attrs: Array<JSXAttribute | JSXSpreadAttribute>,
   lastSpread: number,
+  tagName: string,
 ): Pick<Slot, 'expr' | 'payload'> {
   const sources: Expression[] = []
   const explicit: number[] = []
@@ -546,7 +561,7 @@ function spreadSlotSources(
       group = null
       continue
     }
-    if (!foldsIntoSpread(attr)) continue
+    if (!foldsIntoSpread(attr, tagName)) continue
     const name = (attr.name as JSXIdentifier).name
     const value = attr.value
     const expr: Expression = !value

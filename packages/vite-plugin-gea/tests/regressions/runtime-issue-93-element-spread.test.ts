@@ -11,10 +11,21 @@ import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-set
 import { compileJsxModule, loadRuntimeModules } from '../helpers/compile'
 import { EVENT_NAMES } from '../../src/utils/events'
 import { BOOL_ATTRS } from '../../src/closure-codegen/generator/generator-attrs'
-import { spreadAttrName, walkJsxToTemplate } from '../../src/closure-codegen/generator/walk'
+import {
+  SPREAD_ANIMATION_ATTRIBUTES as COMPILER_ANIMATION_ATTRIBUTES,
+  SPREAD_ANIMATION_ELEMENTS as COMPILER_ANIMATION_ELEMENTS,
+  spreadAttrName,
+  walkJsxToTemplate,
+} from '../../src/closure-codegen/generator/walk'
 import { templateSpecToIr } from '../../src/closure-codegen/ir'
 import { parse } from '@babel/parser'
-import { SPREAD_BOOL_ATTRS, SPREAD_EVENT_NAMES, spreadKeyName } from '../../../gea/src/runtime/reactive-spread'
+import {
+  SPREAD_ANIMATION_ATTRIBUTES,
+  SPREAD_ANIMATION_ELEMENTS,
+  SPREAD_BOOL_ATTRS,
+  SPREAD_EVENT_NAMES,
+  spreadKeyName,
+} from '../../../gea/src/runtime/reactive-spread'
 
 type View = { render: (n: Node) => void; dispose: () => void; [k: string]: any }
 
@@ -519,6 +530,61 @@ describe('element spread attributes (#93)', { concurrency: false }, () => {
     app.dispose()
   })
 
+  it('leaves animation attributes to the template on SVG animation elements only', async () => {
+    const { root, app } = await mount(
+      `
+        import { Component } from '@geajs/core'
+        export class App extends Component {
+          anim = { attributeName: 'x', TO: '1', From: '0', by: '2', VALUES: '0;1', dur: '1s' }
+          matrix = { type: 'matrix', values: '1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0', to: 't' }
+          template() {
+            return (
+              <svg>
+                <animate id="animate" {...this.anim} />
+                <set id="set" {...this.anim} />
+                <animateMotion id="motion" {...this.anim} />
+                <animateTransform id="transform" {...this.anim} />
+                <animate id="written" attributeName="opacity" to="1" {...this.anim} />
+                <filter id="filter">
+                  <feColorMatrix id="matrix" {...this.matrix} />
+                </filter>
+              </svg>
+            )
+          }
+          swap() {
+            this.anim = { ...this.anim, attributeName: 'y', values: '1;0', dur: '2s' }
+            this.matrix = { ...this.matrix, values: '0 1 0 0 0 1 0 0 0 0 0 0 1 0 0 0 0 0 1 0' }
+          }
+        }
+      `,
+      'Animation',
+    )
+    const check = () => {
+      for (const id of ['animate', 'set', 'motion', 'transform']) {
+        const el = root.querySelector('#' + id)!
+        assert.deepEqual(
+          el.getAttributeNames().filter((n) => n !== 'id'),
+          ['dur'],
+          id + ' takes no animation attribute from a spread',
+        )
+        assert.equal(el.getAttribute('dur'), app.anim.dur)
+      }
+      const written = root.querySelector('#written')!
+      assert.equal(written.getAttribute('attributeName'), 'opacity', 'the template still sets them')
+      assert.equal(written.getAttribute('to'), '1')
+      assert.equal(written.getAttribute('dur'), app.anim.dur)
+      const matrix = root.querySelector('#matrix')!
+      assert.equal(matrix.getAttribute('values'), app.matrix.values, 'other elements take them from a spread')
+      assert.equal(matrix.getAttribute('to'), 't')
+      assert.equal(matrix.getAttribute('type'), 'matrix')
+    }
+    check()
+    app.swap()
+    await flushMicrotasks()
+    check()
+    app.dispose()
+  })
+
   it('works in keyed-list rows', async () => {
     const { root, app } = await mount(
       `
@@ -623,9 +689,11 @@ describe('element spread attributes (#93)', { concurrency: false }, () => {
 })
 
 describe('element spread names match the compiler (#93)', () => {
-  it('uses the same event and boolean attribute lists', () => {
+  it('uses the same event, boolean attribute and animation lists', () => {
     assert.deepEqual([...SPREAD_EVENT_NAMES].sort(), [...EVENT_NAMES].sort())
     assert.deepEqual([...SPREAD_BOOL_ATTRS].sort(), [...BOOL_ATTRS].sort())
+    assert.deepEqual([...SPREAD_ANIMATION_ELEMENTS].sort(), [...COMPILER_ANIMATION_ELEMENTS].sort())
+    assert.deepEqual([...SPREAD_ANIMATION_ATTRIBUTES].sort(), [...COMPILER_ANIMATION_ATTRIBUTES].sort())
   })
 
   it('names a spread key the way the compiler names the attribute', () => {

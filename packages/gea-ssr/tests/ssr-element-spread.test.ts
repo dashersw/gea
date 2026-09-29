@@ -68,6 +68,22 @@ class TemplateOnly extends Component {
   }
 }
 
+// SVG animation elements, and a filter primitive that takes `values` too.
+class Animation extends Component {
+  anim = { attributeName: 'x', TO: '1', From: '0', by: '2', VALUES: '0;1', dur: '1s' }
+  matrix = { type: 'matrix', values: '1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0', to: 't' };
+  [GEA_CREATE_TEMPLATE](d: any): Node {
+    const root = document.createElement('div')
+    root.innerHTML =
+      '<svg><animate></animate><set></set><animateMotion></animateMotion><animateTransform></animateTransform>' +
+      '<filter><feColorMatrix></feColorMatrix></filter></svg>'
+    const [animate, set, motion, transform, filter] = [...root.firstElementChild!.children]
+    for (const el of [animate, set, motion, transform]) reactiveSpread(el, d, this, null, () => [this.anim])
+    reactiveSpread(filter.firstElementChild!, d, this, null, () => [this.matrix])
+    return root
+  }
+}
+
 // Serialized attribute values in document order, and the DOM a browser-like
 // parser builds back from the HTML.
 const serialized = (html: string, name: string): string[] =>
@@ -122,5 +138,18 @@ describe('SSR element spread', () => {
     assert.equal(doc.querySelector('iframe')!.getAttribute('title'), 'f')
     assert.equal(doc.querySelector('p')!.textContent, 'kept')
     assert.equal(doc.querySelectorAll('#inner, #outer').length, 0)
+  })
+
+  it('leaves animation attributes out on SVG animation elements only', () => {
+    const html = renderToString(Animation)
+    assert.doesNotMatch(html, /attributename/i)
+    const [animate, set, motion, transform, filter] = [...reparse(html).querySelector('svg')!.children]
+    for (const el of [animate, set, motion, transform]) {
+      assert.deepEqual([...el.getAttributeNames()], ['dur'], el.localName)
+    }
+    const matrix = filter.firstElementChild!
+    assert.equal(matrix.getAttribute('values'), '1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0')
+    assert.equal(matrix.getAttribute('to'), 't')
+    assert.equal(matrix.getAttribute('type'), 'matrix')
   })
 })
