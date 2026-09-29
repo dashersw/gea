@@ -55,7 +55,8 @@ describe('virtual:gea-compiler-runtime re-export granularity', () => {
 
     const plugin = geaPlugin({}) as any
     const loadContext = {
-      resolve: async () => ({ id: coreEntry }),
+      resolve: async (specifier: string) =>
+        specifier === '@geajs/core/compiler-runtime' ? { id: runtimePath } : { id: coreEntry },
     }
 
     const source: string = await plugin.load.call(loadContext, RESOLVED_COMPILER_RUNTIME_ID)
@@ -106,15 +107,16 @@ describe('virtual:gea-compiler-runtime re-export granularity', () => {
     writeFileSync(path.join(distDir, 'compiler-runtime.mjs'), 'export function mount(){}\n')
 
     const plugin = geaPlugin({}) as any
+    // `@geajs/core/compiler-runtime` itself doesn't resolve (e.g. an alias
+    // pointing `@geajs/core` at its entry file), so the runtime is found next
+    // to core's entry instead.
     const loadContext = {
-      resolve: async () => ({ id: coreEntry }),
+      resolve: async (specifier: string) => (specifier === '@geajs/core' ? { id: coreEntry } : null),
     }
 
     const source: string = await plugin.load.call(loadContext, RESOLVED_COMPILER_RUNTIME_ID)
     const runtimePathNormalized = path.join(distDir, 'compiler-runtime.mjs').replace(/\\/g, '/')
-    assert.ok(
-      source.includes(`} from ${JSON.stringify(runtimePathNormalized)}`),
-      `expected the single-statement fallback pointing at the .mjs bundle, got:\n${source}`,
-    )
+    // `export *`, not a name list: a list drifts from the runtime's exports (#97).
+    assert.equal(source, `export * from ${JSON.stringify(runtimePathNormalized)}\n`)
   })
 })
