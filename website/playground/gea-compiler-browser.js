@@ -48877,6 +48877,7 @@ const NOT_SPREAD_ATTRIBUTES = /* @__PURE__ */ new Set(["children", "key", "ref",
 function foldsIntoSpread(attr) {
   if (libExports.isJSXSpreadAttribute(attr)) return true;
   if (!libExports.isJSXIdentifier(attr.name) || NOT_SPREAD_ATTRIBUTES.has(attr.name.name)) return false;
+  if (attr.name.name.toLowerCase() === "srcdoc") return false;
   return attr.value == null || libExports.isStringLiteral(attr.value) || libExports.isJSXExpressionContainer(attr.value);
 }
 function spreadSlotSources(attrs, lastSpread) {
