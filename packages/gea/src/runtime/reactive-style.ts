@@ -2,7 +2,7 @@ import type { Disposer } from './disposer'
 import { bind } from './bind'
 import { styleValue } from './style-value'
 
-/** Property → [value, priority], in declaration order. */
+/** Property → [value, priority], in the order they apply. */
 type Decls = Map<string, [string, string]>
 
 function kebab(k: string): string {
@@ -22,7 +22,9 @@ function addDecl(out: Decls, decl: string): void {
   }
   if (!name || !value) return
   if (!name.startsWith('--')) name = name.toLowerCase()
-  // A repeated property takes the last value and the last position, as in CSS.
+  // A repeated property takes the last value and the last position, as in CSS,
+  // unless the earlier one is `!important` and the new one isn't.
+  if (out.get(name)?.[1] && !priority) return
   out.delete(name)
   out.set(name, [value, priority])
 }
@@ -49,6 +51,14 @@ function parseStyleText(text: string): Decls {
     }
   }
   addDecl(out, text.slice(start))
+  // `!important` wins over a normal declaration whatever the order (`margin-top:
+  // 8px !important; margin: 4px`), so it goes after all of them.
+  for (const [name, decl] of [...out]) {
+    if (decl[1]) {
+      out.delete(name)
+      out.set(name, decl)
+    }
+  }
   return out
 }
 
@@ -66,11 +76,19 @@ function objectDecls(v: unknown): Decls {
   return out
 }
 
+/** A property's value and priority as the style object holds them now. */
+function readDecl(style: CSSStyleDeclaration, name: string): string {
+  const value = style.getPropertyValue(name)
+  return style.getPropertyPriority(name) ? value + ' !important' : value
+}
+
 /** Write `next` over `prev`, touching only the properties the binding declares,
  * so inline styles set by others (`visible`'s `display: none`, a handler's
  * `el.style.transform`) survive. A declaration that keeps its value and its
  * order is left alone unless this update overwrote it, e.g. a changed `padding`
- * before an unchanged `padding-left`. */
+ * before an unchanged `padding-left`. A shorthand whose longhands differ reads
+ * as `''` (`border: 1px solid red; border-left: none`), so a change can't be
+ * seen on it: once anything else is written or removed, it is written again. */
 function applyDecls(style: CSSStyleDeclaration, prev: Decls, next: Decls): void {
   const order = [...prev.keys()]
   const kept = new Map<string, string>()
@@ -79,14 +97,22 @@ function applyDecls(style: CSSStyleDeclaration, prev: Decls, next: Decls): void 
     const old = prev.get(name)
     const at = order.indexOf(name)
     if (old && old[0] === value && old[1] === priority && at > last) {
-      kept.set(name, style.getPropertyValue(name))
+      kept.set(name, readDecl(style, name))
       last = at
     }
   }
-  for (const name of order) if (!next.has(name)) style.removeProperty(name)
+  let dirty = kept.size !== next.size
+  for (const name of order) {
+    if (!next.has(name)) {
+      style.removeProperty(name)
+      dirty = true
+    }
+  }
   for (const [name, [value, priority]] of next) {
     const before = kept.get(name)
-    if (before === undefined || style.getPropertyValue(name) !== before) style.setProperty(name, value, priority)
+    if (before === undefined || (dirty && before === '') || readDecl(style, name) !== before) {
+      style.setProperty(name, value, priority)
+    }
   }
 }
 

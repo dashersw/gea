@@ -190,6 +190,68 @@ describe('reactiveStyle – string styles only touch their own properties (#126)
     assert.equal(el.style.paddingTop, '6px')
     assert.equal(el.style.paddingLeft, '0px')
   })
+  it('restores a shorthand when a longhand override is removed', async () => {
+    const s = new Store({ st: 'border: 1px solid red; border-left: none' }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, ['st'])
+    await flush()
+    assert.equal(el.style.borderLeftStyle, 'none')
+    s.st = 'border: 1px solid red'
+    await flush()
+    assert.equal(el.style.borderLeftWidth, '1px')
+    assert.equal(el.style.borderLeftStyle, 'solid')
+    assert.equal(el.style.borderLeftColor, 'red')
+  })
+  it('restores a shorthand when a longhand override is changed and removed', async () => {
+    const s = new Store({ st: 'border: 1px solid red; border-top-color: green' }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, ['st'])
+    await flush()
+    s.st = 'border: 1px solid red; border-top-color: blue'
+    await flush()
+    assert.equal(el.style.borderTopColor, 'blue')
+    assert.equal(el.style.borderBottomColor, 'red')
+    s.st = 'border: 1px solid red'
+    await flush()
+    assert.equal(el.style.borderTopColor, 'red')
+  })
+  it('restores a shorthand when an !important longhand is removed', async () => {
+    const s = new Store({ st: 'margin: 4px; margin-top: 8px !important' }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, ['st'])
+    await flush()
+    assert.equal(el.style.marginTop, '8px')
+    s.st = 'margin: 4px'
+    await flush()
+    assert.equal(el.style.marginTop, '4px')
+    assert.equal(el.style.getPropertyPriority('margin-top'), '')
+  })
+  it('lets !important win over a later normal declaration, as cssText does', () => {
+    const s = new Store({}) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, () => 'margin-top: 8px !important; margin: 4px; color: red !important; color: blue')
+    assert.equal(el.style.marginTop, '8px')
+    assert.equal(el.style.getPropertyPriority('margin-top'), 'important')
+    assert.equal(el.style.marginLeft, '4px')
+    assert.equal(el.style.color, 'red')
+    assert.equal(el.style.getPropertyPriority('color'), 'important')
+  })
+  it('keeps an unchanged !important longhand after its shorthand changes', async () => {
+    const s = new Store({ st: 'border: 1px solid red; border-top-color: blue !important' }) as any
+    const el = document.createElement('div')
+    const d = createDisposer()
+    reactiveStyle(el, d, s, ['st'])
+    await flush()
+    s.st = 'border: 2px dashed blue; border-top-color: blue !important'
+    await flush()
+    assert.equal(el.style.borderTopColor, 'blue')
+    assert.equal(el.style.getPropertyPriority('border-top-color'), 'important')
+    assert.equal(el.style.borderTopStyle, 'dashed')
+  })
   it('follows the new order when declarations are reordered', async () => {
     const s = new Store({ st: 'padding-left: 0; padding: 5px' }) as any
     const el = document.createElement('div')
