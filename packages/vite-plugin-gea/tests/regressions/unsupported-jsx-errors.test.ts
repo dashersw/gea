@@ -19,9 +19,37 @@ interface UnsupportedCase {
   column: number
 }
 
-// Five of the six repros from #105. Each one used to compile and then render
-// nothing. The sixth, a spread on an element, compiles since #219.
+// Five of the six repros from #105, plus a spread on a component tag. Each one
+// used to compile and then render nothing. The sixth, a spread on an element,
+// compiles since #219.
 const CASES: UnsupportedCase[] = [
+  {
+    name: 'spread props on a component',
+    source: `import { Component } from '@geajs/core'
+
+class Child extends Component {
+  template() {
+    return <p>{this.props.label}</p>
+  }
+}
+
+export default class App extends Component {
+  childProps = { label: 'Go' }
+
+  template() {
+    return (
+      <div>
+        <Child {...this.childProps} />
+      </div>
+    )
+  }
+}
+`,
+    message: /Spread attributes like \{\.\.\.this\.childProps\} on <Child> are not supported\./,
+    hint: /Pass each prop individually: <Child label=\{…\} onSelect=\{…\} \/>\./,
+    line: 15,
+    column: 15,
+  },
   {
     name: 'a string in a component-cased tag',
     source: `import { Component } from '@geajs/core'
@@ -287,6 +315,100 @@ export default class App extends Component {
       const { errors } = compileForBrowser({ 'App.tsx': c.source })
       assert.equal(errors.length, 1, `${c.name}: ${JSON.stringify(errors)}`)
       assert.match(errors[0].message, c.message)
+    }
+  })
+
+  it('also rejects spread props on a function component and in a list row', () => {
+    const child = `import { Component } from '@geajs/core'
+
+function Greeting(props: { label?: string }) {
+  return <p>{props.label}</p>
+}
+`
+    for (const [tag, body] of [
+      ['Greeting', `<div><Greeting {...this.p} /></div>`],
+      ['Greeting', `<ul>{this.items.map((item) => <Greeting key={item.id} {...item} />)}</ul>`],
+    ]) {
+      const { errors } = compileForBrowser({
+        'App.tsx': `${child}
+export default class App extends Component {
+  p = { label: 'x' }
+  items = [{ id: 1, label: 'a' }]
+
+  template() {
+    return ${body}
+  }
+}
+`,
+      })
+      assert.equal(errors.length, 1, `${body}: ${JSON.stringify(errors)}`)
+      assert.match(
+        errors[0].message,
+        new RegExp(`Spread attributes like \\{\\.\\.\\.\\S+\\} on <${tag}> are not supported\\.`),
+      )
+    }
+  })
+
+  // At module scope: template() and function components reject reassigned
+  // locals of their own (#168, #118).
+  it('also rejects a string tag assigned after its declaration', () => {
+    for (const assign of [`Tag = 'section'`, `if (on) Tag = 'section'\nelse Tag = 'div'`]) {
+      const { errors } = compileForBrowser({
+        'App.tsx': `import { Component } from '@geajs/core'
+
+const on = Math.random() > 0.5
+let Tag
+${assign}
+
+export default class App extends Component {
+  template() {
+    return (
+      <div>
+        <Tag class="tagged">x</Tag>
+      </div>
+    )
+  }
+}
+`,
+      })
+      assert.equal(errors.length, 1, `${assign}: ${JSON.stringify(errors)}`)
+      assert.match(errors[0].message, /<Tag> holds a string, not a component, so it would render nothing\./)
+    }
+  })
+
+  it('still compiles a tag assigned a component, or a component on some paths', () => {
+    for (const assign of [`Tag = Big`, `if (on) Tag = Big\nelse Tag = Small`, `if (on) Tag = 'b'\nelse Tag = Big`]) {
+      const { errors } = compileForBrowser({
+        'App.tsx': `import { Component } from '@geajs/core'
+
+class Big extends Component {
+  template() {
+    return <b>big</b>
+  }
+}
+
+class Small extends Component {
+  template() {
+    return <i>small</i>
+  }
+}
+
+const on = Math.random() > 0.5
+let Tag
+${assign}
+
+export default class App extends Component {
+  template() {
+    return (
+      <div>
+        <Tag />
+      </div>
+    )
+  }
+}
+`,
+      })
+      assert.deepEqual(errors, [], assign)
     }
   })
 

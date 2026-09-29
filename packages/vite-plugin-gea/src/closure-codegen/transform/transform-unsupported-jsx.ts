@@ -31,6 +31,9 @@ export function assertNoStringTags(ast: File): void {
     if (t.isVariableDeclarator(node) && t.isIdentifier(node.id) && node.init && isStringValued(node.init)) {
       strings.add(node.id.name)
     }
+    if (t.isAssignmentExpression(node, { operator: '=' }) && t.isIdentifier(node.left) && isStringValued(node.right)) {
+      strings.add(node.left.name)
+    }
     for (const key of Object.keys(node)) {
       if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
       visit(node[key])
@@ -48,9 +51,12 @@ export function assertNoStringTags(ast: File): void {
       if (!t.isJSXIdentifier(name) || !strings.has(name.name)) return
       const binding = path.scope.getBinding(name.name)
       if (!binding || !binding.path.isVariableDeclarator()) return
+      // Every value the variable can hold is a string: its initializer, if
+      // any, and each later assignment. `let Tag; Tag = 'section'` counts.
       const init = (binding.path.node as any).init
-      if (!init || !isStringValued(init)) return
+      if (init && !isStringValued(init)) return
       const writes = binding.constantViolations
+      if (!init && writes.length === 0) return
       if (!writes.every((w) => w.isAssignmentExpression({ operator: '=' }) && isStringValued(w.node.right))) return
       throw compilerError(
         `<${name.name}> holds a string, not a component, so it would render nothing.`,
