@@ -217,12 +217,14 @@ export function GuardStore(props: { hidden: boolean }) {
 }
 `,
   'GuardBlock.tsx': `export function GuardBlock(props: { hidden: boolean; reason: string }) {
+  const why = 'shown'
   if (props.hidden) {
     const why = props.reason.toUpperCase()
-    return <p class="block-hidden">{why}</p>
+    const text = why + '!'
+    return <p class="block-hidden">{text}</p>
   }
   const { reason, ...rest } = props
-  return <i class="block">{reason === 'gone' && !rest.hidden ? 'shown' : 'wrong'}</i>
+  return <i class="block">{reason === 'gone' && !rest.hidden ? why : 'wrong'}</i>
 }
 `,
   'GuardChain.tsx': `export function GuardChain(props: { user: { name: string } | null }) {
@@ -327,7 +329,7 @@ async function assertGuardLocalsBindAndFlip(App: any): Promise<void> {
       'ternary-hidden:hidden',
       'and-hidden:Badge',
       'store-hidden:hidden',
-      'block-hidden:GONE',
+      'block-hidden:GONE!',
       'chain-none:nobody',
       'nested-if:shown',
     ])

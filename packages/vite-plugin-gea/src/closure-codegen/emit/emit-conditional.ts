@@ -102,8 +102,9 @@ function buildBranchFn(branchExpr: any, ctx: EmitContext): Expression {
       last.argument &&
       (t.isJSXElement(last.argument) || t.isJSXFragment(last.argument))
     ) {
-      // Apply outer bindings to the hoisted initializers first.
-      const hoisted = block.body.slice(0, -1).map((s: any) => substituteBindings(s, ctx.bindings))
+      // A class template applies outer bindings to the hoisted initializers first.
+      const stmts = block.body.slice(0, -1)
+      const hoisted = ctx.bindBranchLocals ? [] : stmts.map((s: any) => substituteBindings(s, ctx.bindings))
       // Extend ctx.bindings with the hoisted consts so JSX references inline
       // through to the reactive source (otherwise a captured string/number
       // local would freeze the value at mount time).
@@ -111,7 +112,9 @@ function buildBranchFn(branchExpr: any, ctx: EmitContext): Expression {
       let inner: any
       let kept: Statement[] | null = null
       try {
-        if (ctx.bindBranchLocals) kept = ctx.bindBranchLocals(hoisted, ctx.bindings)
+        // A function component binds the statements as written, as its body
+        // does, so a `const` in a guard's block can shadow an outer binding.
+        if (ctx.bindBranchLocals) kept = ctx.bindBranchLocals(stmts, ctx.bindings)
         else collectBindings(hoisted as any, ctx.bindings)
         inner = compileJsxToBlock(last.argument as any, ctx)
         // A function component keeps the branch's statements as its body
