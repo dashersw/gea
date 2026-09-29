@@ -123,6 +123,81 @@ describe('delegate dispatch – bubbling across helpers', () => {
   })
 })
 
+// `<button click={a} onClick={this.b}>` stashes `a` in `__on_click` and `b` in
+// `__onct_click` on the same element: two listeners on one element.
+describe('delegate dispatch – several handlers on one element', () => {
+  function twoOnInner(first: (e: Event) => void): { root: HTMLElement; inner: HTMLElement; log: string[] } {
+    const { root, outer, inner } = tree()
+    const log: string[] = []
+    delegateEvent(
+      root,
+      'click',
+      [
+        [
+          inner,
+          (e) => {
+            log.push('a')
+            first(e)
+          },
+          false,
+        ],
+        [inner, (e) => log.push('b:' + (e.currentTarget as Element).tagName)],
+        [outer, () => log.push('outer')],
+      ],
+      createDisposer(),
+    )
+    return { root, inner, log }
+  }
+
+  it('runs all of them, then the ancestors', () => {
+    const { root, inner, log } = twoOnInner(() => {})
+    try {
+      click(inner)
+      assert.deepEqual(log, ['a', 'b:SPAN', 'outer'])
+    } finally {
+      root.remove()
+    }
+  })
+
+  it('stopPropagation still runs the rest on the same element', () => {
+    const { root, inner, log } = twoOnInner((e) => e.stopPropagation())
+    try {
+      click(inner)
+      assert.deepEqual(log, ['a', 'b:SPAN'])
+    } finally {
+      root.remove()
+    }
+  })
+
+  it('stopImmediatePropagation skips the rest on the same element and the ancestors', () => {
+    let seen: Event | undefined
+    const { root, inner, log } = twoOnInner((e) => {
+      seen = e
+      e.stopImmediatePropagation()
+    })
+    try {
+      click(inner)
+      assert.deepEqual(log, ['a'])
+      assert.equal(Object.getOwnPropertyDescriptor(seen!, 'stopImmediatePropagation'), undefined)
+    } finally {
+      root.remove()
+    }
+  })
+
+  it('stopImmediatePropagation still stops document listeners added after Gea', () => {
+    const { root, inner, log } = twoOnInner((e) => e.stopImmediatePropagation())
+    const late = () => log.push('late')
+    document.addEventListener('click', late)
+    try {
+      click(inner)
+      assert.deepEqual(log, ['a'])
+    } finally {
+      document.removeEventListener('click', late)
+      root.remove()
+    }
+  })
+})
+
 describe('delegate dispatch – non-bubbling types', () => {
   for (const type of ['focus', 'blur', 'mouseenter', 'mouseleave', 'scroll']) {
     it(`runs only the target's own ${type} handler, never an ancestor's`, () => {

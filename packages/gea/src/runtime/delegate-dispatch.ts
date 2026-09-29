@@ -49,30 +49,62 @@ function dispatchWithCurrentTarget(handler: Handler, event: Event, currentTarget
 /** Run every handler `n` holds for this event type. Returns whether it held any. */
 function runNode(n: Node, e: Event, gc: string, on: string, ct: string, fast: string): boolean {
   const stash = n as unknown as HandlerStash
-  let ran = false
-  if (gc) {
-    const h = stash[gc]
-    if (h !== undefined) {
-      h(e)
-      ran = true
-    }
-  }
+  const hg = gc ? stash[gc] : undefined
   const h = stash[on]
-  if (h !== undefined) {
-    h(e)
-    ran = true
-  }
   const hf = stash[fast]
-  if (hf !== undefined) {
-    hf(e)
-    ran = true
-  }
   const hct = stash[ct]
-  if (hct !== undefined) {
-    dispatchWithCurrentTarget(hct, e, n as Element)
-    ran = true
+  let count = 0
+  if (hg !== undefined) count++
+  if (h !== undefined) count++
+  if (hf !== undefined) count++
+  if (hct !== undefined) count++
+  if (count === 0) return false
+  if (count > 1) {
+    runSeveral(n as Element, e, hg, h, hf, hct)
+    return true
   }
-  return ran
+  if (hg !== undefined) hg(e)
+  else if (h !== undefined) h(e)
+  else if (hf !== undefined) hf(e)
+  else if (hct !== undefined) dispatchWithCurrentTarget(hct, e, n as Element)
+  return true
+}
+
+/**
+ * Several slots on one element (`<button click={a} onClick={this.b}>`) act
+ * like several listeners on it: `stopImmediatePropagation()` in one skips the
+ * rest, `stopPropagation()` doesn't. The DOM keeps the immediate-stop flag
+ * private, so watch the call while this element's handlers run. Single-slot
+ * elements, the common case, never pay for this.
+ */
+function runSeveral(
+  el: Element,
+  e: Event,
+  hg: Handler | undefined,
+  h: Handler | undefined,
+  hf: Handler | undefined,
+  hct: Handler | undefined,
+): void {
+  let stopped = false
+  const own = Object.getOwnPropertyDescriptor(e, 'stopImmediatePropagation')
+  const native = e.stopImmediatePropagation
+  Object.defineProperty(e, 'stopImmediatePropagation', {
+    configurable: true,
+    writable: true,
+    value: () => {
+      stopped = true
+      native.call(e)
+    },
+  })
+  try {
+    if (hg !== undefined) hg(e)
+    if (h !== undefined && !stopped) h(e)
+    if (hf !== undefined && !stopped) hf(e)
+    if (hct !== undefined && !stopped) dispatchWithCurrentTarget(hct, e, el)
+  } finally {
+    if (own) Object.defineProperty(e, 'stopImmediatePropagation', own)
+    else delete (e as any).stopImmediatePropagation
+  }
 }
 
 export function ensureDelegate(root: Element, type: string): void {

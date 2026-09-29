@@ -225,4 +225,38 @@ describe('nested delegated event handlers (#111)', { concurrency: false }, () =>
     assert.deepEqual(log, ['del:2'])
     app.dispose()
   })
+
+  it('click and onClick on one element both run, and stopImmediatePropagation skips the second', async () => {
+    const log: string[] = []
+    const { root, app } = await mount(
+      `
+        import { Component } from '@geajs/core'
+        export class App extends Component {
+          stopNow = false
+          b(e) { log.push('b:' + e.currentTarget.id) }
+          template() {
+            return (
+              <div id="outer" onClick={() => log.push('outer')}>
+                <button
+                  id="btn"
+                  click={(e) => { log.push('a'); if (this.stopNow) e.stopImmediatePropagation() }}
+                  onClick={this.b}
+                >Go</button>
+              </div>
+            )
+          }
+        }
+      `,
+      'SameElement',
+      ['App'],
+      log,
+    )
+    click(root, '#btn')
+    assert.deepEqual(log, ['a', 'b:btn', 'outer'])
+    ;(app as unknown as { stopNow: boolean }).stopNow = true
+    log.length = 0
+    click(root, '#btn')
+    assert.deepEqual(log, ['a'])
+    app.dispose()
+  })
 })
