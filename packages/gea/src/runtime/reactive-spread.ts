@@ -123,8 +123,10 @@ const NOT_ATTRIBUTES = new Set(['children', 'key', 'ref', 'dangerouslySetInnerHT
 // them out unchanged.
 const ATTRIBUTE_NAME_START =
   ':A-Z_a-z\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD'
+// The combining marks come first in their class, where no character precedes
+// them (`no-misleading-character-class`).
 const ATTRIBUTE_NAME = new RegExp(
-  '^[' + ATTRIBUTE_NAME_START + '][' + ATTRIBUTE_NAME_START + '\\-.0-9\\u00B7\\u0300-\\u036F\\u203F-\\u2040]*$',
+  '^[' + ATTRIBUTE_NAME_START + '][\\u0300-\\u036F' + ATTRIBUTE_NAME_START + '\\-.0-9\\u00B7\\u203F-\\u2040]*$',
 )
 
 /**
