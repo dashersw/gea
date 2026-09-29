@@ -51595,18 +51595,27 @@ function applyPropsTypeArgument(classDecl, className, componentPropsShapes, comp
   if (!classPropsReadsAreCovered(classDecl, emptyPropsType)) return;
   classDecl.superTypeParameters = libExports.tsTypeParameterInstantiation([emptyPropsType]);
 }
+const GEA_NON_COMPONENT_EXPORTS = /* @__PURE__ */ new Set(["Store", "Router", "ToastStore", "ViewManager", "GestureHandler"]);
 function extendsGeaComponent(classDecl, ctx, geaImports) {
   const base = classDecl.superClass;
   if (libExports.isIdentifier(base)) {
     return base.name === "Component" || geaImports.has(base.name) || ctx.directClassComponents?.has(base.name) === true;
   }
-  return libExports.isMemberExpression(base) && libExports.isIdentifier(base.object) && geaImports.has(base.object.name);
+  if (!libExports.isMemberExpression(base) || !libExports.isIdentifier(base.object) || !geaImports.has(base.object.name)) return false;
+  const member = libExports.isStringLiteral(base.property) ? base.property.value : !base.computed && libExports.isIdentifier(base.property) ? base.property.name : "";
+  return !GEA_NON_COMPONENT_EXPORTS.has(member);
 }
 function collectGeaImports(ast) {
   const names = /* @__PURE__ */ new Set();
   for (const stmt of ast.program.body) {
     if (!libExports.isImportDeclaration(stmt) || !stmt.source.value.startsWith("@geajs/")) continue;
-    for (const spec of stmt.specifiers) names.add(spec.local.name);
+    for (const spec of stmt.specifiers) {
+      if (libExports.isImportSpecifier(spec)) {
+        const imported = libExports.isIdentifier(spec.imported) ? spec.imported.name : spec.imported.value;
+        if (GEA_NON_COMPONENT_EXPORTS.has(imported)) continue;
+      }
+      names.add(spec.local.name);
+    }
   }
   return names;
 }
