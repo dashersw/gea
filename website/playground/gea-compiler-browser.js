@@ -48913,6 +48913,7 @@ function spreadSlotSources(attrs, lastSpread) {
 }
 function spreadAttrName(name) {
   if (NOT_SPREAD_ATTRIBUTES.has(name)) return null;
+  if (/^on./i.test(name)) return "on:" + name.slice(2).toLowerCase();
   if (classifyAttrKind(name) === "event") return "on:" + normalizeEventAttrName(name);
   return normalizeAttrName(name);
 }
