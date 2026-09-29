@@ -130,17 +130,33 @@ export function createHotComponentProxy(moduleUrl, initialComponent) {
         if (!ComponentClass) return false;
         return Reflect.set(ComponentClass, prop, value, receiver);
       },
+      // The target's own 'prototype' is non-configurable and writable, so the
+      // proxy must always report it, and report it that way, even for a class
+      // (non-writable) or an arrow function (none). Every other property is
+      // absent on the target, so it must be reported as configurable.
       has: function(_target, prop) {
+        if (prop === 'prototype') return true;
         var ComponentClass = getLatestComponentClass(normalizedUrl, initialComponent);
         return !!ComponentClass && prop in ComponentClass;
       },
       ownKeys: function() {
         var ComponentClass = getLatestComponentClass(normalizedUrl, initialComponent);
-        return ComponentClass ? Reflect.ownKeys(ComponentClass) : [];
+        var keys = ComponentClass ? Reflect.ownKeys(ComponentClass) : [];
+        return keys.indexOf('prototype') === -1 ? keys.concat('prototype') : keys;
       },
       getOwnPropertyDescriptor: function(_target, prop) {
         var ComponentClass = getLatestComponentClass(normalizedUrl, initialComponent);
-        return ComponentClass ? Object.getOwnPropertyDescriptor(ComponentClass, prop) : undefined;
+        if (prop === 'prototype') {
+          return {
+            value: ComponentClass ? ComponentClass.prototype : undefined,
+            writable: true,
+            enumerable: false,
+            configurable: false
+          };
+        }
+        var descriptor = ComponentClass ? Object.getOwnPropertyDescriptor(ComponentClass, prop) : undefined;
+        if (descriptor) descriptor.configurable = true;
+        return descriptor;
       }
     });
     componentProxies.set(normalizedUrl, proxy);

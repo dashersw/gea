@@ -63,6 +63,23 @@ describe('SSR helper behavior', () => {
       false,
     )
   })
+  it('isClassConstructorValue returns false for a function whose prototype was replaced', () => {
+    function Legacy() {}
+    Legacy.prototype = { greet() {} }
+    assert.equal(ssr.isClassConstructorValue(Legacy), false)
+  })
+  it('isClassConstructorValue returns true instead of throwing when inspecting fails', () => {
+    class Guarded {}
+    Object.defineProperty(Guarded.prototype, 'constructor', {
+      get() {
+        throw new Error('no access')
+      },
+    })
+    const { proxy: revoked, revoke } = Proxy.revocable(function F() {}, {})
+    revoke()
+    assert.equal(ssr.isClassConstructorValue(Guarded), true)
+    assert.equal(ssr.isClassConstructorValue(revoked), true)
+  })
   it('isClassConstructorValue returns false for non-function values', () => {
     assert.equal(ssr.isClassConstructorValue(42), false)
     assert.equal(ssr.isClassConstructorValue(null), false)

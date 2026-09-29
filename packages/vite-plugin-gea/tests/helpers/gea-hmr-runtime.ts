@@ -8,77 +8,17 @@ import { createDisposer } from '../../../gea/src/runtime/disposer'
 import { GEA_STATIC_NODES } from '../../../gea/src/runtime/compiled-static-symbols'
 import { GEA_CREATED_CALLED, GEA_DISPOSER } from '../../../gea/src/runtime/internal-symbols'
 import { GEA_DOM_COMPONENT, GEA_ELEMENT } from '../../../gea/src/runtime/symbols'
+import { HMR_RUNTIME_SOURCE } from '../../src/virtual-modules.ts'
 
-const hmrGlobal =
-  (
-    globalThis as {
-      __geaHMRGlobal?: { componentModules: Map<string, object>; componentProxies?: Map<string, any> }
-    }
-  ).__geaHMRGlobal ||
-  ((
-    globalThis as unknown as {
-      __geaHMRGlobal: { componentModules: Map<string, object>; componentProxies: Map<string, any> }
-    }
-  ).__geaHMRGlobal = {
-    componentModules: new Map(),
-    componentProxies: new Map(),
-  })
+// Proxies come from the shipped `virtual:gea-hmr` module (no Vite: import.meta.hot is
+// undefined) so tests exercise its real traps. It shares `globalThis.__geaHMRGlobal`.
+const shippedRuntime = await import(`data:text/javascript,${encodeURIComponent(HMR_RUNTIME_SOURCE)}`)
 
-const componentModules = hmrGlobal.componentModules
-const componentProxies = hmrGlobal.componentProxies || (hmrGlobal.componentProxies = new Map())
+export const registerHotModule: (moduleUrl: string, moduleExports: any) => any = shippedRuntime.registerHotModule
+export const createHotComponentProxy: (moduleUrl: string, initialComponent: any) => any =
+  shippedRuntime.createHotComponentProxy
+
 const componentInstances = new Map<string, Set<any>>()
-
-function normalizeModuleUrl(moduleUrl: string): string {
-  try {
-    const url = new URL(moduleUrl, 'file:///')
-    url.search = ''
-    url.hash = ''
-    return url.href
-  } catch {
-    return String(moduleUrl || '').replace(/[?#].*$/, '')
-  }
-}
-
-export function registerHotModule(moduleUrl: string, moduleExports: any): any {
-  if (!moduleExports) return moduleExports
-  componentModules.set(normalizeModuleUrl(moduleUrl), moduleExports)
-  return moduleExports
-}
-
-export function getLatestComponentClass(moduleUrl: string, fallback: any): any {
-  const m = componentModules.get(normalizeModuleUrl(moduleUrl))
-  return m && (m as { default?: any }).default ? (m as { default: any }).default : m || fallback
-}
-
-export function createHotComponentProxy(moduleUrl: string, initialComponent: any): any {
-  const normalizedUrl = normalizeModuleUrl(moduleUrl)
-  if (!componentModules.has(normalizedUrl) && initialComponent) {
-    componentModules.set(normalizedUrl, { default: initialComponent })
-  }
-  if (!componentProxies.has(normalizedUrl)) {
-    const target = function GeaHotComponentProxy() {}
-    const proxy = new Proxy(target, {
-      construct(_t, args, newTarget) {
-        const C = getLatestComponentClass(moduleUrl, initialComponent)
-        if (typeof C !== 'function') throw new Error(`[gea HMR test] No component for ${moduleUrl}`)
-        return Reflect.construct(C, args, newTarget === proxy ? C : newTarget)
-      },
-      apply(_t, thisArg, args) {
-        const C = getLatestComponentClass(moduleUrl, initialComponent)
-        if (typeof C !== 'function') return undefined
-        return Reflect.apply(C, thisArg, args)
-      },
-      get(_t, prop, receiver) {
-        const C = getLatestComponentClass(moduleUrl, initialComponent)
-        if (!C) return undefined
-        if (prop === 'prototype') return C.prototype
-        return Reflect.get(C, prop, receiver)
-      },
-    })
-    componentProxies.set(normalizedUrl, proxy)
-  }
-  return componentProxies.get(normalizedUrl)
-}
 
 export function registerComponentInstance(className: string, instance: any): void {
   if (!componentInstances.has(className)) {

@@ -257,6 +257,7 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   fnCtx.directFnComponentParams = parentCtx.directFnComponentParams
   fnCtx.directFnStringProps = parentCtx.directFnStringProps
   fnCtx.directFnNoDisposer = parentCtx.directFnNoDisposer
+  fnCtx.directClassComponents = parentCtx.directClassComponents
   // Share IR template recording with the parent so functional components also
   // produce an IR template record. Without this, `emit-core.ts` skips the
   // `irTemplates.push(...)` because the function's `fnCtx.currentIrComponent`
