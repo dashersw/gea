@@ -212,6 +212,7 @@ describe('normalizeArrowComponents', () => {
       export const UsesArguments = () => <p>{arguments[0]}</p>
       export const ThisInDefault = (p = this.x) => <p>{p}</p>
       export const ArgumentsInDefault = ({ a } = arguments[0]) => <p>{a}</p>
+      export const ComputedArguments = (p) => <p>{p[arguments]}</p>
     `,
       { sourceType: 'module', plugins: ['jsx', 'typescript'] },
     )
@@ -222,5 +223,14 @@ describe('normalizeArrowComponents', () => {
   it('converts arrows whose `this` belongs to a nested function', () => {
     const out = normalize(`export const Btn = () => <button click={function () { this.x }} />`)
     assert.match(out, /export function Btn\(\)/)
+  })
+
+  it('converts arrows that use `arguments` only as a property or key name', () => {
+    const out = normalize(`
+      export const Args = (props: { arguments: string[] }) => <p>{props.arguments}{props?.arguments}</p>
+      export const Opts = () => <Child opts={{ arguments: 1 }} />
+    `)
+    assert.match(out, /export function Args\(props/)
+    assert.match(out, /export function Opts\(\)/)
   })
 })

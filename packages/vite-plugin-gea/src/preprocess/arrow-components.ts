@@ -82,16 +82,17 @@ function arrowToFunctionDeclaration(name: string, arrow: t.ArrowFunctionExpressi
 }
 
 /** True if `node` reads `this` or `arguments` from the arrow's enclosing scope. */
-function readsFunctionScopedBinding(node: any): boolean {
+function readsFunctionScopedBinding(node: any, parent?: any, grandparent?: any): boolean {
   if (!node || typeof node !== 'object') return false
-  if (Array.isArray(node)) return node.some(readsFunctionScopedBinding)
+  if (Array.isArray(node)) return node.some((child) => readsFunctionScopedBinding(child, parent, grandparent))
   if (t.isThisExpression(node) || t.isJSXIdentifier(node, { name: 'this' })) return true
-  if (t.isIdentifier(node, { name: 'arguments' })) return true
+  // `props.arguments`, `{ arguments: 1 }` and `{ arguments: T }` types are names, not reads.
+  if (t.isIdentifier(node, { name: 'arguments' })) return t.isReferenced(node, parent, grandparent)
   // Non-arrow functions bind their own `this` and `arguments`.
   if (t.isFunction(node) && !t.isArrowFunctionExpression(node)) return false
   for (const k of Object.keys(node)) {
     if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
-    if (readsFunctionScopedBinding(node[k])) return true
+    if (readsFunctionScopedBinding(node[k], node, parent)) return true
   }
   return false
 }
