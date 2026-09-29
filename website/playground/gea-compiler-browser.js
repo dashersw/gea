@@ -48463,6 +48463,16 @@ function normalizeEventAttrName(name) {
   return toGeaEventType(name);
 }
 
+function compilerError(message, node, hint) {
+  const err = new Error(hint ? `${message}
+${hint}` : message);
+  err.__geaCompileError = true;
+  if (hint) err.hint = hint;
+  const start = node?.loc?.start;
+  if (start) err.loc = { line: start.line, column: start.column };
+  return err;
+}
+
 const OPTIONAL_TABLE_END_TAGS = /* @__PURE__ */ new Set(["colgroup", "thead", "tbody", "tfoot", "tr", "td", "th"]);
 const TERMINAL_CLOSE_UNSAFE_TAGS = /* @__PURE__ */ new Set([
   "script",
@@ -48581,8 +48591,20 @@ function walkJsxToTemplate(root, options = {}) {
   function emitElement(el, walk, walkKinds, terminal, nextSiblingTag) {
     const opening = el.openingElement;
     const name = opening.name;
-    if (!libExports.isJSXIdentifier(name)) {
-      throw new Error(`generator: non-identifier JSX tags not yet supported: ${JSON.stringify(name)}`);
+    if (libExports.isJSXNamespacedName(name)) {
+      throw compilerError(
+        `Namespaced JSX tags like <${name.namespace.name}:${name.name.name}> are not supported.`,
+        name,
+        `Use the tag without the namespace: <${name.name.name}>.`
+      );
+    }
+    if (libExports.isJSXMemberExpression(name)) {
+      const tag = jsxMemberTagName(name);
+      throw compilerError(
+        `Member-expression JSX tags like <${tag}> are not supported.`,
+        name,
+        `Import the component and use it by name: import { ${name.property.name} } from '\u2026', then <${name.property.name} />.`
+      );
     }
     const tagName = name.name;
     if (tagName[0] === tagName[0].toUpperCase()) {
@@ -48789,6 +48811,10 @@ function walkJsxToTemplate(root, options = {}) {
   }
   const html = emitNode(root, [], [], true, null);
   return { html, slots };
+}
+function jsxMemberTagName(name) {
+  const object = libExports.isJSXMemberExpression(name.object) ? jsxMemberTagName(name.object) : name.object.name;
+  return `${object}.${name.property.name}`;
 }
 function normalizeMultilineJsxText(value) {
   if (!/[\n\r]/.test(value)) return value;
@@ -49041,12 +49067,11 @@ function emitSlot(slot, stmts, ctx) {
 function canUseScalarTextHelper(expr) {
   if (containsJsx(expr)) return false;
   if (isChildrenExpression(expr)) return false;
+  if (isPropsRead(expr)) return false;
   if (libExports.isIdentifier(expr) || libExports.isMemberExpression(expr) || libExports.isStringLiteral(expr) || libExports.isNumericLiteral(expr) || libExports.isBooleanLiteral(expr) || libExports.isNullLiteral(expr) || libExports.isTemplateLiteral(expr)) {
     return true;
   }
-  if (libExports.isBinaryExpression(expr)) {
-    return canUseScalarTextHelper(expr.left) && canUseScalarTextHelper(expr.right);
-  }
+  if (libExports.isBinaryExpression(expr)) return true;
   if (libExports.isLogicalExpression(expr)) {
     return canUseScalarTextHelper(expr.left) && canUseScalarTextHelper(expr.right);
   }
@@ -49068,6 +49093,19 @@ function isChildrenExpression(expr) {
     return isChildrenExpression(expr.expression);
   }
   return false;
+}
+function isPropsRead(expr) {
+  if (libExports.isTSAsExpression(expr) || libExports.isTSTypeAssertion(expr) || libExports.isTSNonNullExpression(expr)) {
+    return isPropsRead(expr.expression);
+  }
+  let node = expr;
+  while (libExports.isMemberExpression(node)) {
+    if (libExports.isThisExpression(node.object) && !node.computed && libExports.isIdentifier(node.property, { name: "props" })) {
+      return true;
+    }
+    node = node.object;
+  }
+  return libExports.isIdentifier(node, { name: "props" });
 }
 function isStringClassExpression(expr) {
   if (libExports.isStringLiteral(expr) || libExports.isTemplateLiteral(expr)) return true;
@@ -50273,6 +50311,7 @@ function rewriteFnComponent(fnDecl, parentCtx) {
     fnCtx._rowEventTypes = /* @__PURE__ */ new Set();
     fnCtx._rowFastEventTypes = /* @__PURE__ */ new Set();
   }
+  const propsLocals = [];
   if (directParams) {
     fnDecl.params = directParams.locals.map((name) => libExports.identifier(name));
     fnCtx.oneShotPropLocals = new Set(directParams.locals);
@@ -50283,30 +50322,33 @@ function rewriteFnComponent(fnDecl, parentCtx) {
       );
     }
   } else if (fnDecl.params.length >= 1 && libExports.isObjectPattern(fnDecl.params[0])) {
-    const objPat = fnDecl.params[0];
-    for (const prop of objPat.properties) {
-      if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
-      const local = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
-      fnCtx.bindings.set(local, libExports.memberExpression(libExports.identifier("props"), libExports.identifier(prop.key.name)));
-    }
+    propsLocals.push(...bindPropsPattern(fnDecl.params[0], "let", fnCtx.bindings));
     fnDecl.params[0] = libExports.identifier("props");
   } else if (fnDecl.params.length === 0) {
     fnDecl.params.push(libExports.identifier("props"));
   } else if (!libExports.isIdentifier(fnDecl.params[0], { name: "props" })) {
     fnDecl.params[0] = libExports.identifier("props");
   }
-  const precedingRaw = [];
+  const precedingRaw = [...propsLocals];
   for (let i = 0; i < returnIdx; i++) {
     const s = body[i];
-    if (libExports.isVariableDeclaration(s)) {
-      const allFromProps = s.declarations.every(
-        (d) => libExports.isObjectPattern(d.id) && libExports.isIdentifier(d.init, { name: "props" })
-      );
-      if (allFromProps) continue;
+    if (libExports.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
+      const others = s.declarations.filter((decl) => !isPropsDestructure(decl));
+      for (const decl of s.declarations) {
+        if (!isPropsDestructure(decl)) continue;
+        const locals = bindPropsPattern(decl.id, s.kind, fnCtx.bindings);
+        precedingRaw.push(...locals);
+        propsLocals.push(...locals);
+      }
+      if (others.length > 0) precedingRaw.push(libExports.variableDeclaration(s.kind, others));
+      continue;
     }
     precedingRaw.push(s);
   }
-  collectBindings(precedingRaw, fnCtx.bindings);
+  collectBindings(
+    precedingRaw.filter((s) => !propsLocals.includes(s)),
+    fnCtx.bindings
+  );
   const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx);
   if (fnCtx.oneShotProps && fnName && ((fnCtx._rowEventTypes?.size ?? 0) > 0 || (fnCtx._rowFastEventTypes?.size ?? 0) > 0)) {
     const directFnEventTypes = parentCtx.directFnEventTypes ?? (parentCtx.directFnEventTypes = /* @__PURE__ */ new Map());
@@ -50331,6 +50373,84 @@ function rewriteFnComponent(fnDecl, parentCtx) {
     else fnDecl.params[1] = libExports.identifier("d");
   }
   fnDecl.body.body = newBody;
+}
+function isPropsDestructure(decl) {
+  return libExports.isObjectPattern(decl.id) && libExports.isIdentifier(decl.init, { name: "props" });
+}
+function bindPropsPattern(pattern, kind, bindings) {
+  const rest = pattern.properties.find((prop) => libExports.isRestElement(prop));
+  const keys = [];
+  for (const prop of pattern.properties) {
+    if (libExports.isRestElement(prop)) continue;
+    const key = staticPropKey(prop);
+    if (key !== null) keys.push(key);
+    else if (rest) return [libExports.variableDeclaration(kind, [libExports.variableDeclarator(pattern, libExports.identifier("props"))])];
+  }
+  const locals = [];
+  const nested = [];
+  for (const prop of pattern.properties) {
+    if (libExports.isRestElement(prop)) continue;
+    const key = staticPropKey(prop);
+    const value = prop.value;
+    if (key === null || !(libExports.isIdentifier(value) || libExports.isAssignmentPattern(value) && libExports.isIdentifier(value.left))) {
+      nested.push(prop);
+      continue;
+    }
+    const read = () => libExports.isValidIdentifier(key, false) ? libExports.memberExpression(libExports.identifier("props"), libExports.identifier(key)) : libExports.memberExpression(libExports.identifier("props"), libExports.stringLiteral(key), true);
+    if (libExports.isIdentifier(value)) {
+      bindings.set(value.name, read());
+    } else {
+      bindings.set(
+        value.left.name,
+        libExports.conditionalExpression(
+          libExports.binaryExpression("===", read(), libExports.identifier("undefined")),
+          libExports.cloneNode(value.right, true),
+          read()
+        )
+      );
+    }
+  }
+  if (nested.length > 0) {
+    locals.push(libExports.variableDeclaration(kind, [libExports.variableDeclarator(libExports.objectPattern(nested), libExports.identifier("props"))]));
+  }
+  if (rest && libExports.isIdentifier(rest.argument)) {
+    const restId = libExports.identifier(rest.argument.name);
+    const keyId = libExports.identifier("__restKey");
+    const define = libExports.expressionStatement(
+      libExports.callExpression(libExports.memberExpression(libExports.identifier("Object"), libExports.identifier("defineProperty")), [
+        libExports.cloneNode(restId),
+        libExports.cloneNode(keyId),
+        libExports.objectExpression([
+          libExports.objectProperty(libExports.identifier("enumerable"), libExports.booleanLiteral(true)),
+          libExports.objectProperty(libExports.identifier("configurable"), libExports.booleanLiteral(true)),
+          libExports.objectProperty(
+            libExports.identifier("get"),
+            libExports.arrowFunctionExpression([], libExports.memberExpression(libExports.identifier("props"), libExports.cloneNode(keyId), true))
+          )
+        ])
+      ])
+    );
+    const excluded = keys.map((key) => libExports.binaryExpression("!==", libExports.cloneNode(keyId), libExports.stringLiteral(key)));
+    const test = excluded.reduce(
+      (acc, cur) => acc ? libExports.logicalExpression("&&", acc, cur) : cur,
+      null
+    );
+    locals.push(
+      libExports.variableDeclaration(kind, [libExports.variableDeclarator(restId, libExports.objectExpression([]))]),
+      libExports.forInStatement(
+        libExports.variableDeclaration("const", [libExports.variableDeclarator(keyId)]),
+        libExports.identifier("props"),
+        test ? libExports.ifStatement(test, define) : define
+      )
+    );
+  }
+  return locals;
+}
+function staticPropKey(prop) {
+  if (!prop.computed && libExports.isIdentifier(prop.key)) return prop.key.name;
+  if (libExports.isStringLiteral(prop.key)) return prop.key.value;
+  if (libExports.isNumericLiteral(prop.key)) return String(prop.key.value);
+  return null;
 }
 
 function collectComponentsUsedAsJsx(ast, componentNames) {
@@ -50769,10 +50889,16 @@ function transformFile(source, _filename, options = {}) {
   }
   injectTemplateDecls(ast, firstClassIdx, ctx.templateDecls);
   ensureCoreImports(ast, ctx.importsNeeded);
-  const out = generate$1(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } });
+  const out = generate$1(ast, {
+    retainLines: false,
+    compact: false,
+    jsescOption: { minimal: true },
+    ...options.sourceMaps ? { sourceMaps: true, sourceFileName: _filename ?? "source" } : {}
+  });
   return {
     code: out.code,
     map: out.map,
+    decodedMap: options.sourceMaps ? out.decodedMap : void 0,
     changed: true,
     rewritten,
     importsNeeded: Array.from(ctx.importsNeeded),
@@ -51203,6 +51329,91 @@ function ensureComponentImport(ast, imports) {
     )
   );
   imports.set("Component", source);
+}
+
+function normalizeArrowComponents(ast, filename) {
+  const body = ast.program.body;
+  let changed = false;
+  for (let i = 0; i < body.length; i++) {
+    const stmt = body[i];
+    if (libExports.isExportDefaultDeclaration(stmt) && libExports.isArrowFunctionExpression(stmt.declaration)) {
+      const name = defaultComponentName(ast, filename);
+      const fn = arrowToFunctionDeclaration(name, stmt.declaration);
+      if (!fn) continue;
+      stmt.declaration = fn;
+      changed = true;
+      continue;
+    }
+    const exported = libExports.isExportNamedDeclaration(stmt);
+    const decl = exported ? stmt.declaration : stmt;
+    if (!libExports.isVariableDeclaration(decl) || decl.kind !== "const") continue;
+    const replacement = [];
+    let pending = [];
+    const wrap = (node) => exported ? libExports.exportNamedDeclaration(node, []) : node;
+    const flush = () => {
+      if (pending.length === 0) return;
+      replacement.push(wrap(libExports.variableDeclaration("const", pending)));
+      pending = [];
+    };
+    for (const declarator of decl.declarations) {
+      const fn = libExports.isIdentifier(declarator.id) && libExports.isArrowFunctionExpression(declarator.init) ? arrowToFunctionDeclaration(declarator.id.name, declarator.init) : null;
+      if (!fn) {
+        pending.push(declarator);
+        continue;
+      }
+      flush();
+      replacement.push(wrap(fn));
+    }
+    if (pending.length === decl.declarations.length) continue;
+    flush();
+    libExports.inherits(replacement[0], stmt);
+    body.splice(i, 1, ...replacement);
+    i += replacement.length - 1;
+    changed = true;
+  }
+  return changed;
+}
+function arrowToFunctionDeclaration(name, arrow) {
+  if (readsFunctionScopedBinding(arrow.params) || readsFunctionScopedBinding(arrow.body)) return null;
+  const body = libExports.isBlockStatement(arrow.body) ? arrow.body : libExports.blockStatement([libExports.returnStatement(arrow.body)]);
+  const fn = libExports.functionDeclaration(libExports.identifier(name), arrow.params, body, false, arrow.async);
+  libExports.inherits(fn, arrow);
+  return isFunctionComponent(fn) ? fn : null;
+}
+function readsFunctionScopedBinding(node, parent, grandparent) {
+  if (!node || typeof node !== "object") return false;
+  if (Array.isArray(node)) return node.some((child) => readsFunctionScopedBinding(child, parent, grandparent));
+  if (libExports.isThisExpression(node) || libExports.isJSXIdentifier(node, { name: "this" })) return true;
+  if (libExports.isIdentifier(node, { name: "arguments" })) return libExports.isReferenced(node, parent, grandparent);
+  if (libExports.isFunction(node) && !libExports.isArrowFunctionExpression(node)) return false;
+  for (const k of Object.keys(node)) {
+    if (k === "loc" || k === "start" || k === "end" || k === "type") continue;
+    if (readsFunctionScopedBinding(node[k], node, parent)) return true;
+  }
+  return false;
+}
+function defaultComponentName(ast, filename) {
+  const base = (filename ?? "").split(/[\\/]/).pop().replace(/\.[^.]*$/, "");
+  let name = base.split(/[^A-Za-z0-9_$]+/).filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join("");
+  if (!name) name = "DefaultComponent";
+  if (!/^[A-Za-z_$]/.test(name)) name = `_${name}`;
+  const taken = /* @__PURE__ */ new Set();
+  collectIdentifierNames(ast.program, taken);
+  let candidate = name;
+  for (let n = 1; taken.has(candidate); n++) candidate = `${name}${n}`;
+  return candidate;
+}
+function collectIdentifierNames(node, names) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const child of node) collectIdentifierNames(child, names);
+    return;
+  }
+  if (libExports.isIdentifier(node) || libExports.isJSXIdentifier(node)) names.add(node.name);
+  for (const k of Object.keys(node)) {
+    if (k === "loc" || k === "start" || k === "end" || k === "type") continue;
+    collectIdentifierNames(node[k], names);
+  }
 }
 
 function isComponentTag(tagName) {
@@ -51708,10 +51919,15 @@ function compileForBrowser(files) {
   }
   for (const [filename, code] of Object.entries(files)) {
     try {
-      const parsed = parseSource$1(code);
+      let parsed = parseSource$1(code);
       if (!parsed) {
         compiledModules[filename] = code;
         continue;
+      }
+      let source = code;
+      if (parsed.hasJSX && normalizeArrowComponents(parsed.ast, filename)) {
+        source = generate(parsed.ast).code;
+        parsed = parseSource$1(source);
       }
       let { ast, imports } = parsed;
       const { functionalComponentInfo, hasJSX } = parsed;
@@ -51737,9 +51953,9 @@ function compileForBrowser(files) {
       const namedImportSources = /* @__PURE__ */ new Map();
       traverse(ast, {
         ImportDeclaration(path) {
-          const source = path.node.source.value;
-          if (!isComponentImportSource(source)) return;
-          const resolvedName = source.startsWith(".") ? resolveVirtualFile(source, files) : null;
+          const source2 = path.node.source.value;
+          if (!isComponentImportSource(source2)) return;
+          const resolvedName = source2.startsWith(".") ? resolveVirtualFile(source2, files) : null;
           const resolvedPath = resolvedName ? `/virtual/${resolvedName}` : null;
           const isComp = resolvedPath ? componentModules.has(resolvedPath) : false;
           path.node.specifiers.forEach((spec) => {
@@ -51749,21 +51965,21 @@ function compileForBrowser(files) {
               knownFactoryComponentImports.add(spec.local.name);
             if (spec.type === "ImportDefaultSpecifier") {
               if (resolvedPath && !storeModules.has(resolvedPath)) return;
-              if (!source.startsWith(".") && source.startsWith("@geajs/core") && spec.local.name === "router") {
-                storeImports.set(spec.local.name, source);
+              if (!source2.startsWith(".") && source2.startsWith("@geajs/core") && spec.local.name === "router") {
+                storeImports.set(spec.local.name, source2);
               } else if (resolvedPath && storeModules.has(resolvedPath)) {
-                storeImports.set(spec.local.name, source);
+                storeImports.set(spec.local.name, source2);
               }
             } else if (spec.type === "ImportSpecifier") {
-              namedImportSources.set(spec.local.name, source);
+              namedImportSources.set(spec.local.name, source2);
               if (resolvedPath && storeModules.has(resolvedPath)) {
-                storeImports.set(spec.local.name, source);
-              } else if (source.startsWith("@geajs/core") && spec.local.name === "router") {
-                storeImports.set(spec.local.name, source);
+                storeImports.set(spec.local.name, source2);
+              } else if (source2.startsWith("@geajs/core") && spec.local.name === "router") {
+                storeImports.set(spec.local.name, source2);
               }
               const importedName = spec.imported?.name ?? spec.local.name;
               const geaCoreBaseClasses = ["Component", "Store"];
-              if (source === "@geajs/core" && isComponentTag(importedName) && !geaCoreBaseClasses.includes(importedName)) {
+              if (source2 === "@geajs/core" && isComponentTag(importedName) && !geaCoreBaseClasses.includes(importedName)) {
                 knownComponentImports.add(spec.local.name);
               }
             }
@@ -51772,13 +51988,13 @@ function compileForBrowser(files) {
         VariableDeclarator(path) {
           const init = path.node.init;
           if (init && init.type === "NewExpression" && init.callee?.type === "Identifier" && namedImportSources.has(init.callee.name) && path.node.id?.type === "Identifier") {
-            const source = namedImportSources.get(init.callee.name);
-            storeImports.set(path.node.id.name, source);
+            const source2 = namedImportSources.get(init.callee.name);
+            storeImports.set(path.node.id.name, source2);
           }
         }
       });
       let transformed = false;
-      const emitted = transformFile(code, virtualSourceFile, {
+      const emitted = transformFile(source, virtualSourceFile, {
         directClassComponents: knownClassComponentImports,
         directFactoryComponents: knownFactoryComponentImports
       });
