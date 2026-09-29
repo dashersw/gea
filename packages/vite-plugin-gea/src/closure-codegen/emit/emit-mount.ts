@@ -370,11 +370,12 @@ function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean):
   if (!isChildren && !onlySites) {
     return memoizedThunk(t.blockStatement([t.returnStatement(lowerJsxInExpression(expr, ctx))]))
   }
-  const thunk = buildReadThunk(expr, outs, ctx)
+  // A kept Node has to stay live after a slot drops it, so its read doesn't tag it.
+  const thunk = buildReadThunk(expr, outs, ctx, userKept)
   return userKept ? firstNodeThunk(thunk) : thunk
 }
 
-function buildReadThunk(expr: any, outs: Map<any, any>, ctx: EmitContext): Expression {
+function buildReadThunk(expr: any, outs: Map<any, any>, ctx: EmitContext, keep: boolean): Expression {
   let sites = 0
   let items = 0
   const build = (jsx: any) => t.arrowFunctionExpression([t.identifier('d')], compileJsxToBlock(jsx, ctx))
@@ -403,7 +404,12 @@ function buildReadThunk(expr: any, outs: Map<any, any>, ctx: EmitContext): Expre
         ),
       ]),
       t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__v'), t.arrowFunctionExpression([], value))]),
-      t.returnStatement(t.arrowFunctionExpression([], helperCall('read', [t.identifier('__v')]))),
+      t.returnStatement(
+        t.arrowFunctionExpression(
+          [],
+          helperCall('read', keep ? [t.identifier('__v'), t.booleanLiteral(true)] : [t.identifier('__v')]),
+        ),
+      ),
     ]),
   )
   return t.callExpression(outer, [])

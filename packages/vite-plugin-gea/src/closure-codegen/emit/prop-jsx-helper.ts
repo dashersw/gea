@@ -33,6 +33,10 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  *   something else, like the result of a non-array `.map`, can't be found, so
  *   they stay until `d` is disposed, as they would on `d`. A read that throws
  *   disposes what it built.
+ * - `read(fn, true)` is for a thunk that keeps the first Node a read returns
+ *   (see `firstNodeThunk` in `emit-mount.ts`). If this read returns a Node,
+ *   its items aren't tagged: they stay until `d` is disposed, so a slot that
+ *   drops the kept Node doesn't dispose it. Other values are tagged as above.
  */
 const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   const owner = Symbol.for('gea.jsx.owner')
@@ -60,7 +64,7 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
       running.items.add(n)
       return n
     },
-    read(fn) {
+    read(fn, keep) {
       const id = ++reads
       const run = perRead ? { d: createDisposer(), items: new Set() } : null
       const outer = running
@@ -85,9 +89,13 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
           (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
         )
         if (run.items.size > 0) {
-          const rec = { d: run.d, nodes: [v].flat(Infinity).filter((n) => run.items.has(n)) }
-          for (const n of rec.nodes) n[owner] = rec
-          shown.push(rec)
+          if (keep && v !== null && typeof v === 'object' && typeof v.nodeType === 'number') {
+            d.add(() => run.d.dispose())
+          } else {
+            const rec = { d: run.d, nodes: [v].flat(Infinity).filter((n) => run.items.has(n)) }
+            for (const n of rec.nodes) n[owner] = rec
+            shown.push(rec)
+          }
         }
       }
       return v

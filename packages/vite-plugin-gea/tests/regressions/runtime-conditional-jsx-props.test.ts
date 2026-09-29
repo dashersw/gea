@@ -589,6 +589,35 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     })
   }
 
+  // The kept node is one a function the read runs built, so it's tagged for
+  // disposal like other items; the slot hiding it must not dispose it.
+  const USER_KEPT_ITEM = [
+    `<Panel>{(() => (ui.fancy ? <LiveTitle /> : wrap(<LiveTitle />)))()}</Panel>`,
+    `<Panel>{(() => { if (!ui.fancy) return wrap(<LiveTitle />); return <LiveTitle /> })()}</Panel>`,
+  ]
+  for (const [i, body] of USER_KEPT_ITEM.entries()) {
+    it(`keeps the first node of \`children\` live after its slot hides it: ${body}`, async () => {
+      const h = await mountApp(body, `user-kept-item${i}`)
+      const panel = () => [...h.root.querySelectorAll('.panel b')].map((b) => b.textContent).join('')
+      assert.equal(panel(), 'T0')
+      for (let tick = 1; tick <= 3; tick++) {
+        h.ui.open = false
+        h.flush()
+        assert.equal(panel(), '')
+        h.ui.open = true
+        h.flush()
+        await toggle(h)
+        h.ui.tick = tick
+        h.flush()
+        assert.equal(panel(), `T${tick}`)
+        assertTitlesLive(h, 1)
+      }
+      assert.equal(h.counter.n, 1)
+      h.dispose()
+      assertTitlesLive(h, 0)
+    })
+  }
+
   it('disposes JSX a function the read runs built inside a nested array', async () => {
     const h = await mountApp(`<Flat>{[ui.fancy ? ui.rows.map((r: number) => <Title />) : []]}</Flat>`, 'nested-array')
     for (let n = 0; n < 6; n++) {
