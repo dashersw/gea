@@ -47618,7 +47618,7 @@ function buildInlinePropKeyedListBlock(options) {
   } else {
     sourceBlock = INLINE_PROP_LIST_BLOCK;
   }
-  const block = libExports.cloneNode(sourceBlock, true);
+  const block = libExports.cloneNode(sourceBlock, true, true);
   const anchorExpr = options.anchorless ? libExports.nullLiteral() : options.anchorId;
   replacePlaceholders(block, {
     __ANCHOR__: anchorExpr,
@@ -51092,12 +51092,17 @@ function transformFile(source, _filename, options = {}) {
   }
   injectTemplateDecls(ast, firstClassIdx, ctx.templateDecls);
   ensureCoreImports(ast, ctx.importsNeeded);
-  const out = generate$1(ast, {
-    retainLines: false,
-    compact: false,
-    jsescOption: { minimal: true },
-    ...options.sourceMaps ? { sourceMaps: true, sourceFileName: _filename ?? "source" } : {}
-  });
+  const out = generate$1(
+    ast,
+    {
+      retainLines: false,
+      compact: false,
+      jsescOption: { minimal: true },
+      ...options.sourceMaps ? { sourceMaps: true, sourceFileName: _filename ?? "source", inputSourceMap: options.inputSourceMap } : {}
+    },
+    // The map's sourcesContent when there is no inputSourceMap.
+    source
+  );
   return {
     code: out.code,
     map: out.map,

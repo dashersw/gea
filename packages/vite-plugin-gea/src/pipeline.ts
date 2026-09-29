@@ -103,17 +103,30 @@ export function transform(
     if (!parsed) return null
     sourceParsed = true
 
+    // Each print → re-parse round trip below moves node locations into the
+    // printed code. Printing with the previous step's map as `inputSourceMap`
+    // gives a map from the printed code back to `code`, so the final source
+    // map still points at the user's file. `sourceMap` covers `source`;
+    // `astMap` covers the locations in `ast`. Neither is set while they are
+    // still positions in `code`.
+    const print = (node: t.Node, inputSourceMap: unknown) =>
+      generate(node, { retainLines: true, sourceMaps: true, sourceFileName: sourceFile, inputSourceMap }, code)
+
     // ── Preprocess: arrow components → function declarations ──────────
     // transformFile only compiles `function` components. Rewrite arrow
     // components first so every later phase (metadata, functional → class,
     // codegen) works on the same source. `retainLines` keeps the line numbers
     // of compile errors pointing at the user's file.
     let source = code
+    let sourceMap: unknown
     if (parsed.hasJSX && normalizeArrowComponents(parsed.ast, sourceFile)) {
-      source = generate(parsed.ast, { retainLines: true }).code
+      const printed = print(parsed.ast, undefined)
+      source = printed.code
+      sourceMap = printed.map
       parsed = parseSource(source)
       if (!parsed) return null
     }
+    let astMap = sourceMap
 
     const { functionalComponentInfo, hasJSX } = parsed
     let { ast, imports } = parsed
@@ -125,11 +138,12 @@ export function transform(
     if (functionalComponentInfo) {
       convertFunctionalToClass(ast, functionalComponentInfo, imports)
       componentClassNames = [functionalComponentInfo.name]
-      const freshCode = generate(ast, { retainLines: true }).code
-      const freshParsed = parseSource(freshCode)
+      const fresh = print(ast, astMap)
+      const freshParsed = parseSource(fresh.code)
       if (freshParsed) {
         ast = freshParsed.ast
         imports = freshParsed.imports
+        astMap = fresh.map
       }
     }
 
@@ -215,6 +229,8 @@ export function transform(
         directFactoryComponents: knownFactoryComponentImports,
         enableTinyReactiveComponents: !isServe,
         embedded: ctx.embedded,
+        sourceMaps: true,
+        inputSourceMap: sourceMap,
       }
       const emitted = transformFile(source, sourceFile, transformOptions)
       if (emitted.changed) {
@@ -225,12 +241,11 @@ export function transform(
         try {
           reparsed = parseSource(emitted.code)
         } catch (error) {
-          throw invalidEmitError(error, () =>
-            transformFile(source, sourceFile, { ...transformOptions, sourceMaps: true }),
-          )
+          throw invalidEmitError(error, emitted.decodedMap)
         }
         if (reparsed) {
           ast.program.body = reparsed.ast.program.body
+          astMap = emitted.map
           transformed = true
           // Dev/HMR-only component tag metadata. Production bundles do not need it.
           if (isServe) {
@@ -297,7 +312,7 @@ export function transform(
     ensureGeaCompilerSymbolImports(ast)
 
     // ── Emit ──────────────────────────────────────────────────────────
-    const output = generate(ast, { sourceMaps: true, sourceFileName: sourceFile }, code)
+    const output = generate(ast, { sourceMaps: true, sourceFileName: sourceFile, inputSourceMap: astMap }, code)
     return { code: output.code, map: output.map, ir }
   } catch (error: any) {
     // The only soft failure: Babel can't parse the file's own source. Its
@@ -318,19 +333,14 @@ function reasonOf(error: any): string {
 
 /**
  * Babel rejected the code transformFile emitted, so its position is in that
- * code, not the user's. Map it back through a source map of the same emit.
+ * code, not the user's. Map it back through the emit's source map.
  */
-function invalidEmitError(error: any, emitWithSourceMap: () => TransformResult): GeaCompileError {
+function invalidEmitError(error: any, decodedMap: TransformResult['decodedMap']): GeaCompileError {
   const err = compilerError(`The compiled output is invalid JavaScript: ${reasonOf(error)}`, null, COMPILER_BUG_HINT)
   err.cause = error
   const at = error?.loc
   if (!at) return err
-  let segments: number[][] = []
-  try {
-    segments = emitWithSourceMap().decodedMap?.mappings[at.line - 1] ?? []
-  } catch {
-    // Report the original error without a location.
-  }
+  const segments = decodedMap?.mappings[at.line - 1] ?? []
   // Last segment starting at or before the error column; a segment is
   // [generatedColumn, sourceIndex, sourceLine (0-based), sourceColumn].
   const segment = segments.filter((s) => s.length >= 4 && s[0] <= at.column).pop()

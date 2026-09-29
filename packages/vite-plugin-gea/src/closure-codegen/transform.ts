@@ -69,11 +69,13 @@ export interface TransformFileOptions {
   enableTinyReactiveComponents?: boolean
   /** Compiling for the embedded/native (geatsc/IR) backend. See EmitContext.embedded. */
   embedded?: boolean
-  /**
-   * Also return `decodedMap`. The pipeline only asks for it after the emitted
-   * code failed to parse, to point the error at the user's source.
-   */
+  /** Also return a source map (`map` and `decodedMap`) of the emitted code. */
   sourceMaps?: boolean
+  /**
+   * A source map from `source` back to the user's file, when `source` is
+   * itself compiler output. The returned map then points at the user's file.
+   */
+  inputSourceMap?: unknown
 }
 
 export function transformFile(source: string, _filename?: string, options: TransformFileOptions = {}): TransformResult {
@@ -356,12 +358,19 @@ export function transformFile(source: string, _filename?: string, options: Trans
   injectTemplateDecls(ast, firstClassIdx, ctx.templateDecls)
   ensureCoreImports(ast, ctx.importsNeeded)
 
-  const out = generate(ast, {
-    retainLines: false,
-    compact: false,
-    jsescOption: { minimal: true },
-    ...(options.sourceMaps ? { sourceMaps: true, sourceFileName: _filename ?? 'source' } : {}),
-  })
+  const out = generate(
+    ast,
+    {
+      retainLines: false,
+      compact: false,
+      jsescOption: { minimal: true },
+      ...(options.sourceMaps
+        ? { sourceMaps: true, sourceFileName: _filename ?? 'source', inputSourceMap: options.inputSourceMap }
+        : {}),
+    },
+    // The map's sourcesContent when there is no inputSourceMap.
+    source,
+  )
   return {
     code: out.code,
     map: (out as any).map,
