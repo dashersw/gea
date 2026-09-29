@@ -447,4 +447,89 @@ new App().render(document.getElementById('app'))
 
     assert.equal(result, null)
   })
+
+  it('leaves an imported function child compile error to the child module', () => {
+    const root = fixture({
+      'Counter.tsx': `export default function Counter() {
+  let count = 0
+  return <button onClick={() => count++}>Count: {count}</button>
+}`,
+      'App.tsx': `import { Component } from '@geajs/core'
+import Counter from './Counter'
+export default class App extends Component {
+  template() { return <div><Counter /></div> }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.equal(result, null)
+  })
+
+  it('skips local function children that hold per-instance state', () => {
+    const root = fixture({
+      'App.tsx': `import { Component, Store } from '@geajs/core'
+class LocalStore extends Store {
+  count = 0
+}
+function LocalCounter() {
+  const store = new LocalStore()
+  return <button onClick={() => store.count++}>{store.count}</button>
+}
+export default class App extends Component {
+  template() { return <div><LocalCounter /></div> }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.equal(result, null)
+  })
+
+  it('calls imported function children that hold per-instance state instead of inlining them', () => {
+    const root = fixture({
+      'Counter.tsx': `export default function Counter() {
+  const box = new Map([['count', 0]])
+  return <button onClick={() => box.set('count', box.get('count') + 1)}>{box.get('count')}</button>
+}`,
+      'App.tsx': `import { Component } from '@geajs/core'
+import Counter from './Counter'
+export default class App extends Component {
+  template() { return <div><Counter /></div> }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.ok(result)
+    assert.match(result.code, /import Counter from "\.\/Counter\.tsx"/)
+    assert.doesNotMatch(result.code, /function Counter\(/)
+  })
 })

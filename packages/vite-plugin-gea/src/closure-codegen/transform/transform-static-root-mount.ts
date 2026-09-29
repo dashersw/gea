@@ -22,7 +22,12 @@ import {
 import { extractTemplateJsx, findTemplateMethod } from '../generator.ts'
 import { extractPrecedingStatements, foldEarlyReturnGuards } from './transform-template-methods.ts'
 import { collectDirectFnComponentParams, collectDirectFnComponents, collectDirectFnStringProps } from '../transform.ts'
-import { canUseStaticCompiledComponent, rewriteFnComponent } from './transform-components.ts'
+import {
+  canUseStaticCompiledComponent,
+  fnHasInstanceLocals,
+  isFunctionComponent,
+  rewriteFnComponent,
+} from './transform-components.ts'
 import { ensureCoreImports } from './transform-imports.ts'
 
 interface MountPattern {
@@ -199,6 +204,16 @@ function createStaticTemplateFactory(
   const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null
   if (!jsx || !isBuiltinElementRoot(jsx)) return null
 
+  // Local function components that hold per-instance state are kept out of
+  // the direct set and need a real mount, which the static factory lacks.
+  if (
+    ast.program.body.some(
+      (stmt) => t.isFunctionDeclaration(stmt) && isFunctionComponent(stmt) && fnHasInstanceLocals(stmt),
+    )
+  ) {
+    return null
+  }
+
   const ctx = createEmitContext()
   const watchFiles = new Set<string>()
   ctx.directFnComponents = collectDirectFnComponents(ast)
@@ -347,7 +362,9 @@ function collectImportedStaticFunctionComponents(
       const fnDecl = getExportedFunction(imported.ast, exportedName, localName)
       if (fnDecl) {
         const params = getDirectFnParams(fnDecl)
-        if (!params || !functionReturnsJsx(fnDecl)) {
+        // Per-instance locals need reactive reads, which the one-shot direct
+        // path doesn't emit, so call the component's own compiled export.
+        if (!params || !functionReturnsJsx(fnDecl) || fnHasInstanceLocals(fnDecl)) {
           ctx.directFactoryComponents?.add(localName)
           continue
         }

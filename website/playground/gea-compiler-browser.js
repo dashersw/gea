@@ -44510,11 +44510,15 @@ function createEmitContext(reactiveRoot) {
     classGetters: /* @__PURE__ */ new Set()
   };
 }
-function collectBindings(stmts, bindings) {
+function collectBindings(stmts, bindings, keepLocal) {
   for (const stmt of stmts) {
     if (!libExports.isVariableDeclaration(stmt)) continue;
     for (const decl of stmt.declarations) {
       if (!decl.init) continue;
+      if (keepLocal?.(decl.init)) {
+        for (const name of Object.keys(libExports.getBindingIdentifiers(decl.id))) bindings.delete(name);
+        continue;
+      }
       if (libExports.isObjectPattern(decl.id)) {
         for (const prop of decl.id.properties) {
           if (!libExports.isObjectProperty(prop)) continue;
@@ -44531,6 +44535,19 @@ function collectBindings(stmts, bindings) {
       }
     }
   }
+}
+function initializerNeedsLocal(node) {
+  if (!node || typeof node !== "object") return false;
+  if (libExports.isNewExpression(node) || libExports.isClassExpression(node)) return true;
+  if (libExports.isAssignmentExpression(node) || libExports.isUpdateExpression(node)) return true;
+  if (libExports.isUnaryExpression(node, { operator: "delete" })) return true;
+  if (libExports.isFunction(node)) return false;
+  if (Array.isArray(node)) return node.some(initializerNeedsLocal);
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || key === "start" || key === "end" || key === "type") continue;
+    if (initializerNeedsLocal(node[key])) return true;
+  }
+  return false;
 }
 function cloneExpr$1(expr) {
   return libExports.cloneNode(expr);
@@ -50277,6 +50294,47 @@ function isFunctionComponent(fn) {
   }
   return false;
 }
+function fnHasInstanceLocals(fn) {
+  for (const stmt of fn.body?.body ?? []) {
+    if (libExports.isReturnStatement(stmt)) break;
+    if (libExports.isVariableDeclaration(stmt) && stmt.declarations.some((d) => d.init && initializerNeedsLocal(d.init))) {
+      return true;
+    }
+  }
+  return false;
+}
+function assertNoReassignedLocals(fnDecl, fnName, preceding) {
+  const mutable = /* @__PURE__ */ new Set();
+  for (const stmt of preceding) {
+    if (!libExports.isVariableDeclaration(stmt) || stmt.kind === "const") continue;
+    for (const decl of stmt.declarations) {
+      for (const name2 of Object.keys(libExports.getBindingIdentifiers(decl.id))) mutable.add(name2);
+    }
+  }
+  if (mutable.size === 0) return;
+  let name = "";
+  let write = null;
+  const fn = libExports.cloneNode(fnDecl, true);
+  traverse$1(libExports.file(libExports.program([libExports.isStatement(fn) ? fn : libExports.expressionStatement(fn)])), {
+    Function(path) {
+      path.stop();
+      for (const local of mutable) {
+        const violation = path.scope.getOwnBinding(local)?.constantViolations[0];
+        if (violation) {
+          name = local;
+          write = violation.node;
+          return;
+        }
+      }
+    }
+  });
+  if (!write) return;
+  throw compilerError(
+    `Function component \`${fnName || "<anonymous>"}\` reassigns \`${name}\`.`,
+    write,
+    `Function components have no local state yet, so the new value would never render. Keep \`${name}\` in a Store or a class component.`
+  );
+}
 function rewriteFnComponent(fnDecl, parentCtx) {
   const body = fnDecl.body.body;
   let returnIdx = -1;
@@ -50290,8 +50348,9 @@ function rewriteFnComponent(fnDecl, parentCtx) {
   const ret = body[returnIdx];
   if (!ret.argument || !(libExports.isJSXElement(ret.argument) || libExports.isJSXFragment(ret.argument))) return;
   const jsxRoot = ret.argument;
-  const fnCtx = createEmitContext(libExports.identifier("props"));
   const fnName = libExports.isIdentifier(fnDecl.id) ? fnDecl.id.name : "";
+  assertNoReassignedLocals(fnDecl, fnName, body.slice(0, returnIdx));
+  const fnCtx = createEmitContext(libExports.identifier("props"));
   fnCtx.oneShotProps = parentCtx.directFnComponents?.has(fnName) === true;
   const directParams = fnCtx.oneShotProps ? parentCtx.directFnComponentParams?.get(fnName) : void 0;
   fnCtx.tplCounter = parentCtx.tplCounter;
@@ -50347,7 +50406,8 @@ function rewriteFnComponent(fnDecl, parentCtx) {
   }
   collectBindings(
     precedingRaw.filter((s) => !propsLocals.includes(s)),
-    fnCtx.bindings
+    fnCtx.bindings,
+    initializerNeedsLocal
   );
   const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx);
   if (fnCtx.oneShotProps && fnName && ((fnCtx._rowEventTypes?.size ?? 0) > 0 || (fnCtx._rowFastEventTypes?.size ?? 0) > 0)) {
@@ -51073,7 +51133,9 @@ function buildAfterRenderAsyncRenderMethod() {
 function collectDirectFnComponents(ast) {
   const candidates = /* @__PURE__ */ new Set();
   for (const node of ast.program.body) {
-    if (libExports.isFunctionDeclaration(node) && node.id && isFunctionComponent(node)) candidates.add(node.id.name);
+    if (libExports.isFunctionDeclaration(node) && node.id && isFunctionComponent(node) && !fnHasInstanceLocals(node)) {
+      candidates.add(node.id.name);
+    }
   }
   if (candidates.size === 0) return candidates;
   const counts = /* @__PURE__ */ new Map();

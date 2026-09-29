@@ -128,6 +128,28 @@ describe('compile errors fail the build and reach the dev overlay (#104)', () =>
     assert.deepEqual({ ...err.loc }, { file, line: 8, column: 9 })
   })
 
+  it('vite build fails on a reassigned let in a function component, in the component file', async () => {
+    const { root, config } = project({
+      'src/App.tsx': `import { Component } from '@geajs/core'
+import Counter from './Counter'
+export default class App extends Component {
+  template() { return <div><Counter /></div> }
+}
+`,
+      'src/Counter.tsx': `export default function Counter() {
+  let count = 0
+  return <button onClick={() => count++}>Count: {count}</button>
+}
+`,
+    })
+    const err = await buildError(config)
+    const file = path.join(root, 'src/Counter.tsx')
+
+    assert.match(err.message, /^\[gea\] Function component `Counter` reassigns `count`\. \(/)
+    assert.match(err.message, /Keep `count` in a Store or a class component\./)
+    assert.deepEqual({ ...err.loc }, { file, line: 3, column: 32 })
+  })
+
   it('still leaves files Babel cannot parse to Vite', async () => {
     // `<T>value` is valid TypeScript in a .ts file, but Babel's jsx+typescript
     // parser rejects it. That is the one failure that stays soft.
