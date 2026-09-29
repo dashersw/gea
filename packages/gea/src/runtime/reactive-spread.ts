@@ -18,7 +18,10 @@
  * - `class`/`className`, `style`, `value` and `visible` write the way their
  *   own helpers do, boolean attributes toggle, and the rest are attributes.
  * - `children`, `key`, `ref` and `dangerouslySetInnerHTML` are not attributes
- *   and are skipped, as are keys that are not valid attribute names.
+ *   and are skipped, as are keys that are not valid attribute names and
+ *   `srcdoc`, which only the template writes.
+ * - Nothing is assigned as an element property: a key such as `innerHTML`
+ *   is an ordinary attribute.
  *
  * The spread object, not the template, picks the attribute names, so every
  * value written as a plain attribute goes through `sanitizeAttr`, which
@@ -118,6 +121,11 @@ export const SPREAD_BOOL_ATTRS: ReadonlySet<string> = new Set([
 
 const NOT_ATTRIBUTES = new Set(['children', 'key', 'ref', 'dangerouslySetInnerHTML'])
 
+// Attributes only the template writes, matched in any letter case: `srcdoc`
+// holds a frame's whole document. The compiler keeps a `srcdoc` written before
+// a spread out of the spread, so it still applies.
+const TEMPLATE_ONLY = new Set(['srcdoc'])
+
 // A valid attribute name (the XML Name production, as React checks it).
 // `setAttribute` throws on other names, and an HTML serializer would write
 // them out unchanged.
@@ -139,7 +147,7 @@ const ATTRIBUTE_NAME = new RegExp(
  * HTML attribute name, so `ONCLICK` must not reach it.
  */
 export function spreadKeyName(key: string): string | null {
-  if (NOT_ATTRIBUTES.has(key) || !ATTRIBUTE_NAME.test(key)) return null
+  if (NOT_ATTRIBUTES.has(key) || !ATTRIBUTE_NAME.test(key) || TEMPLATE_ONLY.has(key.toLowerCase())) return null
   if (/^on./i.test(key)) return 'on:' + key.slice(2).toLowerCase()
   if (SPREAD_EVENT_NAMES.has(key)) return 'on:' + key
   if (key === 'className') return 'class'

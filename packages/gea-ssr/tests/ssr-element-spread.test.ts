@@ -52,6 +52,22 @@ class Filtered extends Component {
   }
 }
 
+// `srcdoc` and property-like keys in a spread object.
+class TemplateOnly extends Component {
+  frame = { srcdoc: '<p id="framed"></p>', SrcDoc: 'b', title: 'f' }
+  attrs = { innerHTML: '<b id="inner"></b>', outerHTML: '<b id="outer"></b>', textContent: 'replaced' };
+  [GEA_CREATE_TEMPLATE](d: any): Node {
+    const root = document.createElement('div')
+    const frame = document.createElement('iframe')
+    reactiveSpread(frame, d, this, null, () => [this.frame])
+    const p = document.createElement('p')
+    p.textContent = 'kept'
+    reactiveSpread(p, d, this, null, () => [this.attrs])
+    root.append(frame, p)
+    return root
+  }
+}
+
 // Serialized attribute values in document order, and the DOM a browser-like
 // parser builds back from the HTML.
 const serialized = (html: string, name: string): string[] =>
@@ -97,5 +113,14 @@ describe('SSR element spread', () => {
     assert.equal(a.getAttribute('formaction'), '')
     assert.equal(a.getAttribute('xlink:href'), '')
     assert.equal(a.getAttribute('title'), 't')
+  })
+
+  it('leaves srcdoc out and assigns no spread key as a property', () => {
+    const html = renderToString(TemplateOnly)
+    assert.doesNotMatch(html, /srcdoc/i)
+    const doc = reparse(html)
+    assert.equal(doc.querySelector('iframe')!.getAttribute('title'), 'f')
+    assert.equal(doc.querySelector('p')!.textContent, 'kept')
+    assert.equal(doc.querySelectorAll('#inner, #outer').length, 0)
   })
 })

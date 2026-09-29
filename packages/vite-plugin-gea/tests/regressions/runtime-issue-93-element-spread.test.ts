@@ -462,10 +462,60 @@ describe('element spread attributes (#93)', { concurrency: false }, () => {
     assert.equal(allowed.getAttribute('href'), '/docs')
     assert.equal(allowed.getAttribute('src'), 'data:image/png;base64,AAAA')
     assert.equal(allowed.getAttribute('title'), 'javascript:void(0)', 'only URL attributes are filtered')
-    assert.equal(root.querySelector('#before')?.getAttribute('href'), '', 'an attribute before the spread is applied by it')
+    assert.equal(
+      root.querySelector('#before')?.getAttribute('href'),
+      '',
+      'an attribute before the spread is applied by it',
+    )
     app.swap()
     await flushMicrotasks()
     assert.equal(allowed.getAttribute('href'), '', 'an update is filtered too')
+    app.dispose()
+  })
+
+  it('leaves srcdoc to the template and assigns no spread key as a property', async () => {
+    const { root, app } = await mount(
+      `
+        import { Component } from '@geajs/core'
+        export class App extends Component {
+          frame = { srcdoc: 'a', srcDoc: 'b', SRCDOC: 'c', title: 'f' }
+          attrs = { innerHTML: '<b>x</b>', outerHTML: '<b>y</b>', textContent: 'z', innerText: 'w' }
+          template() {
+            return (
+              <div>
+                <iframe id="spread" {...this.frame}></iframe>
+                <iframe id="written" srcdoc="kept" {...this.frame}></iframe>
+                <p id="attrs" {...this.attrs}>kept</p>
+              </div>
+            )
+          }
+          swap() {
+            this.frame = { ...this.frame, srcdoc: 'd' }
+            this.attrs = { ...this.attrs, innerHTML: '<i>v</i>' }
+          }
+        }
+      `,
+      'TemplateOnly',
+    )
+    const check = () => {
+      const spread = root.querySelector('#spread')!
+      assert.equal(spread.hasAttribute('srcdoc'), false, 'a spread never writes srcdoc')
+      assert.equal(spread.getAttribute('title'), 'f')
+      assert.equal(
+        root.querySelector('#written')?.getAttribute('srcdoc'),
+        'kept',
+        'a srcdoc in the template still applies',
+      )
+      const p = root.querySelector('#attrs')!
+      assert.equal(p.childNodes.length, 1)
+      assert.equal(p.textContent, 'kept', 'innerHTML, outerHTML, textContent and innerText are not assigned')
+      assert.equal(root.querySelectorAll('b, i').length, 0)
+      assert.equal(p.getAttribute('innerhtml'), app.attrs.innerHTML, 'they are ordinary attributes')
+    }
+    check()
+    app.swap()
+    await flushMicrotasks()
+    check()
     app.dispose()
   })
 

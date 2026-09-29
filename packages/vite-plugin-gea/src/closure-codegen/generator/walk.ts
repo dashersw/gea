@@ -519,6 +519,9 @@ const NOT_SPREAD_ATTRIBUTES = new Set(['children', 'key', 'ref', 'dangerouslySet
 function foldsIntoSpread(attr: JSXAttribute | JSXSpreadAttribute): boolean {
   if (t.isJSXSpreadAttribute(attr)) return true
   if (!t.isJSXIdentifier(attr.name) || NOT_SPREAD_ATTRIBUTES.has(attr.name.name)) return false
+  // A spread never writes `srcdoc`, so one written before it stays a normal
+  // attribute rather than a spread source.
+  if (attr.name.name.toLowerCase() === 'srcdoc') return false
   return attr.value == null || t.isStringLiteral(attr.value) || t.isJSXExpressionContainer(attr.value)
 }
 
