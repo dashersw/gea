@@ -112,8 +112,11 @@ export function convertFunctionalToClass(
   ) {
     const decl = firstStmt.declarations[0]
     if (decl && t.isObjectPattern(decl.id) && decl.init && t.isIdentifier(decl.init, { name: firstParam.name })) {
-      params = [t.cloneNode(decl.id)]
-      templateBody = templateBody.slice(1)
+      const hasDefaultValue = decl.id.properties.some((p) => t.isObjectProperty(p) && t.isAssignmentPattern(p.value))
+      if (!hasDefaultValue) {
+        params = [t.cloneNode(decl.id)]
+        templateBody = templateBody.slice(1)
+      }
     }
   }
 
