@@ -3,10 +3,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stripVTControlCharacters } from 'node:util'
 import { afterEach, describe, it } from 'node:test'
-import { build, createServer, type InlineConfig } from 'vite'
-import { geaPlugin } from '../../src/index.ts'
+import { build, createServer, type InlineConfig, type Logger } from 'vite'
+import { geaPlugin, type GeaPluginOptions } from '../../src/index.ts'
 import { compileForBrowser } from '../../src/browser.ts'
+import { transformFile } from '../../src/closure-codegen/transform.ts'
 
 const packagesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 
@@ -17,6 +19,8 @@ interface UnsupportedCase {
   hint: RegExp
   line: number
   column: number
+  /** What the default mode compiles, which is what the compiler did before the check. */
+  asBefore: (devCode: string) => void
 }
 
 // Five of the six repros from #105, plus a spread on a component tag. Each one
@@ -49,6 +53,8 @@ export default class App extends Component {
     hint: /Pass each prop individually: <Child label=\{…\} onSelect=\{…\} \/>\./,
     line: 15,
     column: 15,
+    // Child gets its props without the spread.
+    asBefore: (code) => assert.match(code, /\.call\(__c\d+, \{\}\)/),
   },
   {
     name: 'a string in a component-cased tag',
@@ -69,6 +75,7 @@ export default class App extends Component {
     hint: /pick one with a conditional/,
     line: 8,
     column: 9,
+    asBefore: (code) => assert.match(code, /mount\(Tag, /),
   },
   {
     name: 'a callback ref',
@@ -90,6 +97,7 @@ export default class App extends Component {
     hint: /Use an assignable target, e\.g\. ref=\{this\.input\}/,
     line: 9,
     column: 20,
+    asBefore: (code) => assert.doesNotMatch(code, /this\.input = /),
   },
   {
     name: 'a ternary returned from a class template()',
@@ -105,6 +113,7 @@ export default class App extends Component<{ href?: string }> {
     hint: /Wrap the result in an element or a fragment/,
     line: 5,
     column: 11,
+    asBefore: (code) => assert.match(code, /\btemplate\(\) \{/),
   },
   {
     name: 'an on…Capture event handler',
@@ -124,6 +133,7 @@ export default class App extends Component {
     hint: /Use onClick, or add the listener yourself in onAfterRender\(\) with addEventListener\('click', handler, true\)\./,
     line: 6,
     column: 11,
+    asBefore: (code) => assert.match(code, /"clickcapture"/),
   },
   {
     name: 'a component class declared inside a function',
@@ -144,6 +154,7 @@ export default createPage('home')
     hint: /Declare the class at the top level of the module/,
     line: 4,
     column: 2,
+    asBefore: (code) => assert.match(code, /\btemplate\(\) \{/),
   },
 ]
 
@@ -249,14 +260,25 @@ export default class App extends Component<{ big?: boolean }> {
 }
 `
 
-describe('unsupported JSX fails the build with a hint (#105)', () => {
+const STRICT: GeaPluginOptions = { strict: true }
+
+describe('unsupported JSX warns with a hint, and fails the build with strict (#105)', () => {
   const dirs: string[] = []
 
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 
-  function project(app: string, extra: Record<string, string> = {}): { file: string; config: InlineConfig } {
+  interface Project {
+    file: string
+    config: InlineConfig
+    /** What `vite build` passes to `onwarn` from the gea plugin. */
+    buildWarnings: any[]
+    /** What the dev server prints for the gea plugin's warnings. */
+    devWarnings: string[]
+  }
+
+  function project(app: string, extra: Record<string, string> = {}, options: GeaPluginOptions = {}): Project {
     const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'gea-unsupported-jsx-')))
     dirs.push(root)
     const files: Record<string, string> = {
@@ -269,24 +291,59 @@ describe('unsupported JSX fails the build with a hint (#105)', () => {
       mkdirSync(path.dirname(path.join(root, name)), { recursive: true })
       writeFileSync(path.join(root, name), source)
     }
+    const buildWarnings: any[] = []
+    const devWarnings: string[] = []
+    const logger: Logger = {
+      hasWarned: false,
+      info() {},
+      warn(msg) {
+        // Vite's dev terminal colors its output.
+        const text = stripVTControlCharacters(msg)
+        if (text.includes('Plugin: gea-plugin')) devWarnings.push(text)
+      },
+      warnOnce() {},
+      error() {},
+      clearScreen() {},
+      hasErrorLogged: () => false,
+    }
     const config: InlineConfig = {
       root,
       configFile: false,
-      logLevel: 'silent',
-      plugins: [geaPlugin()],
+      customLogger: logger,
+      plugins: [geaPlugin(options)],
       resolve: { alias: [{ find: '@geajs/core', replacement: path.join(packagesDir, 'gea/src') }] },
       // What a Gea app's tsconfig sets. JSX the compiler leaves alone (a
       // function component with a conditional root, until #124) goes here.
       oxc: { jsx: { runtime: 'automatic', importSource: '@geajs/core' } },
-      build: { write: false },
+      build: {
+        write: false,
+        rollupOptions: {
+          onwarn(warning) {
+            if (warning.plugin === 'gea-plugin') buildWarnings.push(warning)
+          },
+        },
+      },
       // No background transform of App's imports: one still running at
       // server.close() can keep the test process alive.
       server: { middlewareMode: true, hmr: false, ws: false, preTransformRequests: false },
+      // No dependency scan either: there's nothing to optimize, and closing the
+      // server while a re-transform's scan runs crashes Rolldown's native code.
+      optimizeDeps: { noDiscovery: true, include: [] },
     }
-    return { file: path.join(root, 'src/App.tsx'), config }
+    return { file: path.join(root, 'src/App.tsx'), config, buildWarnings, devWarnings }
   }
 
-  function assertCaseError(err: any, c: UnsupportedCase, file: string): void {
+  function builtCode(output: any): string {
+    return (Array.isArray(output) ? output : [output])
+      .flatMap((o) => o.output)
+      .filter((o: any) => o.type === 'chunk')
+      .map((o: any) => o.code)
+      .join('\n')
+  }
+
+  type Expected = Pick<UnsupportedCase, 'message' | 'hint' | 'line' | 'column'>
+
+  function assertCaseError(err: any, c: Expected, file: string): void {
     assert.match(err.message, /^\[gea\] /)
     assert.match(err.message, c.message)
     assert.match(err.message, c.hint)
@@ -295,9 +352,48 @@ describe('unsupported JSX fails the build with a hint (#105)', () => {
     assert.deepEqual({ ...err.loc }, { file, line: c.line, column: c.column })
   }
 
+  /** One `vite build` warning, as `onwarn` gets it. */
+  function assertBuildWarning(warnings: any[], c: Expected, file: string): void {
+    assert.equal(warnings.length, 1, JSON.stringify(warnings.map((w) => w.message)))
+    const [warning] = warnings
+    assert.equal(warning.code, 'PLUGIN_WARNING')
+    // Not `id`: for code the build inlines, that's the mount file being transformed.
+    assertCaseError(warning, c, file)
+  }
+
+  /** One warning in the dev terminal, with Vite's plugin and file lines. */
+  function assertDevWarning(warnings: string[], c: Expected, file: string): void {
+    assert.equal(warnings.length, 1, warnings.join('\n---\n'))
+    const [text] = warnings
+    assert.match(text, /^warning: \[gea\] /)
+    assert.match(text, c.message)
+    assert.match(text, c.hint)
+    assert.ok(text.includes(`(${file}:${c.line}:${c.column})`), text)
+    assert.ok(text.includes(`  File: ${file}:${c.line}:${c.column}`), text)
+  }
+
   for (const c of CASES) {
-    it(`vite build fails on ${c.name}`, async () => {
-      const { file, config } = project(c.source)
+    it(`vite build warns on ${c.name} and builds it as before`, async () => {
+      const { file, config, buildWarnings } = project(c.source)
+      await build(config)
+      assertBuildWarning(buildWarnings, c, file)
+    })
+
+    it(`the dev server warns on ${c.name} and compiles it as before`, async () => {
+      const { file, config, devWarnings } = project(c.source)
+      const server = await createServer(config)
+      try {
+        const result = await server.transformRequest('/src/App.tsx')
+        assert.ok(result, 'the dev server should compile App.tsx')
+        c.asBefore(result.code)
+        assertDevWarning(devWarnings, c, file)
+      } finally {
+        await server.close()
+      }
+    })
+
+    it(`vite build with strict fails on ${c.name}`, async () => {
+      const { file, config } = project(c.source, {}, STRICT)
       let err: any
       try {
         await build(config)
@@ -308,8 +404,8 @@ describe('unsupported JSX fails the build with a hint (#105)', () => {
       assertCaseError(err, c, file)
     })
 
-    it(`the dev server rejects ${c.name}`, async () => {
-      const { file, config } = project(c.source)
+    it(`the dev server with strict rejects ${c.name}`, async () => {
+      const { file, config } = project(c.source, {}, STRICT)
       const server = await createServer(config)
       try {
         await assert.rejects(server.transformRequest('/src/App.tsx'), (err: any) => {
@@ -323,32 +419,20 @@ describe('unsupported JSX fails the build with a hint (#105)', () => {
   }
 
   // A build inlines a static root component into the mount file, so App.tsx
-  // never goes through transformFile. The string-tag check has to run there
-  // too, or the page throws `Tag is not defined`.
-  it('vite build fails on a string tag in a root component the build inlines', async () => {
-    const app = (tag: string) => `import { Component } from '@geajs/core'
+  // never goes through transformFile. The string-tag check runs there too,
+  // and warns without stopping the inlining.
+  it('vite build warns on a string tag in a root component it inlines, and fails with strict', async () => {
+    const c = CASES.find((c) => c.name === 'a string in a component-cased tag')!
+    const warned = project(c.source)
+    const output = await build({ ...warned.config, build: { ...warned.config.build, minify: false } })
+    // Inlined as before: main.ts calls the root factory instead of rendering an App class.
+    const code = builtCode(output)
+    assert.match(code, /__gea_root\d+_create\(/)
+    assert.doesNotMatch(code, /extends Compiled\w*Component/)
+    assert.match(code, /mount\(Tag, /)
+    assertBuildWarning(warned.buildWarnings, c, warned.file)
 
-const Tag = 'section'
-
-export default class App extends Component {
-  template() {
-    return (
-      <div>
-        <${tag} class="tagged">x</${tag}>
-      </div>
-    )
-  }
-}
-`
-    // The same root with a plain element is inlined: main.ts calls the
-    // root factory instead of rendering an App class.
-    const inlined = project(app('section'))
-    const output: any = await build({ ...inlined.config, build: { write: false, minify: false } })
-    const chunk = (Array.isArray(output) ? output[0] : output).output.find((o: any) => o.type === 'chunk')
-    assert.match(chunk.code, /__gea_root\d+_create\(\)/)
-    assert.doesNotMatch(chunk.code, /extends Compiled\w*Component/)
-
-    const { file, config } = project(app('Tag'))
+    const { file, config } = project(c.source, {}, STRICT)
     let err: any
     try {
       await build(config)
@@ -356,13 +440,11 @@ export default class App extends Component {
       err = error.errors?.[0] ?? error
     }
     assert.ok(err, 'vite build should fail')
-    assert.match(err.message, /<Tag> holds a string, not a component/)
-    assert.deepEqual({ ...err.loc }, { file, line: 9, column: 9 })
+    assertCaseError(err, c, file)
   })
 
-  it('vite build fails on a string tag in an imported function component', async () => {
-    const { file, config } = project(
-      `import { Component } from '@geajs/core'
+  it('vite build warns on a string tag in an imported function component, and fails with strict', async () => {
+    const app = `import { Component } from '@geajs/core'
 import Card from './Card'
 
 export default class App extends Component {
@@ -374,15 +456,25 @@ export default class App extends Component {
     )
   }
 }
-`,
-      {
-        'src/Card.tsx': `export default function Card() {
+`
+    const card = {
+      'src/Card.tsx': `export default function Card() {
   const Tag = 'section'
   return <Tag class="card">x</Tag>
 }
 `,
-      },
-    )
+    }
+    const tagged = {
+      message: /<Tag> holds a string, not a component/,
+      hint: /pick one with a conditional/,
+      line: 3,
+      column: 10,
+    }
+    const warned = project(app, card)
+    await build(warned.config)
+    assertBuildWarning(warned.buildWarnings, tagged, path.join(path.dirname(warned.file), 'Card.tsx'))
+
+    const { file, config } = project(app, card, STRICT)
     let err: any
     try {
       await build(config)
@@ -390,16 +482,115 @@ export default class App extends Component {
       err = error.errors?.[0] ?? error
     }
     assert.ok(err, 'vite build should fail')
-    const card = path.join(path.dirname(file), 'Card.tsx')
     assert.match(err.message, /<Tag> holds a string, not a component/)
-    assert.deepEqual({ ...err.loc }, { file: card, line: 3, column: 10 })
+    assert.deepEqual({ ...err.loc }, { file: path.join(path.dirname(file), 'Card.tsx'), line: 3, column: 10 })
   })
 
-  it('the playground compiler reports each one', () => {
+  // The build compiles Card into the mount file along with App, so neither
+  // file goes through the pipeline. The warning still names Card.tsx.
+  it('vite build warns about an imported function component it inlines, at its own file', async () => {
+    const app = `import { Component } from '@geajs/core'
+import Card from './Card'
+
+export default class App extends Component {
+  template() {
+    return (
+      <div>
+        <Card />
+      </div>
+    )
+  }
+}
+`
+    const card = {
+      'src/Card.tsx': `export default function Card() {
+  return <div onClickCapture={() => console.log('capture')}>card</div>
+}
+`,
+    }
+    const capture = {
+      message: /Capture-phase event handlers like onClickCapture are not supported yet\./,
+      hint: /Use onClick, or add the listener yourself/,
+      line: 2,
+      column: 14,
+    }
+    const warned = project(app, card)
+    const output = await build({ ...warned.config, build: { ...warned.config.build, minify: false } })
+    const code = builtCode(output)
+    assert.match(code, /__gea_root\d+_create\(/)
+    assert.match(code, /"clickcapture"/)
+    const cardFile = path.join(path.dirname(warned.file), 'Card.tsx')
+    assertBuildWarning(warned.buildWarnings, capture, cardFile)
+
+    const { file, config } = project(app, card, STRICT)
+    let err: any
+    try {
+      await build(config)
+    } catch (error: any) {
+      err = error.errors?.[0] ?? error
+    }
+    assert.ok(err, 'vite build should fail')
+    assertCaseError(err, capture, path.join(path.dirname(file), 'Card.tsx'))
+  })
+
+  it('warns once per transform, and a dev re-transform neither piles up nor throws', async () => {
+    const c = CASES[0]
+    const { file, config, devWarnings } = project(c.source)
+    const server = await createServer(config)
+    try {
+      await server.transformRequest('/src/App.tsx')
+      // What an edit does before HMR: invalidate the module and compile it again.
+      const mod = await server.moduleGraph.getModuleByUrl('/src/App.tsx')
+      assert.ok(mod)
+      server.moduleGraph.invalidateModule(mod)
+      assert.ok(await server.transformRequest('/src/App.tsx'))
+      assert.equal(devWarnings.length, 2, devWarnings.join('\n---\n'))
+      assert.equal(devWarnings[1], devWarnings[0])
+    } finally {
+      await server.close()
+    }
+
+    // Each transform collects its own warnings and leaves nothing behind.
+    assert.equal(transformFile(c.source, file).warnings.length, 1)
+    assert.equal(transformFile(c.source, file).warnings.length, 1)
+    assert.throws(() => transformFile(c.source, file, { strict: true }), c.message)
+    assert.equal(transformFile(c.source, file).warnings.length, 1)
+  })
+
+  /**
+   * Compiles `files` with the playground compiler in both modes and returns
+   * the strict errors. Without strict, nothing fails and each strict error is
+   * a warning, prefixed and with its location.
+   */
+  function playgroundErrors(files: Record<string, string>): Array<{ file: string; message: string }> {
+    const warned = compileForBrowser(files)
+    const strict = compileForBrowser(files, { strict: true })
+    assert.deepEqual(warned.errors, [], 'nothing fails without strict')
+    assert.deepEqual(strict.warnings, [], 'strict reports errors, not warnings')
+    for (const error of strict.errors) {
+      const first = error.message.split('\n')[0]
+      assert.ok(
+        warned.warnings.some((w) => w.file === error.file && w.message.startsWith(`[gea] ${first} (${error.file}:`)),
+        `${first} should be a warning: ${JSON.stringify(warned.warnings)}`,
+      )
+    }
+    return strict.errors
+  }
+
+  it('the playground compiler warns on each one, and reports it as an error with strict', () => {
     for (const c of CASES) {
-      const { errors } = compileForBrowser({ 'App.tsx': c.source })
-      assert.equal(errors.length, 1, `${c.name}: ${JSON.stringify(errors)}`)
-      assert.match(errors[0].message, c.message)
+      const { errors, warnings } = compileForBrowser({ 'App.tsx': c.source })
+      assert.deepEqual(errors, [], c.name)
+      assert.equal(warnings.length, 1, `${c.name}: ${JSON.stringify(warnings)}`)
+      assert.equal(warnings[0].file, 'App.tsx')
+      assert.match(warnings[0].message, /^\[gea\] /)
+      assert.match(warnings[0].message, c.message)
+      assert.match(warnings[0].message, c.hint)
+      assert.ok(warnings[0].message.includes(`(App.tsx:${c.line}:${c.column})`), warnings[0].message)
+
+      const strict = playgroundErrors({ 'App.tsx': c.source })
+      assert.equal(strict.length, 1, `${c.name}: ${JSON.stringify(strict)}`)
+      assert.match(strict[0].message, c.message)
     }
   })
 
@@ -414,7 +605,7 @@ function Greeting(props: { label?: string }) {
       ['Greeting', `<div><Greeting {...this.p} /></div>`],
       ['Greeting', `<ul>{this.items.map((item) => <Greeting key={item.id} {...item} />)}</ul>`],
     ]) {
-      const { errors } = compileForBrowser({
+      const errors = playgroundErrors({
         'App.tsx': `${child}
 export default class App extends Component {
   p = { label: 'x' }
@@ -438,7 +629,7 @@ export default class App extends Component {
   // locals of their own (#168, #118).
   it('also rejects a string tag assigned after its declaration', () => {
     for (const assign of [`Tag = 'section'`, `if (on) Tag = 'section'\nelse Tag = 'div'`]) {
-      const { errors } = compileForBrowser({
+      const errors = playgroundErrors({
         'App.tsx': `import { Component } from '@geajs/core'
 
 const on = Math.random() > 0.5
@@ -463,7 +654,7 @@ export default class App extends Component {
 
   it('still compiles a tag assigned a component, or a component on some paths', () => {
     for (const assign of [`Tag = Big`, `if (on) Tag = Big\nelse Tag = Small`, `if (on) Tag = 'b'\nelse Tag = Big`]) {
-      const { errors } = compileForBrowser({
+      const { errors, warnings } = compileForBrowser({
         'App.tsx': `import { Component } from '@geajs/core'
 
 class Big extends Component {
@@ -493,7 +684,7 @@ export default class App extends Component {
 }
 `,
       })
-      assert.deepEqual(errors, [], assign)
+      assert.deepEqual([...errors, ...warnings], [], assign)
     }
   })
 
@@ -503,7 +694,7 @@ export default class App extends Component {
       ['onPasteCapture', 'onPaste'],
       ['onFocusInCapture', 'onFocusIn'],
     ]) {
-      const { errors } = compileForBrowser({
+      const errors = playgroundErrors({
         'App.tsx': `import { Component } from '@geajs/core'
 
 export default class App extends Component {
@@ -522,7 +713,7 @@ export default class App extends Component {
   // Attributes written before a spread go into the spread's runtime object,
   // where onClickCapture would become the key on:clickcapture and never fire.
   it('also rejects a capture handler written before a spread', () => {
-    const { errors } = compileForBrowser({
+    const errors = playgroundErrors({
       'App.tsx': `import { Component } from '@geajs/core'
 
 export default class App extends Component {
@@ -544,9 +735,8 @@ export default class App extends Component {
 
   // #118 inlines a local whose initializer is a plain value, so `let el = null`
   // leaves ref={el} no variable to assign the element to. It isn't a callback.
-  it('vite build fails on a ref to a local the compiler inlines, and says why', async () => {
-    const { file, config } = project(
-      `import { Component } from '@geajs/core'
+  it('vite build warns on a ref to a local the compiler inlines, says why, and fails with strict', async () => {
+    const app = `import { Component } from '@geajs/core'
 import Field from './Field'
 
 export default class App extends Component {
@@ -558,9 +748,9 @@ export default class App extends Component {
     )
   }
 }
-`,
-      {
-        'src/Field.tsx': `export default function Field() {
+`
+    const field = {
+      'src/Field.tsx': `export default function Field() {
   let el: HTMLInputElement | null = null
   return (
     <div>
@@ -570,8 +760,19 @@ export default class App extends Component {
   )
 }
 `,
-      },
-    )
+    }
+    const inlinedRef = {
+      message:
+        /ref=\{el\} has no variable to assign the element to: the compiler inlines `el` as its initializer \(null\)\./,
+      hint: /Declare it as `let el` with no initializer so it stays a variable\./,
+      line: 5,
+      column: 18,
+    }
+    const warned = project(app, field)
+    await build(warned.config)
+    assertBuildWarning(warned.buildWarnings, inlinedRef, path.join(path.dirname(warned.file), 'Field.tsx'))
+
+    const { file, config } = project(app, field, STRICT)
     let err: any
     try {
       await build(config)
@@ -587,7 +788,7 @@ export default class App extends Component {
     assert.doesNotMatch(err.message, /callback/)
     assert.deepEqual({ ...err.loc }, { file: path.join(path.dirname(file), 'Field.tsx'), line: 5, column: 18 })
 
-    const { errors } = compileForBrowser({
+    const errors = playgroundErrors({
       'App.tsx': `import { Component } from '@geajs/core'
 
 export default class App extends Component {
@@ -618,7 +819,7 @@ export default class App extends Component {
       [`import { Dialog as Modal } from '@geajs/ui'`, 'Modal', {}],
       [`import Dialog from '@geajs/ui/dialog'`, 'Dialog', {}],
     ] as const) {
-      const { errors } = compileForBrowser({
+      const errors = playgroundErrors({
         ...files,
         'App.tsx': `import { Component } from '@geajs/core'
 ${header}
@@ -647,7 +848,7 @@ export default class App extends ${base} {
       [`import { ViewManager } from '@geajs/mobile'`, 'ViewManager'],
       [`import { GestureHandler } from '@geajs/mobile'`, 'GestureHandler'],
     ] as const) {
-      const { errors } = compileForBrowser({
+      const { errors, warnings } = compileForBrowser({
         'App.tsx': `${header}
 
 export class Panel extends ${base} {
@@ -659,12 +860,12 @@ export class Panel extends ${base} {
 }
 `,
       })
-      assert.deepEqual(errors, [], header)
+      assert.deepEqual([...errors, ...warnings], [], header)
     }
   })
 
   it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs, element spreads, conditional function components and classes that are not components', async () => {
-    const { config } = project(STILL_SUPPORTED_APP, {
+    const { config, buildWarnings, devWarnings } = project(STILL_SUPPORTED_APP, {
       'src/Pick.tsx': `export default function Pick(props: { on?: boolean }) {
   return props.on ? <b>on</b> : <i>off</i>
 }
@@ -687,5 +888,7 @@ export class Panel extends ${base} {
     } finally {
       await server.close()
     }
+    assert.deepEqual(buildWarnings, [])
+    assert.deepEqual(devWarnings, [])
   })
 })

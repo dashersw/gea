@@ -1,22 +1,22 @@
 /**
- * Whole-file checks for JSX the compiler can't compile. Each one throws a
- * compile error where the output would otherwise render nothing.
+ * Whole-file checks for JSX the compiler can't compile. Each one reports it
+ * with `reportUnsupportedJsx` where the output renders nothing.
  */
 
 import type { File } from '@babel/types'
 
 import { t, traverse, type NodePath } from '../../utils/babel-interop.ts'
-import { compilerError } from '../../utils/compile-error.ts'
+import { compilerError, reportUnsupportedJsx } from '../../utils/compile-error.ts'
 
 import { bodyContainsJsx, extendsComponent } from './transform-components.ts'
 
 /**
  * `const Tag = 'section'; <Tag />` compiles to `mount('section', …)`, which
- * mounts nothing: a capitalized tag is always mounted as a component. Reject
+ * mounts nothing: a capitalized tag is always mounted as a component. Report
  * a tag whose variable provably holds a string. A variable holding a
  * component (`const Icon = cond ? A : B`) is left alone.
  */
-export function assertNoStringTags(ast: File): void {
+export function checkStringTags(ast: File): void {
   const tags = new Set<string>()
   const strings = new Set<string>()
   const visit = (node: any): void => {
@@ -58,11 +58,13 @@ export function assertNoStringTags(ast: File): void {
       const writes = binding.constantViolations
       if (!init && writes.length === 0) return
       if (!writes.every((w) => w.isAssignmentExpression({ operator: '=' }) && isStringValued(w.node.right))) return
-      throw compilerError(
-        `<${name.name}> holds a string, not a component, so it would render nothing.`,
-        name,
-        `A JSX tag can't come from a string variable. Write the element itself, or pick one with a conditional: ` +
-          `{cond ? <section>…</section> : <div>…</div>}.`,
+      reportUnsupportedJsx(
+        compilerError(
+          `<${name.name}> holds a string, not a component, so it would render nothing.`,
+          name,
+          `A JSX tag can't come from a string variable. Write the element itself, or pick one with a conditional: ` +
+            `{cond ? <section>…</section> : <div>…</div>}.`,
+        ),
       )
     },
   })
@@ -96,7 +98,7 @@ function isStringValued(node: any): boolean {
  * inside a function keeps its raw `template()`, which renders nothing, and
  * the dev HMR code patches it at module scope, where it isn't defined.
  */
-export function assertNoNestedComponentClasses(ast: File): void {
+export function checkNestedComponentClasses(ast: File): void {
   const visit = (node: any, inFunction: boolean): void => {
     if (!node || typeof node !== 'object') return
     if (Array.isArray(node)) {
@@ -105,10 +107,12 @@ export function assertNoNestedComponentClasses(ast: File): void {
     }
     if (inFunction && t.isClass(node) && extendsComponent(node as any) && bodyContainsJsx(node.body)) {
       const name = node.id ? `\`${node.id.name}\` ` : ''
-      throw compilerError(
-        `Component class ${name}is declared inside a function. Only top-level component classes are compiled.`,
-        node,
-        'Declare the class at the top level of the module, and pass values in as props.',
+      reportUnsupportedJsx(
+        compilerError(
+          `Component class ${name}is declared inside a function. Only top-level component classes are compiled.`,
+          node,
+          'Declare the class at the top level of the module, and pass values in as props.',
+        ),
       )
     }
     const nested = inFunction || t.isFunction(node)

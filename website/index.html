@@ -1886,7 +1886,14 @@
           })
         }
         const blobOrder = example.compileOrder || example.fileOrder
-        preview.renderPreview(iframe, result.compiledModules, blobOrder, result.errors, example.previewCSS)
+        preview.renderPreview(
+          iframe,
+          result.compiledModules,
+          blobOrder,
+          result.errors,
+          example.previewCSS,
+          result.warnings,
+        )
       }
     </script>
   </body>

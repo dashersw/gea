@@ -12,6 +12,7 @@ import { dirname, relative } from 'node:path'
 
 import { parseModule } from '../../parse/parser.ts'
 import { generate, t, traverse } from '../../utils/babel-interop.ts'
+import { collectUnsupportedJsx, withSourceFile, type GeaCompileError } from '../../utils/compile-error.ts'
 import {
   bindTemplateLocals,
   compileJsxToBlock,
@@ -32,7 +33,7 @@ import {
   rewriteFnComponent,
 } from './transform-components.ts'
 import { ensureCoreImports } from './transform-imports.ts'
-import { assertNoStringTags } from './transform-unsupported-jsx.ts'
+import { checkStringTags } from './transform-unsupported-jsx.ts'
 
 interface MountPattern {
   appImport: string
@@ -47,24 +48,34 @@ interface StaticTemplateFactory {
   mountExpression: Expression
   importsNeeded: Set<string>
   watchFiles: string[]
+  /** Unsupported JSX in the imported function components it compiled, with their files. */
+  warnings: GeaCompileError[]
 }
 
 interface ImportedStaticFunction {
   localName: string
   fnDecl: FunctionDeclaration
   params: DirectFnComponentParams
+  /** The file `fnDecl` comes from. */
+  file: string
 }
 
 export interface StaticRootMountTransformResult {
   code: string
   changed: boolean
   watchFiles?: string[]
+  /**
+   * Unsupported JSX in the inlined code, with its file and location. The
+   * inlined files may not go through the pipeline, which would warn instead.
+   */
+  warnings?: GeaCompileError[]
 }
 
 export function transformStaticRootMount(
   source: string,
   filePath: string,
   resolveImportPath: (importer: string, source: string) => string | null,
+  options: { strict?: boolean } = {},
 ): StaticRootMountTransformResult | null {
   if (!source.includes('.render') || !source.includes('new ')) return null
 
@@ -87,9 +98,15 @@ export function transformStaticRootMount(
   const resolved = resolveImportPath(filePath, imported.source)
   if (!resolved) return null
 
+  const strict = options.strict === true
   let factory: StaticTemplateFactory | null
+  let warnings: GeaCompileError[]
   try {
-    factory = createStaticTemplateFactory(resolved, '__gea_root0', filePath, resolveImportPath)
+    const collected = collectUnsupportedJsx(strict, () =>
+      createStaticTemplateFactory(resolved, '__gea_root0', filePath, resolveImportPath, strict),
+    )
+    factory = collected.result
+    warnings = collected.warnings.map((w) => withSourceFile(w, resolved))
   } catch {
     // Inlining is only an optimization. Without it the root component goes
     // through the pipeline on its own, which reports any compile error
@@ -111,7 +128,12 @@ export function transformStaticRootMount(
   ensureCoreImports(ast, factory.importsNeeded)
 
   const out = generate(ast, { retainLines: false, compact: false, jsescOption: { minimal: true } })
-  return { code: out.code, changed: true, watchFiles: [resolved, ...factory.watchFiles] }
+  return {
+    code: out.code,
+    changed: true,
+    watchFiles: [resolved, ...factory.watchFiles],
+    warnings: [...warnings, ...factory.warnings],
+  }
 }
 
 function collectDefaultImports(ast: File): Map<string, { source: string; declaration: ImportDeclaration }> {
@@ -181,6 +203,7 @@ function createStaticTemplateFactory(
   tplName: string,
   mountFilePath: string,
   resolveImportPath: (importer: string, source: string) => string | null,
+  strict: boolean,
 ): StaticTemplateFactory | null {
   let source: string
   try {
@@ -195,9 +218,9 @@ function createStaticTemplateFactory(
   } catch {
     return null
   }
-  // transformFile's whole-file checks don't run on code inlined here. A
-  // failed check aborts the inlining, and the pipeline reports it.
-  assertNoStringTags(ast)
+  // transformFile's whole-file checks don't run on code inlined here. With
+  // `strict`, a failed check aborts the inlining, and the pipeline reports it.
+  checkStringTags(ast)
 
   const classDecl = findDefaultClassDeclaration(ast)
   if (!classDecl || !canUseStaticCompiledComponent(classDecl)) return null
@@ -240,9 +263,13 @@ function createStaticTemplateFactory(
   if (nodeContainsAnyIdentifier(jsx, blockedRootBindings)) return null
 
   const importedFnDecls: Statement[] = []
+  const importedWarnings: GeaCompileError[] = []
   for (const imported of importedFns) {
-    const compiled = compileImportedStaticFunction(imported, ctx)
+    const { result: compiled, warnings } = collectUnsupportedJsx(strict, () =>
+      compileImportedStaticFunction(imported, ctx),
+    )
     if (!compiled) return null
+    for (const w of warnings) importedWarnings.push(withSourceFile(w, imported.file))
     if (compiled.factoryName) {
       ctx.directFnFactoryAliases.set(imported.localName, compiled.factoryName)
     } else if (compiled.fnDecl) {
@@ -296,6 +323,7 @@ function createStaticTemplateFactory(
     mountExpression: t.callExpression(t.identifier(tplName + '_create'), disposerArg),
     importsNeeded: ctx.importsNeeded,
     watchFiles: [...watchFiles],
+    warnings: importedWarnings,
   }
 }
 
@@ -454,7 +482,7 @@ function collectImportedStaticFunctionComponents(
         }
         ctx.directFnComponents?.add(localName)
         ctx.directFnComponentParams?.set(localName, params)
-        importedFns.push({ localName, fnDecl, params })
+        importedFns.push({ localName, fnDecl, params, file: resolved })
         continue
       }
 

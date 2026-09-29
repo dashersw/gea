@@ -7,6 +7,7 @@ import { normalizeArrowComponents } from './preprocess/arrow-components.ts'
 import { isComponentTag } from './utils/component-tags.ts'
 import { ensureGeaCompilerSymbolImports } from './utils/imports.ts'
 import { clearCaches as clearStoreCaches } from './parse/store-analysis.ts'
+import { withSourceFile } from './utils/compile-error.ts'
 
 const traverse = typeof (babelTraverse as any).default === 'function' ? (babelTraverse as any).default : babelTraverse
 const generate =
@@ -15,6 +16,8 @@ const generate =
 interface CompileResult {
   compiledModules: Record<string, string>
   errors: Array<{ file: string; message: string }>
+  /** JSX the compiler can't compile, compiled as before. Empty with `strict`, which reports it in `errors`. */
+  warnings: Array<{ file: string; message: string }>
 }
 
 function resolveVirtualFile(source: string, files: Record<string, string>): string | null {
@@ -32,9 +35,10 @@ function isComponentImportSource(source: string): boolean {
   return true
 }
 
-export function compileForBrowser(files: Record<string, string>): CompileResult {
+export function compileForBrowser(files: Record<string, string>, options: { strict?: boolean } = {}): CompileResult {
   const compiledModules: Record<string, string> = {}
   const errors: Array<{ file: string; message: string }> = []
+  const warnings: Array<{ file: string; message: string }> = []
 
   clearStoreCaches()
   ;(globalThis as any).__geaPlaygroundFiles = files
@@ -164,7 +168,11 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
       const emitted = transformFile(source, virtualSourceFile, {
         directClassComponents: knownClassComponentImports,
         directFactoryComponents: knownFactoryComponentImports,
+        strict: options.strict,
       })
+      for (const warning of emitted.warnings) {
+        warnings.push({ file: filename, message: withSourceFile(warning, filename).message })
+      }
       if (emitted.changed) {
         const reparsed = parseSource(emitted.code)
         if (reparsed) {
@@ -186,5 +194,5 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
     }
   }
 
-  return { compiledModules, errors }
+  return { compiledModules, errors, warnings }
 }

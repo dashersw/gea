@@ -128,7 +128,7 @@ function createExecutableModules(compiledModules, fileOrder) {
   return modules
 }
 
-function generateSrcdoc(modules, entryFile, previewCSS) {
+function generateSrcdoc(modules, entryFile, previewCSS, warnings) {
   const runtimeUrl = playgroundModuleUrl('gea-playground-runtime.js')
   return `<!DOCTYPE html>
 <html>
@@ -140,7 +140,7 @@ function generateSrcdoc(modules, entryFile, previewCSS) {
 </style>
 </head>
 <body>
-<div id="app"></div>
+${generateWarningsHtml(warnings)}<div id="app"></div>
 <script type="module">
   import * as geaRuntime from '${runtimeUrl}'
 
@@ -222,11 +222,21 @@ ${errorHtml}
 </html>`
 }
 
+// The app still runs, so the warnings go above it rather than replacing it.
+function generateWarningsHtml(warnings) {
+  if (!warnings || warnings.length === 0) return ''
+  const items = warnings
+    .map((w) => `<pre style="white-space:pre-wrap;margin:6px 0 0;font-size:12px">${escapeHtml(w.message)}</pre>`)
+    .join('')
+  return `<div class="gea-compiler-warnings" style="font-family:'IBM Plex Mono',monospace;color:#ffb454;border:1px solid #ffb454;border-radius:6px;padding:8px 12px;margin-bottom:16px"><strong>Compiler warnings</strong>${items}</div>
+`
+}
+
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-export async function renderPreview(iframe, compiledModules, fileOrder, errors, previewCSS) {
+export async function renderPreview(iframe, compiledModules, fileOrder, errors, previewCSS, warnings) {
   if (errors && errors.length > 0) {
     iframe.srcdoc = generateErrorSrcdoc(errors)
     return
@@ -234,5 +244,5 @@ export async function renderPreview(iframe, compiledModules, fileOrder, errors, 
 
   const modules = createExecutableModules(compiledModules, fileOrder)
   const entryFile = fileOrder[fileOrder.length - 1]
-  iframe.srcdoc = generateSrcdoc(modules, entryFile, previewCSS)
+  iframe.srcdoc = generateSrcdoc(modules, entryFile, previewCSS, warnings)
 }

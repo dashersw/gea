@@ -48,7 +48,7 @@ import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
 import { normalizeArrowComponents } from './preprocess/arrow-components.ts'
 import { transformFile, type TransformResult } from './closure-codegen/transform.ts'
 import { injectHMR } from './postprocess/hmr.ts'
-import { compilerError, isGeaCompileError, type GeaCompileError } from './utils/compile-error.ts'
+import { compilerError, isGeaCompileError, withSourceFile, type GeaCompileError } from './utils/compile-error.ts'
 import { isComponentTag, pascalToKebabCase } from './utils/component-tags.ts'
 import { ensureGeaCompilerSymbolImports } from './utils/imports.ts'
 import type { GeaIrComponent, GeaIrModule } from './closure-codegen/ir.ts'
@@ -63,6 +63,10 @@ export interface CompilerContext {
   isSSR: boolean
   /** Compiling for the embedded/native (geatsc/IR) backend. Threaded to transformFile. */
   embedded?: boolean
+  /** Fail on JSX the compiler can't compile instead of passing it to `warn`. See `GeaPluginOptions.strict`. */
+  strict?: boolean
+  /** Receives each warning about JSX the compiler can't compile, with the file and location added. */
+  warn?: (warning: GeaCompileError) => void
   hmrImportSource: string
   isStoreModule: (filePath: string) => boolean
   isComponentModule: (filePath: string) => boolean
@@ -231,8 +235,10 @@ export function transform(
         embedded: ctx.embedded,
         sourceMaps: true,
         inputSourceMap: sourceMap,
+        strict: ctx.strict,
       }
       const emitted = transformFile(source, sourceFile, transformOptions)
+      for (const warning of emitted.warnings) ctx.warn?.(withSourceFile(warning, sourceFile))
       if (emitted.changed) {
         ir = emitted.ir
         // Re-parse the transformed code so the downstream passes (HMR, __geaTagName
@@ -346,23 +352,4 @@ function invalidEmitError(error: any, decodedMap: TransformResult['decodedMap'])
   const segment = segments.filter((s) => s.length >= 4 && s[0] <= at.column).pop()
   if (segment) err.loc = { line: segment[2] + 1, column: segment[3] }
   return err
-}
-
-/**
- * Put the file and location in the message and in Vite's `loc`, so the dev
- * overlay and a failed `vite build` both point at the source. Drops Babel's
- * `pos`: Vite would build a code frame from it without checking which code
- * it belongs to.
- */
-function withSourceFile(err: GeaCompileError, sourceFile: string): Error {
-  const where = err.loc ? `${sourceFile}:${err.loc.line}:${err.loc.column}` : sourceFile
-  const [first, ...rest] = err.message.split('\n')
-  const out = new Error([`[gea] ${first} (${where})`, ...rest].join('\n'), { cause: err.cause }) as GeaCompileError & {
-    id?: string
-  }
-  out.__geaCompileError = true
-  out.hint = err.hint
-  out.id = sourceFile
-  if (err.loc) out.loc = { file: sourceFile, line: err.loc.line, column: err.loc.column }
-  return out
 }

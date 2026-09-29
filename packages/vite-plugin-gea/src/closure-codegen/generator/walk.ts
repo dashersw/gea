@@ -11,7 +11,7 @@ import type {
 } from '@babel/types'
 
 import { generate, t } from '../../utils/babel-interop.ts'
-import { compilerError } from '../../utils/compile-error.ts'
+import { compilerError, reportUnsupportedJsx } from '../../utils/compile-error.ts'
 import { isCaptureEventAttr, toGeaEventType } from '../../utils/events.ts'
 
 import {
@@ -233,10 +233,12 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
       // The component would get its props without the spread (#198).
       const spread = opening.attributes.find((attr): attr is JSXSpreadAttribute => t.isJSXSpreadAttribute(attr))
       if (spread) {
-        throw compilerError(
-          `Spread attributes like {...${spreadSource(spread.argument)}} on <${tagName}> are not supported.`,
-          spread,
-          `Pass each prop individually: <${tagName} label={…} onSelect={…} />.`,
+        reportUnsupportedJsx(
+          compilerError(
+            `Spread attributes like {...${spreadSource(spread.argument)}} on <${tagName}> are not supported.`,
+            spread,
+            `Pass each prop individually: <${tagName} label={…} onSelect={…} />.`,
+          ),
         )
       }
       const slot: Slot = {
@@ -258,10 +260,12 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
       if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name) || !isCaptureEventAttr(attr.name.name)) continue
       const rawAttrName = attr.name.name
       const bubbling = rawAttrName.slice(0, -'Capture'.length)
-      throw compilerError(
-        `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
-        attr,
-        `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`,
+      reportUnsupportedJsx(
+        compilerError(
+          `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
+          attr,
+          `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`,
+        ),
       )
     }
     // `{...obj}`: one slot applies the spreads at runtime, together with the

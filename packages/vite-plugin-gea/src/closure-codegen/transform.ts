@@ -6,7 +6,12 @@ import type { ClassDeclaration, ClassMethod, File, Statement, TSTypeLiteral } fr
 
 import { parseModule } from '../parse/parser.ts'
 import { generate, t } from '../utils/babel-interop.ts'
-import { compilerError } from '../utils/compile-error.ts'
+import {
+  collectUnsupportedJsx,
+  compilerError,
+  reportUnsupportedJsx,
+  type GeaCompileError,
+} from '../utils/compile-error.ts'
 
 import type { DirectFnComponentParams } from './emit.ts'
 import { buildCreateTemplateMethod, createEmitContext, lowerJsxInStatement } from './emit.ts'
@@ -47,7 +52,7 @@ import {
 } from './transform/transform-component-props.ts'
 import { ensureCoreImports, injectTemplateDecls } from './transform/transform-imports.ts'
 import { extractPrecedingStatements, foldEarlyReturnGuards } from './transform/transform-template-methods.ts'
-import { assertNoNestedComponentClasses, assertNoStringTags } from './transform/transform-unsupported-jsx.ts'
+import { checkNestedComponentClasses, checkStringTags } from './transform/transform-unsupported-jsx.ts'
 
 export interface TransformResult {
   code: string
@@ -65,6 +70,8 @@ export interface TransformResult {
     module: GeaIrModule
     components: GeaIrComponent[]
   }
+  /** JSX the compiler can't compile, compiled as before. Always empty with `strict`, which throws instead. */
+  warnings: GeaCompileError[]
 }
 
 export interface TransformFileOptions {
@@ -80,9 +87,25 @@ export interface TransformFileOptions {
    * itself compiler output. The returned map then points at the user's file.
    */
   inputSourceMap?: unknown
+  /**
+   * Throw on JSX the compiler can't compile. Without it, each one is returned
+   * in `warnings` and compiled the way it was before the checks existed.
+   */
+  strict?: boolean
 }
 
 export function transformFile(source: string, _filename?: string, options: TransformFileOptions = {}): TransformResult {
+  const { result, warnings } = collectUnsupportedJsx(options.strict === true, () =>
+    transformModule(source, _filename, options),
+  )
+  return { ...result, warnings }
+}
+
+function transformModule(
+  source: string,
+  _filename: string | undefined,
+  options: TransformFileOptions,
+): Omit<TransformResult, 'warnings'> {
   // Skip quickly if not JSX-bearing
   if (!source.includes('<') || !source.includes('>')) {
     return { code: source, changed: false, rewritten: [], importsNeeded: [] }
@@ -93,8 +116,8 @@ export function transformFile(source: string, _filename?: string, options: Trans
   // file uncompiled.
   const ast = parseModule(source)
 
-  assertNoNestedComponentClasses(ast)
-  assertNoStringTags(ast)
+  checkNestedComponentClasses(ast)
+  checkStringTags(ast)
 
   const ctx = createEmitContext()
   ctx.irTemplates = []
@@ -172,7 +195,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
         // Checked before extendsComponent, which only recognizes a subclass of
         // another component (imported, aliased) by a template() it can compile.
         if (bodyContainsJsx(templateMethod.body) && extendsGeaComponent(classDecl, ctx, geaImports)) {
-          throw nonJsxTemplateError(classDecl, templateMethod)
+          reportUnsupportedJsx(nonJsxTemplateError(classDecl, templateMethod))
         }
         continue
       }
@@ -693,11 +716,11 @@ function collectGeaImports(ast: File): Set<string> {
 
 /**
  * Only `return <jsx />` compiles. A `template()` that builds its JSX any
- * other way (`return c ? <A /> : <B />`) would keep its raw JSX calls and
- * render nothing, so fail the build. Function components are compiled by
- * `rewriteFnComponent`, not here.
+ * other way (`return c ? <A /> : <B />`) keeps its raw JSX calls and renders
+ * nothing. Function components are compiled by `rewriteFnComponent`, not
+ * here.
  */
-function nonJsxTemplateError(classDecl: ClassDeclaration, templateMethod: ClassMethod): Error {
+function nonJsxTemplateError(classDecl: ClassDeclaration, templateMethod: ClassMethod): GeaCompileError {
   const className = classDecl.id?.name ?? '<anonymous>'
   const ret = templateMethod.body.body.find((s) => t.isReturnStatement(s))
   return compilerError(
