@@ -51,6 +51,32 @@ describe('reactiveAttr – static path', () => {
   })
 })
 
+describe('reactiveAttr – namespaced attributes', () => {
+  it('sets, updates, and removes xlink attributes in their namespace', async () => {
+    const s = new Store<{ href: string | null }>({ href: '#a' }) as any
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use')
+    const d = createDisposer()
+    reactiveAttr(use, d, s, 'xlink:href', ['href'])
+    await flush()
+    assert.equal(use.getAttributeNS('http://www.w3.org/1999/xlink', 'href'), '#a')
+    s.href = '#b'
+    await flush()
+    assert.equal(use.getAttributeNS('http://www.w3.org/1999/xlink', 'href'), '#b')
+    s.href = null
+    await flush()
+    assert.equal(use.hasAttributeNS('http://www.w3.org/1999/xlink', 'href'), false)
+  })
+
+  it('sets xml attributes in their namespace', async () => {
+    const s = new Store({ lang: 'en' }) as any
+    const el = document.createElement('p')
+    const d = createDisposer()
+    reactiveAttr(el, d, s, 'xml:lang', ['lang'])
+    await flush()
+    assert.equal(el.getAttributeNS('http://www.w3.org/XML/1998/namespace', 'lang'), 'en')
+  })
+})
+
 describe('reactiveAttr – getter mode', () => {
   it('reacts to any tracked dep in getter', async () => {
     const s = new Store({ base: 'u', id: 1 }) as any

@@ -234,7 +234,11 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
     let html = '<' + tagName
     for (const attr of opening.attributes) {
       if (t.isJSXAttribute(attr)) {
-        const rawAttrName = t.isJSXIdentifier(attr.name) ? attr.name.name : ''
+        const rawAttrName = t.isJSXIdentifier(attr.name)
+          ? attr.name.name
+          : t.isJSXNamespacedName(attr.name)
+            ? `${attr.name.namespace.name}:${attr.name.name.name}`
+            : ''
         const attrName = normalizeAttrName(rawAttrName)
         if (!attr.value) {
           html += ' ' + attrName

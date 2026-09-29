@@ -21,8 +21,21 @@ export function patch(node: Node, kind: PatchKind, prev: unknown, next: unknown,
   }
   if (kind === 'attr') {
     const el = node as Element
-    if (next == null) el.removeAttribute(extra!)
-    else el.setAttribute(extra!, String(next))
+    const name = extra!
+    const namespace =
+      name.startsWith('xlink:')
+        ? 'http://www.w3.org/1999/xlink'
+        : name.startsWith('xml:')
+          ? 'http://www.w3.org/XML/1998/namespace'
+          : null
+    if (next == null) {
+      if (namespace) el.removeAttributeNS(namespace, name.slice(name.indexOf(':') + 1))
+      else el.removeAttribute(name)
+    } else if (namespace) {
+      el.setAttributeNS(namespace, name, String(next))
+    } else {
+      el.setAttribute(name, String(next))
+    }
     return next
   }
   // bool

@@ -37,6 +37,21 @@ export default class C extends Component {
     assert.ok(code.includes('"href"') || code.includes("'href'"))
   })
 
+  it('preserves namespaced JSX attribute names', () => {
+    const { code, changed } = compile(
+      `import { Component } from '@geajs/core'
+export default class C extends Component {
+  icon = '#star'
+  lang = 'en'
+  template() { return <svg><use xlink:href={this.icon} /><text xml:lang={this.lang}>x</text><use xlink:href="#static" /></svg> }
+}`,
+    )
+    assert.equal(changed, true)
+    assert.match(code, /reactiveAttr\([^;]*["']xlink:href["']/)
+    assert.match(code, /reactiveAttr\([^;]*["']xml:lang["']/)
+    assert.match(code, /xlink:href=#static/)
+  })
+
   it('dynamic src uses reactiveAttr', () => {
     const { code, changed } = compile(
       `import { Component } from '@geajs/core'
