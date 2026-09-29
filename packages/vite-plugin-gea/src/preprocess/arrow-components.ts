@@ -72,7 +72,8 @@ export function normalizeArrowComponents(ast: t.File, filename?: string): boolea
 }
 
 function arrowToFunctionDeclaration(name: string, arrow: t.ArrowFunctionExpression): t.FunctionDeclaration | null {
-  if (readsFunctionScopedBinding(arrow.body)) return null
+  // Parameter defaults are evaluated in the function's scope too.
+  if (readsFunctionScopedBinding(arrow.params) || readsFunctionScopedBinding(arrow.body)) return null
   const body = t.isBlockStatement(arrow.body) ? arrow.body : t.blockStatement([t.returnStatement(arrow.body)])
   const fn = t.functionDeclaration(t.identifier(name), arrow.params, body, false, arrow.async)
   // Carries over loc, comments, type parameters and the return type annotation.

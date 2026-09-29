@@ -210,6 +210,8 @@ describe('normalizeArrowComponents', () => {
       export let Mutable = () => <p />
       export const UsesThis = () => <p>{this.x}</p>
       export const UsesArguments = () => <p>{arguments[0]}</p>
+      export const ThisInDefault = (p = this.x) => <p>{p}</p>
+      export const ArgumentsInDefault = ({ a } = arguments[0]) => <p>{a}</p>
     `,
       { sourceType: 'module', plugins: ['jsx', 'typescript'] },
     )
