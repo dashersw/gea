@@ -25,6 +25,12 @@ const PARTS = `
     cache.set(key, node)
     return node
   }
+  // Returns the node the previous call for \`key\` got, and keeps this one for the next.
+  function swap(key: any, node: any) {
+    const prev = cache.get(key) ?? node
+    cache.set(key, node)
+    return prev
+  }
   export class Profile extends Component {
     created() { counter.p++ }
     dispose() { counter.pd++; super.dispose() }
@@ -493,6 +499,60 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     h.flush()
     assert.equal(card(), 'T4T4')
     assert.equal(h.counter.n, 2)
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  // User code can keep JSX that it gets as a call argument, so it builds on the
+  // parent, as on main, and stays live whenever user code shows it again.
+  it('keeps JSX live that user code gets from a cache or creates', async () => {
+    const h = await mountApp(`<Card>{cache.get(ui.fancy) ?? cacheSet(ui.fancy, <LiveTitle />)}</Card>`, 'get-or-create')
+    const card = () => [...h.root.querySelectorAll('.card b')].map((b) => b.textContent).join('')
+    assert.equal(card(), 'T0')
+    h.ui.tick = 1
+    h.flush()
+    assert.equal(card(), 'T1')
+    await toggle(h)
+    assert.equal(card(), 'T1')
+    await toggle(h)
+    h.ui.tick = 2
+    h.flush()
+    assert.equal(card(), 'T2')
+    assert.equal(h.counter.n, 2)
+    assert.equal(h.counter.d, 0)
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  it('keeps JSX live that a cache hands back on every other read', async () => {
+    const h = await mountApp(
+      `<Card>{ui.rows.map((r: number) => cache.get(r * 10 + (ui.tick % 2)) ?? cacheSet(r * 10 + (ui.tick % 2), <LiveTitle />))}</Card>`,
+      'alternate-cache',
+    )
+    const card = () => [...h.root.querySelectorAll('.card b')].map((b) => b.textContent).join('')
+    assert.equal(card(), 'T0T0')
+    for (let tick = 1; tick <= 4; tick++) {
+      h.ui.tick = tick
+      h.flush()
+      assert.equal(card(), `T${tick}T${tick}`)
+    }
+    assert.equal(h.counter.n, 4)
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  it('keeps JSX live that user code hands out one read later', async () => {
+    const h = await mountApp(
+      `<Card>{ui.tick >= 0 && ui.rows.map((r: number) => swap(r, <LiveTitle />))}</Card>`,
+      'hand-out-later',
+    )
+    const card = () => [...h.root.querySelectorAll('.card b')].map((b) => b.textContent).join('')
+    assert.equal(card(), 'T0T0')
+    for (let tick = 1; tick <= 3; tick++) {
+      h.ui.tick = tick
+      h.flush()
+      assert.equal(card(), `T${tick}T${tick}`)
+    }
     h.dispose()
     assertTitlesLive(h, 0)
   })

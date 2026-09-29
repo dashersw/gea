@@ -5,7 +5,7 @@ import { t } from '../../utils/babel-interop.ts'
 import type { EmitContext } from './emit-context.ts'
 import { compileJsxToBlock } from './emit-core.ts'
 import { substituteBindings } from './emit-substitution.ts'
-import { containsJsx, lowerJsxInExpression } from './emit-jsx-lowering.ts'
+import { lowerJsxInExpression } from './emit-jsx-lowering.ts'
 import { buildMapBranchFn } from './emit-map-branch.ts'
 import { PROP_JSX_HELPER } from './prop-jsx-helper.ts'
 import type { Slot } from '../generator.ts'
@@ -336,9 +336,10 @@ function memoizedThunk(block: any): Expression {
  * Build the thunk for a prop or `children` expression.
  *
  * Every read re-runs the expression, so a condition like `cond ? <A /> : 'b'`
- * stays tracked by whoever reads the prop. Each JSX site the expression
- * evaluates directly builds its Node once while a read selects it and is
- * disposed by the first read that doesn't (see `PROP_JSX_HELPER`):
+ * stays tracked by whoever reads the prop. JSX whose only way out is the
+ * value (see `valueJsx`) is kept by a helper (see `PROP_JSX_HELPER`). Each
+ * such JSX site the expression evaluates directly builds its Node once while
+ * a read selects it and is disposed by the first read that doesn't:
  *
  *   (() => {
  *     const __j = __geaPropJsx(d, 1, false);
@@ -346,30 +347,39 @@ function memoizedThunk(block: any): Expression {
  *     return () => __j.read(__v);
  *   })()
  *
- * JSX inside a nested function (`xs.map((x) => <Row x={x} />)`,
- * `(() => <Row />)()`) is built again each time the function runs. In
- * `children` the function asks `__j.scope()` which disposer to build on: the
- * running read's while a read runs it, disposed once the slot drops that
- * read's nodes, or the parent's when it runs after the read, as a function the
- * read hands out (`(x) => <Row x={x} />`) does. A function whose code names
- * `d` builds on the `d` it sees, as without this thunk. A named prop with such
- * JSX keeps a memo of its whole value instead, as before.
+ * In `children`, such JSX that a function the read runs returns
+ * (`xs.map((x) => <Row x={x} />)`, `(() => <Row />)()`) is built again each
+ * time the function runs, through `__j.item((d) => { <Row block> })`. That
+ * puts it on the read's disposer, disposed once the slot drops the read's
+ * nodes. If the function's code names `d`, the JSX builds on the `d` it sees
+ * instead, as without this thunk. Any other JSX can be kept by user code, so
+ * it builds on the parent's `d`, as before. A named prop with JSX other than
+ * sites keeps a memo of its whole value, as before.
  */
 function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean): Expression {
-  const perRead = hasNestedFunctionJsx(expr)
-  if (perRead && !isChildren) {
+  const outs = valueJsx(expr)
+  let onlySites = true
+  mapJsx(expr, (jsx) => {
+    if (outs.get(jsx) !== null) onlySites = false
+    return jsx
+  })
+  if (!isChildren && !onlySites) {
     return memoizedThunk(t.blockStatement([t.returnStatement(lowerJsxInExpression(expr, ctx))]))
   }
   let sites = 0
-  const value = lowerJsxInExpression(perRead ? scopeNestedFunctionJsx(expr) : expr, ctx, (built: any) =>
-    t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier('site')), [
-      t.numericLiteral(sites++),
-      t.arrowFunctionExpression([t.identifier('d')], built.callee.body),
-    ]),
-  ) as Expression
-  if (sites === 0 && !perRead) return t.arrowFunctionExpression([], value)
+  let items = 0
+  const build = (jsx: any) => t.arrowFunctionExpression([t.identifier('d')], compileJsxToBlock(jsx, ctx))
+  const wrapped = mapJsx(expr, (jsx) => {
+    const fn = outs.get(jsx)
+    if (fn === null) return helperCall('site', [t.numericLiteral(sites++), build(jsx)])
+    if (fn === undefined || namesD(fn)) return jsx
+    items++
+    return helperCall('item', [build(jsx)])
+  })
+  const value = lowerJsxInExpression(wrapped, ctx) as Expression
+  if (sites === 0 && items === 0) return t.arrowFunctionExpression([], value)
   ctx.importsNeeded.add(PROP_JSX_HELPER)
-  if (perRead) ctx.importsNeeded.add('createDisposer')
+  if (items > 0) ctx.importsNeeded.add('createDisposer')
   const outer = t.arrowFunctionExpression(
     [],
     t.blockStatement([
@@ -379,67 +389,154 @@ function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean):
           t.callExpression(t.identifier(PROP_JSX_HELPER), [
             t.identifier('d'),
             t.numericLiteral(sites),
-            t.booleanLiteral(perRead),
+            t.booleanLiteral(items > 0),
           ]),
         ),
       ]),
       t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__v'), t.arrowFunctionExpression([], value))]),
-      t.returnStatement(
-        t.arrowFunctionExpression(
-          [],
-          t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier('read')), [t.identifier('__v')]),
-        ),
-      ),
+      t.returnStatement(t.arrowFunctionExpression([], helperCall('read', [t.identifier('__v')]))),
     ]),
   )
   return t.callExpression(outer, [])
 }
 
-/** Whether an expression has JSX inside a nested function, as in `xs.map((x) => <Row />)`. */
-function hasNestedFunctionJsx(node: any): boolean {
-  if (!node || typeof node !== 'object') return false
-  if (t.isJSXElement(node) || t.isJSXFragment(node)) return false
-  if (t.isFunction(node)) return containsJsx(node)
-  for (const k of Object.keys(node)) {
-    if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
-    const v = node[k]
-    if (Array.isArray(v) ? v.some(hasNestedFunctionJsx) : hasNestedFunctionJsx(v)) return true
-  }
-  return false
+function helperCall(method: string, args: Expression[]): Expression {
+  return t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier(method)), args)
 }
 
 /**
- * Copy `node`, starting each function with JSX in it with
- * `const d = __j.scope()`, so the JSX it builds goes on the disposer of the
- * read that runs it, or on the parent's when it runs after the read. JSX
- * elements are left as they are. A function whose code names `d` anywhere is
- * left as it is too, since the new `d` would shadow or clash with the user's.
- * Its `d` then means what it does without this rewrite: the user's binding,
- * or the parent's disposer.
+ * Map each JSX element in `expr` whose only way out is the expression's value
+ * to the innermost function it's in, or to null outside any function.
+ *
+ * That's JSX the value is made of: a branch of `?:`, `&&`, `||` or `??`, an
+ * array element, the receiver or an argument of `concat`, or the last
+ * expression of a sequence. It's also JSX that a function the read runs
+ * returns into the value: a `.map` or `.flatMap` callback, an IIFE (also
+ * through `.call` or `.apply`), or a `const` helper declared in one of those
+ * whose every use is a call made that way. JSX anywhere else, like a call
+ * argument, a variable or a function handed out, can be kept by user code, so
+ * it isn't in the map.
  */
-function scopeNestedFunctionJsx(node: any): any {
-  if (!node || typeof node !== 'object') return node
-  if (Array.isArray(node)) return node.map(scopeNestedFunctionJsx)
-  if (t.isJSXElement(node) || t.isJSXFragment(node)) return node
-  const out: any = { ...node }
+function valueJsx(expr: any): Map<any, any> {
+  const found = new Map<any, any>()
+  // Identifiers called where the call's result goes into the value.
+  const called = new Set<any>()
+  const out = (node: any, fn: any): void => {
+    if (!node) return
+    if (t.isJSXElement(node) || t.isJSXFragment(node)) found.set(node, fn)
+    else if (t.isConditionalExpression(node)) {
+      out(node.consequent, fn)
+      out(node.alternate, fn)
+    } else if (t.isLogicalExpression(node)) {
+      out(node.left, fn)
+      out(node.right, fn)
+    } else if (t.isSequenceExpression(node)) out(node.expressions[node.expressions.length - 1], fn)
+    else if (t.isArrayExpression(node)) for (const e of node.elements) out(e, fn)
+    else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+      const callee: any = node.callee
+      const run = runByCall(node)
+      if (run) returns(run)
+      else if (methodName(callee) === 'concat') {
+        out(callee.object, fn)
+        for (const a of node.arguments) out(a, fn)
+      } else if (t.isIdentifier(callee)) called.add(callee)
+    }
+  }
+  const returns = (fn: any): void => {
+    if (!t.isBlockStatement(fn.body)) return out(fn.body, fn)
+    forEachReturn(fn.body, (arg) => out(arg, fn))
+    const helpers = constFunctions(fn.body)
+    for (let grew = true; grew; ) {
+      grew = false
+      for (const [id, helper] of helpers) {
+        if (!references(fn.body, id).every((r) => called.has(r))) continue
+        helpers.delete(id)
+        returns(helper)
+        grew = true
+      }
+    }
+  }
+  out(expr, null)
+  return found
+}
+
+function isPlainFunction(node: any): boolean {
+  return (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) && !node.async && !node.generator
+}
+
+function methodName(callee: any): string | null {
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return null
+  return !callee.computed && t.isIdentifier(callee.property) ? callee.property.name : null
+}
+
+/** The function a call runs right away and returns from: an IIFE or a `.map`/`.flatMap` callback. */
+function runByCall(call: any): any {
+  if (isPlainFunction(call.callee)) return call.callee
+  const name = methodName(call.callee)
+  if ((name === 'call' || name === 'apply') && isPlainFunction(call.callee.object)) return call.callee.object
+  if ((name === 'map' || name === 'flatMap') && isPlainFunction(call.arguments[0])) return call.arguments[0]
+  return null
+}
+
+/** Call `f` with each `return` argument in a function body, in the statements `lowerJsxInStatement` lowers. */
+function forEachReturn(stmt: any, f: (arg: any) => void): void {
+  if (!stmt) return
+  if (t.isReturnStatement(stmt)) f(stmt.argument)
+  else if (t.isBlockStatement(stmt)) for (const s of stmt.body) forEachReturn(s, f)
+  else if (t.isIfStatement(stmt)) {
+    forEachReturn(stmt.consequent, f)
+    forEachReturn(stmt.alternate, f)
+  } else if (t.isFor(stmt) || t.isWhile(stmt)) forEachReturn(stmt.body, f)
+  else if (t.isSwitchStatement(stmt)) for (const c of stmt.cases) for (const s of c.consequent) forEachReturn(s, f)
+  else if (t.isTryStatement(stmt)) {
+    forEachReturn(stmt.block, f)
+    forEachReturn(stmt.handler?.body, f)
+    forEachReturn(stmt.finalizer, f)
+  }
+}
+
+/** The `const name = () => …` functions declared directly in a block, by the declared identifier. */
+function constFunctions(block: any): Map<any, any> {
+  const found = new Map<any, any>()
+  for (const s of block.body) {
+    if (!t.isVariableDeclaration(s, { kind: 'const' })) continue
+    for (const decl of s.declarations) {
+      if (t.isIdentifier(decl.id) && isPlainFunction(decl.init)) found.set(decl.id, decl.init)
+    }
+  }
+  return found
+}
+
+/** Identifiers in `node` named like `id`, other than `id` itself and property names. */
+function references(node: any, id: any, found: any[] = []): any[] {
+  if (!node || typeof node !== 'object') return found
+  if (Array.isArray(node)) {
+    for (const n of node) references(n, id, found)
+    return found
+  }
+  if (t.isIdentifier(node) && node !== id && node.name === id.name) found.push(node)
   for (const k of Object.keys(node)) {
     if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
-    out[k] = scopeNestedFunctionJsx(node[k])
+    const isName =
+      !node.computed &&
+      ((k === 'property' && (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))) ||
+        (k === 'key' && (t.isProperty(node) || t.isMethod(node))))
+    if (!isName) references(node[k], id, found)
   }
-  const fn = t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)
-  if (!fn || !containsJsx(node) || namesD(node)) return out
-  const scope = t.variableDeclaration('const', [
-    t.variableDeclarator(
-      t.identifier('d'),
-      t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier('scope')), []),
-    ),
-  ])
-  if (t.isBlockStatement(out.body)) out.body = { ...out.body, body: [scope, ...out.body.body] }
-  else {
-    out.body = t.blockStatement([scope, t.returnStatement(out.body)])
-    out.expression = false
+  return found
+}
+
+/** Copy `node`, replacing each outermost JSX element with `f(jsx)`. */
+function mapJsx(node: any, f: (jsx: any) => any): any {
+  if (!node || typeof node !== 'object') return node
+  if (Array.isArray(node)) return node.map((n) => mapJsx(n, f))
+  if (t.isJSXElement(node) || t.isJSXFragment(node)) return f(node)
+  const copy: any = { ...node }
+  for (const k of Object.keys(node)) {
+    if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
+    copy[k] = mapJsx(node[k], f)
   }
-  return out
+  return copy
 }
 
 /** Whether user code in `node` has an identifier named `d`, in any position. */

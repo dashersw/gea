@@ -12,28 +12,25 @@ import { t } from '../../utils/babel-interop.ts'
 export const PROP_JSX_HELPER = '__geaPropJsx'
 
 /**
- * `__geaPropJsx(d, sites, perRead)` keeps the JSX one prop thunk builds.
+ * `__geaPropJsx(d, sites, perRead)` keeps the JSX one prop thunk builds whose
+ * only way out is the thunk's value.
  *
  * - `site(i, build)` builds JSX site `i` with its own disposer the first time a
  *   read selects it and returns that Node while it stays selected. A read
  *   that doesn't select a built site disposes it, so it builds again when
  *   selected again, as an in-template conditional does. The site's root is
  *   an element, so disposing it before the reader swaps it out is safe.
- * - `read(fn)` runs one read. With `perRead`, JSX that nested functions build
- *   while the read runs them (`xs.map((x) => <Row />)`) gets a disposer per
- *   read. The nodes the read returns are tagged with a `{ d, nodes }` record,
- *   and the slot that shows them disposes it once it has dropped all of them
- *   (see `reactiveText`). A read none of whose nodes is attached by the next
- *   read, like the child's first read when it installs its props, is
- *   disposed then. JSX a read builds but doesn't return as nodes, as in
- *   `{ rows: xs.map(...) }`, can't be tracked and stays until `d` is disposed.
- *   A read that throws disposes what it built. A node that a later read
- *   returns again is held by user code, as a cache holds it, and can be shown
- *   again after a slot drops it. So the read that built it stays until `d` is
- *   disposed, and a node another record owns is never tagged again.
- * - `scope()` is the disposer a nested function builds on: the running read's,
- *   or `d` when the function runs after the read, as one the read hands out
- *   (`(x) => <Row x={x} />`) does.
+ * - `item(build)` builds JSX that a function the read runs returns
+ *   (`xs.map((x) => <Row />)`) on the running read's disposer, or on `d` when
+ *   no read is running.
+ * - `read(fn)` runs one read. With `perRead`, each read gets a disposer for
+ *   its items. The nodes the read returns that its items built are tagged
+ *   with a `{ d, nodes }` record, and the slot that shows them disposes it
+ *   once it has dropped all of them (see `reactiveText`). A read none of whose
+ *   nodes is attached by the next read, like the child's first read when it
+ *   installs its props, is disposed then. Items a read builds but doesn't
+ *   return as nodes, as in `[[<Row />]]`, can't be tracked and stay until `d`
+ *   is disposed. A read that throws disposes what it built.
  */
 const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   const owner = Symbol.for('gea.jsx.owner')
@@ -43,15 +40,11 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   for (let i = 0; i < sites; i++) scopes.push(d.child())
   let reads = 0
   let shown = []
-  let kept = []
-  const held = new WeakSet()
   let running = null
   if (perRead) {
     d.add(() => {
       for (const s of shown) s.d.dispose()
-      for (const k of kept) k.dispose()
       shown = []
-      kept = []
     })
   }
   return {
@@ -59,19 +52,22 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
       picked[i] = reads
       return built[i] ?? (built[i] = build(scopes[i]))
     },
-    scope() {
-      return running ?? d
+    item(build) {
+      if (!running) return build(d)
+      const n = build(running.d)
+      running.items.add(n)
+      return n
     },
     read(fn) {
       const id = ++reads
-      const own = perRead ? createDisposer() : d
+      const run = perRead ? { d: createDisposer(), items: new Set() } : null
       const outer = running
-      running = own
+      running = run
       let v
       try {
         v = fn()
       } catch (e) {
-        if (perRead) own.dispose()
+        if (run) run.d.dispose()
         throw e
       } finally {
         running = outer
@@ -82,29 +78,15 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
           scopes[i].dispose()
         }
       }
-      if (perRead) {
-        const nodes = (Array.isArray(v) ? v : [v]).filter(
-          (n) => n != null && typeof n.nodeType === 'number' && !built.includes(n),
-        )
-        for (const n of nodes) {
-          const s = n[owner]
-          if (!s || !shown.includes(s)) continue
-          shown.splice(shown.indexOf(s), 1)
-          kept.push(s.d)
-          for (const m of s.nodes) {
-            if (m[owner] === s) m[owner] = undefined
-            held.add(m)
-          }
-        }
+      if (run) {
         shown = shown.filter(
           (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
         )
-        const fresh = nodes.filter((n) => !n[owner] && !held.has(n))
-        const rec = { d: own, nodes: fresh }
-        if (fresh.length > 0) {
-          for (const n of fresh) n[owner] = rec
+        if (run.items.size > 0) {
+          const rec = { d: run.d, nodes: (Array.isArray(v) ? v : [v]).filter((n) => run.items.has(n)) }
+          for (const n of rec.nodes) n[owner] = rec
           shown.push(rec)
-        } else if (own.f.length > 0) shown.push(rec)
+        }
       }
       return v
     },

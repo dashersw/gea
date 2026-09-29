@@ -1,4 +1,4 @@
-import type { ClassMethod, Expression, Statement } from '@babel/types'
+import type { ClassMethod, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
 
@@ -153,73 +153,67 @@ export function containsJsx(node: any): boolean {
   return false
 }
 
-/**
- * Replace JSX nodes inside an expression with block-IIFE returns.
- *
- * `site`, when given, wraps each lowered JSX node that is evaluated directly by
- * the expression (not inside a nested function). Prop thunks use it to build
- * each JSX site once while the surrounding expression stays live.
- */
-export function lowerJsxInExpression(expr: any, ctx: EmitContext, site?: (built: Expression) => Expression): any {
+/** Replace JSX nodes inside an expression with block-IIFE returns. */
+export function lowerJsxInExpression(expr: any, ctx: EmitContext): any {
   if (!expr) return expr
   if (t.isJSXElement(expr) || t.isJSXFragment(expr)) {
     const block = compileJsxToBlock(expr, ctx)
     // `(() => { <block with return root> })()`
-    const built = t.callExpression(t.arrowFunctionExpression([], block), [])
-    return site ? site(built) : built
+    return t.callExpression(t.arrowFunctionExpression([], block), [])
   }
-  const lower = (e: any): any => lowerJsxInExpression(e, ctx, site)
   if (t.isConditionalExpression(expr)) {
     return {
       ...expr,
-      test: lower(expr.test),
-      consequent: lower(expr.consequent),
-      alternate: lower(expr.alternate),
+      test: lowerJsxInExpression(expr.test, ctx),
+      consequent: lowerJsxInExpression(expr.consequent, ctx),
+      alternate: lowerJsxInExpression(expr.alternate, ctx),
     }
   }
   if (t.isLogicalExpression(expr) || t.isBinaryExpression(expr)) {
-    return { ...expr, left: lower(expr.left), right: lower(expr.right) }
+    return { ...expr, left: lowerJsxInExpression(expr.left, ctx), right: lowerJsxInExpression(expr.right, ctx) }
   }
   if (t.isCallExpression(expr) || t.isOptionalCallExpression(expr)) {
     return {
       ...expr,
-      callee: lower(expr.callee),
-      arguments: expr.arguments.map((a: any) => lower(a)),
+      callee: lowerJsxInExpression(expr.callee, ctx),
+      arguments: expr.arguments.map((a: any) => lowerJsxInExpression(a, ctx)),
     }
   }
   if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
     return {
       ...expr,
-      object: lower(expr.object),
-      property: expr.computed ? lower(expr.property) : expr.property,
+      object: lowerJsxInExpression(expr.object, ctx),
+      property: expr.computed ? lowerJsxInExpression(expr.property, ctx) : expr.property,
     }
   }
   if (t.isUnaryExpression(expr) || t.isUpdateExpression(expr)) {
-    return { ...expr, argument: lower(expr.argument) }
+    return { ...expr, argument: lowerJsxInExpression(expr.argument, ctx) }
   }
   if (t.isArrayExpression(expr)) {
-    return { ...expr, elements: expr.elements.map((e: any) => (e ? lower(e) : e)) }
+    return { ...expr, elements: expr.elements.map((e: any) => (e ? lowerJsxInExpression(e, ctx) : e)) }
   }
   if (t.isObjectExpression(expr)) {
     return {
       ...expr,
-      properties: expr.properties.map((p: any) => (t.isObjectProperty(p) ? { ...p, value: lower(p.value) } : p)),
+      properties: expr.properties.map((p: any) =>
+        t.isObjectProperty(p) ? { ...p, value: lowerJsxInExpression(p.value, ctx) } : p,
+      ),
     }
   }
   if (t.isTemplateLiteral(expr)) {
-    return { ...expr, expressions: expr.expressions.map((e: any) => lower(e)) }
+    return { ...expr, expressions: expr.expressions.map((e: any) => lowerJsxInExpression(e, ctx)) }
   }
   if (t.isAssignmentExpression(expr)) {
-    return { ...expr, right: lower(expr.right) }
+    return { ...expr, right: lowerJsxInExpression(expr.right, ctx) }
   }
   if (t.isSequenceExpression(expr)) {
-    return { ...expr, expressions: expr.expressions.map((e: any) => lower(e)) }
+    return { ...expr, expressions: expr.expressions.map((e: any) => lowerJsxInExpression(e, ctx)) }
   }
   if (t.isNewExpression(expr)) {
     return {
       ...expr,
-      callee: lower(expr.callee),
-      arguments: expr.arguments.map((a: any) => lower(a)),
+      callee: lowerJsxInExpression(expr.callee, ctx),
+      arguments: expr.arguments.map((a: any) => lowerJsxInExpression(a, ctx)),
     }
   }
   if (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) {
