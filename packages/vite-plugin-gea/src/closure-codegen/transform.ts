@@ -643,11 +643,19 @@ function applyPropsTypeArgument(
 }
 
 /**
+ * The classes `@geajs/*` packages export that aren't components: core's
+ * `Store` and `Router`, `@geajs/ui`'s `ToastStore`, and `@geajs/mobile`'s
+ * `ViewManager` and `GestureHandler`. Every other exported class is one.
+ */
+const GEA_NON_COMPONENT_EXPORTS = new Set(['Store', 'Router', 'ToastStore', 'ViewManager', 'GestureHandler'])
+
+/**
  * Whether the class is a Gea component whatever its `template()` returns: it
- * extends `Component`, a class imported from `@geajs/*` (or reached through
- * one, as in `gea.Component`), or a component declared in this module or
- * imported from a component module. Any other base, such as `HTMLElement` or
- * a plain class, may use JSX for the HTML strings core's jsx-runtime returns.
+ * extends `Component`, a component imported from `@geajs/*` (or reached
+ * through a namespace, as in `gea.Component`), or a component declared in
+ * this module or imported from a component module. Any other base, such as
+ * `HTMLElement`, `Store` or a plain class, may use JSX for the HTML strings
+ * core's jsx-runtime returns.
  */
 function extendsGeaComponent(
   classDecl: ClassDeclaration,
@@ -658,15 +666,27 @@ function extendsGeaComponent(
   if (t.isIdentifier(base)) {
     return base.name === 'Component' || geaImports.has(base.name) || ctx.directClassComponents?.has(base.name) === true
   }
-  return t.isMemberExpression(base) && t.isIdentifier(base.object) && geaImports.has(base.object.name)
+  if (!t.isMemberExpression(base) || !t.isIdentifier(base.object) || !geaImports.has(base.object.name)) return false
+  const member = t.isStringLiteral(base.property)
+    ? base.property.value
+    : !base.computed && t.isIdentifier(base.property)
+      ? base.property.name
+      : ''
+  return !GEA_NON_COMPONENT_EXPORTS.has(member)
 }
 
-/** Local names bound by imports from `@geajs/*`. */
+/** Local names bound by imports from `@geajs/*`, except to a class that isn't a component. */
 function collectGeaImports(ast: File): Set<string> {
   const names = new Set<string>()
   for (const stmt of ast.program.body) {
     if (!t.isImportDeclaration(stmt) || !stmt.source.value.startsWith('@geajs/')) continue
-    for (const spec of stmt.specifiers) names.add(spec.local.name)
+    for (const spec of stmt.specifiers) {
+      if (t.isImportSpecifier(spec)) {
+        const imported = t.isIdentifier(spec.imported) ? spec.imported.name : spec.imported.value
+        if (GEA_NON_COMPONENT_EXPORTS.has(imported)) continue
+      }
+      names.add(spec.local.name)
+    }
   }
   return names
 }

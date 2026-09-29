@@ -604,7 +604,8 @@ export default class App extends Component {
   })
 
   // Every kind of Gea base: in this file, from a component module, an alias,
-  // a namespace, a package's component.
+  // a namespace or default object, a package's component (also renamed, or a
+  // subpath's default export).
   it('also rejects a ternary template() in a subclass of a component', () => {
     const baseModule = `import { Component } from '@geajs/core'\n\nexport default class Base extends Component {\n  template() {\n    return <div>base</div>\n  }\n}\n`
     for (const [header, base, files] of [
@@ -612,7 +613,10 @@ export default class App extends Component {
       [`import Base from './Base'`, 'Base', { 'Base.tsx': baseModule }],
       [`import { Component as Base } from '@geajs/core'`, 'Base', {}],
       [`import * as gea from '@geajs/core'`, 'gea.Component', {}],
+      [`import gea from '@geajs/core'`, 'gea.Component', {}],
       [`import { View } from '@geajs/mobile'`, 'View', {}],
+      [`import { Dialog as Modal } from '@geajs/ui'`, 'Modal', {}],
+      [`import Dialog from '@geajs/ui/dialog'`, 'Dialog', {}],
     ] as const) {
       const { errors } = compileForBrowser({
         ...files,
@@ -628,6 +632,34 @@ export default class App extends ${base} {
       })
       assert.equal(errors.length, 1, `${header}: ${JSON.stringify(errors)}`)
       assert.match(errors[0].message, /`App\.template\(\)` must return a single JSX element or fragment\./)
+    }
+  })
+
+  // The classes @geajs/* exports that aren't components, however imported.
+  it('still compiles a ternary template() in a subclass of a @geajs class that is not a component', () => {
+    for (const [header, base] of [
+      [`import { Store } from '@geajs/core'`, 'Store'],
+      [`import { Store as Base } from '@geajs/core'`, 'Base'],
+      [`import * as gea from '@geajs/core'`, 'gea.Store'],
+      [`import gea from '@geajs/core'`, 'gea.Store'],
+      [`import { Router } from '@geajs/core/router'`, 'Router'],
+      [`import { ToastStore } from '@geajs/ui/toast'`, 'ToastStore'],
+      [`import { ViewManager } from '@geajs/mobile'`, 'ViewManager'],
+      [`import { GestureHandler } from '@geajs/mobile'`, 'GestureHandler'],
+    ] as const) {
+      const { errors } = compileForBrowser({
+        'App.tsx': `${header}
+
+export class Panel extends ${base} {
+  on = true
+
+  template() {
+    return this.on ? <b>on</b> : <i>off</i>
+  }
+}
+`,
+      })
+      assert.deepEqual(errors, [], header)
     }
   })
 
