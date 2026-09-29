@@ -51458,7 +51458,7 @@ function functionExpressionToDeclaration(name, fn) {
   const decl = libExports.functionDeclaration(libExports.identifier(name), fn.params, fn.body, fn.generator, fn.async);
   libExports.inherits(decl, fn);
   if (!isFunctionComponent(decl)) return null;
-  if (fn.id && fn.id.name !== name && !renameSelfReferences(fn, name)) return null;
+  if (fn.id && !renameSelfReferences(fn, name)) return null;
   return decl;
 }
 function renameSelfReferences(fn, name) {
@@ -51471,7 +51471,11 @@ function renameSelfReferences(fn, name) {
   });
   const binding = fnPath.scope.getOwnBinding(fn.id.name);
   if (binding?.kind !== "local") return true;
-  if (!binding.constant || binding.referencePaths.some((ref) => ref.scope.getBinding(name))) return false;
+  if (!binding.constant) return false;
+  for (const ref of binding.referencePaths) {
+    const target = ref.scope.getBinding(name);
+    if (target && target !== binding) return false;
+  }
   for (const ref of binding.referencePaths) ref.node.name = name;
   return true;
 }
