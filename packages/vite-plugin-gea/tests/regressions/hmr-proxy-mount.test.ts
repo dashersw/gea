@@ -9,7 +9,10 @@ import { compileJsxComponentForHmr } from '../helpers/compile'
 import { HMR_RUNTIME_SOURCE } from '../../src/virtual-modules.ts'
 import { mount } from '../../../gea/src/runtime/mount'
 import { createDisposer } from '../../../gea/src/runtime/disposer'
-import { Store, isClassConstructorValue } from '../../../gea/src/store'
+import { Store } from '../../../gea/src/store'
+import { isClassConstructorValue } from '../../../gea/src/runtime/class-constructor'
+import { CompiledLeanStore } from '../../../gea/src/runtime/compiled-lean-store'
+import { CompiledStore } from '../../../gea/src/runtime/compiled-store'
 
 // The shipped `virtual:gea-hmr` module, evaluated as-is (no Vite: import.meta.hot is undefined).
 const hmrRuntime = await import(`data:text/javascript,${encodeURIComponent(HMR_RUNTIME_SOURCE)}`)
@@ -108,6 +111,19 @@ describe('HMR: proxied components mount through runtime mount() (#112)', { concu
     // Router.page is a getter like this one; binding the class would break identity and `new`.
     assert.equal(new Pages().page, proxy)
   })
+
+  for (const [label, Base] of [
+    ['CompiledLeanStore', CompiledLeanStore],
+    ['CompiledStore', CompiledStore],
+  ] as const) {
+    it(`returns a proxied class stored in a ${label} field as the same proxy (#133)`, () => {
+      const proxy = hmrRuntime.createHotComponentProxy(uniqueUrl('view'), PlainClass)
+      class ViewStore extends Base {
+        view: unknown = proxy
+      }
+      assert.equal((new ViewStore() as any).view, proxy)
+    })
+  }
 
   async function compileFile(name: string, source: string, bindings: Record<string, unknown> = {}) {
     const path = join(tempDir, `${name}.tsx`)
