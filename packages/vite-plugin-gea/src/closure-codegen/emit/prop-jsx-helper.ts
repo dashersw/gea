@@ -20,11 +20,16 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  *   selected again, as an in-template conditional does. The site's root is
  *   an element, so disposing it before the reader swaps it out is safe.
  * - `read(fn)` runs one read. With `perRead`, JSX that nested functions build
- *   (`xs.map((x) => <Row />)`) gets a disposer per read. The nodes the read
- *   returns are tagged with a `{ d, nodes }` record, and the slot that shows
- *   them disposes it once it has dropped all of them (see `reactiveText`). A
- *   read none of whose nodes is attached by the next read, like the child's
- *   first read when it installs its props, is disposed then.
+ *   while the read runs them (`xs.map((x) => <Row />)`) gets a disposer per
+ *   read. The nodes the read returns are tagged with a `{ d, nodes }` record,
+ *   and the slot that shows them disposes it once it has dropped all of them
+ *   (see `reactiveText`). A read none of whose nodes is attached by the next
+ *   read, like the child's first read when it installs its props, is
+ *   disposed then. JSX a read builds but doesn't return as nodes, as in
+ *   `{ rows: xs.map(...) }`, can't be tracked and stays until `d` is disposed.
+ * - `scope()` is the disposer a nested function builds on: the running read's,
+ *   or `d` when the function runs after the read, as one the read hands out
+ *   (`(x) => <Row x={x} />`) does.
  */
 const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   const owner = Symbol.for('gea.jsx.owner')
@@ -34,6 +39,7 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   for (let i = 0; i < sites; i++) scopes.push(d.child())
   let reads = 0
   let shown = []
+  let running = null
   if (perRead) {
     d.add(() => {
       for (const s of shown) s.d.dispose()
@@ -45,10 +51,20 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
       picked[i] = reads
       return built[i] ?? (built[i] = build(scopes[i]))
     },
+    scope() {
+      return running ?? d
+    },
     read(fn) {
       const id = ++reads
       const own = perRead ? createDisposer() : d
-      const v = fn(own)
+      const outer = running
+      running = own
+      let v
+      try {
+        v = fn(own)
+      } finally {
+        running = outer
+      }
       for (let i = 0; i < sites; i++) {
         if (built[i] !== undefined && picked[i] !== id) {
           built[i] = undefined
@@ -56,16 +72,17 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
         }
       }
       if (perRead) {
-        shown = shown.filter((s) => s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false))
+        shown = shown.filter(
+          (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
+        )
         const nodes = (Array.isArray(v) ? v : [v]).filter(
           (n) => n != null && typeof n.nodeType === 'number' && !built.includes(n),
         )
-        if (nodes.length === 0) own.dispose()
-        else {
-          const rec = { d: own, nodes }
+        const rec = { d: own, nodes }
+        if (nodes.length > 0) {
           for (const n of nodes) n[owner] = rec
           shown.push(rec)
-        }
+        } else if (own.f.length > 0) shown.push(rec)
       }
       return v
     },

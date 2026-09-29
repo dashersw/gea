@@ -346,25 +346,26 @@ function memoizedThunk(block: any): Expression {
  *     return () => __j.read(__v);
  *   })()
  *
- * JSX inside a nested function (`xs.map((x) => <Row x={x} />)`) is built again
- * on every read. In `children` each read's JSX gets its own disposer, disposed
- * once the slot drops its nodes. A named prop with such JSX keeps a memo of its
- * whole value instead, as before, and so does a `children` function that the
- * read hands out (`(x) => <Row x={x} />`), which can build JSX after the read.
+ * JSX inside a nested function (`xs.map((x) => <Row x={x} />)`,
+ * `(() => <Row />)()`) is built again each time the function runs. In
+ * `children` the function asks `__j.scope()` which disposer to build on: the
+ * running read's while a read runs it, disposed once the slot drops that
+ * read's nodes, or the parent's when it runs after the read, as a function the
+ * read hands out (`(x) => <Row x={x} />`) does. A named prop with such JSX
+ * keeps a memo of its whole value instead, as before.
  */
 function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean): Expression {
-  const nested = nestedFunctionJsx(expr)
-  if (nested !== 'none' && !isChildren) {
+  const perRead = hasNestedFunctionJsx(expr)
+  if (perRead && !isChildren) {
     return memoizedThunk(t.blockStatement([t.returnStatement(lowerJsxInExpression(expr, ctx))]))
   }
   let sites = 0
-  const value = lowerJsxInExpression(expr, ctx, (built: any) =>
+  const value = lowerJsxInExpression(perRead ? scopeNestedFunctionJsx(expr) : expr, ctx, (built: any) =>
     t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier('site')), [
       t.numericLiteral(sites++),
       t.arrowFunctionExpression([t.identifier('d')], built.callee.body),
     ]),
   ) as Expression
-  const perRead = nested === 'called'
   if (sites === 0 && !perRead) return t.arrowFunctionExpression([], value)
   ctx.importsNeeded.add(PROP_JSX_HELPER)
   if (perRead) ctx.importsNeeded.add('createDisposer')
@@ -395,28 +396,49 @@ function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean):
   return t.callExpression(outer, [])
 }
 
-/**
- * Whether an expression has JSX inside a nested function, and whether each
- * such function runs during the read: `called` when every one is an argument
- * of a call (`xs.map((x) => <Row />)`), `escaping` when one is a value the
- * read hands out (`(x) => <Row x={x} />`).
- */
-function nestedFunctionJsx(expr: any): 'none' | 'called' | 'escaping' {
-  let found: 'none' | 'called' | 'escaping' = 'none'
-  const visit = (node: any, isArgument: boolean): void => {
-    if (!node || typeof node !== 'object' || found === 'escaping') return
-    if (t.isJSXElement(node) || t.isJSXFragment(node)) return
-    if (t.isFunction(node) && containsJsx(node)) found = isArgument ? 'called' : 'escaping'
-    const isCall = t.isCallExpression(node) || t.isOptionalCallExpression(node) || t.isNewExpression(node)
-    for (const k of Object.keys(node)) {
-      if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
-      const v = node[k]
-      if (Array.isArray(v)) for (const x of v) visit(x, isCall && k === 'arguments')
-      else visit(v, false)
-    }
+/** Whether an expression has JSX inside a nested function, as in `xs.map((x) => <Row />)`. */
+function hasNestedFunctionJsx(node: any): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (t.isJSXElement(node) || t.isJSXFragment(node)) return false
+  if (t.isFunction(node)) return containsJsx(node)
+  for (const k of Object.keys(node)) {
+    if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
+    const v = node[k]
+    if (Array.isArray(v) ? v.some(hasNestedFunctionJsx) : hasNestedFunctionJsx(v)) return true
   }
-  visit(expr, false)
-  return found
+  return false
+}
+
+/**
+ * Copy `node`, starting each function with JSX in it with
+ * `const d = __j.scope()`, so the JSX it builds goes on the disposer of the
+ * read that runs it, or on the parent's when it runs after the read. JSX
+ * elements are left as they are. A function that names a parameter `d` keeps
+ * that binding.
+ */
+function scopeNestedFunctionJsx(node: any): any {
+  if (!node || typeof node !== 'object') return node
+  if (Array.isArray(node)) return node.map(scopeNestedFunctionJsx)
+  if (t.isJSXElement(node) || t.isJSXFragment(node)) return node
+  const out: any = { ...node }
+  for (const k of Object.keys(node)) {
+    if (k === 'loc' || k === 'start' || k === 'end' || k === 'type') continue
+    out[k] = scopeNestedFunctionJsx(node[k])
+  }
+  const fn = t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)
+  if (!fn || !containsJsx(node) || node.params.some((p: any) => 'd' in t.getBindingIdentifiers(p))) return out
+  const scope = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      t.identifier('d'),
+      t.callExpression(t.memberExpression(t.identifier('__j'), t.identifier('scope')), []),
+    ),
+  ])
+  if (t.isBlockStatement(out.body)) out.body = { ...out.body, body: [scope, ...out.body.body] }
+  else {
+    out.body = t.blockStatement([scope, t.returnStatement(out.body)])
+    out.expression = false
+  }
+  return out
 }
 
 /**

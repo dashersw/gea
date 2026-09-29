@@ -49,6 +49,12 @@ const PARTS = `
       return <div class="pick">{ui.open ? this.kids() : ui.loggedIn ? this.kids().slice(0, 1) : this.kids()[0]}</div>
     }
   }
+  export class Slots extends Component {
+    template({ children }: any) { return <div class="card">{children.rows}<p>{children.label}</p></div> }
+  }
+  export class RenderCard extends Component {
+    template({ children }: any) { return <div class="card">{children(ui.fancy)}</div> }
+  }
   export function FnCard({ children }: any) { return <div class="card">{children}</div> }
   export function FnHeader({ header }: any) { return <div class="header">{header}</div> }
 `
@@ -112,6 +118,8 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
     'ReactiveCard',
     'Panel',
     'Pick',
+    'Slots',
+    'RenderCard',
     'FnCard',
     'FnHeader',
     'App',
@@ -371,6 +379,65 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     h.ui.byId = { a: { name: 'A3' }, b: { name: 'B' } }
     h.flush()
     assert.equal(pick(), 'A3')
+    h.dispose()
+    assert.equal(h.counter.p - h.counter.pd, 0)
+  })
+
+  // [body, whether a Title shows once `ui.fancy` is false]
+  const RUN_BY_THE_READ: Array<[string, boolean]> = [
+    [`<Card>{(() => (ui.fancy ? <Title /> : 'plain'))()}</Card>`, false],
+    [`<Card>{(function () { return ui.fancy ? <Title /> : 'plain' })()}</Card>`, false],
+    [`<Card>{((on: boolean) => (on ? <Title /> : 'plain'))(ui.fancy)}</Card>`, false],
+    [`<Card>{ui.fancy ? (() => <Title />)() : 'plain'}</Card>`, false],
+    [`<Card>{ui.fancy && (() => <Title />)()}</Card>`, false],
+    [`<Card>{ui.fancy ? <Title /> : (() => <Title />)()}</Card>`, true],
+    [`<Card>{(function (this: any) { return ui.fancy ? <Title /> : 'plain' }).call(this)}</Card>`, false],
+    [
+      `<Card>{ui.fancy ? ui.rows.map((r: number) => { const make = () => <Title />; return make() }) : 'none'}</Card>`,
+      false,
+    ],
+    [
+      `<Card>{ui.fancy ? ui.rows.map((r: number) => <Title />).concat([((x: any) => <Title />) && 'x']) : 'none'}</Card>`,
+      false,
+    ],
+  ]
+  for (const [i, [body, titleWhenOff]] of RUN_BY_THE_READ.entries()) {
+    it(`disposes JSX a function the read runs built: ${body}`, async () => {
+      const h = await mountApp(body, `run${i}`)
+      for (let n = 0; n < 20; n++) {
+        const shown = h.root.querySelectorAll('.card b').length
+        assert.ok(h.ui.fancy || titleWhenOff ? shown > 0 : shown === 0, `${shown} shown`)
+        assertTitlesLive(h)
+        await toggle(h)
+      }
+      h.dispose()
+      assertTitlesLive(h, 0)
+    })
+  }
+
+  it('keeps JSX live that a function the read hands out builds later', async () => {
+    const h = await mountApp(
+      `<RenderCard>{(on: boolean) => (on ? <Profile name={ui.profile.name} /> : 'plain')}</RenderCard>`,
+      'handed-out',
+    )
+    assert.equal(h.root.querySelector('.card')?.textContent, 'Ada')
+    h.ui.profile = { name: 'Grace' }
+    h.flush()
+    assert.equal(h.root.querySelector('.card')?.textContent, 'Grace')
+    h.dispose()
+    assert.equal(h.counter.p - h.counter.pd, 0)
+  })
+
+  it('keeps JSX live that a read returns inside an object', async () => {
+    const h = await mountApp(
+      `<Slots>{{ label: 'L', rows: ui.ids.map((id: string) => <Profile name={ui.byId[id].name} />) }}</Slots>`,
+      'object',
+    )
+    const names = () => [...h.root.querySelectorAll('.card i')].map((i) => i.textContent).join('')
+    assert.equal(names(), 'AB')
+    h.ui.byId = { a: { name: 'A2' }, b: { name: 'B2' } }
+    h.flush()
+    assert.equal(names(), 'A2B2')
     h.dispose()
     assert.equal(h.counter.p - h.counter.pd, 0)
   })
