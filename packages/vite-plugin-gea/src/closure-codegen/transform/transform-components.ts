@@ -1,8 +1,10 @@
 import type {
   ClassDeclaration,
+  ClassMethod,
   Expression,
   File,
   FunctionDeclaration,
+  FunctionParameter,
   Identifier,
   ObjectPattern,
   ObjectProperty,
@@ -341,6 +343,40 @@ export function fnHasConditionalRoot(fn: any): boolean {
  * with a pointer to the supported alternatives instead.
  */
 function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statement[]): void {
+  const found = findReassignedLocal(fnDecl, preceding)
+  if (!found) return
+
+  throw compilerError(
+    `Function component \`${fnName || '<anonymous>'}\` reassigns \`${found.name}\`.`,
+    found.write,
+    `Function components have no local state yet, so the new value would never render. ` +
+      `Keep \`${found.name}\` in a Store or a class component.`,
+  )
+}
+
+/**
+ * A class `template()` runs once per instance too, and its locals are inlined
+ * the same way, so a reassigned `let` there fails the build as well.
+ */
+export function assertNoReassignedTemplateLocals(
+  templateMethod: ClassMethod,
+  className: string,
+  preceding: Statement[],
+): void {
+  const params = templateMethod.params as FunctionParameter[]
+  const found = findReassignedLocal(t.functionExpression(null, params, templateMethod.body), preceding)
+  if (!found) return
+
+  throw compilerError(
+    `Class component \`${className}\` reassigns \`${found.name}\` in template().`,
+    found.write,
+    `template() runs once per instance, so the new value would never render. ` +
+      `Make \`${found.name}\` a class field and write \`this.${found.name}\` instead, or keep it in a Store.`,
+  )
+}
+
+/** The first write, anywhere in `fnDecl`, to a `let` or `var` declared in `preceding`. */
+function findReassignedLocal(fnDecl: any, preceding: Statement[]): { name: string; write: any } | null {
   const mutable = new Set<string>()
   for (const stmt of preceding) {
     if (!t.isVariableDeclaration(stmt) || stmt.kind === 'const') continue
@@ -348,7 +384,7 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
       for (const name of Object.keys(t.getBindingIdentifiers(decl.id))) mutable.add(name)
     }
   }
-  if (mutable.size === 0) return
+  if (mutable.size === 0) return null
 
   let name = ''
   let write: any = null
@@ -366,14 +402,7 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
       }
     },
   })
-  if (!write) return
-
-  throw compilerError(
-    `Function component \`${fnName || '<anonymous>'}\` reassigns \`${name}\`.`,
-    write,
-    `Function components have no local state yet, so the new value would never render. ` +
-      `Keep \`${name}\` in a Store or a class component.`,
-  )
+  return write ? { name, write } : null
 }
 
 /** A `return` of JSX inside `node`, not counting nested functions. */

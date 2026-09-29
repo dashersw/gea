@@ -13,17 +13,17 @@ import { dirname, relative } from 'node:path'
 import { parseModule } from '../../parse/parser.ts'
 import { generate, t, traverse } from '../../utils/babel-interop.ts'
 import {
-  collectBindings,
+  bindTemplateLocals,
   compileJsxToBlock,
   createEmitContext,
-  lowerJsxInStatement,
-  substituteBindings,
+  keptTemplateStatements,
   type DirectFnComponentParams,
 } from '../emit.ts'
 import { extractTemplateJsx, findTemplateMethod } from '../generator.ts'
 import { extractPrecedingStatements, foldEarlyReturnGuards } from './transform-template-methods.ts'
 import { collectDirectFnComponentParams, collectDirectFnComponents, collectDirectFnStringProps } from '../transform.ts'
 import {
+  assertNoReassignedTemplateLocals,
   canUseStaticCompiledComponent,
   classHasDecorators,
   fnHasConditionalRoot,
@@ -263,7 +263,8 @@ function createStaticTemplateFactory(
   }
 
   const preceding = extractPrecedingStatements(templateMethod)
-  if (preceding.length > 0) collectBindings(preceding, ctx.bindings)
+  assertNoReassignedTemplateLocals(templateMethod, classDecl.id?.name ?? '<anonymous>', preceding)
+  bindTemplateLocals(preceding, ctx)
   const block = compileJsxToBlock(jsx, ctx)
   if (
     ctx.importsNeeded.has('keyedList') ||
@@ -272,17 +273,7 @@ function createStaticTemplateFactory(
   ) {
     return null
   }
-  const keptPreceding = preceding
-    .filter((s) => {
-      if (t.isReturnStatement(s) || t.isThrowStatement(s)) return false
-      if (t.isVariableDeclaration(s)) {
-        const allPatterns = s.declarations.every((d) => t.isObjectPattern(d.id) || t.isArrayPattern(d.id))
-        if (allPatterns) return false
-      }
-      return true
-    })
-    .map((s) => substituteBindings(s, ctx.bindings))
-    .map((s) => lowerJsxInStatement(s, ctx))
+  const keptPreceding = keptTemplateStatements(preceding, ctx)
   const rootUsesDisposer = nodeContainsIdentifier(block, 'd')
   const disposerArg = rootUsesDisposer ? [t.callExpression(t.identifier('createDisposer'), [])] : []
   if (rootUsesDisposer) ctx.importsNeeded.add('createDisposer')

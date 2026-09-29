@@ -3,4 +3,9 @@ export { collectBindings, createEmitContext, initializerNeedsLocal } from './emi
 export { substituteBindings } from './emit/emit-substitution.ts'
 export { emitTemplateCloneExpression, emitTemplateDecl } from './emit/template-decl.ts'
 export { compileJsxToBlock } from './emit/emit-core.ts'
-export { buildCreateTemplateMethod, lowerJsxInStatement } from './emit/emit-jsx-lowering.ts'
+export {
+  bindTemplateLocals,
+  buildCreateTemplateMethod,
+  keptTemplateStatements,
+  lowerJsxInStatement,
+} from './emit/emit-jsx-lowering.ts'
