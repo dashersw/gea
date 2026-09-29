@@ -426,6 +426,101 @@ new App().render(document.getElementById('app'))
     assert.equal(result, null)
   })
 
+  it('skips roots that render a same-file function component with children', () => {
+    const root = fixture({
+      'App.tsx': `import { Component } from '@geajs/core'
+function Card(props: { children?: any }) {
+  return <section class="card">{props.children}</section>
+}
+export default class App extends Component {
+  template() {
+    return (
+      <div>
+        <Card>
+          <p>Hello</p>
+        </Card>
+      </div>
+    )
+  }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.equal(result, null)
+  })
+
+  it('skips roots that render a same-file class component', () => {
+    const root = fixture({
+      'App.tsx': `import { Component } from '@geajs/core'
+class Badge extends Component {
+  template() {
+    return <em class="badge">new</em>
+  }
+}
+function Label(props: { text: string }) {
+  return <strong>{props.text}</strong>
+}
+export default class App extends Component {
+  template() {
+    return (
+      <div>
+        <Badge />
+        <Label text="plain" />
+      </div>
+    )
+  }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.equal(result, null)
+  })
+
+  it('still inlines when an HTML tag or attribute shares a name with a module binding', () => {
+    const root = fixture({
+      'App.tsx': `import { Component } from '@geajs/core'
+const a = 'unused'
+const title = 'unused'
+export default class App extends Component {
+  template() { return <div title="t"><a href="/">link</a></div> }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.ok(result?.changed)
+    assert.match(result.code, /document\.getElementById\('app'\)\.appendChild\(__gea_root0_create\(\)\)/)
+  })
+
   it('skips static fragments because there is no single root element', () => {
     const root = fixture({
       'App.tsx': `import { Component } from '@geajs/core'
