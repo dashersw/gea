@@ -21,6 +21,7 @@ import {
   type EmitContext,
 } from '../emit.ts'
 import { extractTemplateJsx, findTemplateMethod } from '../generator.ts'
+import { foldConditionalReturn, isConditionalJsxRoot } from './transform-template-methods.ts'
 
 export function extendsComponent(classDecl: ClassDeclaration): boolean {
   const sc = classDecl.superClass
@@ -217,7 +218,10 @@ function nodeContainsIdentifier(node: any, name: string): boolean {
   return false
 }
 
-/** True if the function body returns a JSX expression (PascalCase name + JSX return). */
+/**
+ * True if the function body returns a JSX expression (PascalCase name + JSX
+ * return), or picks one with a condition (`c ? <A/> : <B/>`, `c && <A/>`).
+ */
 export function isFunctionComponent(fn: any): boolean {
   if (!fn.id || !t.isIdentifier(fn.id)) return false
   const name = fn.id.name
@@ -225,11 +229,13 @@ export function isFunctionComponent(fn: any): boolean {
   // Look for a return <JSX/> in the body
   if (!fn.body || !t.isBlockStatement(fn.body)) return false
   for (const stmt of fn.body.body) {
-    if (t.isReturnStatement(stmt) && stmt.argument) {
-      if (t.isJSXElement(stmt.argument) || t.isJSXFragment(stmt.argument)) return true
-    }
+    if (t.isReturnStatement(stmt) && isJsxRoot(stmt.argument)) return true
   }
   return false
+}
+
+function isJsxRoot(node: any): boolean {
+  return t.isJSXElement(node) || t.isJSXFragment(node) || isConditionalJsxRoot(node)
 }
 
 /**
@@ -245,6 +251,19 @@ export function fnHasInstanceLocals(fn: any): boolean {
     }
   }
   return false
+}
+
+/**
+ * True if the body picks its root with a condition, which `rewriteFnComponent`
+ * folds into a `conditional()` reading `props`. A one-shot direct factory has
+ * no `props`, so such a component has to be mounted.
+ */
+export function fnHasConditionalRoot(fn: any): boolean {
+  const body: Statement[] = fn.body?.body ?? []
+  const returnIdx = body.findIndex((s) => t.isReturnStatement(s))
+  if (returnIdx < 0) return false
+  if (isConditionalJsxRoot((body[returnIdx] as any).argument)) return true
+  return body.slice(0, returnIdx).some((stmt) => findJsxReturn(stmt) !== null)
 }
 
 /**
@@ -290,6 +309,67 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
 }
 
 /**
+ * Folding moves the locals declared after an `if (…) return <jsx />` guard
+ * into the branch that renders the final return, where they are inlined at
+ * each read. One that must keep its identity (see `initializerNeedsLocal`)
+ * would be rebuilt on every read, so it has to come before the first guard.
+ */
+function assertNoInstanceLocalsAfterGuard(fnName: string, preceding: Statement[]): void {
+  const firstGuard = preceding.findIndex((stmt) => findJsxReturn(stmt) !== null)
+  if (firstGuard < 0) return
+  for (const stmt of preceding.slice(firstGuard + 1)) {
+    if (!t.isVariableDeclaration(stmt)) continue
+    const decl = stmt.declarations.find((d) => d.init && initializerNeedsLocal(d.init))
+    if (!decl) continue
+    const name = Object.keys(t.getBindingIdentifiers(decl.id)).join('`, `')
+    throw compilerError(
+      `Function component \`${fnName || '<anonymous>'}\` creates \`${name}\` after an early return.`,
+      decl,
+      `Declare \`${name}\` before the first \`if (…) return\`, so each instance creates it once.`,
+    )
+  }
+}
+
+/**
+ * Folding handles `if (cond) return <jsx />` guards that come one after
+ * another, with only declarations between the last guard and the final
+ * return. Any other early return of JSX would hand `mount()` an HTML string,
+ * which renders nothing, so fail the build instead.
+ */
+function assertNoEarlyJsxReturns(fnName: string, preceding: Statement[]): void {
+  for (const stmt of preceding) {
+    const ret = findJsxReturn(stmt)
+    if (!ret) continue
+    throw compilerError(
+      `Function component \`${fnName || '<anonymous>'}\` returns JSX from an early return the compiler can't compile.`,
+      ret,
+      `Write it as \`if (cond) return <A />\` right before the final return (or before another such guard), ` +
+        `or return a ternary: \`return cond ? <A /> : <B />\`.`,
+    )
+  }
+}
+
+/** A `return` of JSX inside `node`, not counting nested functions. */
+function findJsxReturn(node: any): any {
+  if (!node || typeof node !== 'object') return null
+  if (t.isFunction(node)) return null
+  if (t.isReturnStatement(node)) return isJsxRoot(node.argument) ? node : null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findJsxReturn(child)
+      if (found) return found
+    }
+    return null
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    const found = findJsxReturn(node[key])
+    if (found) return found
+  }
+  return null
+}
+
+/**
  * Rewrite a function component body so it becomes a `(props, d) => Element`
  * usable by the new runtime's `mount()` (mount calls it with the disposer).
  *
@@ -299,20 +379,18 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
  */
 export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   const body = fnDecl.body.body as Statement[]
-  let returnIdx = -1
-  for (let i = 0; i < body.length; i++) {
-    if (t.isReturnStatement(body[i])) {
-      returnIdx = i
-      break
-    }
-  }
-  if (returnIdx < 0) return
-  const ret = body[returnIdx] as any
-  if (!ret.argument || !(t.isJSXElement(ret.argument) || t.isJSXFragment(ret.argument))) return
-  const jsxRoot = ret.argument
+  let returnIdx = body.findIndex((s) => t.isReturnStatement(s))
+  if (returnIdx < 0 || !isJsxRoot((body[returnIdx] as any).argument)) return
 
   const fnName = t.isIdentifier(fnDecl.id) ? fnDecl.id.name : ''
+  // Checked before folding, which moves locals declared after a guard into
+  // the guard's branch.
   assertNoReassignedLocals(fnDecl, fnName, body.slice(0, returnIdx))
+  assertNoInstanceLocalsAfterGuard(fnName, body.slice(0, returnIdx))
+  foldConditionalReturn(body)
+  returnIdx = body.findIndex((s) => t.isReturnStatement(s))
+  assertNoEarlyJsxReturns(fnName, body.slice(0, returnIdx))
+  const jsxRoot = (body[returnIdx] as any).argument
 
   const fnCtx = createEmitContext(t.identifier('props'))
   fnCtx.oneShotProps = parentCtx.directFnComponents?.has(fnName) === true

@@ -28,6 +28,7 @@ import {
   canUseStaticCompiledComponent,
   canUseTinyReactiveComponent,
   extendsComponent,
+  fnHasConditionalRoot,
   fnHasInstanceLocals,
   isFunctionComponent,
   nodeContainsThisMember as classBodyReadsThisMember,
@@ -147,7 +148,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
       // lower. The canonical `template()` is one of them; any sibling method
       // (e.g. gea-mobile's `template_items`, `template_views`) is compiled too.
       const templateMethod = findTemplateMethod(classDecl)
-      if (templateMethod) foldEarlyReturnGuards(templateMethod)
+      if (templateMethod) foldEarlyReturnGuards(templateMethod.body.body)
       const methodsWithJsx: any[] = []
       for (const m of classDecl.body.body) {
         if (!t.isClassMethod(m) || m.computed || m.static) continue
@@ -640,7 +641,13 @@ function buildAfterRenderAsyncRenderMethod(): any {
 export function collectDirectFnComponents(ast: File): Set<string> {
   const candidates = new Set<string>()
   for (const node of ast.program.body) {
-    if (t.isFunctionDeclaration(node) && node.id && isFunctionComponent(node) && !fnHasInstanceLocals(node)) {
+    if (
+      t.isFunctionDeclaration(node) &&
+      node.id &&
+      isFunctionComponent(node) &&
+      !fnHasInstanceLocals(node) &&
+      !fnHasConditionalRoot(node)
+    ) {
       candidates.add(node.id.name)
     }
   }
