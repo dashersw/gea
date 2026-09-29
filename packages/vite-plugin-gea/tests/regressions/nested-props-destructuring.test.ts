@@ -131,6 +131,14 @@ describe('function component nested props destructuring (#142)', { concurrency: 
       view.user = { first: 'Grace', last: 'Hopper', born: 1906 }
       await flushMicrotasks()
       assert.equal(b.outerHTML, '<b data-more="last,born:Hopper">Grace</b>')
+
+      view.user = { first: 'Margaret', maiden: 'Hamilton' }
+      await flushMicrotasks()
+      assert.equal(b.outerHTML, '<b data-more="maiden:undefined">Margaret</b>')
+
+      view.user = { first: 'Katherine', last: 'Johnson' }
+      await flushMicrotasks()
+      assert.equal(b.outerHTML, '<b data-more="last:Johnson">Katherine</b>')
     } finally {
       view?.dispose()
       restore()
