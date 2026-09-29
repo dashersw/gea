@@ -719,4 +719,58 @@ new App().render(document.getElementById('app'))
     assert.match(result.code, /import Counter from "\.\/Counter\.tsx"/)
     assert.doesNotMatch(result.code, /function Counter\(/)
   })
+
+  it('creates a root template local that constructs something once', () => {
+    const root = fixture({
+      'App.tsx': `import { Component } from '@geajs/core'
+export default class App extends Component {
+  template() {
+    const seen = new Set()
+    seen.add('a')
+    return <div>Seen: {seen.size}</div>
+  }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.ok(result)
+    assert.equal(result.code.match(/new Set\(\)/g)?.length, 1)
+    assert.match(result.code, /const seen = new Set\(\);\s+seen\.add\('a'\);/)
+    assert.match(result.code, /\(\) => seen\.size/)
+  })
+
+  it('leaves a reassigned let in the root template to the root module', () => {
+    const root = fixture({
+      'App.tsx': `import { Component } from '@geajs/core'
+export default class App extends Component {
+  template() {
+    let count = 0
+    return <button onClick={() => count++}>Count: {count}</button>
+  }
+}`,
+      'main.ts': `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+    })
+
+    const result = transformStaticRootMount(
+      `import App from './App'
+new App().render(document.getElementById('app'))
+`,
+      join(root, 'main.ts'),
+      resolveImportPath,
+    )
+
+    assert.equal(result, null)
+  })
 })
