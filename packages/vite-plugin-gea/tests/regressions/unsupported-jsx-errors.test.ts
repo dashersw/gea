@@ -149,7 +149,8 @@ export default createPage('home')
 
 // Lookalikes of the cases above that compile today and must keep compiling.
 // Pick and Toggle are function components with a conditional root: #124
-// compiles those, so the class template() check must not reach them.
+// compiles those, so the class template() check must not reach them. A spread
+// on an element compiles since #219.
 const STILL_SUPPORTED_APP = `import { Component } from '@geajs/core'
 import Pick from './Pick'
 
@@ -183,6 +184,7 @@ export function titleText() {
 
 export default class App extends Component<{ big?: boolean }> {
   input: HTMLInputElement | null = null
+  attrs = { id: 'go', title: 'Go' }
 
   template() {
     const Icon = this.props.big ? Big : Small
@@ -196,6 +198,7 @@ export default class App extends Component<{ big?: boolean }> {
         <input ref={this.input} />
         <input ref={field} />
         <my-camera onScreenCapture={() => console.log('screencapture handled')} />
+        <button {...this.attrs}>Go</button>
       </div>
     )
   }
@@ -472,6 +475,29 @@ export default class App extends Component {
     }
   })
 
+  // Attributes written before a spread go into the spread's runtime object,
+  // where onClickCapture would become the key on:clickcapture and never fire.
+  it('also rejects a capture handler written before a spread', () => {
+    const { errors } = compileForBrowser({
+      'App.tsx': `import { Component } from '@geajs/core'
+
+export default class App extends Component {
+  attrs = { id: 'go' }
+
+  template() {
+    return (
+      <div onClickCapture={() => 1} {...this.attrs}>
+        x
+      </div>
+    )
+  }
+}
+`,
+    })
+    assert.equal(errors.length, 1, JSON.stringify(errors))
+    assert.match(errors[0].message, /Capture-phase event handlers like onClickCapture are not supported yet\./)
+  })
+
   // #118 inlines a local whose initializer is a plain value, so `let el = null`
   // leaves ref={el} no variable to assign the element to. It isn't a callback.
   it('vite build fails on a ref to a local the compiler inlines, and says why', async () => {
@@ -554,7 +580,7 @@ export default class App extends Base {
     assert.match(errors[0].message, /`App\.template\(\)` must return a single JSX element or fragment\./)
   })
 
-  it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs and conditional function components', async () => {
+  it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs, element spreads and conditional function components', async () => {
     const { config } = project(STILL_SUPPORTED_APP, {
       'src/Pick.tsx': `export default function Pick(props: { on?: boolean }) {
   return props.on ? <b>on</b> : <i>off</i>
@@ -570,6 +596,7 @@ export default class App extends Base {
       assert.match(result.code, /"screencapture"/)
       assert.match(result.code, /this\.input = el\d+/)
       assert.match(result.code, /\bfield = el\d+/)
+      assert.match(result.code, /reactiveSpread\(/)
     } finally {
       await server.close()
     }
