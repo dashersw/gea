@@ -209,9 +209,14 @@ export function transformFile(source: string, _filename?: string, options: Trans
         continue
       }
 
+      // A whole-parameter default (`template({ label } = {})`) never applies:
+      // the compiled template reads `this.props`, which is always an object.
+      const templateParam = t.isAssignmentPattern(templateMethod.params[0])
+        ? templateMethod.params[0].left
+        : templateMethod.params[0]
       // `template({ count, user })` param destructure → bindings to this.props.<name>
-      if (templateMethod.params.length >= 1 && t.isObjectPattern(templateMethod.params[0])) {
-        for (const prop of (templateMethod.params[0] as any).properties) {
+      if (t.isObjectPattern(templateParam)) {
+        for (const prop of templateParam.properties as any[]) {
           if (!t.isObjectProperty(prop) || !t.isIdentifier(prop.key)) continue
           const local = t.isIdentifier(prop.value) ? prop.value.name : prop.key.name
           ctx.bindings.set(
@@ -224,8 +229,8 @@ export function transformFile(source: string, _filename?: string, options: Trans
         }
       }
       // `template(props)` plain parameter → bind `props` → this.props
-      if (templateMethod.params.length >= 1 && t.isIdentifier(templateMethod.params[0])) {
-        ctx.bindings.set(templateMethod.params[0].name, t.memberExpression(t.thisExpression(), t.identifier('props')))
+      if (t.isIdentifier(templateParam)) {
+        ctx.bindings.set(templateParam.name, t.memberExpression(t.thisExpression(), t.identifier('props')))
       }
 
       const preceding = extractPrecedingStatements(templateMethod)

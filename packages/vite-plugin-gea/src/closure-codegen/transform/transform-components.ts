@@ -463,12 +463,12 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
         directParams.locals.filter((local, index) => stringProps.has(directParams.props[index])),
       )
     }
-  } else if (fnDecl.params.length >= 1 && t.isObjectPattern(fnDecl.params[0])) {
-    propsLocals.push(...bindPropsPattern(fnDecl.params[0], 'let', fnCtx.bindings))
-    fnDecl.params[0] = t.identifier('props')
   } else if (fnDecl.params.length === 0) {
     fnDecl.params.push(t.identifier('props'))
-  } else if (!t.isIdentifier(fnDecl.params[0], { name: 'props' })) {
+  } else {
+    const param = propsParam(fnDecl.params[0], fnName)
+    if (t.isObjectPattern(param)) propsLocals.push(...bindPropsPattern(param, 'let', fnCtx.bindings))
+    else if (param.name !== 'props') fnCtx.bindings.set(param.name, t.identifier('props'))
     fnDecl.params[0] = t.identifier('props')
   }
 
@@ -544,6 +544,22 @@ function bindFnLocals(stmts: Statement[], bindings: Map<string, Expression>): St
     initializerNeedsLocal,
   )
   return kept
+}
+
+/**
+ * The props parameter as bound in the body. A whole-parameter default
+ * (`({ label } = {})`, `(p = {})`) is dropped: mount() and direct same-file
+ * calls always pass a props object, so it never applies. Any other shape
+ * can't be bound to `props` and fails the build.
+ */
+function propsParam(param: any, fnName: string): Identifier | ObjectPattern {
+  const target = t.isAssignmentPattern(param) ? param.left : param
+  if (t.isIdentifier(target) || t.isObjectPattern(target)) return target
+  throw compilerError(
+    `Function component \`${fnName || '<anonymous>'}\` has an unsupported props parameter.`,
+    param,
+    'Name the parameter (`props`) or destructure it (`{ label }`).',
+  )
 }
 
 function isPropsDestructure(decl: VariableDeclarator): boolean {
