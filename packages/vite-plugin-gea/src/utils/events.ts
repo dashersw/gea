@@ -59,11 +59,63 @@ export function toGeaEventType(attrName: string): string {
 }
 
 /**
- * React's capture-phase handler names (`onClickCapture`). `toGeaEventType`
- * would turn them into event types that don't exist (`clickcapture`).
- * `gotpointercapture` and `lostpointercapture` are real events.
+ * DOM events that EVENT_NAMES leaves out. React has an `on…Capture` handler
+ * for each, so `isCaptureEventAttr` needs them too.
+ */
+const OTHER_DOM_EVENTS = new Set([
+  'auxclick',
+  'beforeinput',
+  'compositionstart',
+  'compositionupdate',
+  'compositionend',
+  'copy',
+  'cut',
+  'paste',
+  'dragenter',
+  'dragexit',
+  'focusin',
+  'focusout',
+  'invalid',
+  'select',
+  'toggle',
+  'load',
+  'error',
+  'abort',
+  'touchcancel',
+  'canplay',
+  'canplaythrough',
+  'durationchange',
+  'emptied',
+  'encrypted',
+  'ended',
+  'loadeddata',
+  'loadedmetadata',
+  'loadstart',
+  'pause',
+  'play',
+  'playing',
+  'progress',
+  'ratechange',
+  'seeked',
+  'seeking',
+  'stalled',
+  'suspend',
+  'timeupdate',
+  'volumechange',
+  'waiting',
+])
+
+/**
+ * React's capture-phase handler names (`onClickCapture`, or `onclickcapture`).
+ * `toGeaEventType` would turn them into event types that don't exist
+ * (`clickcapture`). Only a DOM event followed by "capture" counts, so a custom
+ * event such as `onScreenCapture` compiles, and so do the real
+ * `gotpointercapture` and `lostpointercapture` events.
  */
 export function isCaptureEventAttr(attrName: string): boolean {
-  if (!/^on[A-Z]\w*Capture$/.test(attrName)) return false
-  return attrName !== 'onGotPointerCapture' && attrName !== 'onLostPointerCapture'
+  if (!attrName.startsWith('on')) return false
+  const type = toGeaEventType(attrName)
+  if (!type.endsWith('capture')) return false
+  const bubbling = type.slice(0, -'capture'.length)
+  return EVENT_NAMES.has(bubbling) || OTHER_DOM_EVENTS.has(bubbling)
 }

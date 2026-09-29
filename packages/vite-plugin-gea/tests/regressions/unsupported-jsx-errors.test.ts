@@ -186,6 +186,7 @@ export default class App extends Component<{ big?: boolean }> {
 
   template() {
     const Icon = this.props.big ? Big : Small
+    let field: HTMLInputElement | undefined
     return (
       <div onGotPointerCapture={() => 1} onLostPointerCapture={() => 2}>
         <Icon />
@@ -193,6 +194,8 @@ export default class App extends Component<{ big?: boolean }> {
         <Pick on />
         <Toggle on />
         <input ref={this.input} />
+        <input ref={field} />
+        <my-camera onScreenCapture={() => console.log('screencapture handled')} />
       </div>
     )
   }
@@ -272,10 +275,45 @@ describe('unsupported JSX fails the build with a hint (#105)', () => {
     })
   }
 
-  // A build inlines a static root component, and the function components it
-  // imports, into the mount file. That path skips transformFile, so the
-  // string-tag check has to hold there too.
-  it('vite build fails on a string tag in a function component inlined into the static root', async () => {
+  // A build inlines a static root component into the mount file, so App.tsx
+  // never goes through transformFile. The string-tag check has to run there
+  // too, or the page throws `Tag is not defined`.
+  it('vite build fails on a string tag in a root component the build inlines', async () => {
+    const app = (tag: string) => `import { Component } from '@geajs/core'
+
+const Tag = 'section'
+
+export default class App extends Component {
+  template() {
+    return (
+      <div>
+        <${tag} class="tagged">x</${tag}>
+      </div>
+    )
+  }
+}
+`
+    // The same root with a plain element is inlined: main.ts calls the
+    // root factory instead of rendering an App class.
+    const inlined = project(app('section'))
+    const output: any = await build({ ...inlined.config, build: { write: false, minify: false } })
+    const chunk = (Array.isArray(output) ? output[0] : output).output.find((o: any) => o.type === 'chunk')
+    assert.match(chunk.code, /__gea_root\d+_create\(\)/)
+    assert.doesNotMatch(chunk.code, /extends Compiled\w*Component/)
+
+    const { file, config } = project(app('Tag'))
+    let err: any
+    try {
+      await build(config)
+    } catch (error: any) {
+      err = error.errors?.[0] ?? error
+    }
+    assert.ok(err, 'vite build should fail')
+    assert.match(err.message, /<Tag> holds a string, not a component/)
+    assert.deepEqual({ ...err.loc }, { file, line: 9, column: 9 })
+  })
+
+  it('vite build fails on a string tag in an imported function component', async () => {
     const { file, config } = project(
       `import { Component } from '@geajs/core'
 import Card from './Card'
@@ -412,6 +450,89 @@ export default class App extends Component {
     }
   })
 
+  it('also rejects lowercase and other DOM capture handlers', () => {
+    for (const [attr, bubbling] of [
+      ['onclickcapture', 'onclick'],
+      ['onPasteCapture', 'onPaste'],
+      ['onFocusInCapture', 'onFocusIn'],
+    ]) {
+      const { errors } = compileForBrowser({
+        'App.tsx': `import { Component } from '@geajs/core'
+
+export default class App extends Component {
+  template() {
+    return <div ${attr}={() => 1}>x</div>
+  }
+}
+`,
+      })
+      assert.equal(errors.length, 1, `${attr}: ${JSON.stringify(errors)}`)
+      assert.match(errors[0].message, new RegExp(`Capture-phase event handlers like ${attr} are not supported yet\\.`))
+      assert.match(errors[0].message, new RegExp(`Use ${bubbling}, or add the listener yourself`))
+    }
+  })
+
+  // #118 inlines a local whose initializer is a plain value, so `let el = null`
+  // leaves ref={el} no variable to assign the element to. It isn't a callback.
+  it('vite build fails on a ref to a local the compiler inlines, and says why', async () => {
+    const { file, config } = project(
+      `import { Component } from '@geajs/core'
+import Field from './Field'
+
+export default class App extends Component {
+  template() {
+    return (
+      <div>
+        <Field />
+      </div>
+    )
+  }
+}
+`,
+      {
+        'src/Field.tsx': `export default function Field() {
+  let el: HTMLInputElement | null = null
+  return (
+    <div>
+      <input ref={el} />
+      <button click={() => el?.focus()}>Focus</button>
+    </div>
+  )
+}
+`,
+      },
+    )
+    let err: any
+    try {
+      await build(config)
+    } catch (error: any) {
+      err = error.errors?.[0] ?? error
+    }
+    assert.ok(err, 'vite build should fail')
+    assert.match(
+      err.message,
+      /ref=\{el\} has no variable to assign the element to: the compiler inlines `el` as its initializer \(null\)\./,
+    )
+    assert.match(err.message, /Declare it as `let el` with no initializer so it stays a variable\./)
+    assert.doesNotMatch(err.message, /callback/)
+    assert.deepEqual({ ...err.loc }, { file: path.join(path.dirname(file), 'Field.tsx'), line: 5, column: 18 })
+
+    const { errors } = compileForBrowser({
+      'App.tsx': `import { Component } from '@geajs/core'
+
+export default class App extends Component {
+  template() {
+    let el: HTMLInputElement | null = null
+    return <div><input ref={el} /></div>
+  }
+}
+`,
+    })
+    assert.equal(errors.length, 1, JSON.stringify(errors))
+    assert.match(errors[0].message, /ref=\{el\} has no variable to assign the element to/)
+    assert.match(errors[0].message, /or use a class field such as ref=\{this\.input\}\./)
+  })
+
   it('also rejects a ternary template() in a subclass of a component', () => {
     const { errors } = compileForBrowser({
       'App.tsx': `import { Component } from '@geajs/core'
@@ -433,7 +554,7 @@ export default class App extends Base {
     assert.match(errors[0].message, /`App\.template\(\)` must return a single JSX element or fragment\./)
   })
 
-  it('still compiles component-valued tags, pointer-capture events, assignable refs and conditional function components', async () => {
+  it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs and conditional function components', async () => {
     const { config } = project(STILL_SUPPORTED_APP, {
       'src/Pick.tsx': `export default function Pick(props: { on?: boolean }) {
   return props.on ? <b>on</b> : <i>off</i>
@@ -446,7 +567,9 @@ export default class App extends Base {
       const result = await server.transformRequest('/src/App.tsx')
       assert.ok(result, 'the dev server should compile App.tsx')
       assert.match(result.code, /"gotpointercapture"/)
+      assert.match(result.code, /"screencapture"/)
       assert.match(result.code, /this\.input = el\d+/)
+      assert.match(result.code, /\bfield = el\d+/)
     } finally {
       await server.close()
     }

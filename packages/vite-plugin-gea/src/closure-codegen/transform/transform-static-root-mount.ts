@@ -429,7 +429,6 @@ function collectImportedStaticFunctionComponents(
     watchFiles.add(resolved)
     const imported = readImportModule(resolved)
     if (!imported) return false
-    assertNoStringTags(imported.ast)
     for (const spec of componentSpecs) {
       const localName = spec.local.name
       const exportedName = getImportedExportName(spec)
