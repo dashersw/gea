@@ -45180,12 +45180,13 @@ function buildBranchFn(branchExpr, ctx) {
     const block = branchExpr.callee.body;
     const last = block.body[block.body.length - 1];
     if (last && libExports.isReturnStatement(last) && last.argument && (libExports.isJSXElement(last.argument) || libExports.isJSXFragment(last.argument))) {
-      const hoisted = block.body.slice(0, -1).map((s) => substituteBindings(s, ctx.bindings));
+      const stmts = block.body.slice(0, -1);
+      const hoisted = ctx.bindBranchLocals ? [] : stmts.map((s) => substituteBindings(s, ctx.bindings));
       const saved = new Map(ctx.bindings);
       let inner;
       let kept = null;
       try {
-        if (ctx.bindBranchLocals) kept = ctx.bindBranchLocals(hoisted, ctx.bindings);
+        if (ctx.bindBranchLocals) kept = ctx.bindBranchLocals(stmts, ctx.bindings);
         else collectBindings(hoisted, ctx.bindings);
         inner = compileJsxToBlock(last.argument, ctx);
         if (kept) kept = kept.map((s) => substituteBindings(s, ctx.bindings));
