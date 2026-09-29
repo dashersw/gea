@@ -12,6 +12,7 @@ import type {
 
 import { t } from '../../utils/babel-interop.ts'
 import { compilerError } from '../../utils/compile-error.ts'
+import { isCaptureEventAttr, toGeaEventType } from '../../utils/events.ts'
 
 import {
   canOmitAttrQuotes,
@@ -242,6 +243,18 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
     }
     // Plain HTML element
     let html = '<' + tagName
+    // Before spreads fold attributes in: `onClickCapture` written before a
+    // spread would otherwise become the spread key `on:clickcapture`.
+    for (const attr of opening.attributes) {
+      if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name) || !isCaptureEventAttr(attr.name.name)) continue
+      const rawAttrName = attr.name.name
+      const bubbling = rawAttrName.slice(0, -'Capture'.length)
+      throw compilerError(
+        `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
+        attr,
+        `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`,
+      )
+    }
     // `{...obj}`: one slot applies the spreads at runtime, together with the
     // attributes written before the last spread, which a spread can override.
     // The ones after it always win, so they stay ordinary attributes.

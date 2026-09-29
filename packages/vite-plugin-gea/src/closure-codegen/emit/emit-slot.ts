@@ -1,6 +1,7 @@
 import type { Expression, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
+import { compilerError } from '../../utils/compile-error.ts'
 
 import { emitConditionalSlot } from './emit-conditional.ts'
 import type { EmitContext } from './emit-context.ts'
@@ -261,9 +262,14 @@ export function emitSlot(slot: Slot, stmts: Statement[], ctx: EmitContext): void
     // the assignment with the substituted LHS.
     const elId = t.identifier('el' + slot.index)
     const target = substituteBindings(slot.expr, ctx.bindings)
-    if (t.isMemberExpression(target) || t.isIdentifier(target)) {
-      stmts.push(t.expressionStatement(t.assignmentExpression('=', target as any, elId)))
+    if (!t.isMemberExpression(target) && !t.isIdentifier(target)) {
+      throw compilerError(
+        'ref only accepts a property or variable to assign the element to; callback refs are not supported.',
+        slot.expr,
+        'Use an assignable target, e.g. ref={this.input}, and read this.input after render.',
+      )
     }
+    stmts.push(t.expressionStatement(t.assignmentExpression('=', target as any, elId)))
     return
   }
   if (slot.kind === 'mount') {

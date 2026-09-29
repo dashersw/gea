@@ -57,3 +57,13 @@ export function toGeaEventType(attrName: string): string {
   if (attrName.startsWith('on') && attrName.length > 2) return attrName.slice(2).toLowerCase()
   return attrName
 }
+
+/**
+ * React's capture-phase handler names (`onClickCapture`). `toGeaEventType`
+ * would turn them into event types that don't exist (`clickcapture`).
+ * `gotpointercapture` and `lostpointercapture` are real events.
+ */
+export function isCaptureEventAttr(attrName: string): boolean {
+  if (!/^on[A-Z]\w*Capture$/.test(attrName)) return false
+  return attrName !== 'onGotPointerCapture' && attrName !== 'onLostPointerCapture'
+}
