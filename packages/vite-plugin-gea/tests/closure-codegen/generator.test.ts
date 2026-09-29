@@ -74,6 +74,21 @@ describe('generator: walk JSX to template', () => {
     assert.equal(spec.slots.length, 1)
     assert.equal(spec.slots[0].kind, 'event')
   })
+
+  it('fragment skips {/* comment */} children when computing walks (#92)', () => {
+    const ast = parseTs(`const _ = <>{/* a */}<button class={this.cls}>{this.label}</button>{/* b */}<i>{this.x}</i></>`)
+    const expr = (ast.program.body[0] as any).declarations[0].init
+    const spec = walkJsxToTemplate(expr)
+    assert.equal(spec.html, '<button>0</button><i>0')
+    assert.deepEqual(
+      spec.slots.map((s) => [s.kind, s.walk, s.walkKinds]),
+      [
+        ['class', [0], [{ elem: 0 }]],
+        ['text', [0, 0], [{ elem: 0 }, { child: 0 }]],
+        ['text', [1, 0], [{ elem: 1 }, { child: 0 }]],
+      ],
+    )
+  })
 })
 
 describe('generator: findTemplateMethod + extractTemplateJsx', () => {
