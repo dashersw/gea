@@ -62,7 +62,7 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
       running = own
       let v
       try {
-        v = fn(own)
+        v = fn()
       } catch (e) {
         if (perRead) own.dispose()
         throw e

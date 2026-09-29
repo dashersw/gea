@@ -342,7 +342,7 @@ function memoizedThunk(block: any): Expression {
  *
  *   (() => {
  *     const __j = __geaPropJsx(d, 1, false);
- *     const __v = (d) => cond ? __j.site(0, (d) => { <A block> }) : 'b';
+ *     const __v = () => cond ? __j.site(0, (d) => { <A block> }) : 'b';
  *     return () => __j.read(__v);
  *   })()
  *
@@ -351,8 +351,9 @@ function memoizedThunk(block: any): Expression {
  * `children` the function asks `__j.scope()` which disposer to build on: the
  * running read's while a read runs it, disposed once the slot drops that
  * read's nodes, or the parent's when it runs after the read, as a function the
- * read hands out (`(x) => <Row x={x} />`) does. A named prop with such JSX
- * keeps a memo of its whole value instead, as before.
+ * read hands out (`(x) => <Row x={x} />`) does. A function whose code names
+ * `d` builds on the `d` it sees, as without this thunk. A named prop with such
+ * JSX keeps a memo of its whole value instead, as before.
  */
 function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean): Expression {
   const perRead = hasNestedFunctionJsx(expr)
@@ -382,9 +383,7 @@ function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean):
           ]),
         ),
       ]),
-      t.variableDeclaration('const', [
-        t.variableDeclarator(t.identifier('__v'), t.arrowFunctionExpression([t.identifier('d')], value)),
-      ]),
+      t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__v'), t.arrowFunctionExpression([], value))]),
       t.returnStatement(
         t.arrowFunctionExpression(
           [],
@@ -413,8 +412,10 @@ function hasNestedFunctionJsx(node: any): boolean {
  * Copy `node`, starting each function with JSX in it with
  * `const d = __j.scope()`, so the JSX it builds goes on the disposer of the
  * read that runs it, or on the parent's when it runs after the read. JSX
- * elements are left as they are. A function that names a parameter `d` keeps
- * that binding.
+ * elements are left as they are. A function whose code names `d` anywhere is
+ * left as it is too, since the new `d` would shadow or clash with the user's.
+ * Its `d` then means what it does without this rewrite: the user's binding,
+ * or the parent's disposer.
  */
 function scopeNestedFunctionJsx(node: any): any {
   if (!node || typeof node !== 'object') return node
@@ -426,7 +427,7 @@ function scopeNestedFunctionJsx(node: any): any {
     out[k] = scopeNestedFunctionJsx(node[k])
   }
   const fn = t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)
-  if (!fn || !containsJsx(node) || node.params.some((p: any) => 'd' in t.getBindingIdentifiers(p))) return out
+  if (!fn || !containsJsx(node) || namesD(node)) return out
   const scope = t.variableDeclaration('const', [
     t.variableDeclarator(
       t.identifier('d'),
@@ -439,6 +440,15 @@ function scopeNestedFunctionJsx(node: any): any {
     out.expression = false
   }
   return out
+}
+
+/** Whether user code in `node` has an identifier named `d`, in any position. */
+function namesD(node: any): boolean {
+  let found = false
+  t.traverseFast(node, (n: any) => {
+    if (t.isIdentifier(n, { name: 'd' })) found = true
+  })
+  return found
 }
 
 /**

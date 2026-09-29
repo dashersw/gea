@@ -459,6 +459,31 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     assert.equal(h.counter.p - h.counter.pd, 0)
   })
 
+  // A `d` the user names inside the expression means what it does on main.
+  const NAMES_D = [
+    `{ui.open && ui.rows.flatMap((d: number) => [0].map(() => (d > 1 ? <b>big</b> : <i>small</i>)))}`,
+    `{ui.open && ((d: number) => ui.rows.map((r: number) => (r >= d ? <b>big</b> : <i>small</i>)))(2)}`,
+    `{ui.open && ui.rows.map((r: number) => { const d = r; return d > 1 ? <b>big</b> : <i>small</i> })}`,
+    `{ui.open && ui.rows.map((r: number) => { let d = r; return d > 1 ? <b>big</b> : <i>small</i> })}`,
+  ]
+  for (const [i, children] of NAMES_D.entries()) {
+    it(`leaves a user's \`d\` alone: ${children}`, async () => {
+      const h = await mountApp(`<Card>${children}</Card>`, `names-d${i}`)
+      // Array slots also leave a stray text node behind (#192), so only read the elements.
+      const card = () => [...h.root.querySelectorAll('.card b, .card i')].map((e) => e.textContent).join('')
+      assert.equal(card(), 'smallbig')
+      h.ui.rows = [2, 1]
+      h.flush()
+      assert.equal(card(), 'bigsmall')
+      h.ui.open = false
+      h.flush()
+      h.ui.open = true
+      h.flush()
+      assert.equal(card(), 'bigsmall')
+      h.dispose()
+    })
+  }
+
   it('keeps a JSX site shown when an array around it re-renders', async () => {
     const h = await mountApp(`<Card>{[<Title />, ui.fancy ? 'a' : 'b']}</Card>`, 'array-site')
     assert.equal(h.root.querySelectorAll('.card b').length, 1)
