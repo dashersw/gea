@@ -1,4 +1,3 @@
-import { parse } from '@babel/parser'
 import type { Scope } from '@babel/traverse'
 import type {
   ClassDeclaration,
@@ -11,6 +10,7 @@ import type {
 import { readFileSync } from 'node:fs'
 import { dirname, relative } from 'node:path'
 
+import { parseModule } from '../../parse/parser.ts'
 import { generate, t, traverse } from '../../utils/babel-interop.ts'
 import {
   collectBindings,
@@ -25,6 +25,7 @@ import { extractPrecedingStatements, foldEarlyReturnGuards } from './transform-t
 import { collectDirectFnComponentParams, collectDirectFnComponents, collectDirectFnStringProps } from '../transform.ts'
 import {
   canUseStaticCompiledComponent,
+  classHasDecorators,
   fnHasConditionalRoot,
   fnHasInstanceLocals,
   isFunctionComponent,
@@ -68,10 +69,7 @@ export function transformStaticRootMount(
 
   let ast: File
   try {
-    ast = parse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods'],
-    })
+    ast = parseModule(source)
   } catch {
     return null
   }
@@ -192,10 +190,7 @@ function createStaticTemplateFactory(
 
   let ast: File
   try {
-    ast = parse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods'],
-    })
+    ast = parseModule(source)
   } catch {
     return null
   }
@@ -489,10 +484,7 @@ function readImportModule(componentPath: string): { ast: File } | null {
   }
   let ast: File
   try {
-    ast = parse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods'],
-    })
+    ast = parseModule(source)
   } catch {
     return null
   }
@@ -780,7 +772,10 @@ function hasNoRootModuleTopLevelSideEffects(ast: File, classDecl: ClassDeclarati
       continue
     }
     if (t.isExportDefaultDeclaration(stmt)) {
-      if (stmt.declaration === classDecl) continue
+      if (stmt.declaration === classDecl) {
+        if (classHasDecorators(classDecl)) return false
+        continue
+      }
       if (
         t.isIdentifier(stmt.declaration) &&
         classDecl.id &&
@@ -807,6 +802,8 @@ function hasNoRootModuleTopLevelSideEffects(ast: File, classDecl: ClassDeclarati
 }
 
 function isSideEffectFreeClassDeclaration(stmt: ClassDeclaration): boolean {
+  // Decorators run when the class is defined; inlining would drop them.
+  if (classHasDecorators(stmt)) return false
   for (const member of stmt.body.body) {
     if (t.isStaticBlock(member)) return false
     if (member.static && (t.isClassProperty(member) || t.isClassPrivateProperty(member))) return false

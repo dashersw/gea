@@ -3,6 +3,7 @@ import type { ClassDeclaration, Expression, File, ImportDeclaration, Statement }
 import { existsSync, readFileSync } from 'node:fs'
 
 import { COMPILER_RUNTIME_ID } from '../../virtual-modules.ts'
+import { parseModule } from '../../parse/parser.ts'
 import { generate, t } from '../../utils/babel-interop.ts'
 import {
   sourceSpan,
@@ -13,6 +14,7 @@ import {
   type GeaIrConstant,
   type GeaIrStore,
 } from '../ir.ts'
+import { classHasDecorators } from './transform-components.ts'
 
 export interface StoreTransformResult {
   code: string
@@ -38,11 +40,7 @@ export function transformCompiledStoreModule(
 
   let ast: File
   try {
-    ast = parse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods'],
-      errorRecovery: false,
-    })
+    ast = parseModule(source)
   } catch {
     return null
   }
@@ -354,11 +352,7 @@ function literalConstantsFromFile(file: string, names: Set<string>): GeaIrConsta
   if (!existsSync(file)) return []
   let ast: File
   try {
-    ast = parse(readFileSync(file, 'utf8'), {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties'],
-      errorRecovery: false,
-    })
+    ast = parseModule(readFileSync(file, 'utf8'))
   } catch {
     return []
   }
@@ -590,11 +584,7 @@ function moduleExportsStore(file: string, resolveImportPath: ResolveImportPath, 
 
   let ast: File
   try {
-    ast = parse(readFileSync(file, 'utf8'), {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties'],
-      errorRecovery: false,
-    })
+    ast = parseModule(readFileSync(file, 'utf8'))
   } catch {
     storeExportCache.set(file, false)
     return false
@@ -661,6 +651,8 @@ function findStoreClasses(ast: File, storeName: string): ClassDeclaration[] {
 }
 
 function isCompiledStoreSafeClass(classDecl: ClassDeclaration): boolean {
+  // Decorators can rewrite the class at runtime; the runtime Store handles that.
+  if (classHasDecorators(classDecl)) return false
   for (const member of classDecl.body.body as any[]) {
     if (member.static) return false
     if (t.isClassPrivateMethod(member) || t.isClassPrivateProperty(member)) return false

@@ -1,5 +1,5 @@
 import type { Plugin, ResolvedConfig } from 'vite'
-import { parse } from '@babel/parser'
+import { parseModule } from './parse/parser.ts'
 import { transform } from './pipeline.ts'
 import { transformCompiledStoreModule } from './closure-codegen/transform/transform-store.ts'
 import { transformDottedObserveCalls } from './closure-codegen/transform/transform-observe-paths.ts'
@@ -504,10 +504,7 @@ function collectStaticModuleShape(source: string): StaticModuleShape {
   }
 
   try {
-    const ast = parse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods'],
-    })
+    const ast = parseModule(source)
     for (const statement of ast.program.body) {
       if (
         (statement.type === 'ImportDeclaration' ||

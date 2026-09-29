@@ -2,10 +2,11 @@
  * transform — file-level transformer.
  */
 
-import { parse } from '@babel/parser'
 import type { ClassDeclaration, File, TSTypeLiteral } from '@babel/types'
 
+import { parseModule } from '../parse/parser.ts'
 import { generate, t } from '../utils/babel-interop.ts'
+import { compilerError } from '../utils/compile-error.ts'
 
 import type { DirectFnComponentParams } from './emit.ts'
 import { buildCreateTemplateMethod, createEmitContext, lowerJsxInStatement } from './emit.ts'
@@ -81,16 +82,10 @@ export function transformFile(source: string, _filename?: string, options: Trans
     return { code: source, changed: false, rewritten: [], importsNeeded: [] }
   }
 
-  let ast: File
-  try {
-    ast = parse(source, {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods'],
-      errorRecovery: false,
-    })
-  } catch {
-    return { code: source, changed: false, rewritten: [], importsNeeded: [] }
-  }
+  // No catch: the pipeline parsed this source with the same plugins, so a
+  // failure here is a compiler bug. Returning `changed: false` would serve the
+  // file uncompiled.
+  const ast = parseModule(source)
 
   const ctx = createEmitContext()
   ctx.irTemplates = []
@@ -165,6 +160,14 @@ export function transformFile(source: string, _filename?: string, options: Trans
       if (templateMethod && !extendsComponent(classDecl)) continue
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null
       if (templateMethod && !jsx) continue
+      if (templateMethod?.decorators?.length) {
+        throw compilerError(
+          `Decorators on \`template()\` are not supported.`,
+          templateMethod.decorators[0],
+          `The compiler replaces \`template()\` with DOM code, so the decorator would never run. ` +
+            `Decorate another method instead.`,
+        )
+      }
       const useStaticCompiledComponent = canUseStaticCompiledComponent(classDecl)
       const useCompiledComponent = !useStaticCompiledComponent && canSkipComponentStoreProxy(classDecl)
       const useTinyReactiveComponent =

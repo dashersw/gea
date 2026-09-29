@@ -1,4 +1,4 @@
-import { parse } from '@babel/parser'
+import { parseModule } from './parser.ts'
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
 import { existsSync, readFileSync } from 'node:fs'
@@ -182,10 +182,7 @@ function parseStoreFile(filePath: string): t.File | null {
   }
 
   try {
-    return parse(source, {
-      sourceType: 'module',
-      plugins: ['jsx', 'typescript', 'decorators-legacy', 'classProperties'],
-    })
+    return parseModule(source)
   } catch {
     return null
   }

@@ -1,6 +1,25 @@
-import { parse } from '@babel/parser'
+import { parse, type ParserPlugin } from '@babel/parser'
 import { traverse, t } from '../utils/babel-interop.ts'
 import type { NodePath } from '../utils/babel-interop.ts'
+
+/**
+ * Babel parser plugins for user source. Every pass that parses a user module
+ * uses this one list: a file that one pass accepts and another rejects is
+ * silently skipped by the second (decorated components were left uncompiled).
+ */
+const SOURCE_PARSER_PLUGINS: ParserPlugin[] = [
+  'typescript',
+  'jsx',
+  'decorators-legacy',
+  'classProperties',
+  'classPrivateProperties',
+  'classPrivateMethods',
+]
+
+/** Parse a user module with {@link SOURCE_PARSER_PLUGINS}. Throws on syntax errors. */
+export function parseModule(code: string): t.File {
+  return parse(code, { sourceType: 'module', plugins: SOURCE_PARSER_PLUGINS })
+}
 
 export interface FunctionalComponentInfo {
   name: string
@@ -30,10 +49,7 @@ export interface ParseResult {
  * - JSX presence
  */
 export function parseSource(code: string): ParseResult | null {
-  const ast = parse(code, {
-    sourceType: 'module',
-    plugins: ['jsx', 'typescript', 'decorators-legacy', 'classProperties'],
-  })
+  const ast = parseModule(code)
 
   let componentClassName: string | null = null
   const componentClassNames: string[] = []
