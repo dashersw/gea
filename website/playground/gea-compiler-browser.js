@@ -44498,6 +44498,33 @@ ${hint}` : message);
   if (start) err.loc = { line: start.line, column: start.column };
   return err;
 }
+function withSourceFile(err, sourceFile) {
+  const where = err.loc ? `${sourceFile}:${err.loc.line}:${err.loc.column}` : sourceFile;
+  const [first, ...rest] = err.message.split("\n");
+  const out = new Error([`[gea] ${first} (${where})`, ...rest].join("\n"), { cause: err.cause });
+  out.__geaCompileError = true;
+  out.hint = err.hint;
+  out.id = sourceFile;
+  if (err.loc) out.loc = { file: sourceFile, line: err.loc.line, column: err.loc.column };
+  return out;
+}
+let unsupportedJsx = null;
+function reportUnsupportedJsx(err) {
+  if (!unsupportedJsx) throw err;
+  const key = `${err.loc?.line}:${err.loc?.column}:${err.message}`;
+  if (!unsupportedJsx.has(key)) unsupportedJsx.set(key, err);
+}
+function collectUnsupportedJsx(strict, fn) {
+  const outer = unsupportedJsx;
+  const collected = strict ? null : /* @__PURE__ */ new Map();
+  unsupportedJsx = collected;
+  try {
+    const result = fn();
+    return { result, warnings: collected ? [...collected.values()] : [] };
+  } finally {
+    unsupportedJsx = outer;
+  }
+}
 
 function createEmitContext(reactiveRoot) {
   return {
@@ -48695,10 +48722,12 @@ function walkJsxToTemplate(root, options = {}) {
     if (tagName[0] === tagName[0].toUpperCase()) {
       const spread = opening.attributes.find((attr) => libExports.isJSXSpreadAttribute(attr));
       if (spread) {
-        throw compilerError(
-          `Spread attributes like {...${spreadSource(spread.argument)}} on <${tagName}> are not supported.`,
-          spread,
-          `Pass each prop individually: <${tagName} label={\u2026} onSelect={\u2026} />.`
+        reportUnsupportedJsx(
+          compilerError(
+            `Spread attributes like {...${spreadSource(spread.argument)}} on <${tagName}> are not supported.`,
+            spread,
+            `Pass each prop individually: <${tagName} label={\u2026} onSelect={\u2026} />.`
+          )
         );
       }
       const slot = {
@@ -48717,10 +48746,12 @@ function walkJsxToTemplate(root, options = {}) {
       if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name) || !isCaptureEventAttr(attr.name.name)) continue;
       const rawAttrName = attr.name.name;
       const bubbling = rawAttrName.slice(0, -"Capture".length);
-      throw compilerError(
-        `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
-        attr,
-        `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`
+      reportUnsupportedJsx(
+        compilerError(
+          `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
+          attr,
+          `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`
+        )
       );
     }
     let lastSpread = -1;
@@ -49222,7 +49253,10 @@ function emitSlot(slot, stmts, ctx) {
   if (slot.kind === "ref") {
     const elId = libExports.identifier("el" + slot.index);
     const target = substituteBindings(slot.expr, ctx.bindings);
-    if (!libExports.isMemberExpression(target) && !libExports.isIdentifier(target)) throw refTargetError(written, target, ctx);
+    if (!libExports.isMemberExpression(target) && !libExports.isIdentifier(target)) {
+      reportUnsupportedJsx(refTargetError(written, target, ctx));
+      return;
+    }
     stmts.push(libExports.expressionStatement(libExports.assignmentExpression("=", target, elId)));
     return;
   }
@@ -51176,7 +51210,7 @@ function ensureCoreImports(ast, helpers) {
   ensureNamedImports(ast, COMPILER_RUNTIME_ID, helpers);
 }
 
-function assertNoStringTags(ast) {
+function checkStringTags(ast) {
   const tags = /* @__PURE__ */ new Set();
   const strings = /* @__PURE__ */ new Set();
   const visit = (node) => {
@@ -51212,10 +51246,12 @@ function assertNoStringTags(ast) {
       const writes = binding.constantViolations;
       if (!init && writes.length === 0) return;
       if (!writes.every((w) => w.isAssignmentExpression({ operator: "=" }) && isStringValued(w.node.right))) return;
-      throw compilerError(
-        `<${name.name}> holds a string, not a component, so it would render nothing.`,
-        name,
-        `A JSX tag can't come from a string variable. Write the element itself, or pick one with a conditional: {cond ? <section>\u2026</section> : <div>\u2026</div>}.`
+      reportUnsupportedJsx(
+        compilerError(
+          `<${name.name}> holds a string, not a component, so it would render nothing.`,
+          name,
+          `A JSX tag can't come from a string variable. Write the element itself, or pick one with a conditional: {cond ? <section>\u2026</section> : <div>\u2026</div>}.`
+        )
       );
     }
   });
@@ -51234,7 +51270,7 @@ function isStringValued(node) {
   }
   return false;
 }
-function assertNoNestedComponentClasses(ast) {
+function checkNestedComponentClasses(ast) {
   const visit = (node, inFunction) => {
     if (!node || typeof node !== "object") return;
     if (Array.isArray(node)) {
@@ -51243,10 +51279,12 @@ function assertNoNestedComponentClasses(ast) {
     }
     if (inFunction && libExports.isClass(node) && extendsComponent(node) && bodyContainsJsx(node.body)) {
       const name = node.id ? `\`${node.id.name}\` ` : "";
-      throw compilerError(
-        `Component class ${name}is declared inside a function. Only top-level component classes are compiled.`,
-        node,
-        "Declare the class at the top level of the module, and pass values in as props."
+      reportUnsupportedJsx(
+        compilerError(
+          `Component class ${name}is declared inside a function. Only top-level component classes are compiled.`,
+          node,
+          "Declare the class at the top level of the module, and pass values in as props."
+        )
       );
     }
     const nested = inFunction || libExports.isFunction(node);
@@ -51259,12 +51297,19 @@ function assertNoNestedComponentClasses(ast) {
 }
 
 function transformFile(source, _filename, options = {}) {
+  const { result, warnings } = collectUnsupportedJsx(
+    options.strict === true,
+    () => transformModule(source, _filename, options)
+  );
+  return { ...result, warnings };
+}
+function transformModule(source, _filename, options) {
   if (!source.includes("<") || !source.includes(">")) {
     return { code: source, changed: false, rewritten: [], importsNeeded: [] };
   }
   const ast = parseModule(source);
-  assertNoNestedComponentClasses(ast);
-  assertNoStringTags(ast);
+  checkNestedComponentClasses(ast);
+  checkStringTags(ast);
   const ctx = createEmitContext();
   ctx.irTemplates = [];
   ctx.embedded = options.embedded;
@@ -51316,7 +51361,7 @@ function transformFile(source, _filename, options = {}) {
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null;
       if (templateMethod && !jsx) {
         if (bodyContainsJsx(templateMethod.body) && extendsGeaComponent(classDecl, ctx, geaImports)) {
-          throw nonJsxTemplateError(classDecl, templateMethod);
+          reportUnsupportedJsx(nonJsxTemplateError(classDecl, templateMethod));
         }
         continue;
       }
@@ -52553,9 +52598,10 @@ function isComponentImportSource(source) {
   if (source.startsWith("node:")) return false;
   return true;
 }
-function compileForBrowser(files) {
+function compileForBrowser(files, options = {}) {
   const compiledModules = {};
   const errors = [];
+  const warnings = [];
   clearCaches();
   globalThis.__geaPlaygroundFiles = files;
   globalThis.__geaResolveFile = (filePath) => {
@@ -52657,8 +52703,12 @@ function compileForBrowser(files) {
       let transformed = false;
       const emitted = transformFile(source, virtualSourceFile, {
         directClassComponents: knownClassComponentImports,
-        directFactoryComponents: knownFactoryComponentImports
+        directFactoryComponents: knownFactoryComponentImports,
+        strict: options.strict
       });
+      for (const warning of emitted.warnings) {
+        warnings.push({ file: filename, message: withSourceFile(warning, filename).message });
+      }
       if (emitted.changed) {
         const reparsed = parseSource$1(emitted.code);
         if (reparsed) {
@@ -52678,7 +52728,7 @@ function compileForBrowser(files) {
       compiledModules[filename] = code;
     }
   }
-  return { compiledModules, errors };
+  return { compiledModules, errors, warnings };
 }
 
 export { compileForBrowser };
