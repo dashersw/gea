@@ -857,7 +857,9 @@ export function buildInlinePropKeyedListBlock(options: InlinePropKeyedListOption
   } else {
     sourceBlock = INLINE_PROP_LIST_BLOCK
   }
-  const block = t.cloneNode(sourceBlock, true)
+  // Without the template's locations: they are positions in the template
+  // string, and the source map would point them at the user's file.
+  const block = t.cloneNode(sourceBlock, true, true)
   const anchorExpr = options.anchorless ? t.nullLiteral() : options.anchorId
   replacePlaceholders(block, {
     __ANCHOR__: anchorExpr,
