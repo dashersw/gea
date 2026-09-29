@@ -3,6 +3,7 @@ import babelTraverse from '@babel/traverse'
 import { parseSource } from './parse/parser.ts'
 import { transformFile } from './closure-codegen/transform.ts'
 import { convertFunctionalToClass } from './preprocess/functional-to-class.ts'
+import { normalizeArrowComponents } from './preprocess/arrow-components.ts'
 import { isComponentTag } from './utils/component-tags.ts'
 import { ensureGeaCompilerSymbolImports } from './utils/imports.ts'
 import { clearCaches as clearStoreCaches } from './parse/store-analysis.ts'
@@ -62,10 +63,17 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
 
   for (const [filename, code] of Object.entries(files)) {
     try {
-      const parsed = parseSource(code)
+      let parsed = parseSource(code)
       if (!parsed) {
         compiledModules[filename] = code
         continue
+      }
+
+      // transformFile only compiles `function` components — see pipeline.ts.
+      let source = code
+      if (parsed.hasJSX && normalizeArrowComponents(parsed.ast, filename)) {
+        source = generate(parsed.ast).code
+        parsed = parseSource(source)!
       }
 
       let { ast, imports } = parsed
@@ -153,7 +161,7 @@ export function compileForBrowser(files: Record<string, string>): CompileResult 
       let transformed = false
       // Use the closure-compiled transformer (Phase 3+). Pass source code (not AST)
       // and splice the resulting AST back in so downstream passes still run.
-      const emitted = transformFile(code, virtualSourceFile, {
+      const emitted = transformFile(source, virtualSourceFile, {
         directClassComponents: knownClassComponentImports,
         directFactoryComponents: knownFactoryComponentImports,
       })
