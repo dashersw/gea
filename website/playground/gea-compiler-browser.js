@@ -49021,7 +49021,7 @@ function emitSlot(slot, stmts, ctx) {
         ctx.importsNeeded.add("reactiveStyleProp");
         for (const p of styleProps) {
           const keyName = libExports.isIdentifier(p.key) ? p.key.name : p.key.value;
-          const kebabKey = String(keyName).replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
+          const kebabKey = String(keyName).startsWith("--") ? String(keyName) : String(keyName).replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
           const valSource = expressionToPathOrGetter(p.value, ctx);
           stmts.push(
             libExports.expressionStatement(
