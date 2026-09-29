@@ -621,7 +621,7 @@ export function bindPropsDestructures(
  *                         base of the nested pattern (its default applied)
  *   `{ ...rest }`     → a real local whose getters read through to `props`
  * Returns the statements that must stay in the body as real locals. Array
- * patterns, computed keys and nested defaults that construct something stay a
+ * patterns, computed keys and nested defaults with a `new` or a call stay a
  * plain destructure of their base, as does the whole pattern when a computed
  * key makes the rest element's excluded keys unknown.
  */
@@ -647,9 +647,11 @@ export function bindPropsPattern(
     if (t.isRestElement(prop)) continue
     const key = staticPropKey(prop)
     const target = t.isAssignmentPattern(prop.value) ? prop.value.left : prop.value
-    // A nested default that constructs something is built once, as a real local
+    // A nested default with effects (`= new Guest()`, `= getGuest()`) runs once, as a real local
     const onceDefault =
-      t.isObjectPattern(target) && t.isAssignmentPattern(prop.value) && initializerNeedsLocal(prop.value.right)
+      t.isObjectPattern(target) &&
+      t.isAssignmentPattern(prop.value) &&
+      (initializerNeedsLocal(prop.value.right) || containsCall(prop.value.right))
     if (key === null || onceDefault || !(t.isIdentifier(target) || t.isObjectPattern(target))) {
       unbound.push(prop)
       continue
@@ -711,6 +713,19 @@ export function bindPropsPattern(
     )
   }
   return locals
+}
+
+/** A call outside a nested function, which may have effects. */
+function containsCall(node: any): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node) || t.isTaggedTemplateExpression(node)) return true
+  if (t.isFunction(node)) return false
+  if (Array.isArray(node)) return node.some(containsCall)
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    if (containsCall(node[key])) return true
+  }
+  return false
 }
 
 /** `props as Props`, `props!` and `(props)` all read `props`. */

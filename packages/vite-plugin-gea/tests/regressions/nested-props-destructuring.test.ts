@@ -137,35 +137,43 @@ describe('function component nested props destructuring (#142)', { concurrency: 
     }
   })
 
-  it('builds a nested default that constructs something once', async () => {
-    const restore = installDom()
-    let view: any
-    try {
-      const created: unknown[] = []
-      const app = await renderApp(
-        `
-          class Guest {
-            first = 'Guest'
-            last = 'User'
-            constructor() {
-              created.push(this)
+  for (const [label, init] of [
+    ['constructs something', 'new Guest()'],
+    ['calls a function', 'guest()'],
+  ] as const) {
+    it(`runs a nested default that ${label} once`, async () => {
+      const restore = installDom()
+      let view: any
+      try {
+        const created: unknown[] = []
+        const app = await renderApp(
+          `
+            class Guest {
+              first = 'Guest'
+              last = 'User'
+              constructor() {
+                created.push(this)
+              }
             }
-          }
+            function guest() {
+              return new Guest()
+            }
 
-          export default function Avatar({ user: { first, last } = new Guest() }) {
-            return <b title={last}>{first}</b>
-          }
-        `,
-        `<Avatar />`,
-        '',
-        { created },
-      )
-      view = app.view
-      assert.equal(app.root.querySelector('b')!.outerHTML, '<b title="User">Guest</b>')
-      assert.equal(created.length, 1)
-    } finally {
-      view?.dispose()
-      restore()
-    }
-  })
+            export default function Avatar({ user: { first, last } = ${init} }) {
+              return <b title={last}>{first}</b>
+            }
+          `,
+          `<Avatar />`,
+          '',
+          { created },
+        )
+        view = app.view
+        assert.equal(app.root.querySelector('b')!.outerHTML, '<b title="User">Guest</b>')
+        assert.equal(created.length, 1)
+      } finally {
+        view?.dispose()
+        restore()
+      }
+    })
+  }
 })
