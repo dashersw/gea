@@ -50446,6 +50446,45 @@ function fnHasInstanceLocals(fn) {
   }
   return false;
 }
+function collectModuleBindings(ast) {
+  const names = /* @__PURE__ */ new Set();
+  for (const stmt of ast.program.body) {
+    if (libExports.isImportDeclaration(stmt)) {
+      if (stmt.importKind === "type" || stmt.importKind === "typeof") continue;
+      for (const spec of stmt.specifiers) {
+        if (libExports.isImportSpecifier(spec) && (spec.importKind === "type" || spec.importKind === "typeof")) continue;
+        names.add(spec.local.name);
+      }
+      continue;
+    }
+    const decl = libExports.isExportNamedDeclaration(stmt) || libExports.isExportDefaultDeclaration(stmt) ? stmt.declaration : stmt;
+    if (libExports.isVariableDeclaration(decl) || libExports.isFunctionDeclaration(decl) || libExports.isClassDeclaration(decl)) {
+      for (const name of Object.keys(libExports.getOuterBindingIdentifiers(decl))) names.add(name);
+    } else if (libExports.isTSEnumDeclaration(decl)) {
+      names.add(decl.id.name);
+    }
+  }
+  return names;
+}
+function fnReadsModuleBinding(fn, moduleBindings) {
+  if (moduleBindings.size === 0) return false;
+  let reads = false;
+  traverse$1(libExports.file(libExports.program([libExports.cloneNode(fn, true)])), {
+    enter(path) {
+      if (isTypeOnlyNode(path.node)) path.skip();
+    },
+    Identifier(path) {
+      const name = path.node.name;
+      if (!moduleBindings.has(name) || !path.isReferencedIdentifier() || path.scope.getBinding(name)) return;
+      reads = true;
+      path.stop();
+    }
+  });
+  return reads;
+}
+function isTypeOnlyNode(node) {
+  return libExports.isTSType(node) || libExports.isTSTypeAnnotation(node) || libExports.isTSTypeParameterInstantiation(node) || libExports.isTSTypeParameterDeclaration(node) || libExports.isTSTypeAliasDeclaration(node) || libExports.isTSInterfaceDeclaration(node);
+}
 function fnHasConditionalRoot(fn) {
   const body = fn.body?.body ?? [];
   const returnIdx = body.findIndex((s) => libExports.isReturnStatement(s));
@@ -51259,6 +51298,13 @@ function collectDirectFnComponents(ast) {
   visit(ast.program);
   for (const name of candidates) {
     if ((counts.get(name) ?? 0) === 0 || disqualified.has(name)) candidates.delete(name);
+  }
+  if (candidates.size === 0) return candidates;
+  const moduleBindings = collectModuleBindings(ast);
+  for (const node of ast.program.body) {
+    if (libExports.isFunctionDeclaration(node) && node.id && candidates.has(node.id.name)) {
+      if (fnReadsModuleBinding(node, moduleBindings)) candidates.delete(node.id.name);
+    }
   }
   return candidates;
 }
