@@ -325,4 +325,23 @@ export default class App extends Component {
     assert.doesNotMatch(code, /relationalClass\(/)
     assert.match(code, /reactiveClassName\(/)
   })
+  it('normalizes lone multiline text passed as component children', () => {
+    const { code } = transformFile(`
+      function Card(props) { return <b>{props.children}</b> }
+      export default class App {
+        template() {
+          return <div>
+            <Card>
+              Save
+              changes
+            </Card>
+            <Card> Keep spaces </Card>
+          </div>
+        }
+      }
+    `, '/virtual/component-text.tsx')
+    assert.match(code, /children:\s*\(\)\s*=>\s*["']Save changes["']/)
+    assert.match(code, /children:\s*\(\)\s*=>\s*["'] Keep spaces ["']/)
+  })
+
 })

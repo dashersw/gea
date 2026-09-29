@@ -7,7 +7,7 @@ import { compileJsxToBlock } from './emit-core.ts'
 import { substituteBindings } from './emit-substitution.ts'
 import { containsJsx, lowerJsxInExpression } from './emit-jsx-lowering.ts'
 import { buildMapBranchFn } from './emit-map-branch.ts'
-import type { Slot } from '../generator.ts'
+import { normalizeMultilineJsxText, type Slot } from '../generator.ts'
 
 export function emitMountSlot(slot: Slot, stmts: Statement[], ctx: EmitContext): void {
   const anchorId = t.identifier('anchor' + slot.index)
@@ -325,7 +325,7 @@ function buildChildrenThunk(children: any[], ctx: EmitContext): Expression | nul
   if (children.length === 1) {
     const c = children[0]
     if (t.isJSXText(c)) {
-      return t.arrowFunctionExpression([], t.stringLiteral(c.value))
+      return t.arrowFunctionExpression([], t.stringLiteral(normalizeMultilineJsxText(c.value)))
     }
     if (t.isJSXExpressionContainer(c)) {
       if (t.isJSXEmptyExpression(c.expression)) return null
