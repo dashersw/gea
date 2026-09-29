@@ -981,6 +981,7 @@ function nodeContainsIdentifier(node: unknown, name: string): boolean {
 function nodeContainsAnyIdentifier(node: unknown, names: Set<string>): boolean {
   if (names.size === 0 || !node || typeof node !== 'object') return false
   if (t.isIdentifier(node) && names.has(node.name)) return true
+  if (t.isJSXOpeningElement(node) && jsxTagReferencesAny(node.name, names)) return true
   if (Array.isArray(node)) {
     for (const child of node) if (nodeContainsAnyIdentifier(child, names)) return true
     return false
@@ -990,4 +991,16 @@ function nodeContainsAnyIdentifier(node: unknown, names: Set<string>): boolean {
     if (nodeContainsAnyIdentifier((node as Record<string, unknown>)[key], names)) return true
   }
   return false
+}
+
+// A JSX tag reads a binding when it names a component (<Card>) or starts a
+// member expression (<ui.Card>). Lowercase tags are HTML elements, and
+// attribute names are JSXIdentifiers that never read a binding.
+function jsxTagReferencesAny(name: unknown, names: Set<string>): boolean {
+  if (t.isJSXMemberExpression(name)) {
+    let object = name.object
+    while (t.isJSXMemberExpression(object)) object = object.object
+    return names.has(object.name)
+  }
+  return t.isJSXIdentifier(name) && isComponentName(name.name) && names.has(name.name)
 }
