@@ -135,6 +135,10 @@ export function transformFile(source: string, _filename?: string, options: Trans
 
     if (classDecl) {
       if (firstClassIdx < 0) firstClassIdx = i
+      // `template()` params and locals bind per class. Starting each class with
+      // empty bindings keeps an earlier class's locals from rewriting same-named
+      // identifiers (a module constant, an import) in this one.
+      ctx.bindings.clear()
       // Collect `get`-accessor names from the class — expressionToPathOrGetter
       // forces getter-form for `this.X` when X is a derived getter.
       ctx.classGetters.clear()
@@ -198,7 +202,6 @@ export function transformFile(source: string, _filename?: string, options: Trans
       }
 
       // `template({ count, user })` param destructure → bindings to this.props.<name>
-      const paramBindings: string[] = []
       if (templateMethod.params.length >= 1 && t.isObjectPattern(templateMethod.params[0])) {
         for (const prop of (templateMethod.params[0] as any).properties) {
           if (!t.isObjectProperty(prop) || !t.isIdentifier(prop.key)) continue
@@ -210,14 +213,11 @@ export function transformFile(source: string, _filename?: string, options: Trans
               t.identifier(prop.key.name),
             ),
           )
-          paramBindings.push(local)
         }
       }
       // `template(props)` plain parameter → bind `props` → this.props
-      let plainPropsParamName: string | null = null
       if (templateMethod.params.length >= 1 && t.isIdentifier(templateMethod.params[0])) {
-        plainPropsParamName = templateMethod.params[0].name
-        ctx.bindings.set(plainPropsParamName, t.memberExpression(t.thisExpression(), t.identifier('props')))
+        ctx.bindings.set(templateMethod.params[0].name, t.memberExpression(t.thisExpression(), t.identifier('props')))
       }
 
       const preceding = extractPrecedingStatements(templateMethod)
@@ -232,9 +232,6 @@ export function transformFile(source: string, _filename?: string, options: Trans
         }
       }
       if (useStaticElementComponent) method.params = []
-      if (plainPropsParamName) ctx.bindings.delete(plainPropsParamName)
-      // Clear per-template bindings so they don't leak to the next class
-      for (const k of paramBindings) ctx.bindings.delete(k)
 
       const isReactiveComponent = reactiveComponentNames.has(className)
       const bodyItems = classDecl.body.body
