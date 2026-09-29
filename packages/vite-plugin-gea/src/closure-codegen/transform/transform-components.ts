@@ -483,6 +483,7 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   // hits the live thunk on each read). `const { … } = props` in the body
   // goes through the same path below.
   const propsLocals: Statement[] = []
+  if (!directParams) renameOwnPropsBindings(fnDecl)
   if (directParams) {
     fnDecl.params = directParams.locals.map((name) => t.identifier(name))
     fnCtx.oneShotPropLocals = new Set(directParams.locals)
@@ -559,6 +560,26 @@ function bindFnLocals(stmts: Statement[], bindings: Map<string, Expression>): St
     initializerNeedsLocal,
   )
   return kept
+}
+
+/**
+ * Give the function's own bindings called `props` fresh names. The compiled
+ * component takes `props` as its first parameter, so `...props` in
+ * `({ class: cls, ...props })`, a `const props` or a callback's `props`
+ * parameter would collide with it or hide it from the reads the compiler
+ * inlines. A props parameter already called `props` is the one it keeps.
+ */
+function renameOwnPropsBindings(fnDecl: any): void {
+  const param = t.isAssignmentPattern(fnDecl.params[0]) ? fnDecl.params[0].left : fnDecl.params[0]
+  const kept = t.isIdentifier(param, { name: 'props' }) ? param : null
+  // A throwaway file, as in renameSelfReferences, gives fresh scopes; the
+  // renames land on the function's own nodes.
+  traverse(t.file(t.program([t.isStatement(fnDecl) ? fnDecl : t.expressionStatement(fnDecl)])), {
+    Scope(path) {
+      const binding = path.scope.getOwnBinding('props')
+      if (binding && binding.identifier !== kept) path.scope.rename('props')
+    },
+  })
 }
 
 /**
