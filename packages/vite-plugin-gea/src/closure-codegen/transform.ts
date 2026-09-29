@@ -234,7 +234,8 @@ export function transformFile(source: string, _filename?: string, options: Trans
         ctx.bindings.set(templateParam.name, t.memberExpression(t.thisExpression(), t.identifier('props')))
       }
 
-      // `const { … } = this.props` in the body binds like a function component's props
+      // `const { … } = this.props` in the body, or `= props` for a `template(props)`
+      // parameter, binds like a function component's props
       const propsLocals: Statement[] = []
       const preceding = bindPropsDestructures(
         extractPrecedingStatements(templateMethod),

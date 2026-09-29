@@ -53,6 +53,7 @@ describe('class template() this.props destructuring (#144)', { concurrency: fals
     ['a rest element', '', 'const { label, ...rest } = this.props', 'rest.title', 'label'],
     ['a renamed key', '', 'const { label: text, title } = this.props', 'title', 'text'],
     ['a rest element of a props parameter', 'props', 'const { label, ...rest } = props', 'rest.title', 'label'],
+    ['a props parameter with a default', 'props = {}', 'const { label, ...rest } = props', 'rest.title', 'label'],
     ['a rest element of a cast', '', 'const { label, ...rest } = this.props as any', 'rest.title', 'label'],
   ] as const) {
     it(`renders and updates ${label}`, async () => {
