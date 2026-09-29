@@ -350,6 +350,30 @@ describe('element spread attributes (#93)', { concurrency: false }, () => {
     app.dispose()
   })
 
+  it("reads only the spread object's own keys", async () => {
+    const log: string[] = []
+    const base = { title: 'inherited', onClick: () => log.push('inherited') }
+    const makeAttrs = () => Object.assign(Object.create(base), { id: 'own' })
+    const { root, app } = await mount(
+      `
+        import { Component } from '@geajs/core'
+        export class App extends Component {
+          o = makeAttrs()
+          template() {
+            return <div><p {...this.o}>kept</p></div>
+          }
+        }
+      `,
+      'OwnKeys',
+      { makeAttrs },
+    )
+    const p = root.querySelector('p')!
+    assert.equal(p.outerHTML, '<p id="own">kept</p>', 'like Object.assign, a spread copies own keys only')
+    click(p)
+    assert.deepEqual(log, [], 'an inherited handler is not installed')
+    app.dispose()
+  })
+
   it('works in keyed-list rows', async () => {
     const { root, app } = await mount(
       `

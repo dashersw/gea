@@ -167,7 +167,9 @@ function patchSpread(el: Element, state: SpreadState, sources: unknown, skip: re
 function collect(out: Map<string, unknown>, source: unknown, skip: readonly string[] | null): void {
   if (source === null || typeof source !== 'object') return
   const obj = source as Record<string, unknown>
-  for (const key in obj) {
+  // Own keys only, as JSX spread copies them (`Object.assign`): an inherited
+  // key is not one of the object's attributes.
+  for (const key of Object.keys(obj)) {
     const name = spreadKeyName(key)
     if (name === null || (skip !== null && skip.indexOf(name) !== -1)) continue
     out.set(name, obj[key])
