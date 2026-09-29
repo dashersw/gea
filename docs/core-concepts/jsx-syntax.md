@@ -48,7 +48,7 @@ const { children, ...rest } = this.props
 return <button class="btn" {...rest}>{children}</button>
 ```
 
-Keys are applied in source order: a spread overrides the attributes written before it, and attributes written after it override the spread. The spread stays live. When the object changes, changed keys are written and keys that are gone are removed. `on*` keys (and bare event names like `click`) become event handlers. `class`, `style`, `value`, `visible` and boolean attributes work as they do when written directly. `children`, `key`, `ref` and `dangerouslySetInnerHTML` are ignored.
+Keys are applied in source order: a spread overrides the attributes written before it, and attributes written after it override the spread. The spread stays live. When the object changes, changed keys are written and keys that are gone are removed. `on*` keys in any letter case (and bare event names like `click`) become event handlers; one whose value is not a function is ignored. `class`, `style`, `value`, `visible` and boolean attributes work as they do when written directly. `children`, `key`, `ref`, `dangerouslySetInnerHTML` and keys that are not valid attribute names are ignored. Because the object chooses the attribute names, the URL attributes a spread writes (`href`, `src`, `action`, `formaction` and the others `geaSanitizeAttr` lists) are written through `geaSanitizeAttr`, which empties a `javascript:`, `vbscript:` or non-image `data:` URL. This includes the attributes written before the spread on the same element, since the spread applies those too.
 
 ## Differences from React
 
@@ -162,8 +162,9 @@ The compiler throws clear errors at build time for these patterns:
 
 | Pattern | Fix |
 | --- | --- |
-| `<Comp {...props} />` (spread on a component tag) | Destructure and pass props individually |
 | Dynamic tag names | Use conditional rendering instead |
 | `{() => <div />}` (function as child) | Use named render prop attributes |
 | `export function Foo() { return <div /> }` | Use `export default function` |
 | Fragments as `.map()` item roots | Wrap in a single root element |
+
+Spreading onto a component tag (`<Comp {...props} />`) is not supported yet, and it raises no error: the compiler drops the spread, so the component receives none of those props ([#198](https://github.com/dashersw/gea/issues/198)). Pass the props individually.
