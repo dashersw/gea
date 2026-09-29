@@ -1,19 +1,22 @@
-import { t } from '../utils/babel-interop.ts'
+import { t, traverse, type NodePath } from '../utils/babel-interop.ts'
 import { isFunctionComponent } from '../closure-codegen/transform/transform-components.ts'
 
 /**
- * Rewrites top-level arrow-function components into function declarations,
- * the only function form the closure compiler recognizes as a component:
+ * Rewrites top-level arrow-function and function-expression components into
+ * function declarations, the only function form the closure compiler
+ * recognizes as a component:
  *
  * - `const Foo = (props) => <div/>`            → `function Foo(props) { return <div/> }`
  * - `export const Foo = (props) => { …; return <div/> }`
  *                                              → `export function Foo(props) { …; return <div/> }`
+ * - `export const Foo = function (props) { … }` → `export function Foo(props) { … }`
  * - `export default (props) => <div/>`         → `export default function Foo(props) { return <div/> }`
- *   (the name comes from the file name, since the arrow has none)
+ * - `export default function (props) { … }`    → `export default function Foo(props) { … }`
+ *   (the name comes from the file name, since the function has none)
  *
- * An arrow is rewritten only if the resulting function passes
- * `isFunctionComponent`, and never if it reads `this` or `arguments`, which a
- * function declaration would rebind.
+ * A function is rewritten only if the resulting declaration passes
+ * `isFunctionComponent`. Arrows that read `this` or `arguments`, which a
+ * function declaration would rebind, are left alone.
  *
  * Mutates the AST in place. Returns true if anything was rewritten.
  */
@@ -33,11 +36,19 @@ export function normalizeArrowComponents(ast: t.File, filename?: string): boolea
       continue
     }
 
+    if (t.isExportDefaultDeclaration(stmt) && t.isFunctionDeclaration(stmt.declaration) && !stmt.declaration.id) {
+      const fn = stmt.declaration
+      fn.id = t.identifier(defaultComponentName(ast, filename))
+      if (isFunctionComponent(fn)) changed = true
+      else fn.id = null
+      continue
+    }
+
     const exported = t.isExportNamedDeclaration(stmt)
     const decl = exported ? stmt.declaration : stmt
     if (!t.isVariableDeclaration(decl) || decl.kind !== 'const') continue
 
-    // Split the declaration so each converted arrow becomes its own function
+    // Split the declaration so each converted function becomes its own function
     // declaration; the remaining declarators stay `const`, in order.
     const replacement: t.Statement[] = []
     let pending: t.VariableDeclarator[] = []
@@ -48,10 +59,7 @@ export function normalizeArrowComponents(ast: t.File, filename?: string): boolea
       pending = []
     }
     for (const declarator of decl.declarations) {
-      const fn =
-        t.isIdentifier(declarator.id) && t.isArrowFunctionExpression(declarator.init)
-          ? arrowToFunctionDeclaration(declarator.id.name, declarator.init)
-          : null
+      const fn = t.isIdentifier(declarator.id) ? toFunctionDeclaration(declarator.id.name, declarator.init) : null
       if (!fn) {
         pending.push(declarator)
         continue
@@ -71,6 +79,12 @@ export function normalizeArrowComponents(ast: t.File, filename?: string): boolea
   return changed
 }
 
+function toFunctionDeclaration(name: string, init: t.Expression | null | undefined): t.FunctionDeclaration | null {
+  if (t.isArrowFunctionExpression(init)) return arrowToFunctionDeclaration(name, init)
+  if (t.isFunctionExpression(init)) return functionExpressionToDeclaration(name, init)
+  return null
+}
+
 function arrowToFunctionDeclaration(name: string, arrow: t.ArrowFunctionExpression): t.FunctionDeclaration | null {
   // Parameter defaults are evaluated in the function's scope too.
   if (readsFunctionScopedBinding(arrow.params) || readsFunctionScopedBinding(arrow.body)) return null
@@ -79,6 +93,43 @@ function arrowToFunctionDeclaration(name: string, arrow: t.ArrowFunctionExpressi
   // Carries over loc, comments, type parameters and the return type annotation.
   t.inherits(fn, arrow)
   return isFunctionComponent(fn) ? fn : null
+}
+
+/**
+ * A function expression binds `this` and `arguments` like a declaration does.
+ * Only its own name needs care: in `const Foo = function Inner() { … }`,
+ * `Inner` is bound inside the body alone, so its references become `Foo`.
+ */
+function functionExpressionToDeclaration(name: string, fn: t.FunctionExpression): t.FunctionDeclaration | null {
+  const decl = t.functionDeclaration(t.identifier(name), fn.params, fn.body, fn.generator, fn.async)
+  // Carries over loc, comments, type parameters and the return type annotation.
+  t.inherits(decl, fn)
+  if (!isFunctionComponent(decl)) return null
+  if (fn.id && fn.id.name !== name && !renameSelfReferences(fn, name)) return null
+  return decl
+}
+
+/**
+ * Renames the references to a named function expression's own name to `name`.
+ * Returns false, renaming nothing, if `name` is bound where one of them sits
+ * or the body assigns to the function's name.
+ */
+function renameSelfReferences(fn: t.FunctionExpression, name: string): boolean {
+  // A throwaway file gives the function fresh paths and scopes, unaffected by
+  // earlier traversals of the module and by the rewrites made so far.
+  let fnPath!: NodePath<t.FunctionExpression>
+  traverse(t.file(t.program([t.expressionStatement(fn)])), {
+    FunctionExpression(path) {
+      fnPath = path
+      path.stop()
+    },
+  })
+  const binding = fnPath.scope.getOwnBinding(fn.id!.name)
+  // A parameter of the same name shadows the function's name everywhere.
+  if (binding?.kind !== 'local') return true
+  if (!binding.constant || binding.referencePaths.some((ref) => ref.scope.getBinding(name))) return false
+  for (const ref of binding.referencePaths) (ref.node as t.Identifier | t.JSXIdentifier).name = name
+  return true
 }
 
 /** True if `node` reads `this` or `arguments` from the arrow's enclosing scope. */

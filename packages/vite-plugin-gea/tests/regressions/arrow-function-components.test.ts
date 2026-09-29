@@ -1,8 +1,11 @@
 /**
- * Arrow-function components (#106) must compile and render like `function`
- * components: named (`export const X = () => <jsx/>`), default
- * (`export default (props) => <jsx/>`) and block-bodied arrows, in the Vite
- * plugin (dev and build) and in the playground compiler.
+ * Arrow-function (#106) and function-expression (#122) components, and
+ * anonymous `export default function` components (#123), must compile and
+ * render like `function` declarations: named (`export const X = () => <jsx/>`,
+ * `export const X = function () { … }`), default
+ * (`export default (props) => <jsx/>`, `export default function () { … }`) and
+ * block-bodied arrows, in the Vite plugin (dev and build) and in the
+ * playground compiler.
  */
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -30,6 +33,19 @@ const FILES: Record<string, string> = {
   return <p class="block-arrow">{text}</p>
 }
 `,
+  'FnExpr.tsx': `export const FnExpr = function () {
+  return <p class="fn-expr">function expression</p>
+}
+`,
+  'DefaultFnExpr.tsx': `const DefaultFnExpr = function Inner(props: { label: string }) {
+  return <p class="default-fn-expr">default function expression {props.label}</p>
+}
+export default DefaultFnExpr
+`,
+  'AnonDefault.tsx': `export default function (props: { label: string }) {
+  return <p class="anon-default">anonymous default {props.label}</p>
+}
+`,
   'FnDecl.tsx': `export function FnDecl() {
   return <p class="fn-decl">function declaration</p>
 }
@@ -38,9 +54,15 @@ const FILES: Record<string, string> = {
 import { NamedArrow } from './NamedArrow'
 import DefaultArrow from './DefaultArrow'
 import { BlockArrow } from './BlockArrow'
+import { FnExpr } from './FnExpr'
+import DefaultFnExpr from './DefaultFnExpr'
+import AnonDefault from './AnonDefault'
 import { FnDecl } from './FnDecl'
 
 const LocalArrow = () => <p class="local-arrow">local arrow</p>
+const LocalFnExpr = function () {
+  return <p class="local-fn-expr">local function expression</p>
+}
 
 export default class App extends Component {
   template() {
@@ -50,6 +72,10 @@ export default class App extends Component {
         <DefaultArrow label="x" />
         <BlockArrow label="block" />
         <LocalArrow />
+        <FnExpr />
+        <DefaultFnExpr label="y" />
+        <AnonDefault label="z" />
+        <LocalFnExpr />
         <FnDecl />
       </div>
     )
@@ -64,6 +90,10 @@ const EXPECTED_HTML =
   '<p class="default-arrow">default arrow x</p>' +
   '<p class="block-arrow">BLOCK</p>' +
   '<p class="local-arrow">local arrow</p>' +
+  '<p class="fn-expr">function expression</p>' +
+  '<p class="default-fn-expr">default function expression y</p>' +
+  '<p class="anon-default">anonymous default z</p>' +
+  '<p class="local-fn-expr">local function expression</p>' +
   '<p class="fn-decl">function declaration</p>' +
   '</div>'
 
@@ -126,7 +156,7 @@ async function renderApp(App: any): Promise<string> {
   return html
 }
 
-describe('arrow-function components render like function components (#106)', { concurrency: false }, () => {
+describe('components in every function form render (#106, #122, #123)', { concurrency: false }, () => {
   let restoreDom: () => void
   let dir: string
 
@@ -218,6 +248,60 @@ describe('normalizeArrowComponents', () => {
     )
     assert.equal(normalizeArrowComponents(ast, '/src/Comp.tsx'), false)
     assert.doesNotMatch(generate(ast).code, /function/)
+  })
+
+  it('rewrites function-expression components into function declarations (#122)', () => {
+    const out = normalize(`
+      export const Named = function (props) { return <p>{props.a}</p> }
+      const Local = async function () { return <p>{this.x}{arguments[0]}</p> }
+      export default Local
+    `)
+    assert.match(out, /export function Named\(props\) \{\s*return <p>\{props\.a\}<\/p>;\s*\}/)
+    assert.match(
+      out,
+      /^async function Local\(\) \{\s*return <p>\{this\.x\}\{arguments\[0\]\}<\/p>;\s*\}\s*export default Local;/m,
+    )
+  })
+
+  it('renames references to a named function expression to the component name (#122)', () => {
+    const out = normalize(`
+      export const Tree = function Node(props) {
+        return <ul>{props.items.map((i) => <Node items={i.children}></Node>)}{Node.name}{props.Node}</ul>
+      }
+      export const Same = function Same() { return <p>{Same.name}</p> }
+      export const Param = function Inner(Inner) { return <p>{Inner}</p> }
+    `)
+    assert.match(out, /export function Tree\(props\)/)
+    assert.match(out, /<Tree items=\{i\.children\}><\/Tree>\)\}\{Tree\.name\}\{props\.Node\}/)
+    assert.match(out, /export function Same\(\) \{\s*return <p>\{Same\.name\}<\/p>;/)
+    assert.match(out, /export function Param\(Inner\) \{\s*return <p>\{Inner\}<\/p>;/)
+  })
+
+  it('leaves function expressions alone that are not components or cannot be renamed', () => {
+    const ast = parse(
+      `
+      export const lower = function () { return <p /> }
+      export const NotJsx = function () { return 1 }
+      export let Mutable = function () { return <p /> }
+      export const Shadowed = function Inner() { const Shadowed = 1; return <p>{Inner}{Shadowed}</p> }
+      export const Reassigned = function Inner() { Inner = 1; return <p /> }
+    `,
+      { sourceType: 'module', plugins: ['jsx', 'typescript'] },
+    )
+    assert.equal(normalizeArrowComponents(ast, '/src/Comp.tsx'), false)
+    assert.doesNotMatch(generate(ast).code, /^(export )?function/m)
+  })
+
+  it('names an anonymous `export default function` component after the file (#123)', () => {
+    assert.match(
+      normalize(`export default function (props) { return <p>{props.a}</p> }`, '/src/anon-default.tsx'),
+      /export default function AnonDefault\(props\)/,
+    )
+    assert.match(
+      normalize(`import Card from './Card'\nexport default async function () { return <Card /> }`, '/src/Card.tsx'),
+      /export default async function Card1\(\)/,
+    )
+    assert.match(normalize(`export default function () { return 1 }`), /export default function \(\)/)
   })
 
   it('converts arrows whose `this` belongs to a nested function', () => {
