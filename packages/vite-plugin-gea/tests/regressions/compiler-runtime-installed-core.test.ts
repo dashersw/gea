@@ -24,7 +24,7 @@ export default class Probe extends Component {
 // @geajs/core installed from npm: a real directory in node_modules (so Vite
 // pre-bundles it in dev) whose exports point at built .mjs files. The .mjs
 // files re-export core's source, so no `npm run build` is needed.
-function installedCoreProject(dirs: string[]): InlineConfig {
+function installedCoreProject(dirs: string[], { exportsCompilerRuntime = true } = {}): InlineConfig {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'gea-installed-core-')))
   dirs.push(root)
   const core = path.join(root, 'node_modules/@geajs/core')
@@ -38,7 +38,7 @@ function installedCoreProject(dirs: string[]): InlineConfig {
       type: 'module',
       exports: {
         '.': { import: './dist/index.mjs' },
-        './compiler-runtime': { import: './dist/compiler-runtime.mjs' },
+        ...(exportsCompilerRuntime && { './compiler-runtime': { import: './dist/compiler-runtime.mjs' } }),
       },
     }),
     [`${core}/dist/index.mjs`]: `export * from ${JSON.stringify(path.join(coreSrc, 'index.ts'))}\n`,
@@ -77,6 +77,23 @@ describe('virtual:gea-compiler-runtime with @geajs/core installed from npm', () 
 
     assert.match(code, /onAfterRenderAsync/)
     assert.match(code, /requestAnimationFrame/)
+  })
+
+  it("falls back to the runtime next to core's entry when core's exports omit ./compiler-runtime", async () => {
+    const config = installedCoreProject(dirs, { exportsCompilerRuntime: false })
+    let runtimeSource: string | undefined
+    config.plugins!.push({
+      name: 'capture-compiler-runtime',
+      transform(code, id) {
+        if (id === '\0virtual:gea-compiler-runtime') runtimeSource = code
+      },
+    })
+
+    // Vite's resolver throws for the unexported subpath; the build must not.
+    await build(config)
+
+    const nextToEntry = path.join(config.root!, 'node_modules/@geajs/core/dist/compiler-runtime.mjs')
+    assert.equal(runtimeSource, `export * from ${JSON.stringify(nextToEntry.replace(/\\/g, '/'))}\n`)
   })
 
   it('dev loads the runtime from the pre-bundled @geajs/core, not a path next to the plugin (#96)', async () => {

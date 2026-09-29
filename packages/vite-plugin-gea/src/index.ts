@@ -226,11 +226,18 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         // layout and dev pre-bundling all apply, so both share one module graph.
         // `id` as importer makes externals match the `export *` emitted here,
         // which re-imports by specifier so Vite serves the pre-bundled copy.
-        const runtime = await this.resolve(CORE_COMPILER_RUNTIME, id, { skipSelf: true })
+        // Vite throws rather than returning null when core's exports omit
+        // `./compiler-runtime` (a fork or custom build), so fall through too.
+        let resolveError: unknown
+        const runtime = await this.resolve(CORE_COMPILER_RUNTIME, id, { skipSelf: true }).catch((error) => {
+          resolveError = error
+          return null
+        })
         if (runtime && !runtime.external) return compilerRuntimeSource(runtime.id, CORE_COMPILER_RUNTIME)
 
         // External or unresolvable (library builds that externalize @geajs/core,
-        // core's own build): inline the runtime file next to core or the plugin.
+        // core's own build, no such export): inline the runtime file next to
+        // core or the plugin.
         const resolvedCore = await this.resolve('@geajs/core', undefined, { skipSelf: true })
         const fromCoreEntry = resolvedCore?.id ? compilerRuntimePathFromCoreEntry(resolvedCore.id) : null
         const candidates = [
@@ -242,7 +249,7 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         for (const candidate of candidates) {
           if (existsSync(candidate)) return compilerRuntimeSource(candidate)
         }
-        throw new Error('[gea-plugin] Could not resolve @geajs/core compiler runtime')
+        throw new Error('[gea-plugin] Could not resolve @geajs/core compiler runtime', { cause: resolveError })
       }
       if (id === RESOLVED_RECONCILE_ID) return RECONCILE_SOURCE
       if (id === RESOLVED_HMR_RUNTIME_ID) return HMR_RUNTIME_SOURCE
