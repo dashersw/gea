@@ -6,13 +6,19 @@ import { collectBindings, type EmitContext } from './emit-context.ts'
 import { compileJsxToBlock } from './emit-core.ts'
 import { substituteBindings } from './emit-substitution.ts'
 
+/**
+ * `propsLocals` are the real locals left by `this.props` destructuring (see
+ * bindPropsPattern). They are kept as they are instead of being inlined.
+ */
 export function buildCreateTemplateMethod(
   jsxRoot: any,
   ctx: EmitContext,
   preceding?: Statement[],
   templateSymbol = 'GEA_CREATE_TEMPLATE',
+  propsLocals: Statement[] = [],
 ): ClassMethod {
-  if (preceding && preceding.length > 0) collectBindings(preceding, ctx.bindings)
+  const bound = (preceding ?? []).filter((s) => !propsLocals.includes(s))
+  if (bound.length > 0) collectBindings(bound, ctx.bindings)
   const jsxBlock = compileJsxToBlock(jsxRoot, ctx)
   // Drop destructuring declarations from preceding — their identifiers have been inlined.
   // Keep other statements (non-destructuring consts, function decls) so they remain in scope.
@@ -21,7 +27,7 @@ export function buildCreateTemplateMethod(
   const keptPreceding = (preceding ?? [])
     .filter((s) => {
       if (t.isReturnStatement(s) || t.isThrowStatement(s)) return false
-      if (t.isVariableDeclaration(s)) {
+      if (t.isVariableDeclaration(s) && !propsLocals.includes(s)) {
         const allPatterns = s.declarations.every((d) => t.isObjectPattern(d.id) || t.isArrayPattern(d.id))
         if (allPatterns) return false
       }

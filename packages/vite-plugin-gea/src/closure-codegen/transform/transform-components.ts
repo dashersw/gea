@@ -515,25 +515,11 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
 /**
  * Bind the locals a function component declares before its JSX so reads
  * inline through to `props`, and return the statements that stay in the
- * body. `const { … } = props` binds as in `bindPropsPattern`.
+ * body. `const { … } = props` binds through `bindPropsDestructures`.
  */
 function bindFnLocals(stmts: Statement[], bindings: Map<string, Expression>): Statement[] {
-  const kept: Statement[] = []
   const propsLocals: Statement[] = []
-  for (const s of stmts) {
-    if (t.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
-      const others = s.declarations.filter((decl) => !isPropsDestructure(decl))
-      for (const decl of s.declarations) {
-        if (!isPropsDestructure(decl)) continue
-        const locals = bindPropsPattern(decl.id as ObjectPattern, s.kind, bindings)
-        kept.push(...locals)
-        propsLocals.push(...locals)
-      }
-      if (others.length > 0) kept.push(t.variableDeclaration(s.kind, others))
-      continue
-    }
-    kept.push(s)
-  }
+  const kept = bindPropsDestructures(stmts, (init) => t.isIdentifier(init, { name: 'props' }), bindings, propsLocals)
   // Props locals stay real variables, so they must not be inlined as
   // bindings. Locals that construct objects or write state stay real
   // variables too, created once per instance (or per render of a guard's
@@ -562,13 +548,43 @@ function propsParam(param: any, fnName: string): Identifier | ObjectPattern {
   )
 }
 
-function isPropsDestructure(decl: VariableDeclarator): boolean {
-  return t.isObjectPattern(decl.id) && t.isIdentifier(decl.init, { name: 'props' })
+/**
+ * Bind every `const { … } = <props>` declarator in `stmts` through
+ * bindPropsPattern and put the locals the pattern still needs in its place.
+ * Those locals are real variables, so they are also added to `propsLocals`
+ * for the caller to keep out of collectBindings.
+ */
+export function bindPropsDestructures(
+  stmts: Statement[],
+  isProps: (init: Expression | null | undefined) => boolean,
+  bindings: Map<string, Expression>,
+  propsLocals: Statement[],
+  base?: Expression,
+): Statement[] {
+  const isPropsDestructure = (decl: VariableDeclarator) =>
+    t.isObjectPattern(decl.id) && isProps(withoutTypes(decl.init))
+  const out: Statement[] = []
+  for (const s of stmts) {
+    if (!t.isVariableDeclaration(s) || !s.declarations.some(isPropsDestructure)) {
+      out.push(s)
+      continue
+    }
+    for (const decl of s.declarations) {
+      if (!isPropsDestructure(decl)) continue
+      const locals = bindPropsPattern(decl.id as ObjectPattern, s.kind, bindings, base)
+      out.push(...locals)
+      propsLocals.push(...locals)
+    }
+    const others = s.declarations.filter((decl) => !isPropsDestructure(decl))
+    if (others.length > 0) out.push(t.variableDeclaration(s.kind, others))
+  }
+  return out
 }
 
 /**
- * Bind a props destructuring pattern so every name reads through `props` on
- * each access instead of capturing the value once:
+ * Bind a props destructuring pattern so every name reads through `base`
+ * (`props` unless given, `this.props` in a class) on each access instead of
+ * capturing the value once:
  *   `{ title }`       → title = props.title
  *   `{ class: cls }`  → cls = props.class
  *   `{ size = 'md' }` → size = props.size === undefined ? 'md' : props.size
@@ -577,10 +593,11 @@ function isPropsDestructure(decl: VariableDeclarator): boolean {
  * patterns stay a plain destructure of `props`, as does the whole pattern when
  * a computed key makes the rest element's excluded keys unknown.
  */
-function bindPropsPattern(
+export function bindPropsPattern(
   pattern: ObjectPattern,
   kind: VariableDeclaration['kind'],
   bindings: Map<string, Expression>,
+  base: Expression = t.identifier('props'),
 ): Statement[] {
   const rest = pattern.properties.find((prop) => t.isRestElement(prop))
   const keys: string[] = []
@@ -588,7 +605,8 @@ function bindPropsPattern(
     if (t.isRestElement(prop)) continue
     const key = staticPropKey(prop)
     if (key !== null) keys.push(key)
-    else if (rest) return [t.variableDeclaration(kind, [t.variableDeclarator(pattern, t.identifier('props'))])]
+    else if (rest)
+      return [declareLocal(t.variableDeclaration(kind, [t.variableDeclarator(pattern, t.cloneNode(base))]), bindings)]
   }
 
   const locals: Statement[] = []
@@ -603,8 +621,8 @@ function bindPropsPattern(
     }
     const read = () =>
       t.isValidIdentifier(key, false)
-        ? t.memberExpression(t.identifier('props'), t.identifier(key))
-        : t.memberExpression(t.identifier('props'), t.stringLiteral(key), true)
+        ? t.memberExpression(t.cloneNode(base), t.identifier(key))
+        : t.memberExpression(t.cloneNode(base), t.stringLiteral(key), true)
     if (t.isIdentifier(value)) {
       bindings.set(value.name, read())
     } else {
@@ -619,7 +637,12 @@ function bindPropsPattern(
     }
   }
   if (nested.length > 0) {
-    locals.push(t.variableDeclaration(kind, [t.variableDeclarator(t.objectPattern(nested), t.identifier('props'))]))
+    locals.push(
+      declareLocal(
+        t.variableDeclaration(kind, [t.variableDeclarator(t.objectPattern(nested), t.cloneNode(base))]),
+        bindings,
+      ),
+    )
   }
 
   if (rest && t.isIdentifier(rest.argument)) {
@@ -636,7 +659,7 @@ function bindPropsPattern(
           t.objectProperty(t.identifier('configurable'), t.booleanLiteral(true)),
           t.objectProperty(
             t.identifier('get'),
-            t.arrowFunctionExpression([], t.memberExpression(t.identifier('props'), t.cloneNode(keyId), true)),
+            t.arrowFunctionExpression([], t.memberExpression(t.cloneNode(base), t.cloneNode(keyId), true)),
           ),
         ]),
       ]),
@@ -647,15 +670,38 @@ function bindPropsPattern(
       null,
     )
     locals.push(
-      t.variableDeclaration(kind, [t.variableDeclarator(restId, t.objectExpression([]))]),
+      declareLocal(t.variableDeclaration(kind, [t.variableDeclarator(restId, t.objectExpression([]))]), bindings),
       t.forInStatement(
         t.variableDeclaration('const', [t.variableDeclarator(keyId)]),
-        t.identifier('props'),
+        t.cloneNode(base),
         test ? t.ifStatement(test, define) : define,
       ),
     )
   }
   return locals
+}
+
+/** `props as Props`, `props!` and `(props)` all read `props`. */
+function withoutTypes(expr: Expression | null | undefined): Expression | null | undefined {
+  while (
+    t.isTSAsExpression(expr) ||
+    t.isTSSatisfiesExpression(expr) ||
+    t.isTSNonNullExpression(expr) ||
+    t.isTSTypeAssertion(expr) ||
+    t.isParenthesizedExpression(expr)
+  ) {
+    expr = expr.expression
+  }
+  return expr
+}
+
+/**
+ * A real local shadows any binding of the same name, such as one left by an
+ * earlier class in the file, so drop it.
+ */
+function declareLocal(decl: VariableDeclaration, bindings: Map<string, Expression>): VariableDeclaration {
+  for (const name of Object.keys(t.getBindingIdentifiers(decl))) bindings.delete(name)
+  return decl
 }
 
 function staticPropKey(prop: ObjectProperty): string | null {
