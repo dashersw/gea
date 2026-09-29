@@ -339,7 +339,7 @@ Vue's two-way binding requires framework-specific concepts: `v-model`, `defineEm
 
 Gea's props follow **JavaScript's native value semantics** — no framework abstractions needed:
 
-- **Primitives** are one-way — the child gets a copy (JS pass-by-value).
+- **Primitives** are one-way, live, read-only props.
 - **Objects and arrays** are two-way — the child gets the parent's reactive proxy (JS pass-by-reference). Mutating the object in the child updates the parent's DOM automatically.
 
 ```jsx

@@ -89,10 +89,10 @@ Use function components for **stateless, presentational UI**.
 
 ### Props and Data Flow
 
-Props follow JavaScript's native value semantics:
+Props are live views of the values supplied by the parent:
 
 - **Objects and arrays** passed as props are the parent's reactive proxy. The child can mutate them directly, and both parent and child DOM update — two-way binding with zero ceremony.
-- **Primitives** are copies. Reassigning a primitive prop in the child updates only the child's DOM — the parent is unaffected.
+- **Primitives** are live, read-only props. Copy a primitive into local component state when the child needs to modify it.
 
 No `emit`, no `v-model`, no callback props needed for object/array mutations. Deep nesting works the same way — as long as the same reference is passed down, reactivity propagates across the entire tree.
 

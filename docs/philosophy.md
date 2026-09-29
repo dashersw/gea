@@ -40,7 +40,7 @@ Frameworks often come with rules that have no analog in the language itself:
 - "Use `.value` to access a ref's current value."
 - "Don't mutate state directly — always return a new reference."
 
-Gea has none of this. Mutate state directly — the proxy tracks it. Use getters — they re-evaluate automatically. Write classes — they work as classes should. Write functions — they receive arguments and return values. Pass an object to a child component — the child can mutate it and the parent sees the change, because it's the same object. Pass a number — the child gets a copy, because that's how JavaScript works. The framework does not impose rules that exist only because of its own internal machinery.
+Gea has none of this. Mutate state directly — the proxy tracks it. Use getters — they re-evaluate automatically. Write classes — they work as classes should. Write functions — they receive arguments and return values. Pass an object to a child component — the child can mutate it and the parent sees the change, because it's the same object. Pass a number — the child reads the parent's current value through a live, read-only prop. The framework does not impose rules that exist only because of its own internal machinery.
 
 ## What This Means in Practice
 
@@ -55,7 +55,7 @@ In JavaScript, primitives are passed by value and objects are passed by referenc
 Gea applies this same principle to component props:
 
 - **Objects and arrays** passed as props are the parent's actual reactive proxy. The child can mutate them directly, and every component observing that data — parent, siblings, grandparents — updates automatically.
-- **Primitives** passed as props are copies. Reassigning a primitive prop in the child affects only the child, not the parent.
+- **Primitives** passed as props are live, read-only values from the parent. A child that needs to modify one should copy it into local component state.
 
 There is no `emit`, no `defineModel`, no callback wiring for object mutations. The framework respects JavaScript's native value semantics. If you understand how function arguments work in JavaScript, you already understand how Gea's props work.
 

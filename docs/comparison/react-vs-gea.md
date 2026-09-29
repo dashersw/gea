@@ -286,7 +286,7 @@ Every upward communication path requires an explicit callback prop. With deep co
 
 Gea's props follow **JavaScript's native value semantics**:
 
-- **Primitives** (numbers, strings, booleans) are one-way — the child gets a copy.
+- **Primitives** (numbers, strings, booleans) are one-way, live, read-only props.
 - **Objects and arrays** are two-way — the child gets the same reactive proxy the parent holds. Mutating the object in the child updates the parent's DOM automatically.
 
 ```jsx
@@ -372,7 +372,7 @@ Gea's position is that JavaScript code should be simple, understandable, and fre
 - Store class with reactive properties and methods
 - Class components with `template()`
 - Function components
-- Props follow JS semantics: objects are two-way (shared proxy), primitives are one-way (copy)
+- Props preserve object reference semantics: objects are two-way (shared proxy), while primitives are one-way, live, read-only props
 - `class` instead of `className`, lowercase events
 - `key` prop for lists
 - Lifecycle hooks (`created`, `onAfterRender`, `dispose`)

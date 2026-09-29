@@ -51,7 +51,7 @@ The "magic" is invisible and lives entirely in the build step. The Vite plugin a
 - **Compile-time JSX** — the Vite plugin transforms JSX into HTML strings and generates targeted DOM patches
 - **Proxy-based reactivity** — mutate state directly and the framework handles updates automatically
 - **Class and function components** — use classes for stateful logic, functions for presentational UI
-- **JS-native props** — objects and arrays passed as props are the parent's reactive proxy; child mutations update both. Primitives are copies. No `emit`, no `v-model`.
+- **JS-native props** — objects and arrays passed as props are the parent's reactive proxy; child mutations update both. Primitives are live, read-only props. No `emit`, no `v-model`.
 - **Event delegation** — a single global listener per event type, not per element
 - **Mobile UI primitives** — optional `@geajs/mobile` package with views, navigation, gestures, and more
 
