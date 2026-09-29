@@ -138,7 +138,11 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
     if (t.isJSXFragment(node)) {
       // Fragment: emit children at current walk
       const children = node.children as any[]
-      const kept = children.filter((c) => !(t.isJSXText(c) && c.value.trim() === ''))
+      const kept = children.filter(
+        (c) =>
+          !(t.isJSXText(c) && c.value.trim() === '') &&
+          !(t.isJSXExpressionContainer(c) && t.isJSXEmptyExpression(c.expression)),
+      )
       let out = ''
       let childIdx = 0
       let elemIdx = 0
