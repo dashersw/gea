@@ -337,7 +337,7 @@ Vue's two-way binding requires framework-specific concepts: `v-model`, `defineEm
 
 ### Gea
 
-Gea's props follow **JavaScript's native value semantics** — no framework abstractions needed:
+For **objects and arrays**, Gea preserves JavaScript reference semantics. **Primitive props are not ordinary function-argument snapshots**: they are live, read-only bindings:
 
 - **Primitives** are one-way, live, read-only props.
 - **Objects and arrays** are two-way — the child gets the parent's reactive proxy (JS pass-by-reference). Mutating the object in the child updates the parent's DOM automatically.
@@ -382,7 +382,7 @@ No `emit`, no `v-model`, no `defineModel`. The child mutates the shared proxy di
 
 | Concern | Vue | Gea |
 | --- | --- | --- |
-| Primitive props | One-way | One-way (JS pass-by-value) |
+| Primitive props | One-way | Live, read-only |
 | Object/array props | One-way by convention, `emit` for updates | Two-way (same proxy reference) |
 | Two-way binding syntax | `v-model` + `defineEmits` / `defineModel` | Direct mutation — no special syntax |
 | Child → parent communication | `$emit('update:prop', value)` | Direct mutation on shared proxy |

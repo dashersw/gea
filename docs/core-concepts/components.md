@@ -283,7 +283,7 @@ export default class Card extends Component {
 
 ## Props and Data Flow
 
-Gea's props follow standard JavaScript semantics. There are no framework-invented concepts like `emit`, `v-model`, or callback-based state lifting for parent-child communication. When a parent passes data to a child, it works exactly like passing arguments to a function:
+Gea's props follow standard JavaScript semantics. There are no framework-invented concepts like `emit`, `v-model`, or callback-based state lifting for parent-child communication. Object and array props preserve ordinary JavaScript reference behavior, while primitive props use live, getter-backed, read-only bindings:
 
 - **Primitives** (numbers, strings, booleans) are exposed through live, read-only props. Copy a value into component state when the child needs to modify it.
 - **Objects and arrays** are passed **by reference**. The child gets the same reactive proxy the parent holds. Mutating properties on the object or calling array methods in the child updates the parent's state and DOM automatically — because it's the same object.
@@ -375,9 +375,9 @@ There is no prop drilling penalty for objects and arrays. As long as the same re
 
 | Concern | React | Vue | Gea |
 | --- | --- | --- | --- |
-| Parent → child (primitives) | Props (one-way) | Props (one-way) | Props (one-way, JS pass-by-value) |
+| Parent → child (primitives) | Props (one-way) | Props (one-way) | Live, read-only props |
 | Parent → child (objects) | Props (one-way, immutable by convention) | Props (one-way by convention, `emit` to update) | Props (two-way — same proxy reference) |
 | Child → parent (objects) | Callback props | `emit` + `v-model` / `defineModel` | Direct mutation on the shared proxy |
-| Child → parent (primitives) | Callback props | `emit` + `v-model` | Not possible — JS pass-by-value |
+| Child → parent (primitives) | Callback props | `emit` + `v-model` | Supplied props are read-only; use local state for writable values |
 
 Gea doesn't introduce a new data flow model. It uses the one JavaScript already has.
