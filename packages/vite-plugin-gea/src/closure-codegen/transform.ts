@@ -2,7 +2,7 @@
  * transform — file-level transformer.
  */
 
-import type { ClassDeclaration, File, TSTypeLiteral } from '@babel/types'
+import type { ClassDeclaration, File, Statement, TSTypeLiteral } from '@babel/types'
 
 import { parseModule } from '../parse/parser.ts'
 import { generate, t } from '../utils/babel-interop.ts'
@@ -23,6 +23,7 @@ import {
   type GeaIrRuntimeBase,
 } from './ir.ts'
 import {
+  bindPropsDestructures,
   bodyContainsJsx,
   canSkipComponentStoreProxy,
   canUseLeanReactiveComponent,
@@ -233,10 +234,24 @@ export function transformFile(source: string, _filename?: string, options: Trans
         ctx.bindings.set(templateParam.name, t.memberExpression(t.thisExpression(), t.identifier('props')))
       }
 
-      const preceding = extractPrecedingStatements(templateMethod)
+      // `const { … } = this.props` in the body, or `= props` for a `template(props)`
+      // parameter, binds like a function component's props
+      const propsLocals: Statement[] = []
+      const preceding = bindPropsDestructures(
+        extractPrecedingStatements(templateMethod),
+        (init) =>
+          (t.isMemberExpression(init) &&
+            !init.computed &&
+            t.isThisExpression(init.object) &&
+            t.isIdentifier(init.property, { name: 'props' })) ||
+          (t.isIdentifier(templateParam) && t.isIdentifier(init, { name: templateParam.name })),
+        ctx.bindings,
+        propsLocals,
+        t.memberExpression(t.thisExpression(), t.identifier('props')),
+      )
       const templateSymbol = useStaticCompiledComponent ? 'GEA_STATIC_TEMPLATE' : 'GEA_CREATE_TEMPLATE'
       ctx.importsNeeded.add(templateSymbol)
-      const method = buildCreateTemplateMethod(jsx, ctx, preceding, templateSymbol)
+      const method = buildCreateTemplateMethod(jsx, ctx, preceding, templateSymbol, propsLocals)
       const useStaticElementComponent =
         useStaticCompiledComponent && isStaticBuiltinElementRoot(jsx) && !nodeContainsIdentifier(method.body, 'd')
       if (useStaticElementComponent && ctx.irTemplates) {
