@@ -86,7 +86,8 @@ function buildBranchFn(branchExpr: any, ctx: EmitContext): Expression {
     const block = compileJsxToBlock(fragment, ctx)
     return t.arrowFunctionExpression([t.identifier('d')], block)
   }
-  // Compiler-emitted hoisted-const IIFE (tagged by foldEarlyReturnGuards).
+  // Compiler-emitted hoisted-const IIFE (tagged by foldEarlyReturnGuards and
+  // foldConditionalReturn).
   if (
     t.isCallExpression(branchExpr) &&
     branchExpr.arguments.length === 0 &&
@@ -107,16 +108,22 @@ function buildBranchFn(branchExpr: any, ctx: EmitContext): Expression {
       // through to the reactive source (otherwise a captured string/number
       // local would freeze the value at mount time).
       const saved = new Map(ctx.bindings)
-      collectBindings(hoisted as any, ctx.bindings)
       let inner: any
+      let kept: Statement[] | null = null
       try {
+        if (ctx.bindBranchLocals) kept = ctx.bindBranchLocals(hoisted, ctx.bindings)
+        else collectBindings(hoisted as any, ctx.bindings)
         inner = compileJsxToBlock(last.argument as any, ctx)
+        // A function component keeps the branch's statements as its body
+        // keeps them: the branch factory runs untracked, once per mount.
+        if (kept) kept = kept.map((s) => substituteBindings(s, ctx.bindings))
       } finally {
         ctx.bindings.clear()
         for (const [k, v] of saved) ctx.bindings.set(k, v)
       }
-      // Drop ALL VariableDeclarations. Every identifier in hoisted consts
-      // has been registered via collectBindings (line 913) and gets inlined
+      if (kept) return t.arrowFunctionExpression([t.identifier('d')], t.blockStatement([...kept, ...inner.body]))
+      // A class template drops ALL VariableDeclarations. Every identifier in
+      // hoisted consts has been registered via collectBindings and gets inlined
       // into JSX slot expressions via substituteBindings — the kept `const`
       // statements would be dead code at best and eager-read hazards at
       // worst (they'd execute inside the branch factory, which runs inside

@@ -69,6 +69,13 @@ export interface EmitContext {
    */
   bindings: Map<string, Expression>
   /**
+   * Binds the locals a guard branch declares (see `foldConditionalReturn`)
+   * into `bindings` the way the component's own body binds them, and returns
+   * the statements the branch must keep. Set for function components; class
+   * templates drop a branch's declarations instead.
+   */
+  bindBranchLocals?: (stmts: Statement[], bindings: Map<string, Expression>) => Statement[]
+  /**
    * Names of `get`-accessor methods on the current class. Used to force
    * getter-form for `this.X` reactive bindings when `X` is a derived value —
    * path form would only track `this.X` but derived getters frequently read

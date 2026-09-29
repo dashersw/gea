@@ -308,47 +308,6 @@ function assertNoReassignedLocals(fnDecl: any, fnName: string, preceding: Statem
   )
 }
 
-/**
- * Folding moves the locals declared after an `if (…) return <jsx />` guard
- * into the branch that renders the final return, where they are inlined at
- * each read. One that must keep its identity (see `initializerNeedsLocal`)
- * would be rebuilt on every read, so it has to come before the first guard.
- */
-function assertNoInstanceLocalsAfterGuard(fnName: string, preceding: Statement[]): void {
-  const firstGuard = preceding.findIndex((stmt) => findJsxReturn(stmt) !== null)
-  if (firstGuard < 0) return
-  for (const stmt of preceding.slice(firstGuard + 1)) {
-    if (!t.isVariableDeclaration(stmt)) continue
-    const decl = stmt.declarations.find((d) => d.init && initializerNeedsLocal(d.init))
-    if (!decl) continue
-    const name = Object.keys(t.getBindingIdentifiers(decl.id)).join('`, `')
-    throw compilerError(
-      `Function component \`${fnName || '<anonymous>'}\` creates \`${name}\` after an early return.`,
-      decl,
-      `Declare \`${name}\` before the first \`if (…) return\`, so each instance creates it once.`,
-    )
-  }
-}
-
-/**
- * Folding handles `if (cond) return <jsx />` guards that come one after
- * another, with only declarations between the last guard and the final
- * return. Any other early return of JSX would hand `mount()` an HTML string,
- * which renders nothing, so fail the build instead.
- */
-function assertNoEarlyJsxReturns(fnName: string, preceding: Statement[]): void {
-  for (const stmt of preceding) {
-    const ret = findJsxReturn(stmt)
-    if (!ret) continue
-    throw compilerError(
-      `Function component \`${fnName || '<anonymous>'}\` returns JSX from an early return the compiler can't compile.`,
-      ret,
-      `Write it as \`if (cond) return <A />\` right before the final return (or before another such guard), ` +
-        `or return a ternary: \`return cond ? <A /> : <B />\`.`,
-    )
-  }
-}
-
 /** A `return` of JSX inside `node`, not counting nested functions. */
 function findJsxReturn(node: any): any {
   if (!node || typeof node !== 'object') return null
@@ -386,10 +345,8 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   // Checked before folding, which moves locals declared after a guard into
   // the guard's branch.
   assertNoReassignedLocals(fnDecl, fnName, body.slice(0, returnIdx))
-  assertNoInstanceLocalsAfterGuard(fnName, body.slice(0, returnIdx))
   foldConditionalReturn(body)
   returnIdx = body.findIndex((s) => t.isReturnStatement(s))
-  assertNoEarlyJsxReturns(fnName, body.slice(0, returnIdx))
   const jsxRoot = (body[returnIdx] as any).argument
 
   const fnCtx = createEmitContext(t.identifier('props'))
@@ -450,31 +407,9 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   // Collect bindings from preceding `const X = expr` declarations so reactive
   // getters substitute X transitively (X → its RHS → further bindings).
   // Must happen BEFORE compileJsxToBlock so the JSX walker sees the bindings.
-  const precedingRaw: Statement[] = [...propsLocals]
-  for (let i = 0; i < returnIdx; i++) {
-    const s = body[i]
-    if (t.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
-      const others = s.declarations.filter((decl) => !isPropsDestructure(decl))
-      for (const decl of s.declarations) {
-        if (!isPropsDestructure(decl)) continue
-        const locals = bindPropsPattern(decl.id as ObjectPattern, s.kind, fnCtx.bindings)
-        precedingRaw.push(...locals)
-        propsLocals.push(...locals)
-      }
-      if (others.length > 0) precedingRaw.push(t.variableDeclaration(s.kind, others))
-      continue
-    }
-    precedingRaw.push(s)
-  }
-  // collectBindings is imported from emit.ts. Props locals stay real
-  // variables, so they must not be inlined as bindings. Locals that construct
-  // objects or write state stay real variables too, created once per instance;
-  // inlining them would re-run the initializer on each read.
-  collectBindings(
-    precedingRaw.filter((s) => !propsLocals.includes(s)),
-    fnCtx.bindings,
-    initializerNeedsLocal,
-  )
+  // A guard's branch binds the locals folded into it the same way.
+  const precedingRaw: Statement[] = [...propsLocals, ...bindFnLocals(body.slice(0, returnIdx), fnCtx.bindings)]
+  fnCtx.bindBranchLocals = bindFnLocals
 
   const jsxBlock = compileJsxToBlock(jsxRoot, fnCtx)
   if (
@@ -507,6 +442,40 @@ export function rewriteFnComponent(fnDecl: any, parentCtx: EmitContext): void {
   }
 
   fnDecl.body.body = newBody
+}
+
+/**
+ * Bind the locals a function component declares before its JSX so reads
+ * inline through to `props`, and return the statements that stay in the
+ * body. `const { … } = props` binds as in `bindPropsPattern`.
+ */
+function bindFnLocals(stmts: Statement[], bindings: Map<string, Expression>): Statement[] {
+  const kept: Statement[] = []
+  const propsLocals: Statement[] = []
+  for (const s of stmts) {
+    if (t.isVariableDeclaration(s) && s.declarations.some(isPropsDestructure)) {
+      const others = s.declarations.filter((decl) => !isPropsDestructure(decl))
+      for (const decl of s.declarations) {
+        if (!isPropsDestructure(decl)) continue
+        const locals = bindPropsPattern(decl.id as ObjectPattern, s.kind, bindings)
+        kept.push(...locals)
+        propsLocals.push(...locals)
+      }
+      if (others.length > 0) kept.push(t.variableDeclaration(s.kind, others))
+      continue
+    }
+    kept.push(s)
+  }
+  // Props locals stay real variables, so they must not be inlined as
+  // bindings. Locals that construct objects or write state stay real
+  // variables too, created once per instance (or per render of a guard's
+  // branch); inlining them would re-run the initializer on each read.
+  collectBindings(
+    kept.filter((s) => !propsLocals.includes(s)),
+    bindings,
+    initializerNeedsLocal,
+  )
+  return kept
 }
 
 function isPropsDestructure(decl: VariableDeclarator): boolean {

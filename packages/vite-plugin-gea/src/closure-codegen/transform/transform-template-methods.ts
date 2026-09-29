@@ -1,4 +1,4 @@
-import type { ClassMethod, Expression, IfStatement, Statement } from '@babel/types'
+import type { ClassMethod, Expression, IfStatement, ReturnStatement, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
 
@@ -30,22 +30,85 @@ export function isConditionalJsxRoot(node: any): boolean {
 }
 
 /**
- * Fold a component body whose root is chosen by a condition into one
- * `return <>{…}</>`, which compiles to a reactive conditional slot:
+ * Fold a function component body whose root is chosen by a condition into
+ * one `return <>{…}</>`, which compiles to a reactive conditional slot:
  *
  *   `return c ? <A/> : <B/>`          → `return <>{c ? <A/> : <B/>}</>`
  *   `return c && <A/>`                → `return <>{c && <A/>}</>`
  *   `if (c) return <A/>; return <B/>` → `return <>{c ? <A/> : <B/>}</>`
  *
- * Guards fold as in `foldEarlyReturnGuards`, and may return a condition too.
+ * A guard may return a condition, or declare locals in a block before its
+ * return. The statements after a guard move into its falsy branch, an IIFE
+ * tagged `__geaHoistedIIFE`, so they run only when that branch renders;
+ * `buildBranchFn` binds their locals there. Folding stops at a statement
+ * that returns any other way, which stays as written.
  */
 export function foldConditionalReturn(body: Statement[]): void {
-  for (const stmt of body) {
-    const ret: any = t.isIfStatement(stmt) && !stmt.alternate ? onlyStatement(stmt.consequent) : stmt
-    if (t.isReturnStatement(ret) && isConditionalJsxRoot(ret.argument)) ret.argument = wrapInFragment(ret.argument)
-    if (t.isReturnStatement(stmt)) break
+  const finalIdx = body.findIndex((s) => t.isReturnStatement(s))
+  if (finalIdx < 0) return
+  const final = body[finalIdx] as ReturnStatement
+  let result = branchRoot(final.argument!)
+  let firstGuardIdx = finalIdx
+  let pending: Statement[] = []
+  for (let i = finalIdx - 1; i >= 0; i--) {
+    const stmt = body[i]
+    const guard = guardBranch(stmt)
+    if (guard) {
+      result = t.conditionalExpression(guard.test, guard.branch, withLocals(pending, result))
+      firstGuardIdx = i
+      pending = []
+      continue
+    }
+    // A function declaration is visible to the guards above it, so it can't
+    // move into a branch.
+    if (t.isFunctionDeclaration(stmt) || containsReturn(stmt)) break
+    pending.unshift(stmt)
   }
-  foldEarlyReturnGuards(body)
+  if (firstGuardIdx === finalIdx) final.argument = result
+  else body.splice(firstGuardIdx, finalIdx - firstGuardIdx + 1, t.returnStatement(wrapInFragment(result)))
+}
+
+/**
+ * The test and branch of `if (c) return <A/>`, or of a block that declares
+ * `const` locals before its return: `if (c) { const x = …; return <A/> }`.
+ */
+function guardBranch(stmt: Statement): { test: Expression; branch: Expression } | null {
+  if (!t.isIfStatement(stmt) || stmt.alternate) return null
+  const stmts = t.isBlockStatement(stmt.consequent) ? stmt.consequent.body : [stmt.consequent]
+  const ret = stmts[stmts.length - 1]
+  if (!t.isReturnStatement(ret) || !(isJsx(ret.argument) || isConditionalJsxRoot(ret.argument))) return null
+  const locals = stmts.slice(0, -1)
+  // A reassigned block-scoped `let` would be inlined like a `const`.
+  const unsafe = (s: Statement) =>
+    t.isFunctionDeclaration(s) || containsReturn(s) || (t.isVariableDeclaration(s) && s.kind !== 'const')
+  if (locals.some(unsafe)) return null
+  return { test: stmt.test, branch: withLocals(locals, branchRoot(ret.argument!)) }
+}
+
+/** `root`, or an IIFE that runs `stmts` first; `buildBranchFn` compiles either. */
+function withLocals(stmts: Statement[], root: Expression): Expression {
+  if (stmts.length === 0) return root
+  const arrow: any = t.arrowFunctionExpression([], t.blockStatement([...stmts, t.returnStatement(branchRoot(root))]))
+  arrow.__geaHoistedIIFE = true
+  return t.callExpression(arrow, [])
+}
+
+/** JSX stays as is; a condition is wrapped so it compiles to a conditional slot. */
+function branchRoot(expr: Expression): Expression {
+  return isJsx(expr) ? expr : wrapInFragment(expr)
+}
+
+/** True if `node` has a `return`, not counting nested functions. */
+function containsReturn(node: any): boolean {
+  if (!node || typeof node !== 'object') return false
+  if (t.isFunction(node)) return false
+  if (t.isReturnStatement(node)) return true
+  if (Array.isArray(node)) return node.some(containsReturn)
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key === 'type') continue
+    if (containsReturn(node[key])) return true
+  }
+  return false
 }
 
 function onlyStatement(stmt: Statement): Statement {

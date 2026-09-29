@@ -6,7 +6,7 @@
  * build) and in the playground compiler.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -15,7 +15,6 @@ import type { ResolvedConfig } from 'vite'
 import { flushMicrotasks, installDom } from '../../../../tests/helpers/jsdom-setup'
 import { geaPlugin } from '../../src/index.ts'
 import { compileForBrowser } from '../../src/browser.ts'
-import { transformGeaSourceToEvalBody } from '../helpers/compile'
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url))
 const GEA_SRC = path.resolve(TEST_DIR, '../../../gea/src')
@@ -156,9 +155,233 @@ const OFF = [
   'user-none:nobody',
 ]
 
-async function compileWithPlugin(dir: string, command: 'build' | 'serve'): Promise<Record<string, string>> {
+// Locals declared after a guard land in the guard's other branch. They must
+// bind like they do without a guard, and the guards must flip both ways.
+const GUARD_LOCAL_FILES: Record<string, string> = {
+  'GuardRest.tsx': `export function GuardRest(props: { hidden: boolean; label: string; title: string }) {
+  if (props.hidden) return <p class="rest-hidden">hidden</p>
+  const { label, ...rest } = props
+  return <i class="rest" title={rest.title}>{label}</i>
+}
+`,
+  'GuardNested.tsx': `export function GuardNested(props: { user: { first: string } | null }) {
+  if (!props.user) return <p class="nested-none">none</p>
+  const {
+    user: { first },
+  } = props
+  return <i class="nested">{first}</i>
+}
+`,
+  'GuardDefault.tsx': `export function GuardDefault(props: { hidden: boolean; label?: string }) {
+  if (props.hidden) return <p class="default-hidden">hidden</p>
+  const { label = 'new' } = props
+  return <i class="default">{label}</i>
+}
+`,
+  // A guard before the destructure and one after it that reads it.
+  'GuardBoth.tsx': `export function GuardBoth(props: { hidden: boolean; label: string; title: string }) {
+  if (props.hidden) return <p class="both-hidden">hidden</p>
+  const { label, ...rest } = props
+  if (!label) return <p class="both-empty">{rest.title}</p>
+  return <i class="both" title={rest.title}>{label}</i>
+}
+`,
+  'DestructureFirst.tsx': `export function DestructureFirst(props: { hidden: boolean; label: string; title: string }) {
+  const { label, ...rest } = props
+  if (props.hidden) return <p class="first-hidden">{rest.title}</p>
+  return <i class="first">{label}</i>
+}
+`,
+  'GuardTernary.tsx': `export function GuardTernary(props: { hidden: boolean; strict: boolean; on: boolean; label: string; title: string }) {
+  if (props.hidden && props.strict) return <p class="ternary-hidden">hidden</p>
+  const { label, ...rest } = props
+  return props.on ? <i class="ternary-on" title={rest.title}>{label}</i> : <b class="ternary-off">{rest.title}</b>
+}
+`,
+  'GuardAnd.tsx': `export function GuardAnd(props: { hidden: boolean; label: string; title: string }) {
+  if (props.hidden) return props.title && <p class="and-hidden">{props.title}</p>
+  const { label = 'new', ...rest } = props
+  return label && <i class="and" title={rest.title}>{label}</i>
+}
+`,
+  'GuardStore.tsx': `import { Store } from '@geajs/core'
+
+class CounterStore extends Store {
+  count = 0
+}
+
+export function GuardStore(props: { hidden: boolean }) {
+  if (props.hidden) return <p class="store-hidden">hidden</p>
+  const store = new CounterStore()
+  return <button class="store" onClick={() => store.count++}>{store.count}</button>
+}
+`,
+  'GuardBlock.tsx': `export function GuardBlock(props: { hidden: boolean; reason: string }) {
+  if (props.hidden) {
+    const why = props.reason.toUpperCase()
+    return <p class="block-hidden">{why}</p>
+  }
+  const { reason, ...rest } = props
+  return <i class="block">{reason === 'gone' && !rest.hidden ? 'shown' : 'wrong'}</i>
+}
+`,
+  'GuardChain.tsx': `export function GuardChain(props: { user: { name: string } | null }) {
+  if (!props.user) return <p class="chain-none">nobody</p>
+  const name = props.user.name
+  if (!name) return <p class="chain-anon">anonymous</p>
+  return <i class="chain">{name}</i>
+}
+`,
+  // A nested early return can't be folded. It compiles as it did before #124
+  // was fixed instead of failing the build.
+  'NestedIf.tsx': `export function NestedIf(props: { a: boolean; b: boolean }) {
+  if (props.a) {
+    if (props.b) return <p class="nested-if-b">b</p>
+  }
+  return <i class="nested-if">shown</i>
+}
+`,
+  'App.tsx': `import { Component } from '@geajs/core'
+import { GuardRest } from './GuardRest'
+import { GuardNested } from './GuardNested'
+import { GuardDefault } from './GuardDefault'
+import { GuardBoth } from './GuardBoth'
+import { DestructureFirst } from './DestructureFirst'
+import { GuardTernary } from './GuardTernary'
+import { GuardAnd } from './GuardAnd'
+import { GuardStore } from './GuardStore'
+import { GuardBlock } from './GuardBlock'
+import { GuardChain } from './GuardChain'
+import { NestedIf } from './NestedIf'
+
+export default class App extends Component {
+  hidden = false
+  on = true
+  label = 'hot'
+  title = 'Badge'
+  optLabel: string | undefined = undefined
+  user: { first: string; name: string } | null = { first: 'Ada', name: 'ada' }
+  template() {
+    return (
+      <div>
+        <GuardRest hidden={this.hidden} label={this.label} title={this.title} />
+        <GuardNested user={this.user} />
+        <GuardDefault hidden={this.hidden} label={this.optLabel} />
+        <GuardBoth hidden={this.hidden} label={this.label} title={this.title} />
+        <DestructureFirst hidden={this.hidden} label={this.label} title={this.title} />
+        <GuardTernary hidden={this.hidden} strict={true} on={this.on} label={this.label} title={this.title} />
+        <GuardAnd hidden={this.hidden} label={this.label} title={this.title} />
+        <GuardStore hidden={this.hidden} />
+        <GuardBlock hidden={this.hidden} reason="gone" />
+        <GuardChain user={this.user} />
+        <NestedIf a={this.hidden} b={false} />
+      </div>
+    )
+  }
+}
+`,
+}
+
+async function assertGuardLocalsBindAndFlip(App: any): Promise<void> {
+  const root = document.createElement('div')
+  document.body.appendChild(root)
+  const app = new App()
+  const rendered = () =>
+    Array.from(root.querySelectorAll('[class]'), (el) => {
+      const title = el.getAttribute('title')
+      return `${el.className}:${el.textContent}${title ? `@${title}` : ''}`
+    })
+  const clickStore = () => (root.querySelector('button.store') as HTMLElement).click()
+  try {
+    app.render(root)
+    await flushMicrotasks()
+    const shown = (store: number) => [
+      'rest:hot@Badge',
+      'nested:Ada',
+      'default:new',
+      'both:hot@Badge',
+      'first:hot',
+      'ternary-on:hot@Badge',
+      'and:hot@Badge',
+      `store:${store}`,
+      'block:shown',
+      'chain:ada',
+      'nested-if:shown',
+    ]
+    assert.deepEqual(rendered(), shown(0))
+
+    clickStore()
+    clickStore()
+    await flushMicrotasks()
+    assert.deepEqual(rendered(), shown(2), 'a store created after a guard is created once')
+
+    app.hidden = true
+    app.user = null
+    await flushMicrotasks()
+    assert.deepEqual(rendered(), [
+      'rest-hidden:hidden',
+      'nested-none:none',
+      'default-hidden:hidden',
+      'both-hidden:hidden',
+      'first-hidden:Badge',
+      'ternary-hidden:hidden',
+      'and-hidden:Badge',
+      'store-hidden:hidden',
+      'block-hidden:GONE',
+      'chain-none:nobody',
+      'nested-if:shown',
+    ])
+
+    app.hidden = false
+    app.on = false
+    app.label = ''
+    app.title = 'Cap'
+    app.optLabel = 'set'
+    app.user = { first: 'Grace', name: '' }
+    await flushMicrotasks()
+    assert.deepEqual(rendered(), [
+      'rest:@Cap',
+      'nested:Grace',
+      'default:set',
+      'both-empty:Cap',
+      'first:',
+      'ternary-off:Cap',
+      'store:0',
+      'block:shown',
+      'chain-anon:anonymous',
+      'nested-if:shown',
+    ])
+
+    app.label = 'cool'
+    app.on = true
+    app.user = { first: 'Grace', name: 'grace' }
+    await flushMicrotasks()
+    assert.deepEqual(rendered(), [
+      'rest:cool@Cap',
+      'nested:Grace',
+      'default:set',
+      'both:cool@Cap',
+      'first:cool',
+      'ternary-on:cool@Cap',
+      'and:cool@Cap',
+      'store:0',
+      'block:shown',
+      'chain:grace',
+      'nested-if:shown',
+    ])
+  } finally {
+    app.dispose()
+    root.remove()
+  }
+}
+
+async function compileWithPlugin(
+  dir: string,
+  command: 'build' | 'serve',
+  files: Record<string, string> = FILES,
+): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
-  for (const [filename, source] of Object.entries(FILES)) {
+  for (const [filename, source] of Object.entries(files)) {
     const plugin = geaPlugin()
     if (command === 'serve' && typeof plugin.configResolved === 'function') {
       plugin.configResolved.call({} as never, { command } as ResolvedConfig)
@@ -270,50 +493,30 @@ describe('function components with a conditional return (#124)', { concurrency: 
     await assertStaticEntries(dir)
   })
 
-  it('fails the build for a per-instance local declared after an early return', async () => {
-    await assert.rejects(
-      transformGeaSourceToEvalBody(
-        `
-        import { Store } from '@geajs/core'
-        class CounterStore extends Store { count = 0 }
-        export default function Counter(props) {
-          if (props.hidden) return <p>hidden</p>
-          const store = new CounterStore()
-          return <button onClick={() => store.count++}>{store.count}</button>
-        }
-      `,
-        '/virtual/GuardedCounter.tsx',
-      ),
-      (error: any) => {
-        assert.equal(error.__geaCompileError, true)
-        assert.match(error.message, /Counter/)
-        assert.match(error.message, /`store`/)
-        assert.equal(error.loc?.line, 6)
-        return true
-      },
-    )
-  })
+  describe('locals declared after a guard', () => {
+    let guardDir: string
+    beforeEach(() => {
+      guardDir = path.join(dir, 'guards')
+      mkdirSync(guardDir)
+      for (const [filename, source] of Object.entries(GUARD_LOCAL_FILES)) {
+        writeFileSync(path.join(guardDir, filename), source, 'utf8')
+      }
+    })
 
-  it('fails the build for an early return of JSX it cannot compile', async () => {
-    await assert.rejects(
-      transformGeaSourceToEvalBody(
-        `
-        export default function Panel(props) {
-          if (props.hidden) {
-            console.log('hidden')
-            return <p>hidden</p>
-          }
-          return <p>shown</p>
-        }
-      `,
-        '/virtual/Panel.tsx',
-      ),
-      (error: any) => {
-        assert.equal(error.__geaCompileError, true)
-        assert.match(error.message, /Panel/)
-        assert.equal(error.loc?.line, 5)
-        return true
-      },
-    )
+    it('vite build', async () => {
+      const compiled = await compileWithPlugin(guardDir, 'build', GUARD_LOCAL_FILES)
+      await assertGuardLocalsBindAndFlip(await loadApp(guardDir, compiled))
+    })
+
+    it('vite dev server', async () => {
+      const compiled = await compileWithPlugin(guardDir, 'serve', GUARD_LOCAL_FILES)
+      await assertGuardLocalsBindAndFlip(await loadApp(guardDir, compiled))
+    })
+
+    it('playground compiler', async () => {
+      const { compiledModules, errors } = compileForBrowser(GUARD_LOCAL_FILES)
+      assert.deepEqual(errors, [])
+      await assertGuardLocalsBindAndFlip(await loadApp(guardDir, compiledModules))
+    })
   })
 })
