@@ -362,7 +362,9 @@ function collectImportedStaticFunctionComponents(
       const fnDecl = getExportedFunction(imported.ast, exportedName, localName)
       if (fnDecl) {
         const params = getDirectFnParams(fnDecl)
-        if (!params || !functionReturnsJsx(fnDecl)) {
+        // Per-instance locals need reactive reads, which the one-shot direct
+        // path doesn't emit, so call the component's own compiled export.
+        if (!params || !functionReturnsJsx(fnDecl) || fnHasInstanceLocals(fnDecl)) {
           ctx.directFactoryComponents?.add(localName)
           continue
         }
