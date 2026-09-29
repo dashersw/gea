@@ -149,8 +149,8 @@ export default createPage('home')
 
 // Lookalikes of the cases above that compile today and must keep compiling.
 // Pick and Toggle are function components with a conditional root: #124
-// compiles those, so the class template() check must not reach them. A spread
-// on an element compiles since #219.
+// compiles those, so the class template() check must not reach them. Neither
+// may Badge, which has no base class. A spread on an element compiles since #219.
 const STILL_SUPPORTED_APP = `import { Component } from '@geajs/core'
 import Pick from './Pick'
 
@@ -173,6 +173,12 @@ class Small extends Component {
 class Title extends Component {
   template() {
     return <h1>title</h1>
+  }
+}
+
+export class Badge {
+  template(on: boolean) {
+    return on ? <b>on</b> : <i>off</i>
   }
 }
 
@@ -559,15 +565,16 @@ export default class App extends Component {
     assert.match(errors[0].message, /or use a class field such as ref=\{this\.input\}\./)
   })
 
+  // Including bases the compiler can't see into: an alias, a package's component.
   it('also rejects a ternary template() in a subclass of a component', () => {
-    const { errors } = compileForBrowser({
-      'App.tsx': `import { Component } from '@geajs/core'
-
-class Base extends Component {
-  template() {
-    return <div>base</div>
-  }
-}
+    for (const base of [
+      `class Base extends Component {\n  template() {\n    return <div>base</div>\n  }\n}`,
+      `import { Component as Base } from '@geajs/core'`,
+      `import { View as Base } from '@geajs/mobile'`,
+    ]) {
+      const { errors } = compileForBrowser({
+        'App.tsx': `import { Component } from '@geajs/core'
+${base}
 
 export default class App extends Base {
   template() {
@@ -575,12 +582,13 @@ export default class App extends Base {
   }
 }
 `,
-    })
-    assert.equal(errors.length, 1, JSON.stringify(errors))
-    assert.match(errors[0].message, /`App\.template\(\)` must return a single JSX element or fragment\./)
+      })
+      assert.equal(errors.length, 1, `${base}: ${JSON.stringify(errors)}`)
+      assert.match(errors[0].message, /`App\.template\(\)` must return a single JSX element or fragment\./)
+    }
   })
 
-  it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs, element spreads and conditional function components', async () => {
+  it('still compiles component-valued tags, pointer-capture and custom …Capture events, assignable refs, element spreads, conditional function components and base-less classes', async () => {
     const { config } = project(STILL_SUPPORTED_APP, {
       'src/Pick.tsx': `export default function Pick(props: { on?: boolean }) {
   return props.on ? <b>on</b> : <i>off</i>

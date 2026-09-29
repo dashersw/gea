@@ -166,12 +166,16 @@ export function transformFile(source: string, _filename?: string, options: Trans
         if (bodyContainsJsx(m.body)) methodsWithJsx.push(m)
       }
       if (!templateMethod && methodsWithJsx.length === 0) continue
-      if (templateMethod && !extendsComponent(classDecl) && !extendsKnownComponent(classDecl, ctx)) continue
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null
       if (templateMethod && !jsx) {
-        if (bodyContainsJsx(templateMethod.body)) throw nonJsxTemplateError(classDecl, templateMethod)
+        // Checked before extendsComponent, which only recognizes a subclass of
+        // another component (imported, aliased) by a template() it can compile.
+        if (classDecl.superClass && bodyContainsJsx(templateMethod.body)) {
+          throw nonJsxTemplateError(classDecl, templateMethod)
+        }
         continue
       }
+      if (templateMethod && !extendsComponent(classDecl)) continue
       if (templateMethod?.decorators?.length) {
         throw compilerError(
           `Decorators on \`template()\` are not supported.`,
@@ -635,11 +639,6 @@ function applyPropsTypeArgument(
   const emptyPropsType = t.tsTypeLiteral([])
   if (!classPropsReadsAreCovered(classDecl, emptyPropsType)) return
   classDecl.superTypeParameters = t.tsTypeParameterInstantiation([emptyPropsType])
-}
-
-/** A subclass of a class component declared in this module or imported from one. */
-function extendsKnownComponent(classDecl: ClassDeclaration, ctx: ReturnType<typeof createEmitContext>): boolean {
-  return t.isIdentifier(classDecl.superClass) && ctx.directClassComponents?.has(classDecl.superClass.name) === true
 }
 
 /**
