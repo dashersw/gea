@@ -90,6 +90,34 @@ function applyDecls(style: CSSStyleDeclaration, prev: Decls, next: Decls): void 
   }
 }
 
+const keepsDeclsByDoc = new WeakMap<Document, boolean>()
+
+/** Whether `doc`'s style objects keep `!important` and the case of custom
+ * property names. linkedom, which SSR renders with, drops both. */
+function keepsDecls(doc: Document): boolean {
+  let keeps = keepsDeclsByDoc.get(doc)
+  if (keeps === undefined) {
+    const probe = doc.createElement('div').style
+    probe.setProperty('--geaProbe', '0', 'important')
+    keeps = /--geaProbe:\s*0\s*!important/.test(probe.cssText)
+    keepsDeclsByDoc.set(doc, keeps)
+  }
+  return keeps
+}
+
+/** `applyDecls` for a style object that can't hold the declarations as written:
+ * rewrite the style text, keeping the properties this binding doesn't declare. */
+function writeDecls(style: CSSStyleDeclaration, prev: Decls, next: Decls): void {
+  const text: string[] = []
+  for (let i = 0; i < style.length; i++) {
+    const name = style[i]
+    const value = style.getPropertyValue(name)
+    if (value && !prev.has(name) && !next.has(name)) text.push(`${name}: ${value}`)
+  }
+  for (const [name, [value, priority]] of next) text.push(`${name}: ${value}${priority ? ' !important' : ''}`)
+  style.cssText = text.join('; ')
+}
+
 export function reactiveStyle(
   el: Element,
   d: Disposer,
@@ -100,13 +128,14 @@ export function reactiveStyle(
   // Last string value, or null when the value was not a string.
   let prevText: string | null = null
   const style = (el as HTMLElement).style
+  const write = keepsDecls(el.ownerDocument) ? applyDecls : writeDecls
   bind(d, root, pathOrGetter, (v) => {
     // A string is a declaration list, diffed per property like an object.
     const text = typeof v === 'string' ? v : null
     if (text !== null && text === prevText) return
     prevText = text
     const next = text !== null ? parseStyleText(text) : objectDecls(v)
-    applyDecls(style, prev, next)
+    write(style, prev, next)
     prev = next
   })
 }
