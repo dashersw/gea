@@ -31,6 +31,9 @@ const PARTS = `
     cache.set(key, node)
     return prev
   }
+  function wrap(node: any, ..._: any[]) {
+    return node
+  }
   export class Profile extends Component {
     created() { counter.p++ }
     dispose() { counter.pd++; super.dispose() }
@@ -67,6 +70,9 @@ const PARTS = `
   }
   export class Slots extends Component {
     template({ children }: any) { return <div class="card">{children.rows}<p>{children.label}</p></div> }
+  }
+  export class Flat extends Component {
+    template({ children }: any) { return <div class="card">{children.flat()}</div> }
   }
   export class RenderCard extends Component {
     template({ children }: any) { return <div class="card">{children(ui.fancy)}</div> }
@@ -137,6 +143,7 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
     'Panel',
     'Pick',
     'Slots',
+    'Flat',
     'RenderCard',
     'FnCard',
     'FnHeader',
@@ -518,7 +525,8 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     h.ui.tick = 2
     h.flush()
     assert.equal(card(), 'T2')
-    assert.equal(h.counter.n, 2)
+    // `children` keeps the first Node, as on main, so the other key never builds.
+    assert.equal(h.counter.n, 1)
     assert.equal(h.counter.d, 0)
     h.dispose()
     assertTitlesLive(h, 0)
@@ -552,6 +560,41 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
       h.ui.tick = tick
       h.flush()
       assert.equal(card(), `T${tick}T${tick}`)
+    }
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  // Re-running such an expression would build a new node on the parent each
+  // read, and reads also follow what the node reads while it's built.
+  const USER_KEPT_ONCE = [
+    `<Card>{wrap(<LiveTitle />)}</Card>`,
+    `<Card>{wrap(<LiveTitle />, ui.fancy)}</Card>`,
+    `<Card>{ui.fancy ? <LiveTitle /> : wrap(<LiveTitle />)}</Card>`,
+  ]
+  for (const [i, body] of USER_KEPT_ONCE.entries()) {
+    it(`keeps the first node of \`children\` with JSX user code can keep: ${body}`, async () => {
+      const h = await mountApp(body, `user-kept-once${i}`)
+      const card = () => [...h.root.querySelectorAll('.card b')].map((b) => b.textContent).join('')
+      for (let tick = 1; tick <= 3; tick++) {
+        h.ui.tick = tick
+        h.flush()
+        await toggle(h)
+        assert.equal(card(), `T${tick}`)
+        assertTitlesLive(h, 1)
+      }
+      assert.equal(h.counter.n, 1)
+      h.dispose()
+      assertTitlesLive(h, 0)
+    })
+  }
+
+  it('disposes JSX a function the read runs built inside a nested array', async () => {
+    const h = await mountApp(`<Flat>{[ui.fancy ? ui.rows.map((r: number) => <Title />) : []]}</Flat>`, 'nested-array')
+    for (let n = 0; n < 6; n++) {
+      assert.equal(h.root.querySelectorAll('.card b').length, h.ui.fancy ? 2 : 0)
+      assertTitlesLive(h)
+      await toggle(h)
     }
     h.dispose()
     assertTitlesLive(h, 0)

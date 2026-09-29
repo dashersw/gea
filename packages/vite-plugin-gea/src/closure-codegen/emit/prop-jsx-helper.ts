@@ -28,9 +28,11 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  *   with a `{ d, nodes }` record, and the slot that shows them disposes it
  *   once it has dropped all of them (see `reactiveText`). A read none of whose
  *   nodes is attached by the next read, like the child's first read when it
- *   installs its props, is disposed then. Items a read builds but doesn't
- *   return as nodes, as in `[[<Row />]]`, can't be tracked and stay until `d`
- *   is disposed. A read that throws disposes what it built.
+ *   installs its props, is disposed then. Nodes inside nested arrays
+ *   (`[xs.map((x) => <Row />)]`) count too. Items a read returns inside
+ *   something else, like the result of a non-array `.map`, can't be found, so
+ *   they stay until `d` is disposed, as they would on `d`. A read that throws
+ *   disposes what it built.
  */
 const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   const owner = Symbol.for('gea.jsx.owner')
@@ -83,7 +85,7 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
           (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
         )
         if (run.items.size > 0) {
-          const rec = { d: run.d, nodes: (Array.isArray(v) ? v : [v]).filter((n) => run.items.has(n)) }
+          const rec = { d: run.d, nodes: [v].flat(Infinity).filter((n) => run.items.has(n)) }
           for (const n of rec.nodes) n[owner] = rec
           shown.push(rec)
         }

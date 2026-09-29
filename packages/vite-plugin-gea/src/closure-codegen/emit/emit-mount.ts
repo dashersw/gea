@@ -353,19 +353,28 @@ function memoizedThunk(block: any): Expression {
  * puts it on the read's disposer, disposed once the slot drops the read's
  * nodes. If the function's code names `d`, the JSX builds on the `d` it sees
  * instead, as without this thunk. Any other JSX can be kept by user code, so
- * it builds on the parent's `d`, as before. A named prop with JSX other than
- * sites keeps a memo of its whole value, as before.
+ * it builds on the parent's `d`, and the thunk keeps what it did before: a
+ * named prop memoizes its whole value, and `children` keeps the first Node a
+ * read returns (see `firstNodeThunk`).
  */
 function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean): Expression {
   const outs = valueJsx(expr)
   let onlySites = true
+  let userKept = false
   mapJsx(expr, (jsx) => {
-    if (outs.get(jsx) !== null) onlySites = false
+    const fn = outs.get(jsx)
+    if (fn !== null) onlySites = false
+    if (fn === undefined) userKept = true
     return jsx
   })
   if (!isChildren && !onlySites) {
     return memoizedThunk(t.blockStatement([t.returnStatement(lowerJsxInExpression(expr, ctx))]))
   }
+  const thunk = buildReadThunk(expr, outs, ctx)
+  return userKept ? firstNodeThunk(thunk) : thunk
+}
+
+function buildReadThunk(expr: any, outs: Map<any, any>, ctx: EmitContext): Expression {
   let sites = 0
   let items = 0
   const build = (jsx: any) => t.arrowFunctionExpression([t.identifier('d')], compileJsxToBlock(jsx, ctx))
@@ -395,6 +404,58 @@ function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean):
       ]),
       t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__v'), t.arrowFunctionExpression([], value))]),
       t.returnStatement(t.arrowFunctionExpression([], helperCall('read', [t.identifier('__v')]))),
+    ]),
+  )
+  return t.callExpression(outer, [])
+}
+
+/**
+ * Wrap `thunk` so that once it returns a Node, every later call returns that
+ * Node without running it again, as the runtime's `children` getter did
+ * before #120. Other values (text, arrays, functions) come from a new call
+ * each time.
+ *
+ *   (() => {
+ *     const __t = <thunk>;
+ *     let __n;
+ *     return () => {
+ *       if (__n) return __n;
+ *       const __r = __t();
+ *       if (__r !== null && typeof __r === 'object' && typeof __r.nodeType === 'number') __n = __r;
+ *       return __r;
+ *     };
+ *   })()
+ */
+function firstNodeThunk(thunk: Expression): Expression {
+  const r = () => t.identifier('__r')
+  const isNode = t.logicalExpression(
+    '&&',
+    t.logicalExpression(
+      '&&',
+      t.binaryExpression('!==', r(), t.nullLiteral()),
+      t.binaryExpression('===', t.unaryExpression('typeof', r()), t.stringLiteral('object')),
+    ),
+    t.binaryExpression(
+      '===',
+      t.unaryExpression('typeof', t.memberExpression(r(), t.identifier('nodeType'))),
+      t.stringLiteral('number'),
+    ),
+  )
+  const read = t.arrowFunctionExpression(
+    [],
+    t.blockStatement([
+      t.ifStatement(t.identifier('__n'), t.returnStatement(t.identifier('__n'))),
+      t.variableDeclaration('const', [t.variableDeclarator(r(), t.callExpression(t.identifier('__t'), []))]),
+      t.ifStatement(isNode, t.expressionStatement(t.assignmentExpression('=', t.identifier('__n'), r()))),
+      t.returnStatement(r()),
+    ]),
+  )
+  const outer = t.arrowFunctionExpression(
+    [],
+    t.blockStatement([
+      t.variableDeclaration('const', [t.variableDeclarator(t.identifier('__t'), thunk)]),
+      t.variableDeclaration('let', [t.variableDeclarator(t.identifier('__n'))]),
+      t.returnStatement(read),
     ]),
   )
   return t.callExpression(outer, [])
