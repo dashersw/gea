@@ -142,7 +142,12 @@ jobs:
 
   build:
     needs: [discover]
-    if: needs.discover.outputs.projects != '[]'
+    # `changes` only runs on pull_request. Without an explicit status check, GitHub skips
+    # every job after a skipped one, so push and dispatch runs never got past `discover`.
+    if: |
+      !cancelled() &&
+      needs.discover.result == 'success' &&
+      needs.discover.outputs.projects != '[]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -161,7 +166,7 @@ jobs:
 
   e2e-tests:
     needs: [discover, build]
-    if: needs.discover.outputs.projects != '[]'
+    if: "!cancelled() && needs.build.result == 'success'"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
