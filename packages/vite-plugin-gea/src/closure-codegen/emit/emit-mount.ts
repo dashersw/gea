@@ -1,4 +1,4 @@
-import type { Expression, Statement } from '@babel/types'
+import type { Expression, Identifier, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
 
@@ -37,7 +37,7 @@ export function emitMountSlot(slot: Slot, stmts: Statement[], ctx: EmitContext):
     return
   }
   if (ctx.directFactoryComponents?.has(tag)) {
-    emitDirectFactoryMount(tag, anchorId, propsObj, attrs, stmts, slot.index)
+    emitDirectFactoryMount(tag, anchorId, propsObj, stmts, slot.index)
     return
   }
   ctx.importsNeeded.add('mount')
@@ -124,7 +124,6 @@ function emitDirectFactoryMount(
   tag: string,
   anchorId: Expression,
   propsObj: Expression,
-  attrs: any[],
   stmts: Statement[],
   slotIndex: number,
 ): void {
@@ -134,7 +133,7 @@ function emitDirectFactoryMount(
   const thunkId = t.identifier('__t' + slotIndex)
   const disposerId = t.identifier('__fd' + slotIndex)
   const outId = t.identifier('__out' + slotIndex)
-  const directProps = hasChildrenAttr(attrs) ? null : buildDirectFactoryPropsObject(propsObj)
+  const directProps = buildDirectFactoryPropsObject(propsObj)
 
   if (directProps) {
     stmts.push(t.variableDeclaration('const', [t.variableDeclarator(propsId, directProps)]))
@@ -173,8 +172,6 @@ function emitDirectFactoryMount(
       ),
     )
   }
-
-  if (!directProps && hasChildrenAttr(attrs)) emitChildrenMemoizer(thunksId, propsId, stmts, slotIndex)
 
   stmts.push(
     t.variableDeclaration('const', [
@@ -251,74 +248,13 @@ function containsThisExpression(node: any): boolean {
   return false
 }
 
-function emitChildrenMemoizer(thunksId: Expression, propsId: Expression, stmts: Statement[], slotIndex: number): void {
-  const cachedId = t.identifier('__ch' + slotIndex)
-  const cacheNodeId = t.identifier('__chn' + slotIndex)
-  const valueId = t.identifier('__chv' + slotIndex)
-  const childrenMember = t.memberExpression(thunksId, t.identifier('children'))
-  stmts.push(
-    t.ifStatement(
-      t.binaryExpression('===', t.unaryExpression('typeof', t.cloneNode(childrenMember)), t.stringLiteral('function')),
-      t.blockStatement([
-        t.variableDeclaration('let', [t.variableDeclarator(cachedId)]),
-        t.variableDeclaration('let', [t.variableDeclarator(cacheNodeId, t.booleanLiteral(false))]),
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('defineProperty')), [
-            propsId,
-            t.stringLiteral('children'),
-            t.objectExpression([
-              t.objectProperty(t.identifier('enumerable'), t.booleanLiteral(true)),
-              t.objectProperty(t.identifier('configurable'), t.booleanLiteral(true)),
-              t.objectProperty(
-                t.identifier('get'),
-                t.arrowFunctionExpression(
-                  [],
-                  t.blockStatement([
-                    t.ifStatement(cacheNodeId, t.returnStatement(cachedId)),
-                    t.variableDeclaration('const', [
-                      t.variableDeclarator(valueId, t.callExpression(t.cloneNode(childrenMember), [])),
-                    ]),
-                    t.ifStatement(
-                      t.logicalExpression(
-                        '&&',
-                        t.cloneNode(valueId),
-                        t.binaryExpression(
-                          '===',
-                          t.unaryExpression('typeof', t.memberExpression(valueId, t.identifier('nodeType'))),
-                          t.stringLiteral('number'),
-                        ),
-                      ),
-                      t.blockStatement([
-                        t.expressionStatement(t.assignmentExpression('=', cachedId, t.cloneNode(valueId))),
-                        t.expressionStatement(t.assignmentExpression('=', cacheNodeId, t.booleanLiteral(true))),
-                      ]),
-                    ),
-                    t.returnStatement(valueId),
-                  ]),
-                ),
-              ),
-            ]),
-          ]),
-        ),
-      ]),
-    ),
-  )
-}
-
-function hasChildrenAttr(attrs: any[]): boolean {
-  for (const attr of attrs) {
-    if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'children' })) return true
-  }
-  return false
-}
-
 /**
  * Build a `() => children` thunk for a component's JSX children. Returns null
  * if the children can't be represented.
  *
- * For Node-returning children (JSX elements/fragments), the thunk is wrapped
- * in a lazy memo so the child DOM is created exactly once — otherwise the
- * child's `{props.children}` slot would re-clone and break identity.
+ * JSX children build their Node once (see `memoizedThunk`), so the child's
+ * `{props.children}` slot gets the same Node on every read. An expression
+ * child goes through `buildExpressionThunk`, which keeps it live.
  */
 function buildChildrenThunk(children: any[], ctx: EmitContext): Expression | null {
   if (children.length === 0) return null
@@ -348,23 +284,21 @@ function buildChildrenThunk(children: any[], ctx: EmitContext): Expression | nul
           // Reuse buildMapBranchFn's structure: wrap branch fn invokes keyedList.
           // It returns an arrow `(d) => <span>...</span>`; we need `() => ...` instead.
           const branchFn = buildMapBranchFn(substituted, ctx) as any
-          // branchFn.body is a BlockStatement returning the span; lift it into a no-arg thunk.
-          return t.arrowFunctionExpression([], branchFn.body)
+          // branchFn.body is a BlockStatement returning the span. The keyed
+          // list inside tracks the array itself, so the span is built once.
+          return memoizedThunk(branchFn.body)
         }
       }
-      // Otherwise lower any JSX inside the expression (arrow bodies, ternary, etc.).
-      return t.arrowFunctionExpression([], lowerJsxInExpression(substituted, ctx) as Expression)
+      return buildExpressionThunk(substituted, ctx, true)
     }
     if (t.isJSXElement(c) || t.isJSXFragment(c)) {
-      const block = compileJsxToBlock(c, ctx)
-      return t.arrowFunctionExpression([], block)
+      return memoizedThunk(compileJsxToBlock(c, ctx))
     }
     return null
   }
   // Multiple children — wrap in a JSX fragment and recursively compile.
   const frag = t.jsxFragment(t.jsxOpeningFragment(), t.jsxClosingFragment(), children)
-  const block = compileJsxToBlock(frag, ctx)
-  return t.arrowFunctionExpression([], block)
+  return memoizedThunk(compileJsxToBlock(frag, ctx))
 }
 
 /**
@@ -398,6 +332,45 @@ function memoizedThunk(block: any): Expression {
 }
 
 /**
+ * Build the thunk for a prop or `children` expression.
+ *
+ * Every read re-runs the expression, so a condition like `cond ? <A /> : 'b'`
+ * stays tracked by whoever reads the prop. Each JSX site the expression
+ * evaluates directly builds its Node once and hands back that same Node
+ * afterwards, so re-reading doesn't construct (and leak) another `<A />`:
+ *
+ *   (() => { let __m0; return () => cond ? __m0 ?? (__m0 = <A block>) : 'b' })()
+ *
+ * JSX inside a nested function (`(x) => <Row x={x} />`) depends on that
+ * function's arguments, so it can't be memoized per site. A named prop whose
+ * only JSX is of that kind keeps a memo of its whole value, so repeat reads
+ * don't rebuild what the function returned; `children` stays live.
+ */
+function buildExpressionThunk(expr: any, ctx: EmitContext, isChildren: boolean): Expression {
+  const sites: Identifier[] = []
+  const value = lowerJsxInExpression(expr, ctx, (built) => {
+    const id = t.identifier('__m' + sites.length)
+    sites.push(id)
+    return t.logicalExpression('??', id, t.assignmentExpression('=', t.cloneNode(id), built))
+  }) as Expression
+  const thunk = t.arrowFunctionExpression([], value)
+  if (sites.length === 0) {
+    return !isChildren && containsJsx(expr) ? memoizedThunk(t.blockStatement([t.returnStatement(value)])) : thunk
+  }
+  const outer = t.arrowFunctionExpression(
+    [],
+    t.blockStatement([
+      t.variableDeclaration(
+        'let',
+        sites.map((id) => t.variableDeclarator(t.cloneNode(id))),
+      ),
+      t.returnStatement(thunk),
+    ]),
+  )
+  return t.callExpression(outer, [])
+}
+
+/**
  * Build props for `mount()`: a `Record<string, () => any>` of thunks. Substitutes
  * destructured identifiers via ctx.bindings so thunks close over live sources.
  */
@@ -410,21 +383,13 @@ function buildPropsObject(attrs: any[], ctx: EmitContext): Expression {
     else if (t.isJSXNamespacedName(attr.name)) name = `${attr.name.namespace.name}:${attr.name.name.name}`
     else continue
     if (name === 'key') continue // consumed by keyedList, not a component prop
-    let value: Expression
-    let wrapMemo = false
-    if (!attr.value) value = t.booleanLiteral(true)
-    else if (t.isStringLiteral(attr.value)) value = t.stringLiteral(attr.value.value)
+    let thunk: Expression
+    if (!attr.value) thunk = t.arrowFunctionExpression([], t.booleanLiteral(true))
+    else if (t.isStringLiteral(attr.value)) thunk = t.arrowFunctionExpression([], t.stringLiteral(attr.value.value))
     else if (t.isJSXExpressionContainer(attr.value)) {
       const sub = substituteBindings(attr.value.expression, ctx.bindings)
-      // Detect raw JSX inside the expression tree BEFORE lowering — if present,
-      // the thunk builds Nodes and should memoize so repeat reads of the prop
-      // don't reconstruct (breaks `items={[{content: <JSX/>}]}` patterns).
-      wrapMemo = containsJsx(sub)
-      value = lowerJsxInExpression(sub, ctx) as Expression
+      thunk = buildExpressionThunk(sub, ctx, name === 'children')
     } else continue
-    const thunk = wrapMemo
-      ? memoizedThunk(t.blockStatement([t.returnStatement(value)]))
-      : t.arrowFunctionExpression([], value)
     // Use a string-literal key for names that aren't valid JS identifiers
     // (e.g. `data-product-id`, `aria-label`, `xml:lang`).
     const isValidIdent = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)

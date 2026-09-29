@@ -54,24 +54,6 @@ export class CompiledReactiveComponent<P extends Record<string, any> = Record<st
         get: () => thunks[k](),
       })
     }
-    const childrenThunk = thunks.children
-    if (typeof childrenThunk === 'function') {
-      let cached: Renderable = undefined
-      let cacheNode = false
-      Object.defineProperty(out, 'children', {
-        enumerable: true,
-        configurable: true,
-        get: () => {
-          if (cacheNode) return cached
-          const v = childrenThunk()
-          if (v !== null && typeof v === 'object' && typeof (v as Node).nodeType === 'number') {
-            cached = v
-            cacheNode = true
-          }
-          return v
-        },
-      })
-    }
     this.props = out as P
     const nextValues: Record<string, any> = {}
     for (const key in thunks) nextValues[key] = this.props?.[key]

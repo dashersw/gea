@@ -59,24 +59,6 @@ export class CompiledComponent<P extends Record<string, any> = Record<string, an
         get: () => thunks[k](),
       })
     }
-    const childrenThunk = thunks.children
-    if (typeof childrenThunk === 'function') {
-      let cached: Renderable = undefined
-      let cacheNode = false
-      Object.defineProperty(out, 'children', {
-        enumerable: true,
-        configurable: true,
-        get: () => {
-          if (cacheNode) return cached
-          const v = childrenThunk()
-          if (v !== null && typeof v === 'object' && typeof (v as Node).nodeType === 'number') {
-            cached = v
-            cacheNode = true
-          }
-          return v
-        },
-      })
-    }
     this.props = out as P
     const nextValues: Partial<P> = {}
     for (const key in thunks) nextValues[key as keyof P] = this.props?.[key as keyof P]
