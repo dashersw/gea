@@ -50589,12 +50589,12 @@ function rewriteFnComponent(fnDecl, parentCtx) {
         directParams.locals.filter((local, index) => stringProps.has(directParams.props[index]))
       );
     }
-  } else if (fnDecl.params.length >= 1 && libExports.isObjectPattern(fnDecl.params[0])) {
-    propsLocals.push(...bindPropsPattern(fnDecl.params[0], "let", fnCtx.bindings));
-    fnDecl.params[0] = libExports.identifier("props");
   } else if (fnDecl.params.length === 0) {
     fnDecl.params.push(libExports.identifier("props"));
-  } else if (!libExports.isIdentifier(fnDecl.params[0], { name: "props" })) {
+  } else {
+    const param = propsParam(fnDecl.params[0], fnName);
+    if (libExports.isObjectPattern(param)) propsLocals.push(...bindPropsPattern(param, "let", fnCtx.bindings));
+    else if (param.name !== "props") fnCtx.bindings.set(param.name, libExports.identifier("props"));
     fnDecl.params[0] = libExports.identifier("props");
   }
   const precedingRaw = [...propsLocals, ...bindFnLocals(body.slice(0, returnIdx), fnCtx.bindings)];
@@ -50647,6 +50647,15 @@ function bindFnLocals(stmts, bindings) {
     initializerNeedsLocal
   );
   return kept;
+}
+function propsParam(param, fnName) {
+  const target = libExports.isAssignmentPattern(param) ? param.left : param;
+  if (libExports.isIdentifier(target) || libExports.isObjectPattern(target)) return target;
+  throw compilerError(
+    `Function component \`${fnName || "<anonymous>"}\` has an unsupported props parameter.`,
+    param,
+    "Name the parameter (`props`) or destructure it (`{ label }`)."
+  );
 }
 function isPropsDestructure(decl) {
   return libExports.isObjectPattern(decl.id) && libExports.isIdentifier(decl.init, { name: "props" });
@@ -50994,8 +51003,9 @@ function transformFile(source, _filename, options = {}) {
         ctx.currentIrRuntimeBase = void 0;
         continue;
       }
-      if (templateMethod.params.length >= 1 && libExports.isObjectPattern(templateMethod.params[0])) {
-        for (const prop of templateMethod.params[0].properties) {
+      const templateParam = libExports.isAssignmentPattern(templateMethod.params[0]) ? templateMethod.params[0].left : templateMethod.params[0];
+      if (libExports.isObjectPattern(templateParam)) {
+        for (const prop of templateParam.properties) {
           if (!libExports.isObjectProperty(prop) || !libExports.isIdentifier(prop.key)) continue;
           const local = libExports.isIdentifier(prop.value) ? prop.value.name : prop.key.name;
           ctx.bindings.set(
@@ -51007,8 +51017,8 @@ function transformFile(source, _filename, options = {}) {
           );
         }
       }
-      if (templateMethod.params.length >= 1 && libExports.isIdentifier(templateMethod.params[0])) {
-        ctx.bindings.set(templateMethod.params[0].name, libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")));
+      if (libExports.isIdentifier(templateParam)) {
+        ctx.bindings.set(templateParam.name, libExports.memberExpression(libExports.thisExpression(), libExports.identifier("props")));
       }
       const preceding = extractPrecedingStatements(templateMethod);
       const templateSymbol = useStaticCompiledComponent ? "GEA_STATIC_TEMPLATE" : "GEA_CREATE_TEMPLATE";
