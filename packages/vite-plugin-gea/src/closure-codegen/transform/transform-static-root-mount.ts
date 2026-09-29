@@ -81,7 +81,15 @@ export function transformStaticRootMount(
   const resolved = resolveImportPath(filePath, imported.source)
   if (!resolved) return null
 
-  const factory = createStaticTemplateFactory(resolved, '__gea_root0', filePath, resolveImportPath)
+  let factory: StaticTemplateFactory | null
+  try {
+    factory = createStaticTemplateFactory(resolved, '__gea_root0', filePath, resolveImportPath)
+  } catch {
+    // Inlining is only an optimization. Without it the root component goes
+    // through the pipeline on its own, which reports any compile error
+    // against the component's file instead of this mount file.
+    return null
+  }
   if (!factory) return null
 
   ast.program.body.splice(
