@@ -15,6 +15,16 @@ const PARTS = `
     dispose() { counter.d++; super.dispose() }
     template() { return <b>Title</b> }
   }
+  export class LiveTitle extends Component {
+    created() { counter.n++ }
+    dispose() { counter.d++; super.dispose() }
+    template() { return <b>T{ui.tick}</b> }
+  }
+  const cache = new Map()
+  function cacheSet(key: any, node: any) {
+    cache.set(key, node)
+    return node
+  }
   export class Profile extends Component {
     created() { counter.p++ }
     dispose() { counter.pd++; super.dispose() }
@@ -68,6 +78,7 @@ type Ui = {
   profile: { name: string } | null
   ids: string[]
   byId: Record<string, { name: string }>
+  tick: number
 }
 type Counter = { n: number; d: number; p: number; pd: number }
 type Harness = { root: HTMLElement; ui: Ui; counter: Counter; flush: () => void; dispose: () => void }
@@ -102,6 +113,7 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
     profile: { name: 'Ada' },
     ids: ['a', 'b'],
     byId: { a: { name: 'A' }, b: { name: 'B' } },
+    tick: 0,
   }) as Ui
   const counter: Counter = { n: 0, d: 0, p: 0, pd: 0 }
   const source = `${PARTS}
@@ -457,6 +469,32 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     assert.equal(names(), 'A2B2')
     h.dispose()
     assert.equal(h.counter.p - h.counter.pd, 0)
+  })
+
+  it('keeps JSX live that a cache returns to later reads', async () => {
+    // The first read, when the child installs its props, builds and caches the
+    // nodes; the reads after it get them from the cache.
+    const h = await mountApp(
+      `<Card>{ui.fancy && ui.tick >= 0 && ui.rows.map((r: number) => cache.get(r) ?? cacheSet(r, <LiveTitle />))}</Card>`,
+      'cache',
+    )
+    const card = () => [...h.root.querySelectorAll('.card b')].map((b) => b.textContent).join('')
+    assert.equal(card(), 'T0T0')
+    assertTitlesLive(h, 2)
+    h.ui.tick = 3
+    h.flush()
+    assert.equal(card(), 'T3T3')
+    assertTitlesLive(h, 2)
+    // The cache still holds them while they're hidden, so they come back live.
+    await toggle(h)
+    assert.equal(h.root.querySelectorAll('.card b').length, 0)
+    await toggle(h)
+    h.ui.tick = 4
+    h.flush()
+    assert.equal(card(), 'T4T4')
+    assert.equal(h.counter.n, 2)
+    h.dispose()
+    assertTitlesLive(h, 0)
   })
 
   // A `d` the user names inside the expression means what it does on main.

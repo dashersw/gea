@@ -27,7 +27,10 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  *   read, like the child's first read when it installs its props, is
  *   disposed then. JSX a read builds but doesn't return as nodes, as in
  *   `{ rows: xs.map(...) }`, can't be tracked and stays until `d` is disposed.
- *   A read that throws disposes what it built.
+ *   A read that throws disposes what it built. A node that a later read
+ *   returns again is held by user code, as a cache holds it, and can be shown
+ *   again after a slot drops it. So the read that built it stays until `d` is
+ *   disposed, and a node another record owns is never tagged again.
  * - `scope()` is the disposer a nested function builds on: the running read's,
  *   or `d` when the function runs after the read, as one the read hands out
  *   (`(x) => <Row x={x} />`) does.
@@ -40,11 +43,15 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   for (let i = 0; i < sites; i++) scopes.push(d.child())
   let reads = 0
   let shown = []
+  let kept = []
+  const held = new WeakSet()
   let running = null
   if (perRead) {
     d.add(() => {
       for (const s of shown) s.d.dispose()
+      for (const k of kept) k.dispose()
       shown = []
+      kept = []
     })
   }
   return {
@@ -76,15 +83,26 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
         }
       }
       if (perRead) {
-        shown = shown.filter(
-          (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
-        )
         const nodes = (Array.isArray(v) ? v : [v]).filter(
           (n) => n != null && typeof n.nodeType === 'number' && !built.includes(n),
         )
-        const rec = { d: own, nodes }
-        if (nodes.length > 0) {
-          for (const n of nodes) n[owner] = rec
+        for (const n of nodes) {
+          const s = n[owner]
+          if (!s || !shown.includes(s)) continue
+          shown.splice(shown.indexOf(s), 1)
+          kept.push(s.d)
+          for (const m of s.nodes) {
+            if (m[owner] === s) m[owner] = undefined
+            held.add(m)
+          }
+        }
+        shown = shown.filter(
+          (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
+        )
+        const fresh = nodes.filter((n) => !n[owner] && !held.has(n))
+        const rec = { d: own, nodes: fresh }
+        if (fresh.length > 0) {
+          for (const n of fresh) n[owner] = rec
           shown.push(rec)
         } else if (own.f.length > 0) shown.push(rec)
       }
