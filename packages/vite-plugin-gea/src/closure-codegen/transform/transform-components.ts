@@ -1,6 +1,8 @@
 import type {
   ClassDeclaration,
   Expression,
+  File,
+  FunctionDeclaration,
   Identifier,
   ObjectPattern,
   ObjectProperty,
@@ -251,6 +253,64 @@ export function fnHasInstanceLocals(fn: any): boolean {
     }
   }
   return false
+}
+
+/** Value bindings declared at the top level of a module: imports, variables, functions, classes, enums. */
+export function collectModuleBindings(ast: File): Set<string> {
+  const names = new Set<string>()
+  for (const stmt of ast.program.body) {
+    if (t.isImportDeclaration(stmt)) {
+      if (stmt.importKind === 'type' || stmt.importKind === 'typeof') continue
+      for (const spec of stmt.specifiers) {
+        if (t.isImportSpecifier(spec) && (spec.importKind === 'type' || spec.importKind === 'typeof')) continue
+        names.add(spec.local.name)
+      }
+      continue
+    }
+    const decl = t.isExportNamedDeclaration(stmt) || t.isExportDefaultDeclaration(stmt) ? stmt.declaration : stmt
+    if (t.isVariableDeclaration(decl) || t.isFunctionDeclaration(decl) || t.isClassDeclaration(decl)) {
+      for (const name of Object.keys(t.getOuterBindingIdentifiers(decl))) names.add(name)
+    } else if (t.isTSEnumDeclaration(decl)) {
+      names.add(decl.id.name)
+    }
+  }
+  return names
+}
+
+/**
+ * True if the function reads one of `moduleBindings` (see
+ * `collectModuleBindings`), e.g. `{counter.count}` for an imported store.
+ * A one-shot direct factory would write that read once and never update it.
+ * JSX tags don't count: rendering a component isn't a read, and the child
+ * keeps its own bindings. Locals that shadow a module name and type
+ * annotations don't count either.
+ */
+export function fnReadsModuleBinding(fn: FunctionDeclaration, moduleBindings: Set<string>): boolean {
+  if (moduleBindings.size === 0) return false
+  let reads = false
+  traverse(t.file(t.program([t.cloneNode(fn, true)])), {
+    enter(path) {
+      if (isTypeOnlyNode(path.node)) path.skip()
+    },
+    Identifier(path) {
+      const name = path.node.name
+      if (!moduleBindings.has(name) || !path.isReferencedIdentifier() || path.scope.getBinding(name)) return
+      reads = true
+      path.stop()
+    },
+  })
+  return reads
+}
+
+function isTypeOnlyNode(node: any): boolean {
+  return (
+    t.isTSType(node) ||
+    t.isTSTypeAnnotation(node) ||
+    t.isTSTypeParameterInstantiation(node) ||
+    t.isTSTypeParameterDeclaration(node) ||
+    t.isTSTypeAliasDeclaration(node) ||
+    t.isTSInterfaceDeclaration(node)
+  )
 }
 
 /**
