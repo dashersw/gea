@@ -27,6 +27,7 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  *   read, like the child's first read when it installs its props, is
  *   disposed then. JSX a read builds but doesn't return as nodes, as in
  *   `{ rows: xs.map(...) }`, can't be tracked and stays until `d` is disposed.
+ *   A read that throws disposes what it built.
  * - `scope()` is the disposer a nested function builds on: the running read's,
  *   or `d` when the function runs after the read, as one the read hands out
  *   (`(x) => <Row x={x} />`) does.
@@ -62,6 +63,9 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
       let v
       try {
         v = fn(own)
+      } catch (e) {
+        if (perRead) own.dispose()
+        throw e
       } finally {
         running = outer
       }

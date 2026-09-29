@@ -415,6 +415,23 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     })
   }
 
+  it('disposes JSX a read built before it threw', async () => {
+    const h = await mountApp(
+      `<Card>{ui.fancy ? ui.rows.map((r: number) => (r === 3 ? ui.profile.name : <Title />)) : 'none'}</Card>`,
+      'throws',
+    )
+    assertTitlesLive(h, 2)
+    h.ui.profile = null
+    h.ui.rows = [1, 2, 3]
+    try {
+      h.flush()
+    } catch {
+      // The read's own error; only what it built matters here.
+    }
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
   it('keeps JSX live that a function the read hands out builds later', async () => {
     const h = await mountApp(
       `<RenderCard>{(on: boolean) => (on ? <Profile name={ui.profile.name} /> : 'plain')}</RenderCard>`,
