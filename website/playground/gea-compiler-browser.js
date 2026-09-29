@@ -48445,6 +48445,55 @@ function toGeaEventType(attrName) {
   if (attrName.startsWith("on") && attrName.length > 2) return attrName.slice(2).toLowerCase();
   return attrName;
 }
+const OTHER_DOM_EVENTS = /* @__PURE__ */ new Set([
+  "auxclick",
+  "beforeinput",
+  "compositionstart",
+  "compositionupdate",
+  "compositionend",
+  "copy",
+  "cut",
+  "paste",
+  "dragenter",
+  "dragexit",
+  "focusin",
+  "focusout",
+  "invalid",
+  "select",
+  "toggle",
+  "load",
+  "error",
+  "abort",
+  "touchcancel",
+  "canplay",
+  "canplaythrough",
+  "durationchange",
+  "emptied",
+  "encrypted",
+  "ended",
+  "loadeddata",
+  "loadedmetadata",
+  "loadstart",
+  "pause",
+  "play",
+  "playing",
+  "progress",
+  "ratechange",
+  "seeked",
+  "seeking",
+  "stalled",
+  "suspend",
+  "timeupdate",
+  "volumechange",
+  "waiting"
+]);
+function isCaptureEventAttr(attrName) {
+  if (!attrName.startsWith("on")) return false;
+  const type = toGeaEventType(attrName);
+  if (!type.endsWith("capture")) return false;
+  const bubbling = type.slice(0, -"capture".length);
+  return EVENT_NAMES.has(bubbling) || OTHER_DOM_EVENTS.has(bubbling);
+}
 
 function escapeAttr(s) {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
@@ -48644,6 +48693,14 @@ function walkJsxToTemplate(root, options = {}) {
     }
     const tagName = name.name;
     if (tagName[0] === tagName[0].toUpperCase()) {
+      const spread = opening.attributes.find((attr) => libExports.isJSXSpreadAttribute(attr));
+      if (spread) {
+        throw compilerError(
+          `Spread attributes like {...${spreadSource(spread.argument)}} on <${tagName}> are not supported.`,
+          spread,
+          `Pass each prop individually: <${tagName} label={\u2026} onSelect={\u2026} />.`
+        );
+      }
       const slot = {
         index: nextSlot++,
         walk: walk.slice(),
@@ -48656,6 +48713,16 @@ function walkJsxToTemplate(root, options = {}) {
       return `<!--${slot.index}-->`;
     }
     let html2 = "<" + tagName;
+    for (const attr of opening.attributes) {
+      if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name) || !isCaptureEventAttr(attr.name.name)) continue;
+      const rawAttrName = attr.name.name;
+      const bubbling = rawAttrName.slice(0, -"Capture".length);
+      throw compilerError(
+        `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
+        attr,
+        `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`
+      );
+    }
     let lastSpread = -1;
     for (let i = 0; i < opening.attributes.length; i++) {
       if (libExports.isJSXSpreadAttribute(opening.attributes[i])) lastSpread = i;
@@ -48917,6 +48984,10 @@ function spreadAttrName(name) {
   if (classifyAttrKind(name) === "event") return "on:" + normalizeEventAttrName(name);
   return normalizeAttrName(name);
 }
+function spreadSource(argument) {
+  const code = generate$1(argument).code;
+  return code.length <= 40 ? code : "\u2026";
+}
 function jsxMemberTagName(name) {
   const object = libExports.isJSXMemberExpression(name.object) ? jsxMemberTagName(name.object) : name.object.name;
   return `${object}.${name.property.name}`;
@@ -48942,6 +49013,7 @@ function formatStaticAttr(name, rawValue) {
 }
 
 function emitSlot(slot, stmts, ctx) {
+  const written = slot.expr;
   slot.expr = substituteBindings(slot.expr, ctx.bindings);
   if (slot.kind === "text") {
     const markerId = libExports.identifier("marker" + slot.index);
@@ -49150,9 +49222,8 @@ function emitSlot(slot, stmts, ctx) {
   if (slot.kind === "ref") {
     const elId = libExports.identifier("el" + slot.index);
     const target = substituteBindings(slot.expr, ctx.bindings);
-    if (libExports.isMemberExpression(target) || libExports.isIdentifier(target)) {
-      stmts.push(libExports.expressionStatement(libExports.assignmentExpression("=", target, elId)));
-    }
+    if (!libExports.isMemberExpression(target) && !libExports.isIdentifier(target)) throw refTargetError(written, target, ctx);
+    stmts.push(libExports.expressionStatement(libExports.assignmentExpression("=", target, elId)));
     return;
   }
   if (slot.kind === "mount") {
@@ -49212,6 +49283,28 @@ function emitSpreadSlot(slot, stmts, ctx) {
 }
 function isThisMethod(expr) {
   return libExports.isMemberExpression(expr) && libExports.isThisExpression(expr.object) && !expr.computed;
+}
+function refTargetError(written, target, ctx) {
+  let expr = written;
+  while (libExports.isTSAsExpression(expr) || libExports.isTSNonNullExpression(expr) || libExports.isTSTypeAssertion(expr)) expr = expr.expression;
+  const hint = "Use an assignable target, e.g. ref={this.input}, and read this.input after render.";
+  if (libExports.isFunction(expr)) {
+    return compilerError(
+      "ref only accepts a property or variable to assign the element to; callback refs are not supported.",
+      written,
+      hint
+    );
+  }
+  if (libExports.isIdentifier(expr)) {
+    const code = generate$1(target).code;
+    const value = code.length <= 40 ? ` (${code})` : "";
+    return compilerError(
+      `ref={${expr.name}} has no variable to assign the element to: the compiler inlines \`${expr.name}\` as its initializer${value}.`,
+      written,
+      `Declare it as \`let ${expr.name}\` with no initializer so it stays a variable` + (libExports.isThisExpression(ctx.reactiveRoot) ? ", or use a class field such as ref={this.input}." : ".")
+    );
+  }
+  return compilerError("ref only accepts a property or variable to assign the element to.", written, hint);
 }
 function canUseScalarTextHelper(expr) {
   if (containsJsx(expr)) return false;
@@ -51083,11 +51176,95 @@ function ensureCoreImports(ast, helpers) {
   ensureNamedImports(ast, COMPILER_RUNTIME_ID, helpers);
 }
 
+function assertNoStringTags(ast) {
+  const tags = /* @__PURE__ */ new Set();
+  const strings = /* @__PURE__ */ new Set();
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    if (libExports.isJSXOpeningElement(node) && libExports.isJSXIdentifier(node.name) && isComponentTagName(node.name.name)) {
+      tags.add(node.name.name);
+    }
+    if (libExports.isVariableDeclarator(node) && libExports.isIdentifier(node.id) && node.init && isStringValued(node.init)) {
+      strings.add(node.id.name);
+    }
+    if (libExports.isAssignmentExpression(node, { operator: "=" }) && libExports.isIdentifier(node.left) && isStringValued(node.right)) {
+      strings.add(node.left.name);
+    }
+    for (const key of Object.keys(node)) {
+      if (key === "loc" || key === "start" || key === "end" || key === "type") continue;
+      visit(node[key]);
+    }
+  };
+  visit(ast.program);
+  if (![...tags].some((name) => strings.has(name))) return;
+  traverse$1(libExports.cloneNode(ast, true), {
+    JSXOpeningElement(path) {
+      const name = path.node.name;
+      if (!libExports.isJSXIdentifier(name) || !strings.has(name.name)) return;
+      const binding = path.scope.getBinding(name.name);
+      if (!binding || !binding.path.isVariableDeclarator()) return;
+      const init = binding.path.node.init;
+      if (init && !isStringValued(init)) return;
+      const writes = binding.constantViolations;
+      if (!init && writes.length === 0) return;
+      if (!writes.every((w) => w.isAssignmentExpression({ operator: "=" }) && isStringValued(w.node.right))) return;
+      throw compilerError(
+        `<${name.name}> holds a string, not a component, so it would render nothing.`,
+        name,
+        `A JSX tag can't come from a string variable. Write the element itself, or pick one with a conditional: {cond ? <section>\u2026</section> : <div>\u2026</div>}.`
+      );
+    }
+  });
+}
+function isComponentTagName(name) {
+  return name[0] === name[0].toUpperCase();
+}
+function isStringValued(node) {
+  if (libExports.isStringLiteral(node) || libExports.isTemplateLiteral(node)) return true;
+  if (libExports.isTSAsExpression(node) || libExports.isTSSatisfiesExpression(node) || libExports.isTSTypeAssertion(node) || libExports.isTSNonNullExpression(node) || libExports.isParenthesizedExpression(node)) {
+    return isStringValued(node.expression);
+  }
+  if (libExports.isConditionalExpression(node)) return isStringValued(node.consequent) && isStringValued(node.alternate);
+  if (libExports.isLogicalExpression(node) && node.operator !== "&&") {
+    return isStringValued(node.left) && isStringValued(node.right);
+  }
+  return false;
+}
+function assertNoNestedComponentClasses(ast) {
+  const visit = (node, inFunction) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child, inFunction);
+      return;
+    }
+    if (inFunction && libExports.isClass(node) && extendsComponent(node) && bodyContainsJsx(node.body)) {
+      const name = node.id ? `\`${node.id.name}\` ` : "";
+      throw compilerError(
+        `Component class ${name}is declared inside a function. Only top-level component classes are compiled.`,
+        node,
+        "Declare the class at the top level of the module, and pass values in as props."
+      );
+    }
+    const nested = inFunction || libExports.isFunction(node);
+    for (const key of Object.keys(node)) {
+      if (key === "loc" || key === "start" || key === "end" || key === "type") continue;
+      visit(node[key], nested);
+    }
+  };
+  visit(ast.program, false);
+}
+
 function transformFile(source, _filename, options = {}) {
   if (!source.includes("<") || !source.includes(">")) {
     return { code: source, changed: false, rewritten: [], importsNeeded: [] };
   }
   const ast = parseModule(source);
+  assertNoNestedComponentClasses(ast);
+  assertNoStringTags(ast);
   const ctx = createEmitContext();
   ctx.irTemplates = [];
   ctx.embedded = options.embedded;
@@ -51135,9 +51312,12 @@ function transformFile(source, _filename, options = {}) {
         if (bodyContainsJsx(m.body)) methodsWithJsx.push(m);
       }
       if (!templateMethod && methodsWithJsx.length === 0) continue;
-      if (templateMethod && !extendsComponent(classDecl)) continue;
+      if (templateMethod && !extendsComponent(classDecl) && !extendsKnownComponent(classDecl, ctx)) continue;
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null;
-      if (templateMethod && !jsx) continue;
+      if (templateMethod && !jsx) {
+        if (bodyContainsJsx(templateMethod.body)) throw nonJsxTemplateError(classDecl, templateMethod);
+        continue;
+      }
       if (templateMethod?.decorators?.length) {
         throw compilerError(
           `Decorators on \`template()\` are not supported.`,
@@ -51411,6 +51591,18 @@ function applyPropsTypeArgument(classDecl, className, componentPropsShapes, comp
   const emptyPropsType = libExports.tsTypeLiteral([]);
   if (!classPropsReadsAreCovered(classDecl, emptyPropsType)) return;
   classDecl.superTypeParameters = libExports.tsTypeParameterInstantiation([emptyPropsType]);
+}
+function extendsKnownComponent(classDecl, ctx) {
+  return libExports.isIdentifier(classDecl.superClass) && ctx.directClassComponents?.has(classDecl.superClass.name) === true;
+}
+function nonJsxTemplateError(classDecl, templateMethod) {
+  const className = classDecl.id?.name ?? "<anonymous>";
+  const ret = templateMethod.body.body.find((s) => libExports.isReturnStatement(s));
+  return compilerError(
+    `\`${className}.template()\` must return a single JSX element or fragment.`,
+    ret?.argument ?? templateMethod.key,
+    `Wrap the result in an element or a fragment, e.g. return <>{cond ? <A /> : <B />}</>.`
+  );
 }
 function collectLocalClassComponents(ast) {
   const names = /* @__PURE__ */ new Set();
