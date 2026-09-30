@@ -594,7 +594,7 @@ export default class App extends Component {
     }
   })
 
-  it('also rejects spread props on a function component and in a list row', () => {
+  it('also catches spread props on a function component and in a list row', () => {
     const child = `import { Component } from '@geajs/core'
 
 function Greeting(props: { label?: string }) {
@@ -627,7 +627,7 @@ export default class App extends Component {
 
   // At module scope: template() and function components reject reassigned
   // locals of their own (#168, #118).
-  it('also rejects a string tag assigned after its declaration', () => {
+  it('also catches a string tag assigned after its declaration', () => {
     for (const assign of [`Tag = 'section'`, `if (on) Tag = 'section'\nelse Tag = 'div'`]) {
       const errors = playgroundErrors({
         'App.tsx': `import { Component } from '@geajs/core'
@@ -688,7 +688,7 @@ export default class App extends Component {
     }
   })
 
-  it('also rejects lowercase and other DOM capture handlers', () => {
+  it('also catches lowercase and other DOM capture handlers', () => {
     for (const [attr, bubbling] of [
       ['onclickcapture', 'onclick'],
       ['onPasteCapture', 'onPaste'],
@@ -712,7 +712,7 @@ export default class App extends Component {
 
   // Attributes written before a spread go into the spread's runtime object,
   // where onClickCapture would become the key on:clickcapture and never fire.
-  it('also rejects a capture handler written before a spread', () => {
+  it('also catches a capture handler written before a spread', () => {
     const errors = playgroundErrors({
       'App.tsx': `import { Component } from '@geajs/core'
 
@@ -807,7 +807,7 @@ export default class App extends Component {
   // Every kind of Gea base: in this file, from a component module, an alias,
   // a namespace or default object, a package's component (also renamed, or a
   // subpath's default export).
-  it('also rejects a ternary template() in a subclass of a component', () => {
+  it('also catches a ternary template() in a subclass of a component', () => {
     const baseModule = `import { Component } from '@geajs/core'\n\nexport default class Base extends Component {\n  template() {\n    return <div>base</div>\n  }\n}\n`
     for (const [header, base, files] of [
       [`class Base extends Component {\n  template() {\n    return <div>base</div>\n  }\n}`, 'Base', {}],
