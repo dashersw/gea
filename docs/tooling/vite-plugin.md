@@ -22,7 +22,7 @@ export default defineConfig({
 })
 ```
 
-No options are needed. The plugin handles everything automatically.
+The plugin handles everything automatically, so none of its options are needed. `strict` is optional.
 
 ### `strict`
 
@@ -32,7 +32,7 @@ Some JSX compiles to code that renders nothing or misbehaves:
 - a component-cased tag that holds a string, like `const Tag = 'section'` with `<Tag />`
 - a callback ref, or a ref to a local the compiler inlines
 - a class `template()` that doesn't return a single JSX element or fragment
-- an `on…Capture` event handler
+- a capture-phase handler for a DOM event, like `onClickCapture`
 - a component class declared inside a function
 
 By default, each one is a warning in the `vite` terminal and in the `vite build` output. The warning gives the file, line and column, and a hint on what to write instead. The code compiles as it did before these checks, so existing projects keep building.
