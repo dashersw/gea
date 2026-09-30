@@ -284,9 +284,9 @@ Every upward communication path requires an explicit callback prop. With deep co
 
 ### Gea
 
-Gea's props follow **JavaScript's native value semantics**:
+For **objects and arrays**, Gea preserves JavaScript reference semantics. **Primitive props differ from ordinary function-argument snapshots**: they are live, getter-backed, read-only bindings:
 
-- **Primitives** (numbers, strings, booleans) are one-way — the child gets a copy.
+- **Primitives** (numbers, strings, booleans) are one-way, live, read-only props.
 - **Objects and arrays** are two-way — the child gets the same reactive proxy the parent holds. Mutating the object in the child updates the parent's DOM automatically.
 
 ```jsx
@@ -331,7 +331,7 @@ This works identically to passing an object to a JavaScript function — if the 
 
 | Concern | React | Gea |
 | --- | --- | --- |
-| Primitive props | One-way (immutable) | One-way (JS pass-by-value) |
+| Primitive props | One-way (immutable) | Live, read-only |
 | Object/array props | One-way (immutable by convention) | Two-way (same proxy reference) |
 | Child → parent communication | Callback props | Direct mutation on shared proxy |
 | Deep nesting | Prop drilling or Context | Same object reference at any depth |
@@ -372,7 +372,7 @@ Gea's position is that JavaScript code should be simple, understandable, and fre
 - Store class with reactive properties and methods
 - Class components with `template()`
 - Function components
-- Props follow JS semantics: objects are two-way (shared proxy), primitives are one-way (copy)
+- Props preserve object reference semantics: objects are two-way (shared proxy), while primitives are one-way, live, read-only props
 - `class` instead of `className`, lowercase events
 - `key` prop for lists
 - Lifecycle hooks (`created`, `onAfterRender`, `dispose`)

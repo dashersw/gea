@@ -283,9 +283,9 @@ export default class Card extends Component {
 
 ## Props and Data Flow
 
-Gea's props follow standard JavaScript semantics. There are no framework-invented concepts like `emit`, `v-model`, or callback-based state lifting for parent-child communication. When a parent passes data to a child, it works exactly like passing arguments to a function:
+Gea's props follow standard JavaScript semantics. There are no framework-invented concepts like `emit`, `v-model`, or callback-based state lifting for parent-child communication. Object and array props preserve ordinary JavaScript reference behavior, while primitive props use live, getter-backed, read-only bindings:
 
-- **Primitives** (numbers, strings, booleans) are passed **by value**. The child gets a copy. Reassigning the prop in the child does not affect the parent.
+- **Primitives** (numbers, strings, booleans) are exposed through live, read-only props. Copy a value into component state when the child needs to modify it.
 - **Objects and arrays** are passed **by reference**. The child gets the same reactive proxy the parent holds. Mutating properties on the object or calling array methods in the child updates the parent's state and DOM automatically — because it's the same object.
 
 ### Objects and Arrays: Two-Way by Nature
@@ -340,9 +340,9 @@ export default class Editor extends Component {
 
 Clicking "Rename" updates `user.name` on the shared proxy. Both the parent's `<span>` and the child's `<span>` update. No callbacks, no events, no indirection.
 
-### Primitives: One-Way, Like JavaScript
+### Primitives: One-Way, Read-Only Props
 
-Primitive props (numbers, strings, booleans) are copied on assignment. If the child reassigns a primitive prop, only the child's local view of that prop changes — the parent is unaffected.
+Primitive props (numbers, strings, booleans) are exposed through live getters. A child can read the latest parent value, but should not assign directly to a supplied prop.
 
 ```jsx
 // counter-display.tsx
@@ -355,9 +355,9 @@ export default class CounterDisplay extends Component {
 }
 ```
 
-If a parent passes `count={this.count}` and the child does `this.props.count = 99`, the child's DOM updates to show `99`, but the parent's state is unchanged. This is standard pass-by-value behavior — the same thing that happens when you reassign a function parameter in plain JavaScript.
+If a child needs a writable counter derived from `this.props.count`, copy that value into a component field and update the field. Assigning `this.props.count = 99` is not supported because supplied props are getter-backed.
 
-When the parent later updates `this.count`, the new value flows down to the child, overwriting the child's local reassignment.
+When the parent later updates `this.count`, reads of `this.props.count` expose the new value.
 
 ### Deep Nesting
 
@@ -375,9 +375,9 @@ There is no prop drilling penalty for objects and arrays. As long as the same re
 
 | Concern | React | Vue | Gea |
 | --- | --- | --- | --- |
-| Parent → child (primitives) | Props (one-way) | Props (one-way) | Props (one-way, JS pass-by-value) |
+| Parent → child (primitives) | Props (one-way) | Props (one-way) | Live, read-only props |
 | Parent → child (objects) | Props (one-way, immutable by convention) | Props (one-way by convention, `emit` to update) | Props (two-way — same proxy reference) |
 | Child → parent (objects) | Callback props | `emit` + `v-model` / `defineModel` | Direct mutation on the shared proxy |
-| Child → parent (primitives) | Callback props | `emit` + `v-model` | Not possible — JS pass-by-value |
+| Child → parent (primitives) | Callback props | `emit` + `v-model` | Supplied props are read-only; use local state for writable values |
 
 Gea doesn't introduce a new data flow model. It uses the one JavaScript already has.

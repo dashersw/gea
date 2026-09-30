@@ -26,7 +26,7 @@ features:
   - title: Proxy-Based Stores
     details: State lives in ordinary classes wrapped by a deep Proxy. Mutate properties directly — array methods, nested objects, everything just works.
   - title: JS-Native Props
-    details: "Objects and arrays passed as props are the parent's reactive proxy — child mutations update the parent automatically. Primitives are copies. No emit, no v-model — just JavaScript semantics."
+    details: "Objects and arrays passed as props are the parent's reactive proxy — child mutations update the parent automatically. Primitives are live, read-only props. No emit, no v-model — just JavaScript semantics."
   - title: Tree-Shaken Router
     details: Client-side RouterView, Link, route params, wildcards, and programmatic navigation. Import routing when you need it; leave it out when you don't.
   - title: Accessible UI Primitives

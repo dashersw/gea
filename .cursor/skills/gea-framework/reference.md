@@ -407,9 +407,9 @@ Is this state shared across components?
 
 ## Props and Data Flow
 
-Props follow JavaScript's native value semantics — no framework-invented concepts:
+Props expose live parent values while preserving JavaScript reference semantics for objects and arrays:
 
-- **Primitives** (numbers, strings, booleans) are passed **by value**. The child receives a copy. Reassigning a primitive prop in the child does not affect the parent — only the child's own DOM updates.
+- **Primitives** (numbers, strings, booleans) are exposed as live, read-only props. Copy one into component state if the child needs a writable local value.
 - **Objects and arrays** are passed **by reference**. The child receives the parent's reactive proxy directly. Mutating properties on the object or calling array methods in the child updates the parent's state and DOM automatically.
 
 ### Objects and Arrays: Two-Way
@@ -456,14 +456,14 @@ export default class Editor extends Component {
 }
 ```
 
-### Primitives: One-Way
+### Primitives: One-Way, Read-Only
 
 ```jsx
-// child reassigns a primitive prop
-this.props.count = 99  // child DOM updates to 99, parent is unaffected
+// copy a primitive prop into local state before modifying it
+this.count = this.props.count
+this.count = 99
 
-// when parent later updates its count, the new value flows down
-// and overwrites the child's local reassignment
+// parent updates remain visible through this.props.count
 ```
 
 ### Deep Nesting
@@ -474,7 +474,7 @@ The same rules apply at any depth. A grandchild or great-grandchild that receive
 
 | Prop type | Direction | Behavior |
 | --- | --- | --- |
-| Primitive (number, string, boolean) | One-way (parent → child) | Child gets a copy; reassignment is local |
+| Primitive (number, string, boolean) | One-way (parent → child) | Live, read-only prop; copy into local state to modify |
 | Object | Two-way | Same proxy; mutations visible to both |
 | Array | Two-way | Same proxy; `push`, `splice`, etc. visible to both |
 

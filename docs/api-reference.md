@@ -251,9 +251,9 @@ get events() {
 
 ### Props and Data Flow
 
-Props follow JavaScript's native value semantics:
+Props are live views of the values supplied by the parent:
 
-- **Primitives** (numbers, strings, booleans) are passed **by value**. The child receives a copy. Reassigning the prop in the child does not affect the parent.
+- **Primitives** (numbers, strings, booleans) are exposed as read-only props. Copy a prop into component state if the child needs a locally writable value.
 - **Objects and arrays** are passed **by reference**. The child receives the parent's reactive proxy. Mutating properties on the object or calling array methods updates the parent's state and DOM automatically.
 
 ```jsx
@@ -262,10 +262,10 @@ Props follow JavaScript's native value semantics:
 
 // In the child:
 this.props.user.name = 'Bob'   // two-way — updates parent's DOM
-this.props.count = 99           // one-way — only child's DOM updates
+this.count = this.props.count    // copy into local state before changing it
 ```
 
-When the parent updates a prop, the new value flows down to the child, overwriting any local reassignment the child may have made to a primitive.
+When the parent updates a primitive prop, the live prop getter exposes the new parent value. Direct assignment to a supplied prop is not supported.
 
 For objects and arrays, reactivity propagates at any depth. A grandchild receiving the same object proxy can mutate it, and every ancestor observing that data updates.
 

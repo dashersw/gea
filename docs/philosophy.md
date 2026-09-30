@@ -40,7 +40,7 @@ Frameworks often come with rules that have no analog in the language itself:
 - "Use `.value` to access a ref's current value."
 - "Don't mutate state directly — always return a new reference."
 
-Gea has none of this. Mutate state directly — the proxy tracks it. Use getters — they re-evaluate automatically. Write classes — they work as classes should. Write functions — they receive arguments and return values. Pass an object to a child component — the child can mutate it and the parent sees the change, because it's the same object. Pass a number — the child gets a copy, because that's how JavaScript works. The framework does not impose rules that exist only because of its own internal machinery.
+Gea has none of this. Mutate state directly — the proxy tracks it. Use getters — they re-evaluate automatically. Write classes — they work as classes should. Write functions — they receive arguments and return values. Pass an object to a child component — the child can mutate it and the parent sees the change, because it's the same object. Pass a number — the child reads the parent's current value through a live, read-only prop. The framework does not impose rules that exist only because of its own internal machinery.
 
 ## What This Means in Practice
 
@@ -50,14 +50,14 @@ A Gea codebase reads like plain JavaScript with JSX. A new team member who has n
 
 One area where most frameworks diverge from the language is data flow between components. React enforces one-way data flow for everything — even objects — requiring callback props to communicate changes upward. Vue introduces `emit`, `v-model`, and `defineModel` as framework-level concepts for two-way binding. Both add abstractions on top of something JavaScript already handles natively.
 
-In JavaScript, primitives are passed by value and objects are passed by reference. If you pass an object to a function and that function mutates it, the caller sees the change. If you pass a number, the function gets a copy.
+For objects and arrays, Gea preserves the familiar JavaScript behavior where caller and callee can observe mutations through the same object reference. Primitive component props are intentionally different from ordinary function arguments: rather than a one-time value snapshot, Gea exposes them through live, read-only bindings.
 
-Gea applies this same principle to component props:
+Gea applies those semantics to component props as follows:
 
 - **Objects and arrays** passed as props are the parent's actual reactive proxy. The child can mutate them directly, and every component observing that data — parent, siblings, grandparents — updates automatically.
-- **Primitives** passed as props are copies. Reassigning a primitive prop in the child affects only the child, not the parent.
+- **Primitives** passed as props are live, read-only values from the parent. A child that needs to modify one should copy it into local component state.
 
-There is no `emit`, no `defineModel`, no callback wiring for object mutations. The framework respects JavaScript's native value semantics. If you understand how function arguments work in JavaScript, you already understand how Gea's props work.
+There is no `emit`, no `defineModel`, no callback wiring for object mutations. Object and array props preserve ordinary JavaScript reference behavior. Primitive props add Gea's live, read-only binding semantics, so their latest parent value can be observed without making the supplied prop writable.
 
 ## What This Means in Practice
 
