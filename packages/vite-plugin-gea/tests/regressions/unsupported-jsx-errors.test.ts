@@ -701,6 +701,92 @@ export default class App extends Component {
     }
   })
 
+  // Once some component tag shares a string variable's name, every tag is
+  // resolved: an element must not be, whatever variable shares its name.
+  it('never reports an element named like a string variable', () => {
+    const child = `class Child extends Component {
+  template() {
+    return <b>child</b>
+  }
+}`
+    const shadowed = playgroundErrors({
+      'App.tsx': `import { Component } from '@geajs/core'
+
+${child}
+
+const Tag = 'section'
+const div = 'label'
+
+export default function App() {
+  const Tag = Child
+  return (
+    <div title={div}>
+      <Tag />
+    </div>
+  )
+}
+`,
+    })
+    assert.deepEqual(shadowed, [])
+
+    const label = playgroundErrors({
+      'App.tsx': `import { Component } from '@geajs/core'
+import Icon from './Icon'
+
+${child}
+
+const label = 'Name'
+
+function iconName() {
+  const Icon = 'star'
+  return Icon
+}
+
+export default class App extends Component {
+  template() {
+    return (
+      <label>
+        {label}
+        <Icon />
+        <Child />
+      </label>
+    )
+  }
+}
+`,
+      'Icon.tsx': `import { Component } from '@geajs/core'
+
+export default class Icon extends Component {
+  template() {
+    return <i>icon</i>
+  }
+}
+`,
+    })
+    assert.deepEqual(label, [])
+
+    const both = playgroundErrors({
+      'App.tsx': `import { Component } from '@geajs/core'
+
+const Tag = 'section'
+const label = 'Name'
+
+export default class App extends Component {
+  template() {
+    return (
+      <label>
+        {label}
+        <Tag />
+      </label>
+    )
+  }
+}
+`,
+    })
+    assert.equal(both.length, 1, JSON.stringify(both))
+    assert.match(both[0].message, /<Tag> holds a string, not a component, so it would render nothing\./)
+  })
+
   it('also catches lowercase and other DOM capture handlers', () => {
     for (const [attr, bubbling] of [
       ['onclickcapture', 'onclick'],

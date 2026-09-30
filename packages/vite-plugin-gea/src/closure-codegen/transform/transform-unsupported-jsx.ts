@@ -42,13 +42,14 @@ export function checkStringTags(ast: File): void {
   visit(ast.program)
   if (![...tags].some((name) => strings.has(name))) return
 
-  // Resolve each tag through its scope, so a string variable elsewhere that
-  // shares a component's name doesn't count. Traverse a copy, so no cached
-  // scope outlives the transform's later AST rewrites.
+  // Resolve each component tag through its scope, so a string variable
+  // elsewhere that shares a component's name doesn't count. An element such as
+  // `<label>` is never a variable, whatever variable shares its name. Traverse
+  // a copy, so no cached scope outlives the transform's later AST rewrites.
   traverse(t.cloneNode(ast, true), {
     JSXOpeningElement(path: NodePath<any>) {
       const name = path.node.name
-      if (!t.isJSXIdentifier(name) || !strings.has(name.name)) return
+      if (!t.isJSXIdentifier(name) || !isComponentTagName(name.name) || !strings.has(name.name)) return
       const binding = path.scope.getBinding(name.name)
       if (!binding || !binding.path.isVariableDeclarator()) return
       // Every value the variable can hold is a string: its initializer, if
