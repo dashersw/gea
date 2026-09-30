@@ -1,5 +1,47 @@
 # @geajs/core
 
+## 1.5.0
+
+### Minor Changes
+
+- [#219](https://github.com/dashersw/gea/pull/219) [`638ee01`](https://github.com/dashersw/gea/commit/638ee01339036f163f250af7e4b2e8f183d45592) Thanks [@ilkaydnc](https://github.com/ilkaydnc)! - ### @geajs/vite-plugin (minor)
+  - **Spread attributes on HTML elements**: `<button {...rest}>` was dropped from the template, so none of the object's attributes or handlers reached the element. A spread now merges with the element's attributes in source order: it overrides the attributes before it, and the attributes after it override it. It stays live in class components, function components and keyed-list rows, in dev and in `vite build` (including an inlined static root). A keyed-list row with a spread keeps its `class={selected === item.id ? 'on' : ''}` as a normal binding instead of the list-scope toggle, so the spread's own `class` can't be overwritten. A `srcdoc` written before a spread, or an animation attribute written before a spread on an SVG animation element, stays a normal attribute, since the spread doesn't write it. Spreading onto a component tag is still unsupported.
+
+  ### @geajs/core (minor)
+  - **`reactiveSpread` and `spreadAttrs` compiler-runtime helpers**: apply spread sources to an element and diff them per key on every run, without relying on the object's identity. Only a source's own keys are read, as `Object.assign` copies them. Keys that go away are removed, or fall back to the attribute written before the spread. `on*` keys in any letter case and bare event names install delegated handlers with the element as `currentTarget`; a non-function value for one is dropped. `class`/`className`, `style`, `value`, `visible` and boolean attributes are written the same way as when written directly. `htmlFor` becomes `for`. `children`, `key`, `ref`, `dangerouslySetInnerHTML`, keys that are not valid attribute names, and function values are never written as attributes. No key is assigned as an element property, so `innerHTML` is an ordinary attribute. Spread values for URL attributes go through `sanitizeAttr`, including a URL attribute written before the spread, which the spread applies. `srcdoc` is skipped in any letter case, and so are `attributeName`, `to`, `from`, `by` and `values` on SVG animation elements (`animate`, `set`, `animateMotion`, `animateTransform`); on other elements they are ordinary attributes. SSR escapes spread values the same way as other dynamic attributes.
+
+### Patch Changes
+
+- [#117](https://github.com/dashersw/gea/pull/117) [`b7c2afc`](https://github.com/dashersw/gea/commit/b7c2afc2ddcbf3533bcc38ac07fc03d283cbc998) Thanks [@ilkaydnc](https://github.com/ilkaydnc)! - ### @geajs/vite-plugin (patch)
+  - **Proxied class components mount in dev**: the HMR component proxy now keeps the Proxy invariants for its target's non-configurable `prototype`, so `mount()` no longer throws `'getOwnPropertyDescriptor' on proxy` for a class component used inside a function component or held in a variable ([#112](https://github.com/dashersw/gea/issues/112)).
+  - **Class components inside function components are constructed directly**: `<Button />` in a function component compiles to `new Button()`, as it already did in class templates, instead of going through `mount()`.
+
+  ### @geajs/core (patch)
+  - **Store reads keep proxied classes unbound**: `isClassConstructorValue` checks the class behind a dev HMR proxy, so a component class returned from a store getter such as `router.page` keeps its identity instead of being bound.
+
+- [#116](https://github.com/dashersw/gea/pull/116) [`6680b18`](https://github.com/dashersw/gea/commit/6680b1864fa82bb75250683d24043a129b0ff88f) Thanks [@ilkaydnc](https://github.com/ilkaydnc)! - ### @geajs/core (patch)
+  - **Nested event handlers bubble like the DOM** (behaviour change, [#111](https://github.com/dashersw/gea/issues/111)): delegated handlers now run from the target outwards, and every handler on the path runs until one calls `stopPropagation()`. Before, only the innermost handler ran, so a row's `onClick` never fired when you clicked a button inside the row.
+  - **`stopPropagation()` works across components**: `delegateClick`, `delegateEvent` and `delegateEventFast` now share one `document` listener per event type. Before, inline arrows and method references could end up on two separate click listeners, so `stopPropagation()` didn't stop the other listener and an outer handler could run before the inner one.
+  - **Two handlers for one event on one element both run**: with `click={a}` and `onClick={b}` on the same element, both now run, like two listeners on that element. Before, only one of them ran. `stopImmediatePropagation()` in the first skips the second, and `stopPropagation()` doesn't.
+  - **Non-bubbling events only reach their target**: `focus`, `blur`, `mouseenter`, `mouseleave` and `scroll` run only the target element's handler. Before, an ancestor's handler could run for an event whose target was a descendant, e.g. `mouseleave` when the pointer left a child.
+
+- [#149](https://github.com/dashersw/gea/pull/149) [`50c8cb0`](https://github.com/dashersw/gea/commit/50c8cb0d8454079c60bed6b21369e7a9b2ea7bd1) Thanks [@ilkaydnc](https://github.com/ilkaydnc)! - ### @geajs/core (patch)
+  - **Compiled stores return classes unbound**: `CompiledLeanStore` and `CompiledStore` no longer bind a class read from a field or getter, matching the runtime `Store`. `store.view === Home` now holds, and static members and `name` survive, whether or not the compiler rewrote the store ([#133](https://github.com/dashersw/gea/issues/133)).
+
+- [#156](https://github.com/dashersw/gea/pull/156) [`5c1c41f`](https://github.com/dashersw/gea/commit/5c1c41f4163aea578d232cc31e4ec14c2e8cbb19) Thanks [@ilkaydnc](https://github.com/ilkaydnc)! - ### @geajs/core (patch)
+  - **String styles keep other inline styles**: a string `style` in braces is now diffed per declaration, like a style object, instead of replacing `cssText`. `visible={false}` on the same element stays hidden when the style string changes, and inline styles set by other code (`el.style.transform = …`) survive. `;` inside quotes and `url(…)`, `!important`, `var()` in shorthands and shorthand/longhand pairs such as `padding: ${p}px; padding-left: 0` keep working. A shorthand such as `border` comes back in full when a longhand override next to it is removed, and `!important` wins over a later normal declaration, as with `cssText`. In SSR, where linkedom's style object drops `!important` and turns `--myColor` into `--my-color`, the style text is rewritten instead, so server output keeps both.
+
+- [#157](https://github.com/dashersw/gea/pull/157) [`c39431a`](https://github.com/dashersw/gea/commit/c39431a744078ec77ece352900cd4ba08bc05b1f) Thanks [@ilkaydnc](https://github.com/ilkaydnc)! - ### @geajs/vite-plugin (patch)
+  - **Custom properties keep their spelling**: a static-key style object like `style={{ '--myColor': 'red' }}` now sets `--myColor` instead of `--my-color`. Custom property names are case-sensitive, so `var(--myColor)` found nothing before.
+
+  ### @geajs/core (patch)
+  - **Custom properties keep their spelling**: dynamic style objects and `h()` no longer kebab-case keys that start with `--`, so `'--myColor'` sets `--myColor`.
+  - **`h()` skips empty style values**: `null`, `undefined` and `false` entries in a `style` object are left out, like in compiled components, so `var(--gap, 8px)` falls back to `8px` when `--gap` is unset. A style object with nothing left renders no `style` attribute.
+
+- [#113](https://github.com/dashersw/gea/pull/113) [`e8aef8b`](https://github.com/dashersw/gea/commit/e8aef8b3ace65f5b7489a3e55e02425ee92f2b26) Thanks [@ilkaydnc](https://github.com/ilkaydnc)! - ### @geajs/core (patch)
+  - Numeric style values are serialized as supplied, without automatic units. Supply explicit CSS units such as `"120px"` for lengths.
+  - **String styles in braces apply**: ``style={`width:${size}px`}`` is applied as `cssText`, like a static `style="…"`, and cleared when the value becomes `null` or `false`.
+
 ## 1.4.3
 
 ### Patch Changes
