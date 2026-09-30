@@ -309,6 +309,24 @@ export function transformFile(source: string, _filename?: string, options: Trans
         // box the Signal fields) is neutralized downstream. This is the lean,
         // fully-typed counterpart to a Store — it does NOT inherit the store's
         // dynamic per-property observer map.
+        const constructor = classDecl.body.body.find(
+          (member) => t.isClassMethod(member) && member.kind === 'constructor',
+        )
+        if (constructor && t.isClassMethod(constructor)) {
+          const first = constructor.body.body[0]
+          if (
+            !first ||
+            !t.isExpressionStatement(first) ||
+            !t.isCallExpression(first.expression) ||
+            !t.isSuper(first.expression.callee) ||
+            first.expression.arguments.length !== 0
+          ) {
+            throw new Error('ReactiveComponent constructors must start with super() without arguments')
+          }
+          // The native marker has no constructor work. Keeping its super call
+          // after removing the marker emits invalid JavaScript.
+          constructor.body.body.shift()
+        }
         classDecl.superClass = null
         usesCompiledRuntimeBase = false
         // The stripped base (`Component`) carried `el` — the mounted root node.

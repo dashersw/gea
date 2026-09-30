@@ -2,7 +2,7 @@ import type { Expression, Statement } from '@babel/types'
 
 import { t } from '../../utils/babel-interop.ts'
 
-import type { EmitContext } from '../emit/emit-context.ts'
+import { collectBindings, type EmitContext } from '../emit/emit-context.ts'
 import { compileJsxToBlock } from '../emit/emit-core.ts'
 import { substituteBindings } from '../emit/emit-substitution.ts'
 import {
@@ -192,7 +192,14 @@ function buildBlockCreateItem(cbBody: any, itemParam: any, idxParam: any, ctx: E
       stmt.argument &&
       (t.isJSXElement(stmt.argument) || t.isJSXFragment(stmt.argument))
     ) {
-      precedingStmts.push(...compileJsxToBlock(stmt.argument as any, ctx).body)
+      const saved = new Map(ctx.bindings)
+      collectBindings(precedingStmts, ctx.bindings)
+      try {
+        precedingStmts.push(...compileJsxToBlock(stmt.argument as any, ctx).body)
+      } finally {
+        ctx.bindings.clear()
+        for (const [key, value] of saved) ctx.bindings.set(key, value)
+      }
       inlined = true
       break
     }

@@ -326,3 +326,20 @@ export default class App extends Component {
     assert.match(code, /reactiveClassName\(/)
   })
 })
+
+it('preserves reactive component constructor work when removing the native marker', () => {
+  const { code, changed } = transformFile(
+    `import { ReactiveComponent } from '@geajs/core'
+    class Counter extends ReactiveComponent {
+      count = 0
+      constructor() { super(); this.count = 1 }
+      template() { return <div>{this.count}</div> }
+    }`,
+    '/virtual/Counter.tsx',
+    { embedded: true },
+  )
+  assert.equal(changed, true)
+  assert.match(code, /constructor\(\)/)
+  assert.match(code, /this.count = 1/)
+  assert.doesNotMatch(code, /super\(/)
+})

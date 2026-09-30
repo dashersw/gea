@@ -46558,7 +46558,14 @@ function buildBlockCreateItem(cbBody, itemParam, idxParam, ctx) {
   let inlined = false;
   for (const stmt of cbBody.body) {
     if (libExports.isReturnStatement(stmt) && stmt.argument && (libExports.isJSXElement(stmt.argument) || libExports.isJSXFragment(stmt.argument))) {
-      precedingStmts.push(...compileJsxToBlock(stmt.argument, ctx).body);
+      const saved = new Map(ctx.bindings);
+      collectBindings(precedingStmts, ctx.bindings);
+      try {
+        precedingStmts.push(...compileJsxToBlock(stmt.argument, ctx).body);
+      } finally {
+        ctx.bindings.clear();
+        for (const [key, value] of saved) ctx.bindings.set(key, value);
+      }
       inlined = true;
       break;
     }
@@ -51226,6 +51233,16 @@ function transformFile(source, _filename, options = {}) {
       }
       let usesCompiledRuntimeBase = false;
       if (isReactiveComponent) {
+        const constructor = classDecl.body.body.find(
+          (member) => libExports.isClassMethod(member) && member.kind === "constructor"
+        );
+        if (constructor && libExports.isClassMethod(constructor)) {
+          const first = constructor.body.body[0];
+          if (!first || !libExports.isExpressionStatement(first) || !libExports.isCallExpression(first.expression) || !libExports.isSuper(first.expression.callee) || first.expression.arguments.length !== 0) {
+            throw new Error("ReactiveComponent constructors must start with super() without arguments");
+          }
+          constructor.body.body.shift();
+        }
         classDecl.superClass = null;
         usesCompiledRuntimeBase = false;
         const declaresEl = classDecl.body.body.some(
