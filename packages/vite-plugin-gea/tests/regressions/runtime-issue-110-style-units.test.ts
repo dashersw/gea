@@ -1,8 +1,8 @@
 /**
  * https://github.com/dashersw/gea/issues/110
  *
- * Numeric `style` values pass through without added units, and a string
- * passed to `style` in braces must be applied
+ * Numeric `style` values must get `px` (except unitless properties, `0` and
+ * custom properties), and a string passed to `style` in braces must be applied
  * as `cssText`, like a static `style="…"`.
  */
 import assert from 'node:assert/strict'
@@ -10,7 +10,7 @@ import test from 'node:test'
 import { installDom, flushMicrotasks } from '../../../../tests/helpers/jsdom-setup'
 import { compileJsxComponent, loadRuntimeModules } from '../helpers/compile'
 
-test('issue #110: numeric style values retain their units and explicit string styles apply', async () => {
+test('issue #110: numeric style values get px and string styles apply as cssText', async () => {
   const restoreDom = installDom()
 
   try {
@@ -53,9 +53,9 @@ test('issue #110: numeric style values retain their units and explicit string st
 
     const byId = (id: string) => root.querySelector('#' + id) as HTMLElement
 
-    assert.equal(byId('static-number').style.height, '')
-    assert.equal(byId('static-number').style.width, '')
-    assert.equal(byId('dynamic-number').style.height, '')
+    assert.equal(byId('static-number').style.height, '120px')
+    assert.equal(byId('static-number').style.width, '50px')
+    assert.equal(byId('dynamic-number').style.height, '120px')
     assert.equal(byId('template-string').style.height, '120px')
     assert.equal(byId('string-style').style.height, '120px')
 
@@ -70,17 +70,17 @@ test('issue #110: numeric style values retain their units and explicit string st
     assert.equal(byId('zero-and-custom').style.margin, '0px')
     assert.equal(byId('zero-and-custom').style.getPropertyValue('--gap'), '4')
 
-    assert.equal(byId('dynamic-object').style.height, '')
+    assert.equal(byId('dynamic-object').style.height, '120px')
     assert.equal(byId('dynamic-object').style.opacity, '1')
 
     view.height = 60
     await flushMicrotasks()
 
-    assert.equal(byId('dynamic-number').style.height, '')
+    assert.equal(byId('dynamic-number').style.height, '60px')
     assert.equal(byId('template-string').style.height, '60px')
     assert.equal(byId('string-style').style.height, '60px')
     assert.equal(byId('dynamic-object').style.height, '')
-    assert.equal(byId('dynamic-object').style.width, '')
+    assert.equal(byId('dynamic-object').style.width, '60px')
 
     view.dispose()
     await flushMicrotasks()

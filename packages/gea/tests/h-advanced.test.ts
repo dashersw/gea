@@ -60,9 +60,9 @@ describe('h — style object', () => {
     const s = h('div', { style: { color: '"x"' } })
     assert.ok(s.includes('&quot;x&quot;'))
   })
-  it('numeric values are serialized without adding units', () => {
+  it('numbers get px except 0, unitless and custom properties (#110)', () => {
     const s = h('div', { style: { height: 120, margin: 0, opacity: 0.5, zIndex: 2, '--gap': 4 } })
-    assert.ok(s.includes('height:120;'))
+    assert.ok(s.includes('height:120px'))
     assert.ok(s.includes('margin:0;'))
     assert.ok(s.includes('opacity:0.5'))
     assert.ok(s.includes('z-index:2;'))

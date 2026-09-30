@@ -75,18 +75,18 @@ Use curly braces for dynamic content:
 Gea supports inline style objects with camelCase property names, like React:
 
 ```jsx
-// Static — compiled to a CSS string at build time
+// Constant style object
 <div style={{ backgroundColor: 'red', fontSize: '14px', fontWeight: 'bold' }}>
   Styled content
 </div>
 
-// Dynamic — converted to cssText at runtime
+// Dynamic — updated per property at runtime
 <div style={{ color: this.textColor, opacity: this.isVisible ? 1 : 0 }}>
   Dynamic styling
 </div>
 ```
 
-Numeric values are passed through without adding units. Use explicit units for lengths, such as `height: "120px"`; unitless properties such as `opacity` accept numbers.
+Numeric style-object values receive `px` for dimensional properties: `style={{ height: 120 }}` produces `height: 120px`. Unitless properties such as `opacity` and `lineHeight`, custom properties (`--*`), and zero do not receive added units. Explicit strings keep their units. This is Gea runtime behavior, not a requirement of JSX syntax.
 
 String styles are also supported and passed through as-is:
 

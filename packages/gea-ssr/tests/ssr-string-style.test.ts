@@ -57,7 +57,7 @@ describe('SSR string styles', () => {
     assert.match(el.getAttribute('style')!, /display:\s*none/)
     assert.match(el.getAttribute('style')!, /color:\s*green !important/)
     assert.doesNotMatch(el.getAttribute('style')!, /--my-?color/i)
-    s.st = { width: '10px' }
+    s.st = { width: 10 }
     await new Promise((r) => setTimeout(r, 0))
     assert.match(el.getAttribute('style')!, /display:\s*none/)
     assert.match(el.getAttribute('style')!, /width:\s*10px/)
@@ -69,7 +69,7 @@ describe('SSR string styles', () => {
     const s = new Store({ c: 'blue' }) as any
     const el = document.createElement('div')
     const d = createDisposer()
-    reactiveStyle(el, d, s, () => ({ '--myColor': s.c, fontSize: '12px' }))
+    reactiveStyle(el, d, s, () => ({ '--myColor': s.c, fontSize: 12 }))
     assert.match(el.getAttribute('style')!, /--myColor:\s*blue/)
     assert.match(el.getAttribute('style')!, /font-size:\s*12px/)
     d.dispose()

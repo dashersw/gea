@@ -1,5 +1,11 @@
 # @geajs/core
 
+## 1.5.1
+
+### Patch Changes
+
+- Restore automatic `px` units for finite, non-zero numeric values in style objects. Unitless properties, custom properties, zero, and explicit strings retain their existing serialization. This applies to compiled style bindings, spread attributes, and `h()` HTML serialization.
+
 ## 1.5.0
 
 ### Minor Changes
