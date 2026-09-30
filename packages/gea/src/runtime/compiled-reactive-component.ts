@@ -1,6 +1,7 @@
 import { GEA_CREATE_TEMPLATE, GEA_DOM_COMPONENT, GEA_ELEMENT, GEA_ON_PROP_CHANGE } from './symbols'
 import { GEA_CREATED_CALLED, GEA_DISPOSER, GEA_SET_PROPS } from './internal-symbols'
 import { createDisposer, type Disposer } from './disposer'
+import { runCreated } from './jsx-reads'
 import { CompiledStore } from './compiled-store'
 import { getComponentId } from './component-id'
 import type { Renderable } from './renderable'
@@ -54,31 +55,13 @@ export class CompiledReactiveComponent<P extends Record<string, any> = Record<st
         get: () => thunks[k](),
       })
     }
-    const childrenThunk = thunks.children
-    if (typeof childrenThunk === 'function') {
-      let cached: Renderable = undefined
-      let cacheNode = false
-      Object.defineProperty(out, 'children', {
-        enumerable: true,
-        configurable: true,
-        get: () => {
-          if (cacheNode) return cached
-          const v = childrenThunk()
-          if (v !== null && typeof v === 'object' && typeof (v as Node).nodeType === 'number') {
-            cached = v
-            cacheNode = true
-          }
-          return v
-        },
-      })
-    }
     this.props = out as P
     const nextValues: Record<string, any> = {}
     for (const key in thunks) nextValues[key] = this.props?.[key]
     ;(this as any)[GEA_LAST_PROP_VALUES] = nextValues
     if (!createdCalled) {
       this[GEA_CREATED_CALLED] = true
-      if (this.created !== CompiledReactiveComponent.prototype.created) this.created(this.props)
+      if (this.created !== CompiledReactiveComponent.prototype.created) runCreated(this, this.props)
     } else if (typeof notifyPropChange === 'function') {
       for (const key in thunks) {
         const prev = prevValues?.[key]
@@ -95,7 +78,7 @@ export class CompiledReactiveComponent<P extends Record<string, any> = Record<st
   render(parent: Node, _index?: number): void {
     if (!this[GEA_CREATED_CALLED]) {
       this[GEA_CREATED_CALLED] = true
-      if (this.created !== CompiledReactiveComponent.prototype.created) this.created(this.props)
+      if (this.created !== CompiledReactiveComponent.prototype.created) runCreated(this, this.props)
     }
     let node = this[GEA_CREATE_TEMPLATE](this[GEA_DISPOSER])
     if (node == null) node = document.createComment('')

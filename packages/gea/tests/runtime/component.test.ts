@@ -92,7 +92,10 @@ describe('Component runtime shell', () => {
     assert.deepEqual(calls, [['value', shared]])
   })
 
-  it('memoizes children only when the thunk returns a DOM node', () => {
+  it('re-reads the children thunk on every access', () => {
+    // The compiler memoizes each JSX site inside the thunk, so the runtime must
+    // not cache the first Node it sees: that would pin a conditional to its
+    // first branch (#120).
     let text = 'A'
     const child = document.createElement('span')
     child.textContent = 'node'
@@ -110,8 +113,9 @@ describe('Component runtime shell', () => {
 
     useNode = true
     assert.equal(app.props.children, child)
+    useNode = false
     text = 'C'
-    assert.equal(app.props.children, child, 'node children keep identity after first node read')
+    assert.equal(app.props.children, 'C')
   })
 
   it('renders element, fragment, string, null, and array template returns', () => {

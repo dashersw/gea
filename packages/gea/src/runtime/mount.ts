@@ -151,26 +151,6 @@ function mountResolved<P>(
         liveProps[k] = thunk
       }
     }
-    // Memoize `children` only when the thunk returns a Node; for primitives
-    // keep the live thunk so reactive getters pick up changes.
-    const childrenThunk = props.children
-    if (typeof childrenThunk === 'function') {
-      let cached: Renderable = undefined
-      let cacheNode = false
-      Object.defineProperty(liveProps, 'children', {
-        enumerable: true,
-        configurable: true,
-        get: () => {
-          if (cacheNode) return cached
-          const v = childrenThunk()
-          if (v !== null && typeof v === 'object' && typeof (v as Node).nodeType === 'number') {
-            cached = v
-            cacheNode = true
-          }
-          return v
-        },
-      })
-    }
     const out = Ctor(liveProps as P, disposer)
     // Use duck-typing instead of instanceof to survive HMR proxies / cross-realm.
     if (out && typeof out === 'object') {
