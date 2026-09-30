@@ -1,6 +1,6 @@
 import type { Disposer } from './disposer'
 import { bind } from './bind'
-import { styleProp, styleValue } from './style-value'
+import { styleProp } from './style-value'
 
 /** Property → [value, priority], in the order they apply. */
 type Decls = Map<string, [string, string]>
@@ -65,7 +65,7 @@ function objectDecls(v: unknown): Decls {
       const val = (v as Record<string, unknown>)[k]
       if (val != null && val !== false) {
         const prop = styleProp(k)
-        out.set(prop, [styleValue(prop, val), ''])
+        out.set(prop, [String(val), ''])
       }
     }
   }
@@ -191,7 +191,7 @@ export function reactiveStyleProp(
       }
       return
     }
-    const next = styleValue(prop, v)
+    const next = String(v)
     if (next !== prev) {
       style.setProperty(prop, next)
       prev = next

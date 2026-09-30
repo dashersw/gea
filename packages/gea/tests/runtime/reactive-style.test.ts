@@ -59,19 +59,19 @@ describe('reactiveStyle – getter mode', () => {
 })
 
 describe('reactiveStyle – units and strings (#110)', () => {
-  it('adds px to numbers except 0, unitless and custom properties', async () => {
+  it('passes numeric values through without adding units', async () => {
     const s = new Store({ h: 120 }) as any
     const el = document.createElement('div')
     const d = createDisposer()
     reactiveStyle(el, d, s, () => ({ height: s.h, margin: 0, opacity: 0.5, zIndex: 2, '--gap': 4 }))
-    assert.equal(el.style.height, '120px')
+    assert.equal(el.style.height, '')
     assert.equal(el.style.margin, '0px')
     assert.equal(el.style.opacity, '0.5')
     assert.equal(el.style.zIndex, '2')
     assert.equal(el.style.getPropertyValue('--gap'), '4')
     s.h = 60
     await flush()
-    assert.equal(el.style.height, '60px')
+    assert.equal(el.style.height, '')
   })
   it('applies a string and clears it on null/false', async () => {
     const s = new Store({ st: 'height: 10px; color: red' as unknown }) as any
@@ -100,7 +100,7 @@ describe('reactiveStyle – units and strings (#110)', () => {
     const d = createDisposer()
     reactiveStyle(el, d, s, ['st'])
     await flush()
-    s.st = { width: 30 }
+    s.st = { width: '30px' }
     await flush()
     assert.equal(el.style.width, '30px')
     assert.equal(el.style.height, '')
@@ -109,7 +109,7 @@ describe('reactiveStyle – units and strings (#110)', () => {
     await flush()
     assert.equal(el.style.color, 'blue')
     assert.equal(el.style.width, '')
-    s.st = { width: 40 }
+    s.st = { width: '40px' }
     await flush()
     assert.equal(el.style.width, '40px')
     assert.equal(el.style.color, '')
@@ -137,7 +137,7 @@ describe('reactiveStyle – string styles only touch their own properties (#126)
     reactiveStyle(el, d, s, ['st'])
     await flush()
     el.style.transform = 'scale(2)'
-    s.st = { width: 10 }
+    s.st = { width: '10px' }
     await flush()
     assert.equal(el.style.transform, 'scale(2)')
     assert.equal(el.style.color, '')
@@ -286,18 +286,18 @@ describe('reactiveStyle – custom properties (#127)', () => {
 })
 
 describe('reactiveStyleProp – units (#110)', () => {
-  it('adds px to static and reactive numbers', async () => {
+  it('does not add units to static or reactive numbers', async () => {
     const s = new Store({ h: 120 }) as any
     const el = document.createElement('div')
     const d = createDisposer()
     reactiveStyleProp(el, d, s, 'width', () => 50)
     reactiveStyleProp(el, d, s, 'height', ['h'])
     await flush()
-    assert.equal(el.style.width, '50px')
-    assert.equal(el.style.height, '120px')
+    assert.equal(el.style.width, '')
+    assert.equal(el.style.height, '')
     s.h = 60
     await flush()
-    assert.equal(el.style.height, '60px')
+    assert.equal(el.style.height, '')
   })
   it('leaves 0, unitless, vendor-prefixed unitless and custom properties alone', () => {
     const s = new Store({}) as any

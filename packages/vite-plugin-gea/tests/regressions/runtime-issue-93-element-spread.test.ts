@@ -237,7 +237,7 @@ describe('element spread attributes (#93)', { concurrency: false }, () => {
         export class App extends Component {
           a = {
             className: 'one two',
-            style: { backgroundColor: 'red', width: 10 },
+            style: { backgroundColor: 'red', width: '10px' },
             disabled: true,
             value: 'typed',
             htmlFor: 'x',

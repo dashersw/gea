@@ -7,7 +7,7 @@
  * .join('') over an array of h() results works as expected (string concat),
  * enabling patterns like `items.map(it => <li>...</li>).join('')`.
  */
-import { styleProp, styleValue } from './runtime/style-value'
+import { styleProp } from './runtime/style-value'
 
 type Props = Record<string, any> | null
 
@@ -54,7 +54,7 @@ export function h(tag: any, props: Props, ...rest: any[]): string {
           .filter((sk) => v[sk] != null && v[sk] !== false)
           .map((sk) => {
             const prop = styleProp(sk)
-            return `${prop}:${styleValue(prop, v[sk])}`
+            return `${prop}:${String(v[sk])}`
           })
           .join(';')
         if (style) html += ` style="${_escapeAttr(style)}"`

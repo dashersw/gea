@@ -86,6 +86,8 @@ Gea supports inline style objects with camelCase property names, like React:
 </div>
 ```
 
+Numeric values are passed through without adding units. Use explicit units for lengths, such as `height: "120px"`; unitless properties such as `opacity` accept numbers.
+
 String styles are also supported and passed through as-is:
 
 ```jsx
