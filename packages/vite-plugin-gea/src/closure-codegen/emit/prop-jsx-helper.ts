@@ -25,10 +25,16 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  *   no read is running.
  * - `read(fn)` runs one read. With `perRead`, each read gets a disposer for
  *   its items. The nodes the read returns that its items built are tagged
- *   with a `{ d, nodes }` record, and the slot that shows them disposes it
- *   once it has dropped all of them (see `reactiveText`). A read none of whose
- *   nodes is attached by the next read, like the child's first read when it
- *   installs its props, is disposed then. Nodes inside nested arrays
+ *   with a `{ d, nodes, seq, kept }` record, and the slot that shows them
+ *   disposes it once it has dropped all of them (see `reactiveText`). `seq`
+ *   numbers the record from a count shared through
+ *   `Symbol.for('gea.jsx.reads')`. A slot that shows a node of a record
+ *   numbered before its getter ran marks it `kept`: user code kept that read,
+ *   so it stays live until `d` is disposed. So is a read made while the
+ *   runtime runs `created()` (`Symbol.for('gea.jsx.creating')` is above 0,
+ *   see `runCreated`). A read none of whose nodes is attached by the next
+ *   read, like the child's first read when it installs its props, is
+ *   disposed then, unless it's kept. Nodes inside nested arrays
  *   (`[xs.map((x) => <Row />)]`) count too. Items a read returns inside
  *   something else, like the result of a non-array `.map`, can't be found, so
  *   they stay until `d` is disposed, as they would on `d`. A read that throws
@@ -40,6 +46,8 @@ export const PROP_JSX_HELPER = '__geaPropJsx'
  */
 const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   const owner = Symbol.for('gea.jsx.owner')
+  const count = Symbol.for('gea.jsx.reads')
+  const creating = Symbol.for('gea.jsx.creating')
   const built = []
   const picked = []
   const scopes = []
@@ -86,13 +94,19 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
       }
       if (run) {
         shown = shown.filter(
-          (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
+          (s) =>
+            s.kept ||
+            s.nodes.length === 0 ||
+            s.nodes.some((n) => n[owner] === s && n.parentNode) ||
+            (s.d.dispose(), false),
         )
         if (run.items.size > 0) {
           if (keep && v !== null && typeof v === 'object' && typeof v.nodeType === 'number') {
             d.add(() => run.d.dispose())
           } else {
-            const rec = { d: run.d, nodes: [v].flat(Infinity).filter((n) => run.items.has(n)) }
+            const last = globalThis[count]
+            const seq = (globalThis[count] = (typeof last === 'number' ? last : 0) + 1)
+            const rec = { d: run.d, nodes: [v].flat(Infinity).filter((n) => run.items.has(n)), seq, kept: globalThis[creating] > 0 }
             for (const n of rec.nodes) n[owner] = rec
             shown.push(rec)
           }

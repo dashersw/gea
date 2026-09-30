@@ -68,3 +68,59 @@ describe('reactiveText – getter mode', () => {
     assert.equal(node.nodeValue, '2')
   })
 })
+
+describe('reactiveText – nodes a prop thunk read tagged', () => {
+  const OWNER = Symbol.for('gea.jsx.owner')
+  const READS = Symbol.for('gea.jsx.reads')
+
+  // Tags a node as a prop thunk read does. `numbered: false` is the record an
+  // older compiler makes, with no read number.
+  function read(numbered: boolean): { node: Node; disposed: () => boolean } {
+    const node = document.createElement('b')
+    const d = createDisposer()
+    let disposed = false
+    d.add(() => (disposed = true))
+    const rec: Record<string, unknown> = { d, nodes: [node] }
+    if (numbered) {
+      const g = globalThis as any
+      rec.seq = g[READS] = (typeof g[READS] === 'number' ? g[READS] : 0) + 1
+      rec.kept = false
+    }
+    ;(node as any)[OWNER] = rec
+    return { node, disposed: () => disposed }
+  }
+
+  function slot(s: any, getter: () => unknown): void {
+    const host = document.createElement('div')
+    const anchor = document.createTextNode('')
+    host.appendChild(anchor)
+    reactiveText(anchor, createDisposer(), s, getter)
+  }
+
+  it('keeps a read made before the getter ran once the slot drops it', async () => {
+    const s = new Store({ on: true }) as any
+    const kept = read(true)
+    slot(s, () => (s.on ? kept.node : 'none'))
+    s.on = false
+    await flush()
+    assert.equal(kept.disposed(), false)
+  })
+
+  it('disposes a read the getter made once the slot drops it', async () => {
+    const s = new Store({ on: true }) as any
+    let fresh: ReturnType<typeof read> | null = null
+    slot(s, () => (s.on ? (fresh = read(true)).node : 'none'))
+    s.on = false
+    await flush()
+    assert.equal(fresh!.disposed(), true)
+  })
+
+  it('disposes a read with no number once the slot drops it, as before', async () => {
+    const s = new Store({ on: true }) as any
+    const old = read(false)
+    slot(s, () => (s.on ? old.node : 'none'))
+    s.on = false
+    await flush()
+    assert.equal(old.disposed(), true)
+  })
+})

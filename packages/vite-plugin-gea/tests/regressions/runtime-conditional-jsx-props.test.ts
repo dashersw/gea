@@ -112,6 +112,19 @@ const PARTS = `
       return <div class="card">{ui.open && <p>{this.kid(0)}</p>}<i>{this.shown()}</i></div>
     }
   }
+  // Keeps its children in created() and shows one of them, or none.
+  export class Tabs extends Component {
+    created() { kept.set(this, this.props.children) }
+    pane() { return ui.tab === -1 ? 'none' : kept.get(this)[ui.tab] }
+    template() { return <div class="card"><p>{this.pane()}</p></div> }
+  }
+  // The same, with a slot before the pane that reads its children again.
+  export class CountedTabs extends Component {
+    created() { kept.set(this, this.props.children) }
+    count() { return ui.tick >= 0 ? this.props.children.length : 0 }
+    pane() { return ui.tab === -1 ? 'none' : kept.get(this)[ui.tab] }
+    template() { return <div class="card"><span>{this.count()}</span><p>{this.pane()}</p></div> }
+  }
   export class SplitProps extends Component {
     template({ children }: any) {
       return <div class="card">{ui.open && <p>{children[0]}</p>}{ui.loggedIn && <i>{children[1]}</i>}</div>
@@ -140,6 +153,7 @@ type Ui = {
   ids: string[]
   byId: Record<string, { name: string }>
   tick: number
+  tab: number
 }
 type Counter = { n: number; d: number; p: number; pd: number }
 type Harness = { root: HTMLElement; ui: Ui; counter: Counter; flush: () => void; dispose: () => void }
@@ -175,6 +189,7 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
     ids: ['a', 'b'],
     byId: { a: { name: 'A' }, b: { name: 'B' } },
     tick: 0,
+    tab: 0,
   }) as Ui
   const counter: Counter = { n: 0, d: 0, p: 0, pd: 0 }
   const source = `${PARTS}
@@ -195,6 +210,8 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
     'SplitProps',
     'Swap',
     'Twice',
+    'Tabs',
+    'CountedTabs',
     'Slots',
     'Flat',
     'RenderCard',
@@ -687,12 +704,14 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
         h.flush()
         assert.equal(text('p') + text('i'), `T${tick}T${tick}`)
       }
-      // Once neither slot shows them, they're disposed.
+      // Once neither slot shows them, SplitProps' read is disposed. Split keeps
+      // its read in a field, so it may show it again: that read stays live
+      // until Split is disposed, as on main.
       h.ui.open = false
       h.flush()
       h.ui.loggedIn = false
       h.flush()
-      assertTitlesLive(h, 0)
+      assertTitlesLive(h, child === 'Split' ? 2 : 0)
       h.dispose()
       assertTitlesLive(h, 0)
     })
@@ -716,7 +735,10 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
   // array. The record it shares with what it replaces must stay live.
   for (const shape of ['node', 'array', 'arrays']) {
     it(`keeps a node live that a slot swaps in after the slot that showed it is torn down: ${shape}`, async () => {
-      const h = await mountApp(`<Swap shape="${shape}">{(() => [<LiveTitle />, <LiveTitle />])()}</Swap>`, `swap-${shape}`)
+      const h = await mountApp(
+        `<Swap shape="${shape}">{(() => [<LiveTitle />, <LiveTitle />])()}</Swap>`,
+        `swap-${shape}`,
+      )
       const text = (tag: string) => [...h.root.querySelectorAll(`.card ${tag} b`)].map((b) => b.textContent).join('')
       assert.equal(text('p') + '|' + text('i'), 'T0|T0')
       h.ui.open = false
@@ -730,10 +752,116 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
       }
       // The node it dropped shares the shown node's record, so it stays too.
       assertTitlesLive(h, 2)
-      // Once the slot shows neither, they're disposed.
+      // Swap keeps the read in a field, so it may show it again: showing text
+      // instead leaves it live until Swap is disposed, as on main.
       await toggle(h)
       assert.equal(h.root.querySelector('.card i')!.textContent, 'none')
+      assertTitlesLive(h, 2)
+      h.dispose()
       assertTitlesLive(h, 0)
+    })
+  }
+
+  // A child that keeps a read of its children, in created() or a field, can
+  // show it again after no slot shows it, so the read stays live until the
+  // child is disposed, as on main.
+  it('keeps children kept in created() live while no tab shows them', async () => {
+    const h = await mountApp(`<Tabs>{(() => [<LiveTitle />, <LiveTitle />])()}</Tabs>`, 'tabs')
+    const pane = () => h.root.querySelector('.card p')!.textContent
+    assert.equal(pane(), 'T0')
+    for (const [i, tab] of [-1, 1, -1, 0].entries()) {
+      h.ui.tab = tab
+      h.flush()
+      h.ui.tick = i + 1
+      h.flush()
+      assert.equal(pane(), tab === -1 ? 'none' : `T${i + 1}`)
+      assertTitlesLive(h, 2)
+    }
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  it('keeps children kept in created() live when a slot reads them again before the pane shows them', async () => {
+    const h = await mountApp(`<CountedTabs>{(() => [<LiveTitle />, <LiveTitle />])()}</CountedTabs>`, 'counted-tabs')
+    const pane = () => h.root.querySelector('.card p')!.textContent
+    assert.equal(pane(), 'T0')
+    for (const [i, tab] of [1, -1, 0].entries()) {
+      h.ui.tab = tab
+      h.flush()
+      h.ui.tick = i + 1
+      h.flush()
+      assert.equal(h.root.querySelector('.card span')!.textContent, '2')
+      assert.equal(pane(), tab === -1 ? 'none' : `T${i + 1}`)
+      // The kept read, and the count's last read, which its next read disposes.
+      assertTitlesLive(h, 4)
+    }
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  it('keeps nodes a child keeps in a field live after both slots showing them hide', async () => {
+    const h = await mountApp(`<Split>{(() => [<LiveTitle />, <LiveTitle />])()}</Split>`, 'split-hidden')
+    const text = (tag: string) => [...h.root.querySelectorAll(`.card ${tag} b`)].map((b) => b.textContent).join('')
+    h.ui.open = false
+    h.ui.loggedIn = false
+    h.flush()
+    assertTitlesLive(h, 2)
+    h.ui.open = true
+    h.ui.loggedIn = true
+    h.flush()
+    h.ui.tick = 1
+    h.flush()
+    assert.equal(text('p') + '|' + text('i'), 'T1|T1')
+    assertTitlesLive(h, 2)
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  it('keeps nodes live that the slot left showing them hides after the other slot was torn down', async () => {
+    const h = await mountApp(`<Twice>{(() => [<LiveTitle />, <LiveTitle />])()}</Twice>`, 'twice-hidden')
+    const text = () => [...h.root.querySelectorAll('.card b')].map((b) => b.textContent).join('')
+    h.ui.open = false
+    h.flush()
+    h.ui.loggedIn = false
+    h.flush()
+    assertTitlesLive(h, 2)
+    h.ui.loggedIn = true
+    h.flush()
+    h.ui.tick = 1
+    h.flush()
+    assert.equal(text(), 'T1T1')
+    h.ui.open = true
+    h.flush()
+    h.ui.tick = 2
+    h.flush()
+    assert.equal(text(), 'T2T2')
+    assertTitlesLive(h, 2)
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
+
+  for (const shape of ['node', 'array', 'arrays']) {
+    it(`keeps a node live that a slot shows again after text: ${shape}`, async () => {
+      const h = await mountApp(
+        `<Swap shape="${shape}">{(() => [<LiveTitle />, <LiveTitle />])()}</Swap>`,
+        `swap-back-${shape}`,
+      )
+      const shown = () => h.root.querySelector('.card i')!.textContent
+      // Array slots also leave a stray text node behind (#192), so only read the elements.
+      const titles = () => [...h.root.querySelectorAll('.card i b')].map((b) => b.textContent).join('')
+      h.ui.open = false
+      h.flush()
+      h.ui.loggedIn = false
+      h.flush()
+      for (let tick = 1; tick <= 3; tick++) {
+        await toggle(h)
+        assert.equal(shown(), 'none')
+        await toggle(h)
+        h.ui.tick = tick
+        h.flush()
+        assert.equal(titles(), `T${tick}`)
+        assertTitlesLive(h, 2)
+      }
       h.dispose()
       assertTitlesLive(h, 0)
     })

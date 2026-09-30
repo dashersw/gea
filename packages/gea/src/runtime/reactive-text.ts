@@ -9,7 +9,21 @@ import { patch } from './patch'
 // this or another slot still shows keep their bindings.
 const JSX_OWNER = Symbol.for('gea.jsx.owner')
 
-type JsxOwner = { d: Disposer; nodes: Node[] }
+// Prop thunks number the records they tag from this global count. A slot
+// whose getter returns a node of a record numbered before the getter ran got
+// it from user code that keeps the read, like a method that keeps the
+// `children` of its first call. That record is kept: it stays live until the
+// parent is disposed, as every read did before prop thunks disposed them. So
+// is a read made in `created()` (see `runCreated`). A record with no number,
+// from an older compiler, is never kept.
+const JSX_READS = Symbol.for('gea.jsx.reads')
+
+type JsxOwner = { d: Disposer; nodes: Node[]; seq?: number; kept?: boolean }
+
+function readCount(): number {
+  const n = (globalThis as any)[JSX_READS]
+  return typeof n === 'number' ? n : 0
+}
 
 // The slot that last showed each tagged node, or null once that slot is torn
 // down: its nodes can still sit in its detached DOM, but they aren't shown.
@@ -17,7 +31,7 @@ const shownBy = new WeakMap<Node, object | null>()
 
 function release(n: Node): void {
   const owner = (n as any)[JSX_OWNER] as JsxOwner | undefined
-  if (!owner) return
+  if (!owner || owner.kept) return
   const owns = (m: Node): boolean => (m as any)[JSX_OWNER] === owner
   if (owner.nodes.some((m) => owns(m) && m.parentNode && shownBy.get(m) !== null)) return
   for (const m of owner.nodes) if (owns(m)) (m as any)[JSX_OWNER] = undefined
@@ -48,8 +62,12 @@ export function reactiveText(
   // set so we can replace on subsequent renders.
   let liveChildren: Node[] | null = null
   let slot: object | null = null
+  // The count when the getter last started; a path read keeps nothing.
+  let before = -1
   const adopt = (n: Node): void => {
-    if (!(n as any)[JSX_OWNER]) return
+    const owner = (n as any)[JSX_OWNER] as JsxOwner | undefined
+    if (!owner) return
+    if (typeof owner.seq === 'number' && owner.seq <= before) owner.kept = true
     if (!slot) {
       const self = {}
       slot = self
@@ -62,7 +80,14 @@ export function reactiveText(
     }
     shownBy.set(n, slot)
   }
-  bind(d, root, pathOrGetter, (v) => {
+  const read =
+    typeof pathOrGetter === 'function'
+      ? () => {
+          before = readCount()
+          return pathOrGetter()
+        }
+      : pathOrGetter
+  bind(d, root, read, (v) => {
     // Array of Nodes (e.g. from `.map(item => <Node/>)`) → wrap in a fragment.
     if (Array.isArray(v)) {
       const frag = document.createDocumentFragment()

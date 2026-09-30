@@ -13,6 +13,7 @@ import getUid from '../uid'
 import { GEA_CREATE_TEMPLATE, GEA_DOM_COMPONENT, GEA_ELEMENT, GEA_ON_PROP_CHANGE } from './symbols'
 import { GEA_CREATED_CALLED, GEA_DISPOSER, GEA_SET_PROPS } from './internal-symbols'
 import { createDisposer, type Disposer } from './disposer'
+import { runCreated } from './jsx-reads'
 import { Store } from '../store'
 import type { Renderable } from './renderable'
 
@@ -76,7 +77,7 @@ export class Component<P extends Record<string, any> = Record<string, any>> exte
     ;(this as any)[GEA_LAST_PROP_VALUES] = nextValues
     if (!createdCalled) {
       this[GEA_CREATED_CALLED] = true
-      if (this.created !== Component.prototype.created) this.created(this.props)
+      if (this.created !== Component.prototype.created) runCreated(this, this.props)
     } else {
       if (typeof notifyPropChange === 'function') {
         for (const key in thunks) {
@@ -98,7 +99,7 @@ export class Component<P extends Record<string, any> = Record<string, any>> exte
     // props being installed (e.g. `new App(); app.render(root)`).
     if (!this[GEA_CREATED_CALLED]) {
       this[GEA_CREATED_CALLED] = true
-      if (this.created !== Component.prototype.created) this.created(this.props)
+      if (this.created !== Component.prototype.created) runCreated(this, this.props)
     }
     let node = this[GEA_CREATE_TEMPLATE](this[GEA_DISPOSER])
     if (node == null) node = document.createComment('')

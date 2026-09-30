@@ -1,6 +1,7 @@
 import { GEA_CREATE_TEMPLATE, GEA_DOM_COMPONENT, GEA_ELEMENT, GEA_ON_PROP_CHANGE } from './symbols'
 import { GEA_CREATED_CALLED, GEA_DISPOSER, GEA_SET_PROPS } from './internal-symbols'
 import { createDisposer, type Disposer } from './disposer'
+import { runCreated } from './jsx-reads'
 import { getComponentId } from './component-id'
 import type { Renderable } from './renderable'
 
@@ -65,7 +66,7 @@ export class CompiledComponent<P extends Record<string, any> = Record<string, an
     this[GEA_LAST_PROP_VALUES] = nextValues
     if (!createdCalled) {
       this[GEA_CREATED_CALLED] = true
-      if (this.created !== CompiledComponent.prototype.created) this.created(this.props)
+      if (this.created !== CompiledComponent.prototype.created) runCreated(this, this.props)
     } else if (typeof notifyPropChange === 'function') {
       for (const key in thunks) {
         const prev = prevValues?.[key as keyof P]
@@ -82,7 +83,7 @@ export class CompiledComponent<P extends Record<string, any> = Record<string, an
   render(parent: Node, _index?: number): void {
     if (!this[GEA_CREATED_CALLED]) {
       this[GEA_CREATED_CALLED] = true
-      if (this.created !== CompiledComponent.prototype.created) this.created(this.props)
+      if (this.created !== CompiledComponent.prototype.created) runCreated(this, this.props)
     }
     let node: Renderable = this[GEA_CREATE_TEMPLATE](this[GEA_DISPOSER])
     if (node == null) node = document.createComment('')
