@@ -604,7 +604,7 @@ function jsxMemberTagName(name: JSXMemberExpression): string {
   return `${object}.${name.property.name}`
 }
 
-function normalizeMultilineJsxText(value: string): string {
+export function normalizeMultilineJsxText(value: string): string {
   if (!/[\n\r]/.test(value)) return value
 
   const lines = value.replace(/\t/g, ' ').split(/\r\n|\n|\r/)
