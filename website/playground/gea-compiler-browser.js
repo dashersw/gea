@@ -47985,6 +47985,8 @@ function pendingEventsWillInstallDelegateClick$1(ctx) {
 const PROP_JSX_HELPER = "__geaPropJsx";
 const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
   const owner = Symbol.for('gea.jsx.owner')
+  const count = Symbol.for('gea.jsx.reads')
+  const creating = Symbol.for('gea.jsx.creating')
   const built = []
   const picked = []
   const scopes = []
@@ -48031,13 +48033,19 @@ const PROP_JSX_HELPER_SOURCE = `function ${PROP_JSX_HELPER}(d, sites, perRead) {
       }
       if (run) {
         shown = shown.filter(
-          (s) => s.nodes.length === 0 || s.nodes.some((n) => n[owner] === s && n.parentNode) || (s.d.dispose(), false),
+          (s) =>
+            s.kept ||
+            s.nodes.length === 0 ||
+            s.nodes.some((n) => n[owner] === s && n.parentNode) ||
+            (s.d.dispose(), false),
         )
         if (run.items.size > 0) {
           if (keep && v !== null && typeof v === 'object' && typeof v.nodeType === 'number') {
             d.add(() => run.d.dispose())
           } else {
-            const rec = { d: run.d, nodes: [v].flat(Infinity).filter((n) => run.items.has(n)) }
+            const last = globalThis[count]
+            const seq = (globalThis[count] = (typeof last === 'number' ? last : 0) + 1)
+            const rec = { d: run.d, nodes: [v].flat(Infinity).filter((n) => run.items.has(n)), seq, kept: globalThis[creating] > 0 }
             for (const n of rec.nodes) n[owner] = rec
             shown.push(rec)
           }
