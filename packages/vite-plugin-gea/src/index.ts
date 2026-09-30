@@ -4,6 +4,7 @@ import { transform } from './pipeline.ts'
 import { transformCompiledStoreModule } from './closure-codegen/transform/transform-store.ts'
 import { transformDottedObserveCalls } from './closure-codegen/transform/transform-observe-paths.ts'
 import { transformStaticRootMount } from './closure-codegen/transform/transform-static-root-mount.ts'
+import type { GeaCompileError } from './utils/compile-error.ts'
 import { minifyGeaSymbolForKeys } from './symbol-key-minify.ts'
 import { createHash } from 'node:crypto'
 import { dirname, posix, relative, resolve } from 'node:path'
@@ -48,11 +49,29 @@ export interface GeaPluginOptions {
     enabled: boolean
     outFile?: string
   }
+  /**
+   * Fail the build on JSX the compiler can't compile, such as a spread on a
+   * component tag or a callback ref, which renders nothing or misbehaves.
+   * Off by default: each one is a warning with its file and location, and
+   * compiles as it did before these checks, so existing projects keep
+   * building.
+   */
+  strict?: boolean
+}
+
+/** A compile error as a Vite warning, keeping its location for the dev terminal and `vite build`. */
+function asWarning(err: GeaCompileError): {
+  message: string
+  id?: string
+  loc?: { file?: string; line: number; column: number }
+} {
+  return { message: err.message, id: err.id, loc: err.loc }
 }
 
 export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
   const envIrOutFile = process.env.GEA_IR_OUT || process.env.GEA_IR_FILE
   const irOptions = options.ir ?? (envIrOutFile ? { enabled: true, outFile: envIrOutFile } : undefined)
+  const strict = options.strict === true
   const storeModules = new Set<string>()
   const componentModules = new Set<string>()
   let isServeCommand = false
@@ -305,9 +324,10 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         // Keep the component boundary in dev; retain this optimization for builds.
         const rootMountResult = isServeCommand
           ? null
-          : transformStaticRootMount(transformedCode, cleanId, resolveImportPath)
+          : transformStaticRootMount(transformedCode, cleanId, resolveImportPath, { strict })
         if (rootMountResult?.changed) {
           for (const file of rootMountResult.watchFiles ?? []) this.addWatchFile?.(file)
+          for (const warning of rootMountResult.warnings ?? []) this.warn(asWarning(warning))
           return { code: rootMountResult.code, map: null }
         }
       }
@@ -322,6 +342,8 @@ export function geaPlugin(options: GeaPluginOptions = {}): Plugin {
         // keyed-list observer re-resolving the payload-less hub field).
         embedded: !!irOptions?.enabled,
         hmrImportSource: HMR_RUNTIME_ID,
+        strict,
+        warn: (warning) => this.warn(asWarning(warning)),
         isStoreModule,
         isComponentModule,
         isClassComponentModule,

@@ -10,8 +10,9 @@ import type {
   StringLiteral,
 } from '@babel/types'
 
-import { t } from '../../utils/babel-interop.ts'
-import { compilerError } from '../../utils/compile-error.ts'
+import { generate, t } from '../../utils/babel-interop.ts'
+import { compilerError, reportUnsupportedJsx } from '../../utils/compile-error.ts'
+import { captureEventType, toGeaEventType } from '../../utils/events.ts'
 
 import {
   canOmitAttrQuotes,
@@ -229,6 +230,17 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
     // Within a keyed-list map callback the compiler may hoist the `key` attribute
     // out before this walker is called; here we simply preserve attributes.
     if (tagName[0] === tagName[0].toUpperCase()) {
+      // The component would get its props without the spread (#198).
+      const spread = opening.attributes.find((attr): attr is JSXSpreadAttribute => t.isJSXSpreadAttribute(attr))
+      if (spread) {
+        reportUnsupportedJsx(
+          compilerError(
+            `Spread attributes like {...${spreadSource(spread.argument)}} on <${tagName}> are not supported.`,
+            spread,
+            `Pass each prop individually: <${tagName} label={…} onSelect={…} />.`,
+          ),
+        )
+      }
       const slot: Slot = {
         index: nextSlot++,
         walk: walk.slice(),
@@ -242,6 +254,25 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
     }
     // Plain HTML element
     let html = '<' + tagName
+    // Before spreads fold attributes in: `onClickCapture` written before a
+    // spread would otherwise become the spread key `on:clickcapture`.
+    for (const attr of opening.attributes) {
+      if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
+      const rawAttrName = attr.name.name
+      const type = captureEventType(rawAttrName)
+      if (!type) continue
+      const bubbling = rawAttrName.slice(0, -'Capture'.length)
+      // `onDoubleClick` would bind `doubleclick`, and `onLongTap` `longtap`,
+      // which nothing fires. The event's own name works as an attribute.
+      const handler = toGeaEventType(bubbling) === type ? bubbling : type
+      reportUnsupportedJsx(
+        compilerError(
+          `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
+          attr,
+          `Use ${handler}, or add the listener yourself in onAfterRender() with addEventListener('${type}', handler, true).`,
+        ),
+      )
+    }
     // `{...obj}`: one slot applies the spreads at runtime, together with the
     // attributes written before the last spread, which a spread can override.
     // The ones after it always win, so they stay ordinary attributes.
@@ -597,6 +628,12 @@ export function spreadAttrName(name: string): string | null {
   if (/^on./i.test(name)) return 'on:' + name.slice(2).toLowerCase()
   if (classifyAttrKind(name) === 'event') return 'on:' + normalizeEventAttrName(name)
   return normalizeAttrName(name)
+}
+
+/** The spread's source, if short enough to quote in an error. */
+function spreadSource(argument: Expression): string {
+  const code = generate(argument).code
+  return code.length <= 40 ? code : '…'
 }
 
 function jsxMemberTagName(name: JSXMemberExpression): string {

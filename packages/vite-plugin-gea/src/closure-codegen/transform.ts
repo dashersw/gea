@@ -2,11 +2,16 @@
  * transform — file-level transformer.
  */
 
-import type { ClassDeclaration, File, Statement, TSTypeLiteral } from '@babel/types'
+import type { ClassDeclaration, ClassMethod, File, Statement, TSTypeLiteral } from '@babel/types'
 
 import { parseModule } from '../parse/parser.ts'
 import { generate, t } from '../utils/babel-interop.ts'
-import { compilerError } from '../utils/compile-error.ts'
+import {
+  collectUnsupportedJsx,
+  compilerError,
+  reportUnsupportedJsx,
+  type GeaCompileError,
+} from '../utils/compile-error.ts'
 
 import type { DirectFnComponentParams } from './emit.ts'
 import { buildCreateTemplateMethod, createEmitContext, lowerJsxInStatement } from './emit.ts'
@@ -47,6 +52,7 @@ import {
 } from './transform/transform-component-props.ts'
 import { ensureCoreImports, injectTemplateDecls } from './transform/transform-imports.ts'
 import { extractPrecedingStatements, foldEarlyReturnGuards } from './transform/transform-template-methods.ts'
+import { checkNestedComponentClasses, checkStringTags } from './transform/transform-unsupported-jsx.ts'
 
 export interface TransformResult {
   code: string
@@ -64,6 +70,8 @@ export interface TransformResult {
     module: GeaIrModule
     components: GeaIrComponent[]
   }
+  /** JSX the compiler can't compile, compiled as before. Always empty with `strict`, which throws instead. */
+  warnings: GeaCompileError[]
 }
 
 export interface TransformFileOptions {
@@ -79,9 +87,25 @@ export interface TransformFileOptions {
    * itself compiler output. The returned map then points at the user's file.
    */
   inputSourceMap?: unknown
+  /**
+   * Throw on JSX the compiler can't compile. Without it, each one is returned
+   * in `warnings` and compiled the way it was before the checks existed.
+   */
+  strict?: boolean
 }
 
 export function transformFile(source: string, _filename?: string, options: TransformFileOptions = {}): TransformResult {
+  const { result, warnings } = collectUnsupportedJsx(options.strict === true, () =>
+    transformModule(source, _filename, options),
+  )
+  return { ...result, warnings }
+}
+
+function transformModule(
+  source: string,
+  _filename: string | undefined,
+  options: TransformFileOptions,
+): Omit<TransformResult, 'warnings'> {
   // Skip quickly if not JSX-bearing
   if (!source.includes('<') || !source.includes('>')) {
     return { code: source, changed: false, rewritten: [], importsNeeded: [] }
@@ -91,6 +115,9 @@ export function transformFile(source: string, _filename?: string, options: Trans
   // failure here is a compiler bug. Returning `changed: false` would serve the
   // file uncompiled.
   const ast = parseModule(source)
+
+  checkNestedComponentClasses(ast)
+  checkStringTags(ast)
 
   const ctx = createEmitContext()
   ctx.irTemplates = []
@@ -102,6 +129,7 @@ export function transformFile(source: string, _filename?: string, options: Trans
   const localComponentNames = collectLocalClassComponents(ast)
   ctx.directClassComponents = new Set(localComponentNames)
   for (const name of options.directClassComponents ?? []) ctx.directClassComponents.add(name)
+  const geaImports = collectGeaImports(ast)
   ctx.directFactoryComponents = new Set(options.directFactoryComponents)
   // Best-effort props shape per locally-declared component, derived from its
   // JSX call sites in this module — see transform-component-props.ts. Used
@@ -162,9 +190,16 @@ export function transformFile(source: string, _filename?: string, options: Trans
         if (bodyContainsJsx(m.body)) methodsWithJsx.push(m)
       }
       if (!templateMethod && methodsWithJsx.length === 0) continue
-      if (templateMethod && !extendsComponent(classDecl)) continue
       const jsx = templateMethod ? extractTemplateJsx(templateMethod) : null
-      if (templateMethod && !jsx) continue
+      if (templateMethod && !jsx) {
+        // Checked before extendsComponent, which only recognizes a subclass of
+        // another component (imported, aliased) by a template() it can compile.
+        if (bodyContainsJsx(templateMethod.body) && extendsGeaComponent(classDecl, ctx, geaImports)) {
+          reportUnsupportedJsx(nonJsxTemplateError(classDecl, templateMethod))
+        }
+        continue
+      }
+      if (templateMethod && !extendsComponent(classDecl)) continue
       if (templateMethod?.decorators?.length) {
         throw compilerError(
           `Decorators on \`template()\` are not supported.`,
@@ -628,6 +663,71 @@ function applyPropsTypeArgument(
   const emptyPropsType = t.tsTypeLiteral([])
   if (!classPropsReadsAreCovered(classDecl, emptyPropsType)) return
   classDecl.superTypeParameters = t.tsTypeParameterInstantiation([emptyPropsType])
+}
+
+/**
+ * The classes `@geajs/*` packages export that aren't components: core's
+ * `Store` and `Router`, `@geajs/ui`'s `ToastStore`, and `@geajs/mobile`'s
+ * `ViewManager` and `GestureHandler`. Every other exported class is one.
+ */
+const GEA_NON_COMPONENT_EXPORTS = new Set(['Store', 'Router', 'ToastStore', 'ViewManager', 'GestureHandler'])
+
+/**
+ * Whether the class is a Gea component whatever its `template()` returns: it
+ * extends `Component`, a component imported from `@geajs/*` (or reached
+ * through a namespace, as in `gea.Component`), or a component declared in
+ * this module or imported from a component module. Any other base, such as
+ * `HTMLElement`, `Store` or a plain class, may use JSX for the HTML strings
+ * core's jsx-runtime returns.
+ */
+function extendsGeaComponent(
+  classDecl: ClassDeclaration,
+  ctx: ReturnType<typeof createEmitContext>,
+  geaImports: Set<string>,
+): boolean {
+  const base = classDecl.superClass
+  if (t.isIdentifier(base)) {
+    return base.name === 'Component' || geaImports.has(base.name) || ctx.directClassComponents?.has(base.name) === true
+  }
+  if (!t.isMemberExpression(base) || !t.isIdentifier(base.object) || !geaImports.has(base.object.name)) return false
+  const member = t.isStringLiteral(base.property)
+    ? base.property.value
+    : !base.computed && t.isIdentifier(base.property)
+      ? base.property.name
+      : ''
+  return !GEA_NON_COMPONENT_EXPORTS.has(member)
+}
+
+/** Local names bound by imports from `@geajs/*`, except to a class that isn't a component. */
+function collectGeaImports(ast: File): Set<string> {
+  const names = new Set<string>()
+  for (const stmt of ast.program.body) {
+    if (!t.isImportDeclaration(stmt) || !stmt.source.value.startsWith('@geajs/')) continue
+    for (const spec of stmt.specifiers) {
+      if (t.isImportSpecifier(spec)) {
+        const imported = t.isIdentifier(spec.imported) ? spec.imported.name : spec.imported.value
+        if (GEA_NON_COMPONENT_EXPORTS.has(imported)) continue
+      }
+      names.add(spec.local.name)
+    }
+  }
+  return names
+}
+
+/**
+ * Only `return <jsx />` compiles. A `template()` that builds its JSX any
+ * other way (`return c ? <A /> : <B />`) keeps its raw JSX calls and renders
+ * nothing. Function components are compiled by `rewriteFnComponent`, not
+ * here.
+ */
+function nonJsxTemplateError(classDecl: ClassDeclaration, templateMethod: ClassMethod): GeaCompileError {
+  const className = classDecl.id?.name ?? '<anonymous>'
+  const ret = templateMethod.body.body.find((s) => t.isReturnStatement(s))
+  return compilerError(
+    `\`${className}.template()\` must return a single JSX element or fragment.`,
+    (ret as any)?.argument ?? templateMethod.key,
+    `Wrap the result in an element or a fragment, e.g. return <>{cond ? <A /> : <B />}</>.`,
+  )
 }
 
 function collectLocalClassComponents(ast: File): Set<string> {
