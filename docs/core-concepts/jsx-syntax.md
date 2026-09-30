@@ -86,7 +86,7 @@ Gea supports inline style objects with camelCase property names, like React:
 </div>
 ```
 
-Numeric style-object values receive `px` for dimensional properties: `style={{ height: 120 }}` produces `height: 120px`. Unitless properties such as `opacity` and `lineHeight`, custom properties (`--*`), and zero do not receive added units. Explicit strings keep their units. This is Gea runtime behavior, not a requirement of JSX syntax.
+Numeric style-object values receive `px` for dimensional properties: a style object containing `height: 120` produces `height: 120px`. Unitless properties such as `opacity` and `lineHeight`, custom properties (`--*`), and zero do not receive added units. Explicit strings keep their units. This is Gea runtime behavior, not a requirement of JSX syntax.
 
 String styles are also supported and passed through as-is:
 
