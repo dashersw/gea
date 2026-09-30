@@ -91,6 +91,27 @@ const PARTS = `
       return <div class="card">{ui.open && <p>{this.kids()}</p>}{ui.loggedIn && <i>{this.kids()}</i>}</div>
     }
   }
+  // Shows its first children's first node in one slot, and swaps another slot
+  // from their second node to the first, as a node or an array, or to text.
+  export class Swap extends Component {
+    kids() {
+      if (!kept.has(this)) kept.set(this, this.props.children)
+      return kept.get(this)
+    }
+    kid(i: number) {
+      return this.kids()[i]
+    }
+    shown() {
+      const [a, b] = this.kids()
+      if (!ui.fancy) return 'none'
+      if (this.props.shape === 'array') return ui.loggedIn ? [b] : a
+      if (this.props.shape === 'arrays') return ui.loggedIn ? [b] : [a]
+      return ui.loggedIn ? b : a
+    }
+    template() {
+      return <div class="card">{ui.open && <p>{this.kid(0)}</p>}<i>{this.shown()}</i></div>
+    }
+  }
   export class SplitProps extends Component {
     template({ children }: any) {
       return <div class="card">{ui.open && <p>{children[0]}</p>}{ui.loggedIn && <i>{children[1]}</i>}</div>
@@ -172,6 +193,7 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
     'Pick',
     'Split',
     'SplitProps',
+    'Swap',
     'Twice',
     'Slots',
     'Flat',
@@ -689,6 +711,33 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
     h.dispose()
     assertTitlesLive(h, 0)
   })
+
+  // A slot swaps in a node whose first slot was torn down, from a node or an
+  // array. The record it shares with what it replaces must stay live.
+  for (const shape of ['node', 'array', 'arrays']) {
+    it(`keeps a node live that a slot swaps in after the slot that showed it is torn down: ${shape}`, async () => {
+      const h = await mountApp(`<Swap shape="${shape}">{(() => [<LiveTitle />, <LiveTitle />])()}</Swap>`, `swap-${shape}`)
+      const text = (tag: string) => [...h.root.querySelectorAll(`.card ${tag} b`)].map((b) => b.textContent).join('')
+      assert.equal(text('p') + '|' + text('i'), 'T0|T0')
+      h.ui.open = false
+      h.flush()
+      h.ui.loggedIn = false
+      h.flush()
+      for (let tick = 1; tick <= 3; tick++) {
+        h.ui.tick = tick
+        h.flush()
+        assert.equal(text('p') + '|' + text('i'), `|T${tick}`)
+      }
+      // The node it dropped shares the shown node's record, so it stays too.
+      assertTitlesLive(h, 2)
+      // Once the slot shows neither, they're disposed.
+      await toggle(h)
+      assert.equal(h.root.querySelector('.card i')!.textContent, 'none')
+      assertTitlesLive(h, 0)
+      h.dispose()
+      assertTitlesLive(h, 0)
+    })
+  }
 
   it('disposes JSX a function the read runs built inside a nested array', async () => {
     const h = await mountApp(`<Flat>{[ui.fancy ? ui.rows.map((r: number) => <Title />) : []]}</Flat>`, 'nested-array')

@@ -93,23 +93,28 @@ export function reactiveText(
       liveChildren = nodes
       return
     }
-    // Scalar value arriving after an array — clear the array first, keeping
-    // a node that is shown next.
+    // Show a node before releasing what it replaces: they can share a record
+    // that nothing else shows, e.g. when its last slot was torn down.
+    const shows = v && typeof (v as Node).nodeType === 'number' ? (v as Node) : null
+    if (shows && shows !== live) {
+      adopt(shows)
+      const p = live.parentNode
+      if (p) p.replaceChild(shows, live)
+    }
+    // Scalar value arriving after an array — clear the array, keeping a node
+    // that is shown next.
     if (liveChildren) {
       for (const n of liveChildren) {
-        if (n === v) continue
+        if (n === shows) continue
         if (n.parentNode) n.parentNode.removeChild(n)
         release(n)
       }
       liveChildren = null
     }
-    if (v && typeof (v as Node).nodeType === 'number') {
-      if (v === live) return
-      const p = live.parentNode
-      if (p) p.replaceChild(v as Node, live)
+    if (shows) {
+      if (shows === live) return
       release(live)
-      live = v as Node
-      adopt(live)
+      live = shows
       prev = v
       return
     }
