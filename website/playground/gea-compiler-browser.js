@@ -51287,7 +51287,7 @@ function checkStringTags(ast) {
   traverse$1(libExports.cloneNode(ast, true), {
     JSXOpeningElement(path) {
       const name = path.node.name;
-      if (!libExports.isJSXIdentifier(name) || !strings.has(name.name)) return;
+      if (!libExports.isJSXIdentifier(name) || !isComponentTagName(name.name) || !strings.has(name.name)) return;
       const binding = path.scope.getBinding(name.name);
       if (!binding || !binding.path.isVariableDeclarator()) return;
       const init = binding.path.node.init;
