@@ -12,7 +12,7 @@ import type {
 
 import { generate, t } from '../../utils/babel-interop.ts'
 import { compilerError, reportUnsupportedJsx } from '../../utils/compile-error.ts'
-import { isCaptureEventAttr, toGeaEventType } from '../../utils/events.ts'
+import { captureEventType, toGeaEventType } from '../../utils/events.ts'
 
 import {
   canOmitAttrQuotes,
@@ -257,14 +257,19 @@ export function walkJsxToTemplate(root: JSXElement | JSXFragment, options: WalkO
     // Before spreads fold attributes in: `onClickCapture` written before a
     // spread would otherwise become the spread key `on:clickcapture`.
     for (const attr of opening.attributes) {
-      if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name) || !isCaptureEventAttr(attr.name.name)) continue
+      if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) continue
       const rawAttrName = attr.name.name
+      const type = captureEventType(rawAttrName)
+      if (!type) continue
       const bubbling = rawAttrName.slice(0, -'Capture'.length)
+      // `onDoubleClick` would bind `doubleclick`, and `onLongTap` `longtap`,
+      // which nothing fires. The event's own name works as an attribute.
+      const handler = toGeaEventType(bubbling) === type ? bubbling : type
       reportUnsupportedJsx(
         compilerError(
           `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
           attr,
-          `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`,
+          `Use ${handler}, or add the listener yourself in onAfterRender() with addEventListener('${type}', handler, true).`,
         ),
       )
     }

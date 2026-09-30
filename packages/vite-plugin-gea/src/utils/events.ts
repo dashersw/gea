@@ -59,8 +59,10 @@ export function toGeaEventType(attrName: string): string {
 }
 
 /**
- * DOM events that EVENT_NAMES leaves out. React has an `on…Capture` handler
- * for each, so `isCaptureEventAttr` needs them too.
+ * Element events that EVENT_NAMES leaves out: the rest of the element event
+ * maps in TypeScript's lib.dom.d.ts (a test keeps the two in step). React has
+ * an `on…Capture` handler for most of them, so `captureEventType` needs them
+ * too.
  */
 const OTHER_DOM_EVENTS = new Set([
   'auxclick',
@@ -103,19 +105,53 @@ const OTHER_DOM_EVENTS = new Set([
   'timeupdate',
   'volumechange',
   'waiting',
+  'waitingforkey',
+  'enterpictureinpicture',
+  'leavepictureinpicture',
+  'animationcancel',
+  'beforematch',
+  'beforetoggle',
+  'cancel',
+  'close',
+  'command',
+  'contextlost',
+  'contextrestored',
+  'cuechange',
+  'formdata',
+  'fullscreenchange',
+  'fullscreenerror',
+  'gotpointercapture',
+  'lostpointercapture',
+  'pointerrawupdate',
+  'scrollend',
+  'securitypolicyviolation',
+  'selectionchange',
+  'selectstart',
+  'slotchange',
+  'webkitanimationend',
+  'webkitanimationiteration',
+  'webkitanimationstart',
+  'webkittransitionend',
 ])
 
+/** Each event type by its lowercased name, which is what `toGeaEventType` gives (`longtap` for `longTap`). */
+const CAPTURE_EVENT_TYPES = new Map([...EVENT_NAMES, ...OTHER_DOM_EVENTS].map((type) => [type.toLowerCase(), type]))
+
+/** React's names that lowercase to a type no browser fires: `onDoubleClick` is `dblclick`. */
+const REACT_EVENT_TYPES = new Map([['doubleclick', 'dblclick']])
+
 /**
- * React's capture-phase handler names (`onClickCapture`, or `onclickcapture`).
- * `toGeaEventType` would turn them into event types that don't exist
- * (`clickcapture`). Only a DOM event followed by "capture" counts, so a custom
+ * The event type of a React-style capture-phase handler (`onClickCapture`, or
+ * `onclickcapture`), or null for any other attribute. `toGeaEventType` would
+ * turn them into event types that don't exist (`clickcapture`). Only an event
+ * Gea knows or an element event followed by "capture" counts, so a custom
  * event such as `onScreenCapture` compiles, and so do the real
  * `gotpointercapture` and `lostpointercapture` events.
  */
-export function isCaptureEventAttr(attrName: string): boolean {
-  if (!attrName.startsWith('on')) return false
+export function captureEventType(attrName: string): string | null {
+  if (!attrName.startsWith('on')) return null
   const type = toGeaEventType(attrName)
-  if (!type.endsWith('capture')) return false
+  if (!type.endsWith('capture')) return null
   const bubbling = type.slice(0, -'capture'.length)
-  return EVENT_NAMES.has(bubbling) || OTHER_DOM_EVENTS.has(bubbling)
+  return CAPTURE_EVENT_TYPES.get(REACT_EVENT_TYPES.get(bubbling) ?? bubbling) ?? null
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,8 +10,20 @@ import { build, createServer, type InlineConfig, type Logger } from 'vite'
 import { geaPlugin, type GeaPluginOptions } from '../../src/index.ts'
 import { compileForBrowser } from '../../src/browser.ts'
 import { transformFile } from '../../src/closure-codegen/transform.ts'
+import { EVENT_NAMES } from '../../src/utils/events.ts'
 
 const packagesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+
+/** The event maps in lib.dom.d.ts for the events an element fires (not the window-only ones). */
+const ELEMENT_EVENT_MAPS = [
+  'ElementEventMap',
+  'GlobalEventHandlersEventMap',
+  'HTMLElementEventMap',
+  'HTMLMediaElementEventMap',
+  'HTMLVideoElementEventMap',
+  'MathMLElementEventMap',
+  'SVGElementEventMap',
+]
 
 interface UnsupportedCase {
   name: string
@@ -707,6 +720,81 @@ export default class App extends Component {
       assert.equal(errors.length, 1, `${attr}: ${JSON.stringify(errors)}`)
       assert.match(errors[0].message, new RegExp(`Capture-phase event handlers like ${attr} are not supported yet\\.`))
       assert.match(errors[0].message, new RegExp(`Use ${bubbling}, or add the listener yourself`))
+    }
+  })
+
+  // #214: every event an element fires, as TypeScript's lib.dom.d.ts lists
+  // them, and every event Gea knows (EVENT_NAMES, with `longTap`).
+  it('also catches a capture handler for every element event and every Gea event', () => {
+    const lib = readFileSync(createRequire(import.meta.url).resolve('typescript/lib/lib.dom.d.ts'), 'utf8')
+    const types = new Set(EVENT_NAMES)
+    for (const map of ELEMENT_EVENT_MAPS) {
+      const body = lib.match(new RegExp(`^interface ${map}(?: extends [^{]+)? \\{\\n([\\s\\S]*?)^\\}`, 'm'))
+      assert.ok(body, map)
+      for (const [, type] of body[1].matchAll(/^\s+"([^"]+)":/gm)) types.add(type)
+    }
+    assert.ok(types.size > 100, `only ${types.size} event types: did lib.dom.d.ts change?`)
+    const missed = [...types].filter((type) => {
+      const attr = `on${type}Capture`
+      const source = `export default function App() {\n  return <div ${attr}={() => 1}>x</div>\n}\n`
+      const { warnings } = transformFile(source, '/src/App.tsx')
+      return !(warnings.length === 1 && warnings[0].message.includes(`like ${attr} are not supported yet.`))
+    })
+    assert.deepEqual(missed, [])
+  })
+
+  it("also catches React's capture names, with a hint that names the event", () => {
+    for (const [attr, handler, type] of [
+      ['onDoubleClickCapture', 'dblclick', 'dblclick'],
+      ['onCancelCapture', 'onCancel', 'cancel'],
+      ['onCloseCapture', 'onClose', 'close'],
+      ['onBeforeToggleCapture', 'onBeforeToggle', 'beforetoggle'],
+      ['onScrollEndCapture', 'onScrollEnd', 'scrollend'],
+      ['onGotPointerCaptureCapture', 'onGotPointerCapture', 'gotpointercapture'],
+      ['onLongTapCapture', 'longTap', 'longTap'],
+    ]) {
+      const errors = playgroundErrors({
+        'App.tsx': `import { Component } from '@geajs/core'
+
+export default class App extends Component {
+  template() {
+    return <div ${attr}={() => 1}>x</div>
+  }
+}
+`,
+      })
+      assert.equal(errors.length, 1, `${attr}: ${JSON.stringify(errors)}`)
+      assert.match(errors[0].message, new RegExp(`Capture-phase event handlers like ${attr} are not supported yet\\.`))
+      assert.ok(
+        errors[0].message.includes(
+          `Use ${handler}, or add the listener yourself in onAfterRender() with addEventListener('${type}', handler, true).`,
+        ),
+        errors[0].message,
+      )
+    }
+  })
+
+  it('still compiles handlers that are not capture handlers of an element event', () => {
+    for (const attr of [
+      'onCapture',
+      'oncapture',
+      'onCaptureCapture',
+      'onPointerCapture',
+      'onScreenCapture',
+      'onGotPointerCapture',
+      'onLostPointerCapture',
+      'onDoubleClick',
+      'onCancel',
+      'onClose',
+      'onBeforeToggle',
+      'onScrollEnd',
+      'onLongTap',
+      'dblclick',
+    ]) {
+      const { errors, warnings } = compileForBrowser({
+        'App.tsx': `export default function App() {\n  return <div ${attr}={() => 1}>x</div>\n}\n`,
+      })
+      assert.deepEqual([...errors, ...warnings], [], attr)
     }
   })
 
