@@ -701,36 +701,66 @@ export function bindPropsPattern(
   }
 
   if (rest && t.isIdentifier(rest.argument)) {
-    // Same shape as the direct factory props object in emit-mount.ts: one
-    // enumerable getter per remaining prop, so reads stay live.
+    // A proxy keeps both the values and the key set live when a nested object
+    // is replaced. Object.keys(rest) therefore reflects the current base
+    // instead of the keys that happened to exist when the component mounted.
     const restId = t.identifier(rest.argument.name)
-    const keyId = t.identifier('__restKey')
-    const define = t.expressionStatement(
-      t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('defineProperty')), [
-        t.cloneNode(restId),
-        t.cloneNode(keyId),
-        t.objectExpression([
-          t.objectProperty(t.identifier('enumerable'), t.booleanLiteral(true)),
-          t.objectProperty(t.identifier('configurable'), t.booleanLiteral(true)),
-          t.objectProperty(
-            t.identifier('get'),
-            t.arrowFunctionExpression([], t.memberExpression(t.cloneNode(base), t.cloneNode(keyId), true)),
-          ),
-        ]),
+    const excluded = t.arrayExpression(keys.map((key) => t.stringLiteral(key)))
+    const keyAllowed = (key: Expression) =>
+      t.unaryExpression(
+        '!',
+        t.callExpression(t.memberExpression(t.cloneNode(excluded), t.identifier('includes')), [key]),
+      )
+    const keyId = t.identifier('key')
+    const proxy = t.newExpression(t.identifier('Proxy'), [
+      t.objectExpression([]),
+      t.objectExpression([
+        t.objectMethod(
+          'method',
+          t.identifier('ownKeys'),
+          [],
+          t.blockStatement([
+            t.returnStatement(
+              t.callExpression(
+                t.memberExpression(
+                  t.callExpression(t.memberExpression(t.identifier('Reflect'), t.identifier('ownKeys')), [
+                    t.cloneNode(base),
+                  ]),
+                  t.identifier('filter'),
+                ),
+                [t.arrowFunctionExpression([t.cloneNode(keyId)], keyAllowed(t.cloneNode(keyId)))],
+              ),
+            ),
+          ]),
+        ),
+        t.objectMethod(
+          'method',
+          t.identifier('getOwnPropertyDescriptor'),
+          [t.identifier('_target'), t.cloneNode(keyId)],
+          t.blockStatement([
+            t.ifStatement(
+              keyAllowed(t.cloneNode(keyId)),
+              t.returnStatement(
+                t.objectExpression([
+                  t.objectProperty(t.identifier('enumerable'), t.booleanLiteral(true)),
+                  t.objectProperty(t.identifier('configurable'), t.booleanLiteral(true)),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+        t.objectMethod(
+          'method',
+          t.identifier('get'),
+          [t.identifier('_target'), t.cloneNode(keyId)],
+          t.blockStatement([
+            t.returnStatement(t.memberExpression(t.cloneNode(base), t.cloneNode(keyId), true)),
+          ]),
+        ),
       ]),
-    )
-    const excluded = keys.map((key) => t.binaryExpression('!==', t.cloneNode(keyId), t.stringLiteral(key)))
-    const test = excluded.reduce<Expression | null>(
-      (acc, cur) => (acc ? t.logicalExpression('&&', acc, cur) : cur),
-      null,
-    )
+    ])
     locals.push(
-      declareLocal(t.variableDeclaration(kind, [t.variableDeclarator(restId, t.objectExpression([]))]), bindings),
-      t.forInStatement(
-        t.variableDeclaration('const', [t.variableDeclarator(keyId)]),
-        t.cloneNode(base),
-        test ? t.ifStatement(test, define) : define,
-      ),
+      declareLocal(t.variableDeclaration(kind, [t.variableDeclarator(restId, proxy)]), bindings),
     )
   }
   return locals
