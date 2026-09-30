@@ -21,7 +21,7 @@ var hasRequiredSourcemapCodec_umd;
 function requireSourcemapCodec_umd () {
 	if (hasRequiredSourcemapCodec_umd) return sourcemapCodec_umd$1.exports;
 	hasRequiredSourcemapCodec_umd = 1;
-	(function (module, exports$1) {
+	(function (module, exports) {
 		(function (global, factory) {
 		  {
 		    factory(module);
@@ -490,7 +490,7 @@ var hasRequiredResolveUri_umd;
 function requireResolveUri_umd () {
 	if (hasRequiredResolveUri_umd) return resolveUri_umd$1.exports;
 	hasRequiredResolveUri_umd = 1;
-	(function (module, exports$1) {
+	(function (module, exports) {
 		(function (global, factory) {
 		    module.exports = factory() ;
 		})(resolveUri_umd, (function () {
@@ -739,7 +739,7 @@ var hasRequiredTraceMapping_umd;
 function requireTraceMapping_umd () {
 	if (hasRequiredTraceMapping_umd) return traceMapping_umd$1.exports;
 	hasRequiredTraceMapping_umd = 1;
-	(function (module, exports$1) {
+	(function (module, exports) {
 		(function (global, factory) {
 		  {
 		    factory(module, requireResolveUri_umd(), requireSourcemapCodec_umd());
@@ -780,14 +780,14 @@ function requireTraceMapping_umd () {
 
 		// umd:@jridgewell/sourcemap-codec
 		var require_sourcemap_codec = __commonJS({
-		  "umd:@jridgewell/sourcemap-codec"(exports$1, module2) {
+		  "umd:@jridgewell/sourcemap-codec"(exports, module2) {
 		    module2.exports = require_sourcemapCodec;
 		  }
 		});
 
 		// umd:@jridgewell/resolve-uri
 		var require_resolve_uri = __commonJS({
-		  "umd:@jridgewell/resolve-uri"(exports$1, module2) {
+		  "umd:@jridgewell/resolve-uri"(exports, module2) {
 		    module2.exports = require_resolveURI;
 		  }
 		});
@@ -1299,7 +1299,7 @@ var hasRequiredGenMapping_umd;
 function requireGenMapping_umd () {
 	if (hasRequiredGenMapping_umd) return genMapping_umd$1.exports;
 	hasRequiredGenMapping_umd = 1;
-	(function (module, exports$1) {
+	(function (module, exports) {
 		(function (global, factory) {
 		  {
 		    factory(module, requireSourcemapCodec_umd(), requireTraceMapping_umd());
@@ -1340,14 +1340,14 @@ function requireGenMapping_umd () {
 
 		// umd:@jridgewell/sourcemap-codec
 		var require_sourcemap_codec = __commonJS({
-		  "umd:@jridgewell/sourcemap-codec"(exports$1, module2) {
+		  "umd:@jridgewell/sourcemap-codec"(exports, module2) {
 		    module2.exports = require_sourcemapCodec;
 		  }
 		});
 
 		// umd:@jridgewell/trace-mapping
 		var require_trace_mapping = __commonJS({
-		  "umd:@jridgewell/trace-mapping"(exports$1, module2) {
+		  "umd:@jridgewell/trace-mapping"(exports, module2) {
 		    module2.exports = require_traceMapping;
 		  }
 		});
@@ -5232,54 +5232,54 @@ var hasRequiredLib$7;
 function requireLib$7 () {
 	if (hasRequiredLib$7) return lib$5;
 	hasRequiredLib$7 = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
-		Object.defineProperty(exports$1, "isIdentifierChar", {
+		Object.defineProperty(exports, "isIdentifierChar", {
 		  enumerable: true,
 		  get: function () {
 		    return _identifier.isIdentifierChar;
 		  }
 		});
-		Object.defineProperty(exports$1, "isIdentifierName", {
+		Object.defineProperty(exports, "isIdentifierName", {
 		  enumerable: true,
 		  get: function () {
 		    return _identifier.isIdentifierName;
 		  }
 		});
-		Object.defineProperty(exports$1, "isIdentifierStart", {
+		Object.defineProperty(exports, "isIdentifierStart", {
 		  enumerable: true,
 		  get: function () {
 		    return _identifier.isIdentifierStart;
 		  }
 		});
-		Object.defineProperty(exports$1, "isKeyword", {
+		Object.defineProperty(exports, "isKeyword", {
 		  enumerable: true,
 		  get: function () {
 		    return _keyword.isKeyword;
 		  }
 		});
-		Object.defineProperty(exports$1, "isReservedWord", {
+		Object.defineProperty(exports, "isReservedWord", {
 		  enumerable: true,
 		  get: function () {
 		    return _keyword.isReservedWord;
 		  }
 		});
-		Object.defineProperty(exports$1, "isStrictBindOnlyReservedWord", {
+		Object.defineProperty(exports, "isStrictBindOnlyReservedWord", {
 		  enumerable: true,
 		  get: function () {
 		    return _keyword.isStrictBindOnlyReservedWord;
 		  }
 		});
-		Object.defineProperty(exports$1, "isStrictBindReservedWord", {
+		Object.defineProperty(exports, "isStrictBindReservedWord", {
 		  enumerable: true,
 		  get: function () {
 		    return _keyword.isStrictBindReservedWord;
 		  }
 		});
-		Object.defineProperty(exports$1, "isStrictReservedWord", {
+		Object.defineProperty(exports, "isStrictReservedWord", {
 		  enumerable: true,
 		  get: function () {
 		    return _keyword.isStrictReservedWord;
@@ -9137,79 +9137,79 @@ var hasRequiredDefinitions;
 function requireDefinitions () {
 	if (hasRequiredDefinitions) return definitions;
 	hasRequiredDefinitions = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
-		Object.defineProperty(exports$1, "ALIAS_KEYS", {
+		Object.defineProperty(exports, "ALIAS_KEYS", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.ALIAS_KEYS;
 		  }
 		});
-		Object.defineProperty(exports$1, "BUILDER_KEYS", {
+		Object.defineProperty(exports, "BUILDER_KEYS", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.BUILDER_KEYS;
 		  }
 		});
-		Object.defineProperty(exports$1, "DEPRECATED_ALIASES", {
+		Object.defineProperty(exports, "DEPRECATED_ALIASES", {
 		  enumerable: true,
 		  get: function () {
 		    return _deprecatedAliases.DEPRECATED_ALIASES;
 		  }
 		});
-		Object.defineProperty(exports$1, "DEPRECATED_KEYS", {
+		Object.defineProperty(exports, "DEPRECATED_KEYS", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.DEPRECATED_KEYS;
 		  }
 		});
-		Object.defineProperty(exports$1, "FLIPPED_ALIAS_KEYS", {
+		Object.defineProperty(exports, "FLIPPED_ALIAS_KEYS", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.FLIPPED_ALIAS_KEYS;
 		  }
 		});
-		Object.defineProperty(exports$1, "NODE_FIELDS", {
+		Object.defineProperty(exports, "NODE_FIELDS", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.NODE_FIELDS;
 		  }
 		});
-		Object.defineProperty(exports$1, "NODE_PARENT_VALIDATIONS", {
+		Object.defineProperty(exports, "NODE_PARENT_VALIDATIONS", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.NODE_PARENT_VALIDATIONS;
 		  }
 		});
-		Object.defineProperty(exports$1, "NODE_UNION_SHAPES__PRIVATE", {
+		Object.defineProperty(exports, "NODE_UNION_SHAPES__PRIVATE", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.NODE_UNION_SHAPES__PRIVATE;
 		  }
 		});
-		Object.defineProperty(exports$1, "PLACEHOLDERS", {
+		Object.defineProperty(exports, "PLACEHOLDERS", {
 		  enumerable: true,
 		  get: function () {
 		    return _placeholders.PLACEHOLDERS;
 		  }
 		});
-		Object.defineProperty(exports$1, "PLACEHOLDERS_ALIAS", {
+		Object.defineProperty(exports, "PLACEHOLDERS_ALIAS", {
 		  enumerable: true,
 		  get: function () {
 		    return _placeholders.PLACEHOLDERS_ALIAS;
 		  }
 		});
-		Object.defineProperty(exports$1, "PLACEHOLDERS_FLIPPED_ALIAS", {
+		Object.defineProperty(exports, "PLACEHOLDERS_FLIPPED_ALIAS", {
 		  enumerable: true,
 		  get: function () {
 		    return _placeholders.PLACEHOLDERS_FLIPPED_ALIAS;
 		  }
 		});
-		exports$1.TYPES = void 0;
-		Object.defineProperty(exports$1, "VISITOR_KEYS", {
+		exports.TYPES = void 0;
+		Object.defineProperty(exports, "VISITOR_KEYS", {
 		  enumerable: true,
 		  get: function () {
 		    return _utils.VISITOR_KEYS;
@@ -9240,7 +9240,7 @@ function requireDefinitions () {
 		    }
 		  }
 		}
-		exports$1.TYPES = [].concat(Object.keys(_utils.VISITOR_KEYS), Object.keys(_utils.FLIPPED_ALIAS_KEYS), Object.keys(_utils.DEPRECATED_KEYS));
+		exports.TYPES = [].concat(Object.keys(_utils.VISITOR_KEYS), Object.keys(_utils.FLIPPED_ALIAS_KEYS), Object.keys(_utils.DEPRECATED_KEYS));
 
 		
 	} (definitions));
@@ -12491,16 +12491,16 @@ var hasRequiredGenerated$2;
 function requireGenerated$2 () {
 	if (hasRequiredGenerated$2) return generated$2;
 	hasRequiredGenerated$2 = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
 		var _lowercase = requireLowercase();
 		Object.keys(_lowercase).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _lowercase[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _lowercase[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _lowercase[key];
@@ -12510,8 +12510,8 @@ function requireGenerated$2 () {
 		var _uppercase = requireUppercase();
 		Object.keys(_uppercase).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _uppercase[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _uppercase[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _uppercase[key];
@@ -16001,9 +16001,9 @@ var hasRequiredLib$5;
 function requireLib$5 () {
 	if (hasRequiredLib$5) return lib$6;
 	hasRequiredLib$5 = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
 		var _exportNames = {
@@ -16067,350 +16067,350 @@ function requireLib$5 () {
 		  buildMatchMemberExpression: true,
 		  __internal__deprecationWarning: true
 		};
-		Object.defineProperty(exports$1, "__internal__deprecationWarning", {
+		Object.defineProperty(exports, "__internal__deprecationWarning", {
 		  enumerable: true,
 		  get: function () {
 		    return _deprecationWarning.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "addComment", {
+		Object.defineProperty(exports, "addComment", {
 		  enumerable: true,
 		  get: function () {
 		    return _addComment.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "addComments", {
+		Object.defineProperty(exports, "addComments", {
 		  enumerable: true,
 		  get: function () {
 		    return _addComments.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "appendToMemberExpression", {
+		Object.defineProperty(exports, "appendToMemberExpression", {
 		  enumerable: true,
 		  get: function () {
 		    return _appendToMemberExpression.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "assertNode", {
+		Object.defineProperty(exports, "assertNode", {
 		  enumerable: true,
 		  get: function () {
 		    return _assertNode.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "buildMatchMemberExpression", {
+		Object.defineProperty(exports, "buildMatchMemberExpression", {
 		  enumerable: true,
 		  get: function () {
 		    return _buildMatchMemberExpression.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "clone", {
+		Object.defineProperty(exports, "clone", {
 		  enumerable: true,
 		  get: function () {
 		    return _clone.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "cloneDeep", {
+		Object.defineProperty(exports, "cloneDeep", {
 		  enumerable: true,
 		  get: function () {
 		    return _cloneDeep.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "cloneDeepWithoutLoc", {
+		Object.defineProperty(exports, "cloneDeepWithoutLoc", {
 		  enumerable: true,
 		  get: function () {
 		    return _cloneDeepWithoutLoc.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "cloneNode", {
+		Object.defineProperty(exports, "cloneNode", {
 		  enumerable: true,
 		  get: function () {
 		    return _cloneNode.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "cloneWithoutLoc", {
+		Object.defineProperty(exports, "cloneWithoutLoc", {
 		  enumerable: true,
 		  get: function () {
 		    return _cloneWithoutLoc.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "createFlowUnionType", {
+		Object.defineProperty(exports, "createFlowUnionType", {
 		  enumerable: true,
 		  get: function () {
 		    return _createFlowUnionType.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "createTSUnionType", {
+		Object.defineProperty(exports, "createTSUnionType", {
 		  enumerable: true,
 		  get: function () {
 		    return _createTSUnionType.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "createTypeAnnotationBasedOnTypeof", {
+		Object.defineProperty(exports, "createTypeAnnotationBasedOnTypeof", {
 		  enumerable: true,
 		  get: function () {
 		    return _createTypeAnnotationBasedOnTypeof.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "createUnionTypeAnnotation", {
+		Object.defineProperty(exports, "createUnionTypeAnnotation", {
 		  enumerable: true,
 		  get: function () {
 		    return _createFlowUnionType.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "ensureBlock", {
+		Object.defineProperty(exports, "ensureBlock", {
 		  enumerable: true,
 		  get: function () {
 		    return _ensureBlock.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "getAssignmentIdentifiers", {
+		Object.defineProperty(exports, "getAssignmentIdentifiers", {
 		  enumerable: true,
 		  get: function () {
 		    return _getAssignmentIdentifiers.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "getBindingIdentifiers", {
+		Object.defineProperty(exports, "getBindingIdentifiers", {
 		  enumerable: true,
 		  get: function () {
 		    return _getBindingIdentifiers.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "getFunctionName", {
+		Object.defineProperty(exports, "getFunctionName", {
 		  enumerable: true,
 		  get: function () {
 		    return _getFunctionName.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "getOuterBindingIdentifiers", {
+		Object.defineProperty(exports, "getOuterBindingIdentifiers", {
 		  enumerable: true,
 		  get: function () {
 		    return _getOuterBindingIdentifiers.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "inheritInnerComments", {
+		Object.defineProperty(exports, "inheritInnerComments", {
 		  enumerable: true,
 		  get: function () {
 		    return _inheritInnerComments.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "inheritLeadingComments", {
+		Object.defineProperty(exports, "inheritLeadingComments", {
 		  enumerable: true,
 		  get: function () {
 		    return _inheritLeadingComments.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "inheritTrailingComments", {
+		Object.defineProperty(exports, "inheritTrailingComments", {
 		  enumerable: true,
 		  get: function () {
 		    return _inheritTrailingComments.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "inherits", {
+		Object.defineProperty(exports, "inherits", {
 		  enumerable: true,
 		  get: function () {
 		    return _inherits.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "inheritsComments", {
+		Object.defineProperty(exports, "inheritsComments", {
 		  enumerable: true,
 		  get: function () {
 		    return _inheritsComments.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "is", {
+		Object.defineProperty(exports, "is", {
 		  enumerable: true,
 		  get: function () {
 		    return _is.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isBinding", {
+		Object.defineProperty(exports, "isBinding", {
 		  enumerable: true,
 		  get: function () {
 		    return _isBinding.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isBlockScoped", {
+		Object.defineProperty(exports, "isBlockScoped", {
 		  enumerable: true,
 		  get: function () {
 		    return _isBlockScoped.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isImmutable", {
+		Object.defineProperty(exports, "isImmutable", {
 		  enumerable: true,
 		  get: function () {
 		    return _isImmutable.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isLet", {
+		Object.defineProperty(exports, "isLet", {
 		  enumerable: true,
 		  get: function () {
 		    return _isLet.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isNode", {
+		Object.defineProperty(exports, "isNode", {
 		  enumerable: true,
 		  get: function () {
 		    return _isNode.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isNodesEquivalent", {
+		Object.defineProperty(exports, "isNodesEquivalent", {
 		  enumerable: true,
 		  get: function () {
 		    return _isNodesEquivalent.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isPlaceholderType", {
+		Object.defineProperty(exports, "isPlaceholderType", {
 		  enumerable: true,
 		  get: function () {
 		    return _isPlaceholderType.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isReferenced", {
+		Object.defineProperty(exports, "isReferenced", {
 		  enumerable: true,
 		  get: function () {
 		    return _isReferenced.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isScope", {
+		Object.defineProperty(exports, "isScope", {
 		  enumerable: true,
 		  get: function () {
 		    return _isScope.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isSpecifierDefault", {
+		Object.defineProperty(exports, "isSpecifierDefault", {
 		  enumerable: true,
 		  get: function () {
 		    return _isSpecifierDefault.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isType", {
+		Object.defineProperty(exports, "isType", {
 		  enumerable: true,
 		  get: function () {
 		    return _isType.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isValidES3Identifier", {
+		Object.defineProperty(exports, "isValidES3Identifier", {
 		  enumerable: true,
 		  get: function () {
 		    return _isValidES3Identifier.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isValidIdentifier", {
+		Object.defineProperty(exports, "isValidIdentifier", {
 		  enumerable: true,
 		  get: function () {
 		    return _isValidIdentifier.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "isVar", {
+		Object.defineProperty(exports, "isVar", {
 		  enumerable: true,
 		  get: function () {
 		    return _isVar.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "matchesPattern", {
+		Object.defineProperty(exports, "matchesPattern", {
 		  enumerable: true,
 		  get: function () {
 		    return _matchesPattern.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "prependToMemberExpression", {
+		Object.defineProperty(exports, "prependToMemberExpression", {
 		  enumerable: true,
 		  get: function () {
 		    return _prependToMemberExpression.default;
 		  }
 		});
-		exports$1.react = void 0;
-		Object.defineProperty(exports$1, "removeComments", {
+		exports.react = void 0;
+		Object.defineProperty(exports, "removeComments", {
 		  enumerable: true,
 		  get: function () {
 		    return _removeComments.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "removeProperties", {
+		Object.defineProperty(exports, "removeProperties", {
 		  enumerable: true,
 		  get: function () {
 		    return _removeProperties.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "removePropertiesDeep", {
+		Object.defineProperty(exports, "removePropertiesDeep", {
 		  enumerable: true,
 		  get: function () {
 		    return _removePropertiesDeep.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "removeTypeDuplicates", {
+		Object.defineProperty(exports, "removeTypeDuplicates", {
 		  enumerable: true,
 		  get: function () {
 		    return _removeTypeDuplicates.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "shallowEqual", {
+		Object.defineProperty(exports, "shallowEqual", {
 		  enumerable: true,
 		  get: function () {
 		    return _shallowEqual.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "toBindingIdentifierName", {
+		Object.defineProperty(exports, "toBindingIdentifierName", {
 		  enumerable: true,
 		  get: function () {
 		    return _toBindingIdentifierName.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "toBlock", {
+		Object.defineProperty(exports, "toBlock", {
 		  enumerable: true,
 		  get: function () {
 		    return _toBlock.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "toComputedKey", {
+		Object.defineProperty(exports, "toComputedKey", {
 		  enumerable: true,
 		  get: function () {
 		    return _toComputedKey.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "toExpression", {
+		Object.defineProperty(exports, "toExpression", {
 		  enumerable: true,
 		  get: function () {
 		    return _toExpression.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "toIdentifier", {
+		Object.defineProperty(exports, "toIdentifier", {
 		  enumerable: true,
 		  get: function () {
 		    return _toIdentifier.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "toKeyAlias", {
+		Object.defineProperty(exports, "toKeyAlias", {
 		  enumerable: true,
 		  get: function () {
 		    return _toKeyAlias.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "toStatement", {
+		Object.defineProperty(exports, "toStatement", {
 		  enumerable: true,
 		  get: function () {
 		    return _toStatement.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "traverse", {
+		Object.defineProperty(exports, "traverse", {
 		  enumerable: true,
 		  get: function () {
 		    return _traverse.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "traverseFast", {
+		Object.defineProperty(exports, "traverseFast", {
 		  enumerable: true,
 		  get: function () {
 		    return _traverseFast.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "validate", {
+		Object.defineProperty(exports, "validate", {
 		  enumerable: true,
 		  get: function () {
 		    return _validate.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "valueToNode", {
+		Object.defineProperty(exports, "valueToNode", {
 		  enumerable: true,
 		  get: function () {
 		    return _valueToNode.default;
@@ -16424,8 +16424,8 @@ function requireLib$5 () {
 		Object.keys(_index).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _index[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _index[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _index[key];
@@ -16439,8 +16439,8 @@ function requireLib$5 () {
 		Object.keys(_productions).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _productions[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _productions[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _productions[key];
@@ -16451,8 +16451,8 @@ function requireLib$5 () {
 		Object.keys(_index2).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _index2[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _index2[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _index2[key];
@@ -16475,8 +16475,8 @@ function requireLib$5 () {
 		Object.keys(_index3).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _index3[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _index3[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _index3[key];
@@ -16487,8 +16487,8 @@ function requireLib$5 () {
 		Object.keys(_index4).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _index4[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _index4[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _index4[key];
@@ -16508,8 +16508,8 @@ function requireLib$5 () {
 		Object.keys(_index5).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _index5[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _index5[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _index5[key];
@@ -16530,8 +16530,8 @@ function requireLib$5 () {
 		Object.keys(_traverse).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _traverse[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _traverse[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _traverse[key];
@@ -16562,8 +16562,8 @@ function requireLib$5 () {
 		Object.keys(_index6).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
 		  if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
-		  if (key in exports$1 && exports$1[key] === _index6[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _index6[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _index6[key];
@@ -16572,12 +16572,12 @@ function requireLib$5 () {
 		});
 		var _deprecationWarning = requireDeprecationWarning();
 		var _toSequenceExpression = requireToSequenceExpression();
-		exports$1.react = {
+		exports.react = {
 		  isReactComponent: _isReactComponent.default,
 		  isCompatTag: _isCompatTag.default,
 		  buildChildren: _buildChildren.default
 		};
-		exports$1.toSequenceExpression = _toSequenceExpression.default;
+		exports.toSequenceExpression = _toSequenceExpression.default;
 		if (process.env.BABEL_TYPES_8_BREAKING) {
 		  console.warn("BABEL_TYPES_8_BREAKING is not supported anymore. Use the latest Babel 8.0.0 pre-release instead!");
 		}
@@ -19363,85 +19363,85 @@ var hasRequiredFlow;
 function requireFlow () {
 	if (hasRequiredFlow) return flow;
 	hasRequiredFlow = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
-		exports$1.AnyTypeAnnotation = AnyTypeAnnotation;
-		exports$1.ArrayTypeAnnotation = ArrayTypeAnnotation;
-		exports$1.BooleanLiteralTypeAnnotation = BooleanLiteralTypeAnnotation;
-		exports$1.BooleanTypeAnnotation = BooleanTypeAnnotation;
-		exports$1.DeclareClass = DeclareClass;
-		exports$1.DeclareExportAllDeclaration = DeclareExportAllDeclaration;
-		exports$1.DeclareExportDeclaration = DeclareExportDeclaration;
-		exports$1.DeclareFunction = DeclareFunction;
-		exports$1.DeclareInterface = DeclareInterface;
-		exports$1.DeclareModule = DeclareModule;
-		exports$1.DeclareModuleExports = DeclareModuleExports;
-		exports$1.DeclareOpaqueType = DeclareOpaqueType;
-		exports$1.DeclareTypeAlias = DeclareTypeAlias;
-		exports$1.DeclareVariable = DeclareVariable;
-		exports$1.DeclaredPredicate = DeclaredPredicate;
-		exports$1.EmptyTypeAnnotation = EmptyTypeAnnotation;
-		exports$1.EnumBooleanBody = EnumBooleanBody;
-		exports$1.EnumBooleanMember = EnumBooleanMember;
-		exports$1.EnumDeclaration = EnumDeclaration;
-		exports$1.EnumDefaultedMember = EnumDefaultedMember;
-		exports$1.EnumNumberBody = EnumNumberBody;
-		exports$1.EnumNumberMember = EnumNumberMember;
-		exports$1.EnumStringBody = EnumStringBody;
-		exports$1.EnumStringMember = EnumStringMember;
-		exports$1.EnumSymbolBody = EnumSymbolBody;
-		exports$1.ExistsTypeAnnotation = ExistsTypeAnnotation;
-		exports$1.FunctionTypeAnnotation = FunctionTypeAnnotation;
-		exports$1.FunctionTypeParam = FunctionTypeParam;
-		exports$1.IndexedAccessType = IndexedAccessType;
-		exports$1.InferredPredicate = InferredPredicate;
-		exports$1.InterfaceDeclaration = InterfaceDeclaration;
-		exports$1.GenericTypeAnnotation = exports$1.ClassImplements = exports$1.InterfaceExtends = InterfaceExtends;
-		exports$1.InterfaceTypeAnnotation = InterfaceTypeAnnotation;
-		exports$1.IntersectionTypeAnnotation = IntersectionTypeAnnotation;
-		exports$1.MixedTypeAnnotation = MixedTypeAnnotation;
-		exports$1.NullLiteralTypeAnnotation = NullLiteralTypeAnnotation;
-		exports$1.NullableTypeAnnotation = NullableTypeAnnotation;
-		Object.defineProperty(exports$1, "NumberLiteralTypeAnnotation", {
+		exports.AnyTypeAnnotation = AnyTypeAnnotation;
+		exports.ArrayTypeAnnotation = ArrayTypeAnnotation;
+		exports.BooleanLiteralTypeAnnotation = BooleanLiteralTypeAnnotation;
+		exports.BooleanTypeAnnotation = BooleanTypeAnnotation;
+		exports.DeclareClass = DeclareClass;
+		exports.DeclareExportAllDeclaration = DeclareExportAllDeclaration;
+		exports.DeclareExportDeclaration = DeclareExportDeclaration;
+		exports.DeclareFunction = DeclareFunction;
+		exports.DeclareInterface = DeclareInterface;
+		exports.DeclareModule = DeclareModule;
+		exports.DeclareModuleExports = DeclareModuleExports;
+		exports.DeclareOpaqueType = DeclareOpaqueType;
+		exports.DeclareTypeAlias = DeclareTypeAlias;
+		exports.DeclareVariable = DeclareVariable;
+		exports.DeclaredPredicate = DeclaredPredicate;
+		exports.EmptyTypeAnnotation = EmptyTypeAnnotation;
+		exports.EnumBooleanBody = EnumBooleanBody;
+		exports.EnumBooleanMember = EnumBooleanMember;
+		exports.EnumDeclaration = EnumDeclaration;
+		exports.EnumDefaultedMember = EnumDefaultedMember;
+		exports.EnumNumberBody = EnumNumberBody;
+		exports.EnumNumberMember = EnumNumberMember;
+		exports.EnumStringBody = EnumStringBody;
+		exports.EnumStringMember = EnumStringMember;
+		exports.EnumSymbolBody = EnumSymbolBody;
+		exports.ExistsTypeAnnotation = ExistsTypeAnnotation;
+		exports.FunctionTypeAnnotation = FunctionTypeAnnotation;
+		exports.FunctionTypeParam = FunctionTypeParam;
+		exports.IndexedAccessType = IndexedAccessType;
+		exports.InferredPredicate = InferredPredicate;
+		exports.InterfaceDeclaration = InterfaceDeclaration;
+		exports.GenericTypeAnnotation = exports.ClassImplements = exports.InterfaceExtends = InterfaceExtends;
+		exports.InterfaceTypeAnnotation = InterfaceTypeAnnotation;
+		exports.IntersectionTypeAnnotation = IntersectionTypeAnnotation;
+		exports.MixedTypeAnnotation = MixedTypeAnnotation;
+		exports.NullLiteralTypeAnnotation = NullLiteralTypeAnnotation;
+		exports.NullableTypeAnnotation = NullableTypeAnnotation;
+		Object.defineProperty(exports, "NumberLiteralTypeAnnotation", {
 		  enumerable: true,
 		  get: function () {
 		    return _types2.NumericLiteral;
 		  }
 		});
-		exports$1.NumberTypeAnnotation = NumberTypeAnnotation;
-		exports$1.ObjectTypeAnnotation = ObjectTypeAnnotation;
-		exports$1.ObjectTypeCallProperty = ObjectTypeCallProperty;
-		exports$1.ObjectTypeIndexer = ObjectTypeIndexer;
-		exports$1.ObjectTypeInternalSlot = ObjectTypeInternalSlot;
-		exports$1.ObjectTypeProperty = ObjectTypeProperty;
-		exports$1.ObjectTypeSpreadProperty = ObjectTypeSpreadProperty;
-		exports$1.OpaqueType = OpaqueType;
-		exports$1.OptionalIndexedAccessType = OptionalIndexedAccessType;
-		exports$1.QualifiedTypeIdentifier = QualifiedTypeIdentifier;
-		Object.defineProperty(exports$1, "StringLiteralTypeAnnotation", {
+		exports.NumberTypeAnnotation = NumberTypeAnnotation;
+		exports.ObjectTypeAnnotation = ObjectTypeAnnotation;
+		exports.ObjectTypeCallProperty = ObjectTypeCallProperty;
+		exports.ObjectTypeIndexer = ObjectTypeIndexer;
+		exports.ObjectTypeInternalSlot = ObjectTypeInternalSlot;
+		exports.ObjectTypeProperty = ObjectTypeProperty;
+		exports.ObjectTypeSpreadProperty = ObjectTypeSpreadProperty;
+		exports.OpaqueType = OpaqueType;
+		exports.OptionalIndexedAccessType = OptionalIndexedAccessType;
+		exports.QualifiedTypeIdentifier = QualifiedTypeIdentifier;
+		Object.defineProperty(exports, "StringLiteralTypeAnnotation", {
 		  enumerable: true,
 		  get: function () {
 		    return _types2.StringLiteral;
 		  }
 		});
-		exports$1.StringTypeAnnotation = StringTypeAnnotation;
-		exports$1.SymbolTypeAnnotation = SymbolTypeAnnotation;
-		exports$1.ThisTypeAnnotation = ThisTypeAnnotation;
-		exports$1.TupleTypeAnnotation = TupleTypeAnnotation;
-		exports$1.TypeAlias = TypeAlias;
-		exports$1.TypeAnnotation = TypeAnnotation;
-		exports$1.TypeCastExpression = TypeCastExpression;
-		exports$1.TypeParameter = TypeParameter;
-		exports$1.TypeParameterDeclaration = exports$1.TypeParameterInstantiation = TypeParameterInstantiation;
-		exports$1.TypeofTypeAnnotation = TypeofTypeAnnotation;
-		exports$1.UnionTypeAnnotation = UnionTypeAnnotation;
-		exports$1.Variance = Variance;
-		exports$1.VoidTypeAnnotation = VoidTypeAnnotation;
-		exports$1._interfaceish = _interfaceish;
-		exports$1._variance = _variance;
+		exports.StringTypeAnnotation = StringTypeAnnotation;
+		exports.SymbolTypeAnnotation = SymbolTypeAnnotation;
+		exports.ThisTypeAnnotation = ThisTypeAnnotation;
+		exports.TupleTypeAnnotation = TupleTypeAnnotation;
+		exports.TypeAlias = TypeAlias;
+		exports.TypeAnnotation = TypeAnnotation;
+		exports.TypeCastExpression = TypeCastExpression;
+		exports.TypeParameter = TypeParameter;
+		exports.TypeParameterDeclaration = exports.TypeParameterInstantiation = TypeParameterInstantiation;
+		exports.TypeofTypeAnnotation = TypeofTypeAnnotation;
+		exports.UnionTypeAnnotation = UnionTypeAnnotation;
+		exports.Variance = Variance;
+		exports.VoidTypeAnnotation = VoidTypeAnnotation;
+		exports._interfaceish = _interfaceish;
+		exports._variance = _variance;
 		var _t = requireLib$5();
 		var _modules = requireModules();
 		var _index = requireNode();
@@ -20480,16 +20480,16 @@ var hasRequiredGenerators;
 function requireGenerators () {
 	if (hasRequiredGenerators) return generators;
 	hasRequiredGenerators = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
 		var _templateLiterals = requireTemplateLiterals();
 		Object.keys(_templateLiterals).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _templateLiterals[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _templateLiterals[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _templateLiterals[key];
@@ -20499,8 +20499,8 @@ function requireGenerators () {
 		var _expressions = requireExpressions();
 		Object.keys(_expressions).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _expressions[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _expressions[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _expressions[key];
@@ -20510,8 +20510,8 @@ function requireGenerators () {
 		var _statements = requireStatements();
 		Object.keys(_statements).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _statements[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _statements[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _statements[key];
@@ -20521,8 +20521,8 @@ function requireGenerators () {
 		var _classes = requireClasses();
 		Object.keys(_classes).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _classes[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _classes[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _classes[key];
@@ -20532,8 +20532,8 @@ function requireGenerators () {
 		var _methods = requireMethods();
 		Object.keys(_methods).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _methods[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _methods[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _methods[key];
@@ -20543,8 +20543,8 @@ function requireGenerators () {
 		var _modules = requireModules();
 		Object.keys(_modules).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _modules[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _modules[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _modules[key];
@@ -20554,8 +20554,8 @@ function requireGenerators () {
 		var _types = requireTypes();
 		Object.keys(_types).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _types[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _types[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _types[key];
@@ -20565,8 +20565,8 @@ function requireGenerators () {
 		var _flow = requireFlow();
 		Object.keys(_flow).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _flow[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _flow[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _flow[key];
@@ -20576,8 +20576,8 @@ function requireGenerators () {
 		var _base = requireBase();
 		Object.keys(_base).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _base[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _base[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _base[key];
@@ -20587,8 +20587,8 @@ function requireGenerators () {
 		var _jsx = requireJsx();
 		Object.keys(_jsx).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _jsx[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _jsx[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _jsx[key];
@@ -20598,8 +20598,8 @@ function requireGenerators () {
 		var _typescript = requireTypescript();
 		Object.keys(_typescript).forEach(function (key) {
 		  if (key === "default" || key === "__esModule") return;
-		  if (key in exports$1 && exports$1[key] === _typescript[key]) return;
-		  Object.defineProperty(exports$1, key, {
+		  if (key in exports && exports[key] === _typescript[key]) return;
+		  Object.defineProperty(exports, key, {
 		    enumerable: true,
 		    get: function () {
 		      return _typescript[key];
@@ -22444,17 +22444,17 @@ var hasRequiredBrowser;
 function requireBrowser () {
 	if (hasRequiredBrowser) return browser.exports;
 	hasRequiredBrowser = 1;
-	(function (module, exports$1) {
+	(function (module, exports) {
 		/**
 		 * This is the web browser implementation of `debug()`.
 		 */
 
-		exports$1.formatArgs = formatArgs;
-		exports$1.save = save;
-		exports$1.load = load;
-		exports$1.useColors = useColors;
-		exports$1.storage = localstorage();
-		exports$1.destroy = (() => {
+		exports.formatArgs = formatArgs;
+		exports.save = save;
+		exports.load = load;
+		exports.useColors = useColors;
+		exports.storage = localstorage();
+		exports.destroy = (() => {
 			let warned = false;
 
 			return () => {
@@ -22469,7 +22469,7 @@ function requireBrowser () {
 		 * Colors.
 		 */
 
-		exports$1.colors = [
+		exports.colors = [
 			'#0000CC',
 			'#0000FF',
 			'#0033CC',
@@ -22634,7 +22634,7 @@ function requireBrowser () {
 		 *
 		 * @api public
 		 */
-		exports$1.log = console.debug || console.log || (() => {});
+		exports.log = console.debug || console.log || (() => {});
 
 		/**
 		 * Save `namespaces`.
@@ -22645,9 +22645,9 @@ function requireBrowser () {
 		function save(namespaces) {
 			try {
 				if (namespaces) {
-					exports$1.storage.setItem('debug', namespaces);
+					exports.storage.setItem('debug', namespaces);
 				} else {
-					exports$1.storage.removeItem('debug');
+					exports.storage.removeItem('debug');
 				}
 			} catch (error) {
 				// Swallow
@@ -22664,7 +22664,7 @@ function requireBrowser () {
 		function load() {
 			let r;
 			try {
-				r = exports$1.storage.getItem('debug') || exports$1.storage.getItem('DEBUG') ;
+				r = exports.storage.getItem('debug') || exports.storage.getItem('DEBUG') ;
 			} catch (error) {
 				// Swallow
 				// XXX (@Qix-) should we be logging these?
@@ -22700,7 +22700,7 @@ function requireBrowser () {
 			}
 		}
 
-		module.exports = requireCommon()(exports$1);
+		module.exports = requireCommon()(exports);
 
 		const {formatters} = module.exports;
 
@@ -24955,42 +24955,42 @@ var hasRequiredInferers;
 function requireInferers () {
 	if (hasRequiredInferers) return inferers;
 	hasRequiredInferers = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
-		exports$1.ArrayExpression = ArrayExpression;
-		exports$1.AssignmentExpression = AssignmentExpression;
-		exports$1.BinaryExpression = BinaryExpression;
-		exports$1.BooleanLiteral = BooleanLiteral;
-		exports$1.CallExpression = CallExpression;
-		exports$1.ConditionalExpression = ConditionalExpression;
-		exports$1.ClassDeclaration = exports$1.ClassExpression = exports$1.FunctionDeclaration = exports$1.ArrowFunctionExpression = exports$1.FunctionExpression = Func;
-		Object.defineProperty(exports$1, "Identifier", {
+		exports.ArrayExpression = ArrayExpression;
+		exports.AssignmentExpression = AssignmentExpression;
+		exports.BinaryExpression = BinaryExpression;
+		exports.BooleanLiteral = BooleanLiteral;
+		exports.CallExpression = CallExpression;
+		exports.ConditionalExpression = ConditionalExpression;
+		exports.ClassDeclaration = exports.ClassExpression = exports.FunctionDeclaration = exports.ArrowFunctionExpression = exports.FunctionExpression = Func;
+		Object.defineProperty(exports, "Identifier", {
 		  enumerable: true,
 		  get: function () {
 		    return _infererReference.default;
 		  }
 		});
-		exports$1.LogicalExpression = LogicalExpression;
-		exports$1.NewExpression = NewExpression;
-		exports$1.NullLiteral = NullLiteral;
-		exports$1.NumericLiteral = NumericLiteral;
-		exports$1.ObjectExpression = ObjectExpression;
-		exports$1.ParenthesizedExpression = ParenthesizedExpression;
-		exports$1.RegExpLiteral = RegExpLiteral;
-		exports$1.RestElement = RestElement;
-		exports$1.SequenceExpression = SequenceExpression;
-		exports$1.StringLiteral = StringLiteral;
-		exports$1.TSAsExpression = TSAsExpression;
-		exports$1.TSNonNullExpression = TSNonNullExpression;
-		exports$1.TaggedTemplateExpression = TaggedTemplateExpression;
-		exports$1.TemplateLiteral = TemplateLiteral;
-		exports$1.TypeCastExpression = TypeCastExpression;
-		exports$1.UnaryExpression = UnaryExpression;
-		exports$1.UpdateExpression = UpdateExpression;
-		exports$1.VariableDeclarator = VariableDeclarator;
+		exports.LogicalExpression = LogicalExpression;
+		exports.NewExpression = NewExpression;
+		exports.NullLiteral = NullLiteral;
+		exports.NumericLiteral = NumericLiteral;
+		exports.ObjectExpression = ObjectExpression;
+		exports.ParenthesizedExpression = ParenthesizedExpression;
+		exports.RegExpLiteral = RegExpLiteral;
+		exports.RestElement = RestElement;
+		exports.SequenceExpression = SequenceExpression;
+		exports.StringLiteral = StringLiteral;
+		exports.TSAsExpression = TSAsExpression;
+		exports.TSNonNullExpression = TSNonNullExpression;
+		exports.TaggedTemplateExpression = TaggedTemplateExpression;
+		exports.TemplateLiteral = TemplateLiteral;
+		exports.TypeCastExpression = TypeCastExpression;
+		exports.UnaryExpression = UnaryExpression;
+		exports.UpdateExpression = UpdateExpression;
+		exports.VariableDeclarator = VariableDeclarator;
 		var _t = requireLib$5();
 		var _infererReference = requireInfererReference();
 		var _util = requireUtil();
@@ -28093,7 +28093,7 @@ function requireLib$2 () {
 	  }
 	  flowParseDeclareVariable(node) {
 	    this.next();
-	    node.id = this.flowParseTypeAnnotatableIdentifier(true);
+	    node.id = this.flowParseTypeAnnotatableIdentifier();
 	    this.scope.declareName(node.id.name, 5, node.id.loc.start);
 	    this.semicolon();
 	    return this.finishNode(node, "DeclareVariable");
@@ -28267,9 +28267,14 @@ function requireLib$2 () {
 	      reservedType: word
 	    });
 	  }
-	  flowParseRestrictedIdentifier(liberal, declaration) {
+	  flowParseRestrictedIdentifierName(liberal, declaration) {
 	    this.checkReservedType(this.state.value, this.state.startLoc, declaration);
-	    return this.parseIdentifier(liberal);
+	    return this.parseIdentifierName(liberal);
+	  }
+	  flowParseRestrictedIdentifier(liberal, declaration) {
+	    const node = this.startNode();
+	    const name = this.flowParseRestrictedIdentifierName(liberal, declaration);
+	    return this.createIdentifier(node, name);
 	  }
 	  flowParseTypeAlias(node) {
 	    node.id = this.flowParseRestrictedIdentifier(false, true);
@@ -28303,14 +28308,21 @@ function requireLib$2 () {
 	    this.semicolon();
 	    return this.finishNode(node, "OpaqueType");
 	  }
+	  flowParseTypeParameterBound() {
+	    if (this.match(14) || this.isContextual(81)) {
+	      const node = this.startNode();
+	      this.next();
+	      node.typeAnnotation = this.flowParseType();
+	      return this.finishNode(node, "TypeAnnotation");
+	    }
+	  }
 	  flowParseTypeParameter(requireDefault = false) {
 	    const nodeStartLoc = this.state.startLoc;
 	    const node = this.startNode();
 	    const variance = this.flowParseVariance();
-	    const ident = this.flowParseTypeAnnotatableIdentifier();
-	    node.name = ident.name;
+	    node.name = this.flowParseRestrictedIdentifierName();
 	    node.variance = variance;
-	    node.bound = ident.typeAnnotation;
+	    node.bound = this.flowParseTypeParameterBound();
 	    if (this.match(29)) {
 	      this.eat(29);
 	      node.default = this.flowParseType();
@@ -29007,13 +29019,13 @@ function requireLib$2 () {
 	    node.typeAnnotation = this.flowParseTypeInitialiser();
 	    return this.finishNode(node, "TypeAnnotation");
 	  }
-	  flowParseTypeAnnotatableIdentifier(allowPrimitiveOverride) {
-	    const ident = allowPrimitiveOverride ? this.parseIdentifier() : this.flowParseRestrictedIdentifier();
+	  flowParseTypeAnnotatableIdentifier() {
+	    const node = this.startNode();
+	    const name = this.parseIdentifierName();
 	    if (this.match(14)) {
-	      ident.typeAnnotation = this.flowParseTypeAnnotation();
-	      this.resetEndLocation(ident);
+	      node.typeAnnotation = this.flowParseTypeAnnotation();
 	    }
-	    return ident;
+	    return this.createIdentifier(node, name);
 	  }
 	  typeCastToParameter(node) {
 	    node.expression.typeAnnotation = node.typeAnnotation;
@@ -31240,6 +31252,7 @@ function requireLib$2 () {
 	            adjustInnerComments(node, node.properties, commentWS);
 	            break;
 	          case "CallExpression":
+	          case "NewExpression":
 	          case "OptionalCallExpression":
 	            adjustInnerComments(node, node.arguments, commentWS);
 	            break;
@@ -31252,6 +31265,7 @@ function requireLib$2 () {
 	          case "ObjectMethod":
 	          case "ClassMethod":
 	          case "ClassPrivateMethod":
+	          case "TSTypeParameterDeclaration":
 	            adjustInnerComments(node, node.params, commentWS);
 	            break;
 	          case "ArrayExpression":
@@ -31267,6 +31281,9 @@ function requireLib$2 () {
 	            break;
 	          case "TSEnumBody":
 	            adjustInnerComments(node, node.members, commentWS);
+	            break;
+	          case "TSInterfaceBody":
+	            adjustInnerComments(node, node.body, commentWS);
 	            break;
 	          default:
 	            {
@@ -42695,26 +42712,26 @@ var hasRequiredIntrospection;
 function requireIntrospection () {
 	if (hasRequiredIntrospection) return introspection;
 	hasRequiredIntrospection = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
-		exports$1._guessExecutionStatusRelativeTo = _guessExecutionStatusRelativeTo;
-		exports$1._resolve = _resolve;
-		exports$1.canHaveVariableDeclarationOrExpression = canHaveVariableDeclarationOrExpression;
-		exports$1.canSwapBetweenExpressionAndStatement = canSwapBetweenExpressionAndStatement;
-		exports$1.getSource = getSource;
-		exports$1.isCompletionRecord = isCompletionRecord;
-		exports$1.isConstantExpression = isConstantExpression;
-		exports$1.isInStrictMode = isInStrictMode;
-		exports$1.isNodeType = isNodeType;
-		exports$1.isStatementOrBlock = isStatementOrBlock;
-		exports$1.isStatic = isStatic;
-		exports$1.matchesPattern = matchesPattern;
-		exports$1.referencesImport = referencesImport;
-		exports$1.resolve = resolve;
-		exports$1.willIMaybeExecuteBefore = willIMaybeExecuteBefore;
+		exports._guessExecutionStatusRelativeTo = _guessExecutionStatusRelativeTo;
+		exports._resolve = _resolve;
+		exports.canHaveVariableDeclarationOrExpression = canHaveVariableDeclarationOrExpression;
+		exports.canSwapBetweenExpressionAndStatement = canSwapBetweenExpressionAndStatement;
+		exports.getSource = getSource;
+		exports.isCompletionRecord = isCompletionRecord;
+		exports.isConstantExpression = isConstantExpression;
+		exports.isInStrictMode = isInStrictMode;
+		exports.isNodeType = isNodeType;
+		exports.isStatementOrBlock = isStatementOrBlock;
+		exports.isStatic = isStatic;
+		exports.matchesPattern = matchesPattern;
+		exports.referencesImport = referencesImport;
+		exports.resolve = resolve;
+		exports.willIMaybeExecuteBefore = willIMaybeExecuteBefore;
 		var _t = requireLib$5();
 		const {
 		  STATEMENT_OR_BLOCK_KEYS,
@@ -42730,7 +42747,7 @@ function requireIntrospection () {
 		function matchesPattern(pattern, allowPartial) {
 		  return _matchesPattern(this.node, pattern, allowPartial);
 		}
-		exports$1.has = function has(key) {
+		exports.has = function has(key) {
 		  var _this$node;
 		  const val = (_this$node = this.node) == null ? void 0 : _this$node[key];
 		  if (val && Array.isArray(val)) {
@@ -42742,11 +42759,11 @@ function requireIntrospection () {
 		function isStatic() {
 		  return this.scope.isStatic(this.node);
 		}
-		exports$1.is = exports$1.has;
-		exports$1.isnt = function isnt(key) {
+		exports.is = exports.has;
+		exports.isnt = function isnt(key) {
 		  return !this.has(key);
 		};
-		exports$1.equals = function equals(key, value) {
+		exports.equals = function equals(key, value) {
 		  return this.node[key] === value;
 		};
 		function isNodeType(type) {
@@ -44269,33 +44286,33 @@ var hasRequiredLib;
 function requireLib () {
 	if (hasRequiredLib) return lib$3;
 	hasRequiredLib = 1;
-	(function (exports$1) {
+	(function (exports) {
 
-		Object.defineProperty(exports$1, "__esModule", {
+		Object.defineProperty(exports, "__esModule", {
 		  value: true
 		});
-		Object.defineProperty(exports$1, "Hub", {
+		Object.defineProperty(exports, "Hub", {
 		  enumerable: true,
 		  get: function () {
 		    return _hub.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "NodePath", {
+		Object.defineProperty(exports, "NodePath", {
 		  enumerable: true,
 		  get: function () {
 		    return _index.default;
 		  }
 		});
-		Object.defineProperty(exports$1, "Scope", {
+		Object.defineProperty(exports, "Scope", {
 		  enumerable: true,
 		  get: function () {
 		    return _index2.default;
 		  }
 		});
-		exports$1.visitors = exports$1.default = void 0;
+		exports.visitors = exports.default = void 0;
 		requireContext();
 		var visitors = requireVisitors();
-		exports$1.visitors = visitors;
+		exports.visitors = visitors;
 		var _t = requireLib$5();
 		var cache = requireCache();
 		var _traverseNode = requireTraverseNode();
@@ -44323,7 +44340,7 @@ function requireLib () {
 		  visitors.explode(opts);
 		  (0, _traverseNode.traverseNode)(parent, opts, scope, state, parentPath, undefined, visitSelf);
 		}
-		exports$1.default = traverse;
+		exports.default = traverse;
 		traverse.visitors = visitors;
 		traverse.verify = visitors.verify;
 		traverse.explode = visitors.explode;
@@ -48512,14 +48529,43 @@ const OTHER_DOM_EVENTS = /* @__PURE__ */ new Set([
   "suspend",
   "timeupdate",
   "volumechange",
-  "waiting"
+  "waiting",
+  "waitingforkey",
+  "enterpictureinpicture",
+  "leavepictureinpicture",
+  "animationcancel",
+  "beforematch",
+  "beforetoggle",
+  "cancel",
+  "close",
+  "command",
+  "contextlost",
+  "contextrestored",
+  "cuechange",
+  "formdata",
+  "fullscreenchange",
+  "fullscreenerror",
+  "gotpointercapture",
+  "lostpointercapture",
+  "pointerrawupdate",
+  "scrollend",
+  "securitypolicyviolation",
+  "selectionchange",
+  "selectstart",
+  "slotchange",
+  "webkitanimationend",
+  "webkitanimationiteration",
+  "webkitanimationstart",
+  "webkittransitionend"
 ]);
-function isCaptureEventAttr(attrName) {
-  if (!attrName.startsWith("on")) return false;
+const CAPTURE_EVENT_TYPES = new Map([...EVENT_NAMES, ...OTHER_DOM_EVENTS].map((type) => [type.toLowerCase(), type]));
+const REACT_EVENT_TYPES = /* @__PURE__ */ new Map([["doubleclick", "dblclick"]]);
+function captureEventType(attrName) {
+  if (!attrName.startsWith("on")) return null;
   const type = toGeaEventType(attrName);
-  if (!type.endsWith("capture")) return false;
+  if (!type.endsWith("capture")) return null;
   const bubbling = type.slice(0, -"capture".length);
-  return EVENT_NAMES.has(bubbling) || OTHER_DOM_EVENTS.has(bubbling);
+  return CAPTURE_EVENT_TYPES.get(REACT_EVENT_TYPES.get(bubbling) ?? bubbling) ?? null;
 }
 
 function escapeAttr(s) {
@@ -48743,14 +48789,17 @@ function walkJsxToTemplate(root, options = {}) {
     }
     let html2 = "<" + tagName;
     for (const attr of opening.attributes) {
-      if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name) || !isCaptureEventAttr(attr.name.name)) continue;
+      if (!libExports.isJSXAttribute(attr) || !libExports.isJSXIdentifier(attr.name)) continue;
       const rawAttrName = attr.name.name;
+      const type = captureEventType(rawAttrName);
+      if (!type) continue;
       const bubbling = rawAttrName.slice(0, -"Capture".length);
+      const handler = toGeaEventType(bubbling) === type ? bubbling : type;
       reportUnsupportedJsx(
         compilerError(
           `Capture-phase event handlers like ${rawAttrName} are not supported yet.`,
           attr,
-          `Use ${bubbling}, or add the listener yourself in onAfterRender() with addEventListener('${toGeaEventType(bubbling)}', handler, true).`
+          `Use ${handler}, or add the listener yourself in onAfterRender() with addEventListener('${type}', handler, true).`
         )
       );
     }
