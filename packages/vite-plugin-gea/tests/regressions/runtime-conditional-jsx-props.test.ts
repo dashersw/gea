@@ -68,6 +68,34 @@ const PARTS = `
       return <div class="pick">{ui.open ? this.kids() : ui.loggedIn ? this.kids().slice(0, 1) : this.kids()[0]}</div>
     }
   }
+  // Shows each of its first children's nodes in its own slot.
+  export class Split extends Component {
+    kids() {
+      if (!kept.has(this)) kept.set(this, this.props.children)
+      return kept.get(this)
+    }
+    kid(i: number) {
+      return this.kids()[i]
+    }
+    template() {
+      return <div class="card">{ui.open && <p>{this.kid(0)}</p>}{ui.loggedIn && <i>{this.kid(1)}</i>}</div>
+    }
+  }
+  // Shows all of its first children in two slots; the nodes end up in the one rendered last.
+  export class Twice extends Component {
+    kids() {
+      if (!kept.has(this)) kept.set(this, this.props.children)
+      return kept.get(this)
+    }
+    template() {
+      return <div class="card">{ui.open && <p>{this.kids()}</p>}{ui.loggedIn && <i>{this.kids()}</i>}</div>
+    }
+  }
+  export class SplitProps extends Component {
+    template({ children }: any) {
+      return <div class="card">{ui.open && <p>{children[0]}</p>}{ui.loggedIn && <i>{children[1]}</i>}</div>
+    }
+  }
   export class Slots extends Component {
     template({ children }: any) { return <div class="card">{children.rows}<p>{children.label}</p></div> }
   }
@@ -142,6 +170,9 @@ async function mountApp(appBody: string, id: string, factories: string[] = []): 
     'ReactiveCard',
     'Panel',
     'Pick',
+    'Split',
+    'SplitProps',
+    'Twice',
     'Slots',
     'Flat',
     'RenderCard',
@@ -617,6 +648,47 @@ describe('conditional JSX passed in props or children (#120)', { concurrency: fa
       assertTitlesLive(h, 0)
     })
   }
+
+  // Two slots show nodes of one read; tearing one down must not dispose the other's.
+  for (const child of ['Split', 'SplitProps']) {
+    it(`keeps a node live in one slot after another slot showing its read is torn down: ${child}`, async () => {
+      const h = await mountApp(`<${child}>{(() => [<LiveTitle />, <LiveTitle />])()}</${child}>`, `split-${child}`)
+      const text = (tag: string) => [...h.root.querySelectorAll(`.card ${tag} b`)].map((b) => b.textContent).join('')
+      assert.equal(text('p') + text('i'), 'T0T0')
+      for (let tick = 1; tick <= 3; tick++) {
+        h.ui.open = false
+        h.flush()
+        h.ui.tick = tick
+        h.flush()
+        assert.equal(text('p') + '|' + text('i'), `|T${tick}`)
+        h.ui.open = true
+        h.flush()
+        assert.equal(text('p') + text('i'), `T${tick}T${tick}`)
+      }
+      // Once neither slot shows them, they're disposed.
+      h.ui.open = false
+      h.flush()
+      h.ui.loggedIn = false
+      h.flush()
+      assertTitlesLive(h, 0)
+      h.dispose()
+      assertTitlesLive(h, 0)
+    })
+  }
+
+  it('keeps nodes live that another slot took when the slot that showed them first is torn down', async () => {
+    const h = await mountApp(`<Twice>{(() => [<LiveTitle />, <LiveTitle />])()}</Twice>`, 'twice')
+    const text = (tag: string) => [...h.root.querySelectorAll(`.card ${tag} b`)].map((b) => b.textContent).join('')
+    assert.equal(text('p') + '|' + text('i'), '|T0T0')
+    h.ui.open = false
+    h.flush()
+    h.ui.tick = 1
+    h.flush()
+    assert.equal(text('i'), 'T1T1')
+    assertTitlesLive(h, 2)
+    h.dispose()
+    assertTitlesLive(h, 0)
+  })
 
   it('disposes JSX a function the read runs built inside a nested array', async () => {
     const h = await mountApp(`<Flat>{[ui.fancy ? ui.rows.map((r: number) => <Title />) : []]}</Flat>`, 'nested-array')

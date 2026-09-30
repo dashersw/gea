@@ -11,4 +11,4 @@
 ### @geajs/core (patch)
 
 - **`children` is no longer cached at runtime**: `Component`, `CompiledComponent`, `CompiledReactiveComponent` and `mount()` stopped caching the first DOM node a `children` thunk returned. That cache pinned conditional children to their first branch. `children` now reads its thunk like every other prop, and the compiler keeps nodes stable, including that first-node cache for expressions whose JSX user code can keep.
-- **`reactiveText` releases the nodes it drops**: nodes that compiled `children` tags with a read's disposer are disposed once the text slot has dropped all of that read's nodes or is torn down, so siblings it still shows keep their bindings. Nodes the new array value shows again stay in place.
+- **`reactiveText` releases the nodes it drops**: nodes that compiled `children` tags with a read's disposer are disposed once no slot shows any of that read's nodes, whether the slot dropped them or was torn down. So nodes this or another slot still shows keep their bindings, and nodes the new array value shows again stay in place.

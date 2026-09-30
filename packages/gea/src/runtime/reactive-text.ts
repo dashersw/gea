@@ -4,18 +4,22 @@ import { patch } from './patch'
 
 // A prop thunk tags the nodes a nested function built for one read
 // (`.map((r) => <Row />)` in `children`) with a record of that read's
-// disposer and nodes. A slot that drops one of them disposes the record once
-// none of its nodes is attached any more, so siblings it still shows keep
-// their bindings. A slot that is torn down disposes it right away.
+// disposer and nodes. A slot that drops one of them, or is torn down,
+// disposes the record once none of its nodes is still shown, so nodes that
+// this or another slot still shows keep their bindings.
 const JSX_OWNER = Symbol.for('gea.jsx.owner')
 
 type JsxOwner = { d: Disposer; nodes: Node[] }
 
-function release(n: Node, force = false): void {
+// The slot that last showed each tagged node, or null once that slot is torn
+// down: its nodes can still sit in its detached DOM, but they aren't shown.
+const shownBy = new WeakMap<Node, object | null>()
+
+function release(n: Node): void {
   const owner = (n as any)[JSX_OWNER] as JsxOwner | undefined
   if (!owner) return
   const owns = (m: Node): boolean => (m as any)[JSX_OWNER] === owner
-  if (!force && owner.nodes.some((m) => owns(m) && m.parentNode)) return
+  if (owner.nodes.some((m) => owns(m) && m.parentNode && shownBy.get(m) !== null)) return
   for (const m of owner.nodes) if (owns(m)) (m as any)[JSX_OWNER] = undefined
   owner.d.dispose()
 }
@@ -43,14 +47,20 @@ export function reactiveText(
   // For array children (`.map(...)` returning DOM nodes), remember the live
   // set so we can replace on subsequent renders.
   let liveChildren: Node[] | null = null
-  let releasesOnDispose = false
+  let slot: object | null = null
   const adopt = (n: Node): void => {
-    if (releasesOnDispose || !(n as any)[JSX_OWNER]) return
-    releasesOnDispose = true
-    d.add(() => {
-      if (liveChildren) for (const c of liveChildren) release(c, true)
-      release(live, true)
-    })
+    if (!(n as any)[JSX_OWNER]) return
+    if (!slot) {
+      const self = {}
+      slot = self
+      d.add(() => {
+        // Nodes another slot has shown since stay shown by it.
+        const mine = liveChildren ? [...liveChildren, live] : [live]
+        for (const c of mine) if (shownBy.get(c) === self) shownBy.set(c, null)
+        for (const c of mine) release(c)
+      })
+    }
+    shownBy.set(n, slot)
   }
   bind(d, root, pathOrGetter, (v) => {
     // Array of Nodes (e.g. from `.map(item => <Node/>)`) → wrap in a fragment.
