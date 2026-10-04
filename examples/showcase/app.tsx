@@ -433,12 +433,22 @@ export default class App extends Component {
                   >
                     Error
                   </Button>
-                  <Button
+                   <Button
                     size="sm"
                     variant="outline"
                     click={() => ToastStore.info({ title: 'Tip', description: 'Try keyboard shortcuts.' })}
                   >
                     Info
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    click={() => ToastStore.create({ 
+                      title: 'XSS Test', 
+                      description: '<img src=x onerror=\'alert("XSS_FAIL")\'>' 
+                    })}
+                  >
+                    XSS Test
                   </Button>
                 </div>
               </div>
