@@ -60,14 +60,14 @@ describe('HMR: duplicate panel class in two tab slots', { concurrency: false }, 
     for (const host of [root.querySelector('.tab0'), root.querySelector('.tab1')]) {
       const el = host!.firstElementChild as unknown as { [k: symbol]: any } | null
       const c = el?.[GEA_DOM_COMPONENT] as { constructor: { name: string } } | undefined
-      if (c?.constructor?.name === 'Panel') registerComponentInstance('Panel', c)
+      if (c?.constructor?.name === 'Panel') registerComponentInstance('file:///virtual/TabsPanels.tsx', 'Panel', c)
     }
     assert.equal(panelText(root.querySelector('.tab0')), 'v1')
     assert.equal(panelText(root.querySelector('.tab1')), 'v1')
 
     const srcV2 = srcV1.replace('v1', 'v2')
     const m2 = await compileJsxModule(srcV2, '/virtual/TabsPanelsV2.tsx', ['Panel', 'Tabs'], { Component })
-    rebindClassInstancesToNewPrototype('Panel', m2.Panel)
+    rebindClassInstancesToNewPrototype('file:///virtual/TabsPanels.tsx', 'Panel', m2.Panel)
 
     assert.equal(panelText(root.querySelector('.tab0')), 'v2', 'visible tab picks up hot template')
     assert.equal(panelText(root.querySelector('.tab1')), 'v2', 'off-screen tab also updated for later switch')

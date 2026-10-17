@@ -164,19 +164,26 @@ export function createHotComponentProxy(moduleUrl, initialComponent) {
   return componentProxies.get(normalizedUrl);
 }
 
-export function registerComponentInstance(className, instance) {
-  if (!componentInstances.has(className)) {
-    componentInstances.set(className, new Set());
-  }
-  componentInstances.get(className).add(instance);
+// Vite changes the URL timestamp on each save; the module and class stay stable.
+function componentKey(moduleId, className) {
+  return normalizeModuleUrl(moduleId) + '#' + className;
 }
 
-export function unregisterComponentInstance(className, instance) {
-  var instances = componentInstances.get(className);
+export function registerComponentInstance(moduleId, className, instance) {
+  var key = componentKey(moduleId, className);
+  if (!componentInstances.has(key)) {
+    componentInstances.set(key, new Set());
+  }
+  componentInstances.get(key).add(instance);
+}
+
+export function unregisterComponentInstance(moduleId, className, instance) {
+  var key = componentKey(moduleId, className);
+  var instances = componentInstances.get(key);
   if (instances) {
     instances.delete(instance);
     if (instances.size === 0) {
-      componentInstances.delete(className);
+      componentInstances.delete(key);
     }
   }
 }
@@ -249,7 +256,7 @@ export function handleComponentUpdate(moduleId, newModule) {
   if (!ComponentClass || typeof ComponentClass !== 'function') return false;
   var className = ComponentClass.name;
   if (!className) return false;
-  var instances = componentInstances.get(className);
+  var instances = componentInstances.get(componentKey(moduleId, className));
   if (!instances || instances.size === 0) return false;
   var newProto = ComponentClass.prototype;
   var instancesArray = Array.from(instances);
