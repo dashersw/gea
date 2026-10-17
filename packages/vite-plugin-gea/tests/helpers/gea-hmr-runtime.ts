@@ -20,18 +20,24 @@ export const createHotComponentProxy: (moduleUrl: string, initialComponent: any)
 
 const componentInstances = new Map<string, Set<any>>()
 
-export function registerComponentInstance(className: string, instance: any): void {
-  if (!componentInstances.has(className)) {
-    componentInstances.set(className, new Set())
-  }
-  componentInstances.get(className)!.add(instance)
+function componentKey(moduleId: string, className: string): string {
+  return moduleId.replace(/[?#].*$/, '') + '#' + className
 }
 
-export function unregisterComponentInstance(className: string, instance: any): void {
-  const set = componentInstances.get(className)
+export function registerComponentInstance(moduleId: string, className: string, instance: any): void {
+  const key = componentKey(moduleId, className)
+  if (!componentInstances.has(key)) {
+    componentInstances.set(key, new Set())
+  }
+  componentInstances.get(key)!.add(instance)
+}
+
+export function unregisterComponentInstance(moduleId: string, className: string, instance: any): void {
+  const key = componentKey(moduleId, className)
+  const set = componentInstances.get(key)
   if (set) {
     set.delete(instance)
-    if (set.size === 0) componentInstances.delete(className)
+    if (set.size === 0) componentInstances.delete(key)
   }
 }
 
@@ -64,20 +70,20 @@ function reRenderComponent(instance: any): void {
   if (newEl) newEl[GEA_DOM_COMPONENT] = instance
 }
 
-export function handleComponentUpdate(_moduleId: string, newModule: any): boolean | null {
+export function handleComponentUpdate(moduleId: string, newModule: any): boolean | null {
   const ComponentClass: any = newModule.default || newModule
   if (!ComponentClass || typeof ComponentClass !== 'function') return false
-  return rebindInstancesToNewClass(ComponentClass)
+  return rebindClassInstancesToNewPrototype(moduleId, ComponentClass.name, ComponentClass)
 }
 
 /**
- * Rebind all live instances registered under an existing `className` to `NewClass.prototype`.
+ * Rebind live instances registered under a module and `className` to `NewClass.prototype`.
  * (The plugin’s Vite `handleComponentUpdate` is module-shaped; class-shaped updates are
  * what multi-export files need in tests.)
  */
-export function rebindClassInstancesToNewPrototype(className: string, NewClass: any): boolean | null {
+export function rebindClassInstancesToNewPrototype(moduleId: string, className: string, NewClass: any): boolean | null {
   if (typeof NewClass !== 'function' || !className) return false
-  const instSet = componentInstances.get(className)
+  const instSet = componentInstances.get(componentKey(moduleId, className))
   if (!instSet || instSet.size === 0) return false
   const newProto = NewClass.prototype
   const instances = Array.from(instSet)
@@ -99,12 +105,6 @@ export function rebindClassInstancesToNewPrototype(className: string, NewClass: 
     }
   }
   return true
-}
-
-function rebindInstancesToNewClass(ComponentClass: any): boolean | null {
-  const className: string = ComponentClass.name
-  if (!className) return false
-  return rebindClassInstancesToNewPrototype(className, ComponentClass)
 }
 
 export type GeaHmrBindings = {

@@ -175,7 +175,7 @@ describe('injectHMR', () => {
       injectHMR(ast, ['Test'], 'Test', [], new Set())
       const code = codegen(ast)
       assert.ok(code.includes('Test.prototype.created'))
-      assert.ok(code.includes('registerComponentInstance'))
+      assert.match(code, /registerComponentInstance\(import\.meta\.url, ['"]Test['"], this\)/)
     })
 
     it('patches dispose to unregister instance', () => {
@@ -189,7 +189,7 @@ describe('injectHMR', () => {
       injectHMR(ast, ['Test'], 'Test', [], new Set())
       const code = codegen(ast)
       assert.ok(code.includes('Test.prototype.dispose'))
-      assert.ok(code.includes('unregisterComponentInstance'))
+      assert.match(code, /unregisterComponentInstance\(import\.meta\.url, ['"]Test['"], this\)/)
     })
 
     it('patches all classes in a multi-component file', () => {

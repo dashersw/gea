@@ -102,14 +102,14 @@ export function injectHMR(
     hmrStmts.push(js`const ${id('__origCreated' + suffix)} = ${id(cn)}.prototype.created;`)
     hmrStmts.push(
       js`${id(cn)}.prototype.created = function(__geaProps) {
-        registerComponentInstance(${cn}, this);
+        registerComponentInstance(${importMeta()}.url, ${cn}, this);
         return ${id('__origCreated' + suffix)}.call(this, __geaProps);
       };`,
     )
     hmrStmts.push(js`const ${id('__origDispose' + suffix)} = ${id(cn)}.prototype.dispose;`)
     hmrStmts.push(
       js`${id(cn)}.prototype.dispose = function() {
-        unregisterComponentInstance(${cn}, this);
+        unregisterComponentInstance(${importMeta()}.url, ${cn}, this);
         return ${id('__origDispose' + suffix)}.call(this);
       };`,
     )

@@ -177,7 +177,7 @@ describe('HMR: static components patch in place', { concurrency: false }, () => 
     const instance = new Before()
     instance.render(root)
     const oldRoot = instance.el!
-    hmrRuntime.registerComponentInstance('StaticCleanupProbe', instance)
+    hmrRuntime.registerComponentInstance('file:///virtual/static-cleanup.ts', 'StaticCleanupProbe', instance)
     try {
       for (const label of ['after', 'final']) {
         assert.equal(
@@ -193,7 +193,7 @@ describe('HMR: static components patch in place', { concurrency: false }, () => 
       assert.equal(oldRoot.isConnected, false)
     } finally {
       instance.dispose()
-      hmrRuntime.unregisterComponentInstance('StaticCleanupProbe', instance)
+      hmrRuntime.unregisterComponentInstance('file:///virtual/static-cleanup.ts', 'StaticCleanupProbe', instance)
     }
     assert.deepEqual(disposed, ['before', 'after', 'final'])
     document.dispatchEvent(new Event('hmr-probe'))
@@ -227,7 +227,7 @@ describe('HMR: static components patch in place', { concurrency: false }, () => 
       const instance = new Before()
       instance.render(root)
       root.append(footer)
-      runtime.registerComponentInstance('StaticFragmentProbe', instance)
+      runtime.registerComponentInstance('file:///virtual/fragment.ts', 'StaticFragmentProbe', instance)
       try {
         for (const label of ['after', 'final']) {
           const oldNodes = Array.from(root.childNodes).slice(1, -1)
@@ -243,7 +243,7 @@ describe('HMR: static components patch in place', { concurrency: false }, () => 
         }
       } finally {
         instance.dispose()
-        runtime.unregisterComponentInstance('StaticFragmentProbe', instance)
+        runtime.unregisterComponentInstance('file:///virtual/fragment.ts', 'StaticFragmentProbe', instance)
       }
       assert.deepEqual(Array.from(root.childNodes), [header, footer])
       assert.equal(instance.el, null)
