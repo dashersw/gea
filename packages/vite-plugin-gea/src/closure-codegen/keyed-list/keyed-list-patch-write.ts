@@ -23,6 +23,7 @@ export interface PatchWriteInput {
   itemName: string
   nonDirectTextWalks: Set<string>
   stashSlots: Map<string, number>
+  capturePatchTargets: boolean
 }
 
 export function buildPatchWrite(input: PatchWriteInput): PatchWriteResult {
@@ -36,38 +37,38 @@ export function buildPatchWrite(input: PatchWriteInput): PatchWriteResult {
   }
 
   const isDirectText = input.kind === 'text' && !input.nonDirectTextWalks.has(input.walkName)
-  const canStash = input.walk.length > 0 && (input.kind !== 'text' || isDirectText)
+  const canStash = input.walk.length > 0 && (input.capturePatchTargets || input.kind !== 'text' || isDirectText)
   const slotN = canStash ? getStashSlot(input.stashSlots, input.walk) : null
   const elParam = t.identifier('el')
   const itemParam = t.identifier('item')
-  const nodeExpr: Expression =
-    slotN !== null
-      ? t.memberExpression(elParam, t.identifier('__r' + slotN))
-      : input.walk.length === 0
-        ? elParam
-        : emitWalkExpr(elParam, input.walk, input.walkKinds)
-  const initNodeExpr: Expression =
-    input.walk.length === 0 ? elParam : emitWalkExpr(elParam, input.walk, input.walkKinds)
+  const cachedNode = slotN === null ? null : t.memberExpression(elParam, t.identifier('__r' + slotN))
+  const nodeWalk = input.walk.length === 0 ? elParam : emitWalkExpr(elParam, input.walk, input.walkKinds)
+  // A structural slot can shift the child indices during setup or a later
+  // update. Stash the original target instead of walking the changed row.
+  const initNodeExpr =
+    input.capturePatchTargets && cachedNode
+      ? t.assignmentExpression('=', t.cloneNode(cachedNode), t.identifier(input.targetName))
+      : nodeWalk
   const itemAccess = buildItemAccess(itemParam, itemPath)
-  const lazyCacheExpr: Expression =
-    slotN !== null
+  const patchNodeExpr =
+    cachedNode && !input.capturePatchTargets
       ? t.logicalExpression(
           '||',
-          t.memberExpression(elParam, t.identifier('__r' + slotN)),
-          t.assignmentExpression(
-            '=',
-            t.memberExpression(elParam, t.identifier('__r' + slotN)),
-            emitWalkExpr(elParam, input.walk, input.walkKinds),
-          ),
+          cachedNode,
+          t.assignmentExpression('=', t.cloneNode(cachedNode), t.cloneNode(nodeWalk)),
         )
-      : nodeExpr
+      : (cachedNode ?? t.cloneNode(nodeWalk))
 
   const patchStmt = withDirtyPropGuard(
-    buildPatchStatement(input.kind, input.args, lazyCacheExpr, itemAccess, itemPath),
+    buildPatchStatement(input.kind, input.args, patchNodeExpr, itemAccess, itemPath),
     itemPath,
   )
   const initStmt = buildInitStatement(input.kind, input.args, initNodeExpr, itemPath)
-  const deadBindings = input.kind === 'text' ? [input.targetName, input.walkName] : [input.targetName]
+  const deadBindings = input.capturePatchTargets
+    ? []
+    : input.kind === 'text'
+      ? [input.targetName, input.walkName]
+      : [input.targetName]
   return { kind: 'write', patchStmt, initStmt, deadBindings }
 }
 

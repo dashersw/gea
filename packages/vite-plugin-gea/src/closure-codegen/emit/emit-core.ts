@@ -10,6 +10,10 @@ import { normalizeEventAttrName, walkJsxToTemplate, type Slot, type TemplateSpec
 import { templateSpecToIr } from '../ir.ts'
 
 export function compileJsxToBlock(jsxRoot: any, ctx: EmitContext): BlockStatement {
+  return compileJsxToBlockWithSlots(jsxRoot, ctx).block
+}
+
+export function compileJsxToBlockWithSlots(jsxRoot: any, ctx: EmitContext): { block: BlockStatement; slots: Slot[] } {
   // Wrap the JSX root in a `<span style="display:contents">` when it would
   // produce a non-singular cloneable root:
   //   - JSXFragment with multiple top-level children — first would be lost
@@ -129,7 +133,7 @@ export function compileJsxToBlock(jsxRoot: any, ctx: EmitContext): BlockStatemen
   }
   ctx._documentClickDelegateInstalled = savedDocumentClickDelegateInstalled
   stmts.push(t.returnStatement(t.identifier('root')))
-  return t.blockStatement(stmts)
+  return { block: t.blockStatement(stmts), slots: spec.slots }
 }
 
 export function findInputValueReconciliations(spec: TemplateSpec): Map<number, any> {

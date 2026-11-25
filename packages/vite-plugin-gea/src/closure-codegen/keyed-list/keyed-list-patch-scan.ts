@@ -12,7 +12,11 @@ export interface PatchRowPlan {
   deadBindings: Set<string>
 }
 
-export function collectPatchRowPlan(block: BlockStatement, itemName: string): PatchRowPlan {
+export function collectPatchRowPlan(
+  block: BlockStatement,
+  itemName: string,
+  capturePatchTargets: boolean,
+): PatchRowPlan {
   const walks = new Map<string, number[]>()
   const walkKindsMap = new Map<string, WalkKind[]>()
   for (const stmt of block.body) {
@@ -67,6 +71,7 @@ export function collectPatchRowPlan(block: BlockStatement, itemName: string): Pa
       itemName,
       nonDirectTextWalks,
       stashSlots,
+      capturePatchTargets,
     })
     if (result.kind === 'keep') plan.keep.push(stmt)
     else if (result.kind === 'write') {

@@ -9,8 +9,13 @@ export {
   createItemBodyReferencesRowDisposer,
 } from './keyed-list-usage.ts'
 
-export function extractPatchRowFromBlock(block: BlockStatement, itemName: string, idxParam: any): Expression | null {
-  const plan = collectPatchRowPlan(block, itemName)
+export function extractPatchRowFromBlock(
+  block: BlockStatement,
+  itemName: string,
+  idxParam: any,
+  capturePatchTargets: boolean,
+): Expression | null {
+  const plan = collectPatchRowPlan(block, itemName, capturePatchTargets)
   if (plan.patchStmts.length === 0) return null
   return applyPatchRowPlan(block, plan, itemName, idxParam)
 }

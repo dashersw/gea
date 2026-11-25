@@ -3,7 +3,7 @@ import type { Expression, Statement } from '@babel/types'
 import { t } from '../../utils/babel-interop.ts'
 
 import { collectBindings, type EmitContext } from '../emit/emit-context.ts'
-import { compileJsxToBlock } from '../emit/emit-core.ts'
+import { compileJsxToBlock, compileJsxToBlockWithSlots } from '../emit/emit-core.ts'
 import { substituteBindings } from '../emit/emit-substitution.ts'
 import {
   extractPatchRowFromBlock,
@@ -52,7 +52,7 @@ export function buildKeyedListCreateItem(options: KeyedListCreateItemOptions): K
     ctx._rowEventTypes = rowEventTypes
     ctx._rowFastEventTypes = rowFastEventTypes
     ctx._rowEventHandlers = {}
-    const block = compileJsxToBlock(cbBody, ctx)
+    const { block, slots } = compileJsxToBlockWithSlots(cbBody, ctx)
     ctx._inKeyedListRow = prevInRow
     ctx._rowEventTypes = prevRowTypes
     ctx._rowFastEventTypes = prevRowFastTypes
@@ -64,7 +64,11 @@ export function buildKeyedListCreateItem(options: KeyedListCreateItemOptions): K
 
     const itemName = t.isIdentifier(itemParam) ? itemParam.name : null
     if (itemName) {
-      patchRowExpr = extractPatchRowFromBlock(block, itemName, idxParam)
+      // These slots can change the row's child indices after the template walk.
+      const capturePatchTargets = slots.some(({ kind }) =>
+        ['conditional', 'mount', 'direct-fn', 'keyed-list', 'html', 'spread', 'ref'].includes(kind),
+      )
+      patchRowExpr = extractPatchRowFromBlock(block, itemName, idxParam, capturePatchTargets)
       if (patchRowExpr) ctx.importsNeeded.add('GEA_DIRTY_PROPS')
       const sharedHandlerMap = extractSharedHandlersFromBlock(block, itemName, idxParam, stmts, ctx)
       rewriteRowEventHandlers(ctx, sharedHandlerMap)

@@ -10,6 +10,59 @@ describe('map() items + trailing conditional — DOM order', { concurrency: fals
     restoreDom()
   })
 
+  it('creates and updates mapped row text and attributes after a sibling conditional changes', async () => {
+    const [{ default: Component }] = await loadRuntimeModules('map-row-before-text')
+    const App = (await compileJsxComponent(
+      `
+        import { Component } from '@geajs/core'
+        export default class App extends Component {
+          items = [{ id: 1, label: 'Carol' }]
+          showIcon = false
+          template() {
+            return (
+              <ul>
+                {this.items.map(item => (
+                  <li key={item.id}>
+                    {this.showIcon ? <i>Note</i> : null}
+                    <span title={item.label}>{item.label}</span>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+        }
+      `,
+      '/virtual/MapRowBeforeText.tsx',
+      'App',
+      { Component },
+    )) as {
+      new (): {
+        items: { id: number; label: string }[]
+        showIcon: boolean
+        render: (n: Node) => void
+        dispose: () => void
+      }
+    }
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const app = new App()
+    app.render(root)
+    await flushMicrotasks()
+    const title = root.querySelector('span')!
+    assert.equal(title.textContent, 'Carol')
+    assert.equal(title.title, 'Carol')
+
+    app.showIcon = true
+    await flushMicrotasks()
+    assert.equal(root.querySelector('i')?.textContent, 'Note')
+    app.items = [{ id: 1, label: 'Waltz' }]
+    await flushMicrotasks()
+    assert.equal(root.querySelector('span'), title)
+    assert.equal(title.textContent, 'Waltz')
+    assert.equal(title.title, 'Waltz')
+    app.dispose()
+  })
+
   it('pushes a new list item and keeps the conditional slot at the end of the <ul>', async () => {
     const seed = `map-cond-${Date.now()}`
     const [{ default: Component }] = await loadRuntimeModules(seed)
